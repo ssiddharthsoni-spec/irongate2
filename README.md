@@ -442,16 +442,16 @@ The API enforces strict origin allowlisting. Only the dashboard origin, the regi
 ### ABA Model Rule 1.6 (Confidentiality of Information)
 Iron Gate is designed to help law firms satisfy their obligation under **ABA Model Rule 1.6(c)** to "make reasonable efforts to prevent the inadvertent or unauthorized disclosure of, or unauthorized access to, information relating to the representation of a client." By detecting and pseudonymizing client-identifying information before it reaches third-party AI services, Iron Gate provides a technical control that supports compliance with this duty.
 
-### SOC 2
-The architecture incorporates several controls relevant to SOC 2 Type II certification:
+### Data Minimization & Security Controls
+The architecture incorporates security best practices:
 - **Encryption at rest** (AES-256-GCM) for all sensitive stored data
 - **Append-only audit log** for every AI interaction across the firm
 - **Tenant isolation** with firm-scoped access controls
 - **Rate limiting** and authentication on all API endpoints
-- **Data minimization** -- no raw prompt text is persisted
+- **No raw prompt text is persisted** -- only hashes and metadata
 
-### HIPAA
-For firms handling healthcare clients, the Executive Lens includes specific detection of Protected Health Information (PHI) patterns and routes identified PHI content to private infrastructure, supporting compliance with the HIPAA Security Rule's transmission security requirements.
+### HIPAA-Aware Detection
+For firms handling healthcare clients, the Executive Lens includes detection of Protected Health Information (PHI) patterns and can route flagged content to private infrastructure to help limit PHI exposure to external AI services. This is not a substitute for a comprehensive HIPAA compliance program.
 
 ---
 

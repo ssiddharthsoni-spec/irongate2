@@ -2056,7 +2056,7 @@ function analyzeContext(text, entities) {
     // PII + math → private LLM (need real numbers for accurate computation)
     valueStrategy = 'private_llm';
     if (detectedIndustry === 'healthcare') {
-      reasoning = 'Patient data + dosage/clinical calculation needed — routing to HIPAA-compliant private LLM';
+      reasoning = 'Patient data + dosage/clinical calculation needed — routing to private LLM to keep PHI off external servers';
     } else if (detectedIndustry === 'finance') {
       reasoning = 'Client financial data + portfolio math needed — routing to private LLM (real data stays on-prem)';
     } else if (detectedIndustry === 'manufacturing') {

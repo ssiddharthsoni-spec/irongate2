@@ -119,7 +119,7 @@ proxyRoutes.post('/analyze', async (c) => {
     const body = await c.req.json();
     const parsed = analyzeRequestSchema.parse(body);
 
-    const promptText = (promptText || parsed.text)!;
+    const promptText = (parsed.promptText || parsed.text)!;
     const firmId = parsed.firmId || c.get('firmId');
     const userId = parsed.userId || c.get('userId');
 
