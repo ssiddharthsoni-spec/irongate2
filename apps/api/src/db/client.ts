@@ -1,6 +1,10 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
+import dns from 'node:dns';
 import * as schema from './schema';
+
+// Force IPv4 resolution — Railway can't reach Supabase over IPv6
+dns.setDefaultResultOrder('ipv4first');
 
 const connectionString = process.env.DATABASE_URL || 'postgresql://localhost:5432/irongate';
 const isRemote = connectionString.includes('supabase') || connectionString.includes('neon');
