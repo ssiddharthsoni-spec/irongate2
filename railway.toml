@@ -1,8 +1,0 @@
-[build]
-builder = "NIXPACKS"
-buildCommand = "pnpm install && pnpm --filter=@iron-gate/types build && pnpm --filter=@iron-gate/config build && pnpm --filter=@iron-gate/crypto build"
-
-[deploy]
-startCommand = "cd apps/api && npx tsx src/index.ts"
-healthcheckPath = "/health"
-healthcheckTimeout = 30
