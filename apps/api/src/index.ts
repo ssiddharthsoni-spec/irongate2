@@ -62,6 +62,9 @@ app.get('/health', async (c) => {
     } catch (e) {
       health.database = 'disconnected';
       health.status = 'degraded';
+      health.dbError = e instanceof Error ? e.message : String(e);
+      health.dbUrlSet = !!process.env.DATABASE_URL;
+      health.dbUrlPrefix = process.env.DATABASE_URL?.substring(0, 30) + '...';
     }
   }
 
