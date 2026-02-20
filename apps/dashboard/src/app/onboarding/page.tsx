@@ -2,8 +2,7 @@
 
 import React, { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/v1';
+import { useApiClient } from '../../lib/api';
 
 const INDUSTRIES = [
   'Legal',
@@ -41,6 +40,7 @@ const TOTAL_STEPS = 5;
 
 export default function OnboardingPage() {
   const router = useRouter();
+  const { apiFetch } = useApiClient();
   const [currentStep, setCurrentStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -86,12 +86,8 @@ export default function OnboardingPage() {
     setSubmitError(null);
 
     try {
-      const response = await fetch(`${API_BASE}/admin/firm`, {
+      const response = await apiFetch('/admin/firm', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer dev-token',
-        },
         body: JSON.stringify({
           firmName: state.firmName,
           industry: state.industry,

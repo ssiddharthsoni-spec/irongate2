@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
+import { useApiClient } from '../lib/api';
 
 // Dynamic imports for chart components — prevents SSR hydration issues with Recharts
 const SensitivityDistributionChart = dynamic(
@@ -29,8 +30,6 @@ interface FirmOverview {
   recentHighRisk: any[];
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/v1';
-
 const RISK_COLORS = {
   low: '#51cf66',
   medium: '#fcc419',
@@ -39,6 +38,7 @@ const RISK_COLORS = {
 };
 
 export default function DashboardPage() {
+  const { apiFetch } = useApiClient();
   // Start with demo data immediately — no loading/error state flash
   const [data, setData] = useState<FirmOverview>(getDemoData());
   const [isLive, setIsLive] = useState(false);
@@ -52,12 +52,7 @@ export default function DashboardPage() {
   async function fetchDashboardData() {
     try {
       setSyncing(true);
-      const response = await fetch(`${API_BASE}/dashboard/overview?days=${timeRange}`, {
-        headers: {
-          'Authorization': 'Bearer dev-token',
-          'X-Firm-ID': 'dev-firm-id',
-        },
-      });
+      const response = await apiFetch(`/dashboard/overview?days=${timeRange}`);
 
       if (!response.ok) throw new Error('Failed to fetch');
       const json = await response.json();
@@ -98,7 +93,7 @@ export default function DashboardPage() {
             )}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {[7, 14, 30, 90].map((days) => (
             <button
               key={days}
@@ -116,7 +111,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <SummaryCard title="Total Interactions" value={data.totalInteractions.toLocaleString()} />
         <SummaryCard title="Avg Sensitivity Score" value={String(data.avgSensitivityScore)} color={
           data.avgSensitivityScore > 60 ? 'text-risk-high' : data.avgSensitivityScore > 25 ? 'text-risk-medium' : 'text-risk-low'
@@ -126,7 +121,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Charts Row 1 */}
-      <div className="grid grid-cols-2 gap-6 mb-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Sensitivity Distribution</h2>
           <div style={{ width: '100%', height: 300 }}>
@@ -151,7 +146,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Tables Row */}
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Top Users */}
         <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Top Users</h2>

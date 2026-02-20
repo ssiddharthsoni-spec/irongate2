@@ -7,6 +7,7 @@ import { adminRoutes } from './routes/admin';
 import { reportsRoutes } from './routes/reports';
 import { feedbackRoutes } from './routes/feedback';
 import { proxyRoutes } from './routes/proxy';
+import { authRoutes } from './routes/auth';
 import { authMiddleware } from './middleware/auth';
 import { rateLimitMiddleware } from './middleware/rate-limit';
 import { firmContextMiddleware } from './middleware/firm-context';
@@ -64,6 +65,9 @@ app.get('/health', async (c) => {
 
   return c.json(health);
 });
+
+// Auth routes (self-authenticated — must be mounted before the global auth middleware)
+app.route('/v1/auth', authRoutes);
 
 // API routes (with auth)
 app.use('/v1/*', authMiddleware);

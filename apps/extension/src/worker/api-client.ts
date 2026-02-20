@@ -3,7 +3,12 @@
  * Handles authentication, retries, and error handling.
  */
 
-const API_BASE_URL = 'http://localhost:3000/v1';
+let API_BASE_URL = 'http://localhost:3000/v1';
+
+// Load configurable API base URL from chrome.storage
+chrome.storage.local.get('apiBaseUrl', (result) => {
+  if (result.apiBaseUrl) API_BASE_URL = result.apiBaseUrl;
+});
 
 interface ApiClientConfig {
   baseUrl: string;

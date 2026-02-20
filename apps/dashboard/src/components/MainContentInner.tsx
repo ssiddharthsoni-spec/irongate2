@@ -7,7 +7,7 @@ export function MainContentInner({ children }: { children: React.ReactNode }) {
   const isOnboarding = pathname.startsWith('/onboarding');
 
   return (
-    <main className={isOnboarding ? '' : 'ml-64 p-8'}>
+    <main className={isOnboarding ? '' : 'md:ml-64 ml-0 p-8'}>
       {children}
     </main>
   );

@@ -1,10 +1,10 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/v1';
+import { useApiClient } from '../../lib/api';
 
 export default function EventsPage() {
+  const { apiFetch } = useApiClient();
   const [events, setEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({
@@ -27,12 +27,7 @@ export default function EventsPage() {
       params.set('limit', String(filters.limit));
       params.set('offset', String(filters.offset));
 
-      const response = await fetch(`${API_BASE}/events?${params}`, {
-        headers: {
-          'Authorization': 'Bearer dev-token',
-          'X-Firm-ID': 'dev-firm-id',
-        },
-      });
+      const response = await apiFetch(`/events?${params}`);
 
       if (response.ok) {
         const data = await response.json();
@@ -82,7 +77,7 @@ export default function EventsPage() {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden overflow-x-auto">
         <table className="w-full">
           <thead>
             <tr className="bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">

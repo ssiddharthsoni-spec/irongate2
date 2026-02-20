@@ -624,6 +624,69 @@
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+
+  /* Responsive: Tablet */
+  @media (max-width: 768px) {
+    .main {
+      flex-direction: column;
+    }
+    .chatgpt-panel {
+      flex: none;
+      width: 100%;
+      height: 50vh;
+    }
+    .monitor-panel {
+      flex: none;
+      width: 100%;
+      height: 50vh;
+    }
+    .topbar {
+      flex-wrap: wrap;
+      height: auto;
+      padding: 8px 12px;
+      gap: 8px;
+    }
+    .scenario-buttons {
+      overflow-x: auto;
+      flex-wrap: nowrap;
+      -webkit-overflow-scrolling: touch;
+      padding-bottom: 4px;
+    }
+    .industry-tabs {
+      overflow-x: auto;
+      flex-wrap: nowrap;
+      -webkit-overflow-scrolling: touch;
+    }
+  }
+
+  /* Responsive: Phone */
+  @media (max-width: 480px) {
+    .topbar {
+      padding: 6px 8px;
+      gap: 6px;
+    }
+    .scenario-btn {
+      font-size: 11px;
+      padding: 4px 8px;
+    }
+    .industry-tab {
+      font-size: 11px;
+      padding: 4px 8px;
+    }
+    .chatgpt-panel {
+      height: 45vh;
+    }
+    .monitor-panel {
+      height: 55vh;
+    }
+    .chat-msg {
+      font-size: 13px;
+      padding: 8px 12px;
+    }
+    .chat-content {
+      font-size: 13px;
+    }
+  }
 </style>
 </head>
 <body>

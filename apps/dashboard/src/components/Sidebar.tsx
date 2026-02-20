@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
@@ -45,73 +46,101 @@ const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   // Hide sidebar on the onboarding page
   const isOnboarding = pathname.startsWith('/onboarding');
   if (isOnboarding) return null;
 
   return (
-    <nav className="fixed left-0 top-0 bottom-0 w-64 bg-white border-r border-gray-200 p-4 flex flex-col">
-      {/* Logo */}
-      <div className="flex items-center gap-3 mb-8">
-        <div className="w-10 h-10 bg-iron-600 rounded-lg flex items-center justify-center">
-          <span className="text-white font-bold">IG</span>
-        </div>
-        <div>
-          <h1 className="font-bold text-gray-900">Iron Gate</h1>
-          <p className="text-xs text-gray-500">AI Governance</p>
-        </div>
-      </div>
+    <>
+      {/* Hamburger button — visible only on mobile */}
+      <button
+        onClick={() => setMobileOpen(true)}
+        className="md:hidden fixed top-4 left-4 z-50 p-2 rounded-lg bg-white shadow-md border border-gray-200"
+        aria-label="Open menu"
+      >
+        <svg className="w-6 h-6 text-gray-700" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5" />
+        </svg>
+      </button>
 
-      {/* Navigation */}
-      <ul className="space-y-1 flex-1">
-        {navItems.map((item) => {
-          const isActive =
-            item.href === '/'
-              ? pathname === '/'
-              : pathname.startsWith(item.href);
+      {/* Dark overlay backdrop — visible only when sidebar is open on mobile */}
+      {mobileOpen && (
+        <div
+          className="md:hidden fixed inset-0 z-40 bg-black/50"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
 
-          return (
-            <li key={item.href}>
-              <Link
-                href={item.href}
-                className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  isActive
-                    ? 'bg-iron-50 text-iron-700'
-                    : 'text-gray-700 hover:bg-gray-100'
-                }`}
-              >
-                <span className={isActive ? 'text-iron-600' : 'text-gray-400'}>
-                  {item.icon}
-                </span>
-                <span>{item.label}</span>
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
-
-      {/* User avatar and version info */}
-      <div className="space-y-3">
-        {/* User avatar placeholder */}
-        <div className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors">
-          <div className="w-8 h-8 rounded-full bg-iron-100 flex items-center justify-center">
-            <svg className="w-4 h-4 text-iron-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
-            </svg>
+      {/* Sidebar */}
+      <nav
+        className={`fixed left-0 top-0 bottom-0 w-64 bg-white border-r border-gray-200 p-4 flex flex-col z-50 transition-transform duration-300 ${
+          mobileOpen ? 'translate-x-0' : '-translate-x-full'
+        } md:translate-x-0`}
+      >
+        {/* Logo */}
+        <div className="flex items-center gap-3 mb-8">
+          <div className="w-10 h-10 bg-iron-600 rounded-lg flex items-center justify-center">
+            <span className="text-white font-bold">IG</span>
           </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-gray-900 truncate">Admin User</p>
-            <p className="text-xs text-gray-500 truncate">admin@firm.com</p>
+          <div>
+            <h1 className="font-bold text-gray-900">Iron Gate</h1>
+            <p className="text-xs text-gray-500">AI Governance</p>
           </div>
         </div>
 
-        {/* Version badge */}
-        <div className="px-3 py-2 bg-iron-50 rounded-lg">
-          <p className="text-xs font-medium text-iron-700">Phase 1: Shadow AI Auditor</p>
-          <p className="text-xs text-iron-500">v0.1.0</p>
+        {/* Navigation */}
+        <ul className="space-y-1 flex-1">
+          {navItems.map((item) => {
+            const isActive =
+              item.href === '/'
+                ? pathname === '/'
+                : pathname.startsWith(item.href);
+
+            return (
+              <li key={item.href}>
+                <Link
+                  href={item.href}
+                  onClick={() => setMobileOpen(false)}
+                  className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    isActive
+                      ? 'bg-iron-50 text-iron-700'
+                      : 'text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  <span className={isActive ? 'text-iron-600' : 'text-gray-400'}>
+                    {item.icon}
+                  </span>
+                  <span>{item.label}</span>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+
+        {/* User avatar and version info */}
+        <div className="space-y-3">
+          {/* User avatar placeholder */}
+          <div className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors">
+            <div className="w-8 h-8 rounded-full bg-iron-100 flex items-center justify-center">
+              <svg className="w-4 h-4 text-iron-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+              </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-gray-900 truncate">Admin User</p>
+              <p className="text-xs text-gray-500 truncate">admin@firm.com</p>
+            </div>
+          </div>
+
+          {/* Version badge */}
+          <div className="px-3 py-2 bg-iron-50 rounded-lg">
+            <p className="text-xs font-medium text-iron-700">Phase 1: Shadow AI Auditor</p>
+            <p className="text-xs text-iron-500">v0.1.0</p>
+          </div>
         </div>
-      </div>
-    </nav>
+      </nav>
+    </>
   );
 }

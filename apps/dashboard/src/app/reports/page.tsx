@@ -5,12 +5,12 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, Legend,
 } from 'recharts';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/v1';
+import { useApiClient } from '../../lib/api';
 
 const RISK_COLORS = { low: '#51cf66', medium: '#fcc419', high: '#ff922b', critical: '#ff6b6b' };
 
 export default function ReportsPage() {
+  const { apiFetch } = useApiClient();
   const [report, setReport] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(30);
@@ -22,9 +22,7 @@ export default function ReportsPage() {
   async function fetchReport() {
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE}/reports/exposure?days=${days}`, {
-        headers: { 'Authorization': 'Bearer dev-token', 'X-Firm-ID': 'dev-firm-id' },
-      });
+      const response = await apiFetch(`/reports/exposure?days=${days}`);
       if (response.ok) {
         setReport(await response.json());
       } else {

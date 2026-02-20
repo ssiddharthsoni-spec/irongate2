@@ -10,8 +10,7 @@ import { LLMRouter } from '../proxy/llm-router';
 import type { FirmLLMConfig } from '../proxy/llm-router';
 import type { AppEnv } from '../types';
 import type { DetectedEntity } from '@iron-gate/types';
-
-const DETECTION_SERVICE_URL = process.env.DETECTION_SERVICE_URL || 'http://localhost:8080';
+import { detect, score as scoreText } from '../detection';
 
 // ---------------------------------------------------------------------------
 // Zod schemas
@@ -40,20 +39,6 @@ const sendRequestSchema = z.object({
   maxTokens: z.number().int().positive().optional().default(4096),
   temperature: z.number().min(0).max(2).optional().default(0.7),
 });
-
-// ---------------------------------------------------------------------------
-// Types for detection service responses
-// ---------------------------------------------------------------------------
-
-interface DetectResponse {
-  entities: DetectedEntity[];
-}
-
-interface ScoreResponse {
-  score: number;
-  level: 'low' | 'medium' | 'high' | 'critical';
-  breakdown: Record<string, number>;
-}
 
 // Firm config shape (stored in the firms.config jsonb column)
 interface FirmConfig {
@@ -133,42 +118,11 @@ proxyRoutes.post('/analyze', async (c) => {
     const firmConfig = (firm?.config ?? {}) as FirmConfig;
     const thresholds = firmConfig.thresholds ?? {};
 
-    // 2. Call detection service to get entities
-    const detectResponse = await fetch(`${DETECTION_SERVICE_URL}/v1/detect`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text: promptText,
-        firmId,
-      }),
-    });
+    // 2. Detect entities using local regex engine
+    const detectedEntities = detect(promptText);
 
-    if (!detectResponse.ok) {
-      const errText = await detectResponse.text();
-      console.error('[proxy/analyze] Detection service /v1/detect failed:', detectResponse.status, errText);
-      return c.json({ error: 'Detection service unavailable', detail: errText }, 502);
-    }
-
-    const detectResult = (await detectResponse.json()) as DetectResponse;
-
-    // 3. Call detection service to get sensitivity score
-    const scoreResponse = await fetch(`${DETECTION_SERVICE_URL}/v1/score`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text: promptText,
-        entities: detectResult.entities,
-        firmId,
-      }),
-    });
-
-    if (!scoreResponse.ok) {
-      const errText = await scoreResponse.text();
-      console.error('[proxy/analyze] Detection service /v1/score failed:', scoreResponse.status, errText);
-      return c.json({ error: 'Scoring service unavailable', detail: errText }, 502);
-    }
-
-    const scoreResult = (await scoreResponse.json()) as ScoreResponse;
+    // 3. Score sensitivity
+    const scoreResult = scoreText(promptText, detectedEntities);
 
     // 4. Determine recommended route based on score vs firm thresholds
     const recommendedRoute = determineRoute(scoreResult.score, thresholds);
@@ -177,9 +131,9 @@ proxyRoutes.post('/analyze', async (c) => {
     let maskedPrompt = promptText;
     let pseudonymMap: Record<string, string> = {};
 
-    if (recommendedRoute !== 'passthrough' && detectResult.entities.length > 0) {
+    if (recommendedRoute !== 'passthrough' && detectedEntities.length > 0) {
       const pseudonymizer = new Pseudonymizer(parsed.sessionId, firmId);
-      const result = pseudonymizer.pseudonymize(promptText, detectResult.entities);
+      const result = pseudonymizer.pseudonymize(promptText, detectedEntities);
       maskedPrompt = result.maskedText;
       pseudonymMap = buildPseudonymRecord(result.map);
 
@@ -198,7 +152,7 @@ proxyRoutes.post('/analyze', async (c) => {
       maskedPrompt,
       pseudonymMap,
       recommendedRoute,
-      entitiesFound: detectResult.entities.length,
+      entitiesFound: detectedEntities.length,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
