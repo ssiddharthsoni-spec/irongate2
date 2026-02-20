@@ -1,25 +1,31 @@
-FROM oven/bun:1 AS base
+FROM node:20-slim
+
+# Install pnpm via corepack
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+
 WORKDIR /app
 
-# Install dependencies
-COPY package.json bun.lock* ./
-COPY packages/types/package.json packages/types/
-COPY packages/config/package.json packages/config/
-COPY apps/api/package.json apps/api/
+# Copy root workspace files
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 
-RUN bun install --frozen-lockfile
+# Copy workspace package manifests (needed for pnpm install)
+COPY packages/types/package.json packages/types/package.json
+COPY packages/config/package.json packages/config/package.json
+COPY packages/crypto/package.json packages/crypto/package.json
+COPY packages/proto/package.json packages/proto/package.json
+COPY apps/api/package.json apps/api/package.json
 
-# Copy source
-COPY packages/ packages/
+# Install all dependencies
+RUN pnpm install --frozen-lockfile
+
+# Copy source code
+COPY packages/types/ packages/types/
+COPY packages/config/ packages/config/
+COPY packages/crypto/ packages/crypto/
 COPY apps/api/ apps/api/
 
-# Build
-WORKDIR /app/apps/api
-RUN bun build src/index.ts --outdir dist
-
-# Production
-FROM oven/bun:1-slim
-WORKDIR /app
-COPY --from=base /app/apps/api/dist ./
+# Expose port
 EXPOSE 3000
-CMD ["bun", "run", "index.js"]
+
+# Start API with tsx (resolves workspace packages from source)
+CMD ["pnpm", "--filter=@iron-gate/api", "start"]

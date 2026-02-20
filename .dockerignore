@@ -1,0 +1,12 @@
+node_modules
+.git
+*.md
+docs
+demo
+apps/extension
+apps/dashboard
+apps/detection
+.env
+.env.local
+.turbo
+dist
