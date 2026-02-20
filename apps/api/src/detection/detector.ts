@@ -4,10 +4,41 @@
  * legal-domain recognizers (PERSON, ORGANIZATION, PRIVILEGE_MARKER).
  */
 
-import type { DetectedEntity } from '@iron-gate/types';
+// Entity types matching @iron-gate/types EntityType
+type EntityType =
+  | 'PERSON'
+  | 'ORGANIZATION'
+  | 'LOCATION'
+  | 'DATE'
+  | 'PHONE_NUMBER'
+  | 'EMAIL'
+  | 'CREDIT_CARD'
+  | 'SSN'
+  | 'MONETARY_AMOUNT'
+  | 'ACCOUNT_NUMBER'
+  | 'IP_ADDRESS'
+  | 'MEDICAL_RECORD'
+  | 'PASSPORT_NUMBER'
+  | 'DRIVERS_LICENSE'
+  | 'MATTER_NUMBER'
+  | 'CLIENT_MATTER_PAIR'
+  | 'PRIVILEGE_MARKER'
+  | 'DEAL_CODENAME'
+  | 'OPPOSING_COUNSEL';
+
+type Source = 'gliner' | 'regex' | 'presidio' | 'keyword';
+
+interface DetectedEntity {
+  type: EntityType;
+  text: string;
+  start: number;
+  end: number;
+  confidence: number;
+  source: Source;
+}
 
 interface RegexPattern {
-  type: DetectedEntity['type'];
+  type: EntityType;
   pattern: RegExp;
   confidence: number;
 }
@@ -120,14 +151,15 @@ export function detect(text: string): DetectedEntity[] {
       const key = `${match.index}-${match.index + matchText.length}-${type}`;
       if (!seen.has(key)) {
         seen.add(key);
-        entities.push({
+        const entity: DetectedEntity = {
           type,
           text: matchText,
           start: match.index,
           end: match.index + matchText.length,
           confidence,
           source: 'regex',
-        });
+        };
+        entities.push(entity);
       }
     }
   }

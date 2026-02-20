@@ -9,7 +9,6 @@ import { PseudonymStore } from '../proxy/pseudonym-store';
 import { LLMRouter } from '../proxy/llm-router';
 import type { FirmLLMConfig } from '../proxy/llm-router';
 import type { AppEnv } from '../types';
-import type { DetectedEntity } from '@iron-gate/types';
 import { detect, score as scoreText } from '../detection';
 
 // ---------------------------------------------------------------------------
