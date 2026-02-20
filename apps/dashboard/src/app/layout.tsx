@@ -13,21 +13,16 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  const content = (
-    <html lang="en">
-      <body>
-        <div className="min-h-screen bg-gray-50">
-          <Sidebar />
-          <MainContentInner>{children}</MainContentInner>
-        </div>
-      </body>
-    </html>
+  return (
+    <ClerkProvider>
+      <html lang="en">
+        <body>
+          <div className="min-h-screen bg-gray-50">
+            <Sidebar />
+            <MainContentInner>{children}</MainContentInner>
+          </div>
+        </body>
+      </html>
+    </ClerkProvider>
   );
-
-  // Skip ClerkProvider if publishable key isn't set (e.g. during CI builds)
-  if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
-    return content;
-  }
-
-  return <ClerkProvider>{content}</ClerkProvider>;
 }
