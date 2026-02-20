@@ -92,20 +92,8 @@ app.onError((err, c) => {
 
 const port = parseInt(process.env.PORT || '3000');
 
-// Support both Bun (export default) and Node.js (@hono/node-server)
-if (typeof globalThis.Bun !== 'undefined') {
-  console.log(`[Iron Gate API] Starting on port ${port} (Bun)`);
-  // @ts-ignore Bun export default syntax
-  module.exports = { port, fetch: app.fetch };
-} else {
-  import('@hono/node-server').then(({ serve }) => {
-    serve({ fetch: app.fetch, port }, () => {
-      console.log(`[Iron Gate API] Running on http://localhost:${port} (Node.js)`);
-    });
+import('@hono/node-server').then(({ serve }) => {
+  serve({ fetch: app.fetch, port }, () => {
+    console.log(`[Iron Gate API] Running on http://localhost:${port}`);
   });
-}
-
-export default {
-  port,
-  fetch: app.fetch,
-};
+});
