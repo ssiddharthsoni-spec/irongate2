@@ -16,11 +16,12 @@
     "db:studio": "pnpm --filter=api db:studio"
   },
   "devDependencies": {
-    "turbo": "^2.3.0",
-    "typescript": "^5.7.0",
     "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "next": "^15.1.0",
     "prettier": "^3.4.0",
-    "eslint": "^9.0.0"
+    "turbo": "^2.3.0",
+    "typescript": "^5.7.0"
   },
   "packageManager": "pnpm@9.15.0"
 }

@@ -1,0 +1,7 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "pnpm install",
+  "buildCommand": "pnpm --filter=@iron-gate/types build && cd apps/dashboard && npx next build",
+  "outputDirectory": "apps/dashboard/.next",
+  "framework": "nextjs"
+}
