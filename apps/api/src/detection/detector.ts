@@ -7,7 +7,7 @@
 import type { DetectedEntity } from '@iron-gate/types';
 
 interface RegexPattern {
-  type: string;
+  type: DetectedEntity['type'];
   pattern: RegExp;
   confidence: number;
 }
