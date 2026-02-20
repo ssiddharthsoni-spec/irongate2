@@ -54,10 +54,11 @@ app.get('/health', async (c) => {
   // Deep health check with ?deep=true
   if (c.req.query('deep') === 'true') {
     try {
+      const { sql } = await import('drizzle-orm');
       const { db } = await import('./db/client');
-      const result = await db.execute({ sql: 'SELECT 1' } as any);
+      await db.execute(sql`SELECT 1`);
       health.database = 'connected';
-    } catch {
+    } catch (e) {
       health.database = 'disconnected';
       health.status = 'degraded';
     }
