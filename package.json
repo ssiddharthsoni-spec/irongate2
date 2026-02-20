@@ -1,0 +1,26 @@
+{
+  "name": "iron-gate",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI Governance for Professional Services",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "test": "turbo test",
+    "test:e2e": "turbo test:e2e",
+    "test:detection": "turbo test:detection",
+    "lint": "turbo lint",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "db:migrate": "pnpm --filter=api db:migrate",
+    "db:seed": "pnpm --filter=api db:seed",
+    "db:studio": "pnpm --filter=api db:studio"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.0",
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0",
+    "prettier": "^3.4.0",
+    "eslint": "^9.0.0"
+  },
+  "packageManager": "pnpm@9.15.0"
+}

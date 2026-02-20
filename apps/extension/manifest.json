@@ -1,0 +1,63 @@
+{
+  "manifest_version": 3,
+  "name": "Iron Gate",
+  "version": "0.1.0",
+  "description": "AI Governance for Professional Services",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "sidePanel",
+    "webRequest"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "https://claude.ai/*",
+    "https://gemini.google.com/*",
+    "https://copilot.microsoft.com/*",
+    "https://chat.deepseek.com/*",
+    "https://poe.com/*",
+    "https://perplexity.ai/*",
+    "https://you.com/*",
+    "https://huggingface.co/chat/*",
+    "https://groq.com/*"
+  ],
+  "background": {
+    "service_worker": "src/worker/index.ts",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*",
+        "https://copilot.microsoft.com/*",
+        "https://chat.deepseek.com/*",
+        "https://poe.com/*",
+        "https://perplexity.ai/*",
+        "https://you.com/*",
+        "https://huggingface.co/chat/*",
+        "https://groq.com/*"
+      ],
+      "js": ["src/content/index.ts"],
+      "run_at": "document_start"
+    }
+  ],
+  "side_panel": {
+    "default_path": "src/sidepanel/index.html"
+  },
+  "action": {
+    "default_icon": {
+      "16": "public/icons/icon16.png",
+      "48": "public/icons/icon48.png",
+      "128": "public/icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "public/icons/icon16.png",
+    "48": "public/icons/icon48.png",
+    "128": "public/icons/icon128.png"
+  }
+}

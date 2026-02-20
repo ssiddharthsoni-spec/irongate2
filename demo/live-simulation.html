@@ -1,0 +1,2596 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Iron Gate — Live Extension Simulation</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* Top bar */
+  .topbar {
+    background: #16213e;
+    border-bottom: 1px solid #0f3460;
+    padding: 10px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 52px;
+  }
+  .topbar-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .topbar-logo {
+    width: 32px; height: 32px;
+    background: #4c6ef5;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 14px;
+    color: white;
+  }
+  .topbar-title {
+    font-weight: 700;
+    font-size: 16px;
+    color: #fff;
+  }
+  .topbar-sub {
+    font-size: 12px;
+    color: #7f8c8d;
+  }
+  .mode-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+  }
+  .mode-audit {
+    background: #1e3a5f;
+    color: #4dabf7;
+    border: 1px solid #4dabf7;
+  }
+  .mode-proxy {
+    background: #1e3a1e;
+    color: #51cf66;
+    border: 1px solid #51cf66;
+  }
+  .mode-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+  }
+  .mode-audit .mode-dot { background: #4dabf7; }
+  .mode-proxy .mode-dot { background: #51cf66; }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* Main layout */
+  .main {
+    display: flex;
+    height: calc(100vh - 52px);
+  }
+
+  /* LEFT: ChatGPT simulation */
+  .chatgpt-panel {
+    flex: 0 0 45%;
+    background: #343541;
+    display: flex;
+    flex-direction: column;
+    border-right: 2px solid #0f3460;
+  }
+  .chatgpt-header {
+    padding: 12px 20px;
+    background: #2b2c37;
+    border-bottom: 1px solid #444654;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #ccc;
+  }
+  .chatgpt-header img, .chatgpt-header .gpt-icon {
+    width: 24px; height: 24px;
+    border-radius: 4px;
+    background: #19c37d;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; color: white;
+  }
+  .chatgpt-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+  }
+  .chat-msg {
+    margin-bottom: 20px;
+    display: flex;
+    gap: 12px;
+    animation: fadeIn 0.3s ease;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .chat-avatar {
+    width: 32px; height: 32px;
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; color: white;
+    flex-shrink: 0;
+  }
+  .chat-avatar.user { background: #5436DA; }
+  .chat-avatar.gpt { background: #19c37d; }
+  .chat-content {
+    line-height: 1.6;
+    font-size: 14px;
+    color: #d1d5db;
+    max-width: 100%;
+  }
+  .chat-content pre {
+    background: #1e1e2e;
+    padding: 12px;
+    border-radius: 8px;
+    margin-top: 8px;
+    font-size: 13px;
+    overflow-x: auto;
+  }
+  .chatgpt-input-area {
+    padding: 16px 20px;
+    background: #40414f;
+    border-top: 1px solid #555;
+  }
+  .chatgpt-input-wrap {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    background: #343541;
+    border: 1px solid #555;
+    border-radius: 12px;
+    padding: 8px 12px;
+  }
+  .chatgpt-input-wrap textarea {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: #e0e0e0;
+    font-size: 14px;
+    font-family: inherit;
+    resize: none;
+    outline: none;
+    min-height: 24px;
+    max-height: 120px;
+  }
+  .send-btn {
+    width: 32px; height: 32px;
+    border: none;
+    border-radius: 8px;
+    background: #19c37d;
+    color: white;
+    font-size: 16px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.15s;
+  }
+  .send-btn:hover { background: #15a86b; }
+  .send-btn:disabled { background: #555; cursor: not-allowed; }
+
+  /* Industry tabs + scenario buttons */
+  .scenarios {
+    padding: 0;
+    background: #2b2c37;
+    border-top: 1px solid #444654;
+  }
+  .industry-tabs {
+    display: flex;
+    border-bottom: 1px solid #444654;
+    overflow-x: auto;
+  }
+  .industry-tab {
+    flex: 1;
+    padding: 7px 4px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border: none;
+    background: transparent;
+    color: #666;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .industry-tab:hover { color: #bbb; }
+  .industry-tab.active {
+    color: #4dabf7;
+    border-bottom-color: #4dabf7;
+  }
+  .scenario-buttons {
+    display: flex;
+    gap: 6px;
+    padding: 6px 12px;
+    flex-wrap: wrap;
+  }
+  .scenario-btn {
+    padding: 4px 10px;
+    font-size: 11px;
+    border: 1px solid #555;
+    background: #40414f;
+    color: #bbb;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .scenario-btn:hover {
+    background: #4c6ef5;
+    color: white;
+    border-color: #4c6ef5;
+  }
+  .strategy-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .strategy-label {
+    font-size: 8px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    opacity: 0.8;
+  }
+
+  /* RIGHT: Iron Gate monitor */
+  .monitor-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: #0d1b2a;
+  }
+  .monitor-header {
+    padding: 12px 20px;
+    background: #1b2838;
+    border-bottom: 1px solid #0f3460;
+    font-weight: 600;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .monitor-header .shield {
+    font-size: 18px;
+  }
+  .monitor-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  /* Monitor sections */
+  .section {
+    margin-bottom: 16px;
+    background: #1b2838;
+    border-radius: 10px;
+    border: 1px solid #1e3a5f;
+    overflow: hidden;
+  }
+  .section-header {
+    padding: 10px 14px;
+    background: #16213e;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #7f8c8d;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .section-header .step-num {
+    background: #4c6ef5;
+    color: white;
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px;
+    margin-right: 8px;
+  }
+  .section-body {
+    padding: 12px 14px;
+    font-size: 13px;
+    line-height: 1.7;
+  }
+  .section-body.empty {
+    color: #555;
+    font-style: italic;
+  }
+
+  /* Score indicator */
+  .score-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .score-badge {
+    font-size: 28px;
+    font-weight: 800;
+    min-width: 56px;
+    text-align: center;
+  }
+  .score-meta { font-size: 12px; }
+  .score-bar {
+    width: 100%;
+    height: 8px;
+    background: #1e3a5f;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: 6px;
+  }
+  .score-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.5s ease;
+  }
+
+  /* Entity tags */
+  .entity-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    margin: 2px 3px;
+  }
+  .entity-SSN { background: #ff6b6b22; color: #ff6b6b; border: 1px solid #ff6b6b44; }
+  .entity-CREDIT_CARD { background: #ff6b6b22; color: #ff6b6b; border: 1px solid #ff6b6b44; }
+  .entity-PERSON { background: #4dabf722; color: #4dabf7; border: 1px solid #4dabf744; }
+  .entity-EMAIL { background: #fcc41922; color: #fcc419; border: 1px solid #fcc41944; }
+  .entity-PHONE_NUMBER { background: #fcc41922; color: #fcc419; border: 1px solid #fcc41944; }
+  .entity-MONETARY_AMOUNT { background: #ff922b22; color: #ff922b; border: 1px solid #ff922b44; }
+  .entity-ORGANIZATION { background: #7950f222; color: #a27ff5; border: 1px solid #7950f244; }
+  .entity-ACCOUNT_NUMBER { background: #ff6b6b22; color: #ff6b6b; border: 1px solid #ff6b6b44; }
+  .entity-MATTER_NUMBER { background: #e6498022; color: #e64980; border: 1px solid #e6498044; }
+  .entity-IP_ADDRESS { background: #20c99722; color: #20c997; border: 1px solid #20c99744; }
+  .entity-DATE { background: #66666622; color: #999; border: 1px solid #66666644; }
+  .entity-PRIVILEGE_MARKER { background: #ff6b6b22; color: #ff6b6b; border: 1px solid #ff6b6b44; }
+  .entity-default { background: #4c6ef522; color: #4c6ef5; border: 1px solid #4c6ef544; }
+
+  /* Highlighted text */
+  .highlight {
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-weight: 600;
+  }
+  .hl-SSN, .hl-CREDIT_CARD, .hl-ACCOUNT_NUMBER, .hl-PRIVILEGE_MARKER { background: #ff6b6b33; color: #ff8787; }
+  .hl-PERSON { background: #4dabf733; color: #74c0fc; }
+  .hl-EMAIL, .hl-PHONE_NUMBER { background: #fcc41933; color: #ffe066; }
+  .hl-MONETARY_AMOUNT { background: #ff922b33; color: #ffa94d; }
+  .hl-ORGANIZATION { background: #7950f233; color: #b197fc; }
+  .hl-default { background: #4c6ef533; color: #748ffc; }
+
+  /* Pseudonym mapping table */
+  .pseudo-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    margin-top: 6px;
+  }
+  .pseudo-table th {
+    text-align: left;
+    padding: 4px 8px;
+    color: #7f8c8d;
+    font-weight: 600;
+    border-bottom: 1px solid #1e3a5f;
+  }
+  .pseudo-table td {
+    padding: 4px 8px;
+    border-bottom: 1px solid #0d1b2a;
+  }
+  .pseudo-original { color: #ff8787; text-decoration: line-through; }
+  .pseudo-arrow { color: #555; padding: 0 4px; }
+  .pseudo-fake { color: #51cf66; }
+
+  /* Local storage display */
+  .storage-entry {
+    background: #0d1b2a;
+    border: 1px solid #1e3a5f;
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 11px;
+    line-height: 1.5;
+  }
+  .storage-key { color: #4dabf7; }
+  .storage-val { color: #a9b7c6; }
+  .storage-str { color: #6a9955; }
+  .storage-num { color: #b5cea8; }
+
+  /* Level colors */
+  .level-low { color: #51cf66; }
+  .level-medium { color: #fcc419; }
+  .level-high { color: #ff922b; }
+  .level-critical { color: #ff6b6b; }
+
+  /* Comparison box */
+  .compare-box {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 6px;
+  }
+  .compare-col {
+    background: #0d1b2a;
+    border: 1px solid #1e3a5f;
+    border-radius: 6px;
+    padding: 10px;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .compare-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: #555;
+    margin-bottom: 6px;
+  }
+  .compare-col.original { border-color: #ff6b6b44; }
+  .compare-col.masked { border-color: #51cf6644; }
+
+  /* Typing indicator */
+  .typing {
+    display: inline-flex;
+    gap: 4px;
+    align-items: center;
+  }
+  .typing span {
+    width: 6px; height: 6px;
+    background: #999;
+    border-radius: 50%;
+    animation: typing 1.4s infinite;
+  }
+  .typing span:nth-child(2) { animation-delay: 0.2s; }
+  .typing span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes typing {
+    0%, 60%, 100% { transform: translateY(0); }
+    30% { transform: translateY(-6px); }
+  }
+
+  .mono { font-family: 'SF Mono', 'Fira Code', monospace; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<!-- Top bar -->
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="topbar-logo">IG</div>
+    <div>
+      <div class="topbar-title">Iron Gate — Live Extension Simulation</div>
+      <div class="topbar-sub">Sterling & Associates LLP &middot; Siddharth Soni</div>
+    </div>
+  </div>
+  <button class="mode-badge mode-proxy" id="modeBtn" onclick="toggleMode()">
+    <span class="mode-dot"></span>
+    <span id="modeLabel">Proxy Mode</span>
+  </button>
+</div>
+
+<!-- Main layout -->
+<div class="main">
+
+  <!-- LEFT: ChatGPT simulation -->
+  <div class="chatgpt-panel">
+    <div class="chatgpt-header">
+      <div class="gpt-icon">G</div>
+      ChatGPT (Simulated)
+    </div>
+    <div class="chatgpt-messages" id="chatMessages">
+      <div style="text-align:center;color:#666;padding:40px 0;font-size:13px;">
+        Type a prompt below or click a scenario to simulate.<br>
+        Iron Gate monitors everything in real-time.
+      </div>
+    </div>
+    <div class="scenarios">
+      <div class="industry-tabs">
+        <button class="industry-tab active" data-industry="legal" onclick="selectIndustry('legal')">Legal</button>
+        <button class="industry-tab" data-industry="healthcare" onclick="selectIndustry('healthcare')">Healthcare</button>
+        <button class="industry-tab" data-industry="finance" onclick="selectIndustry('finance')">Finance</button>
+        <button class="industry-tab" data-industry="tech" onclick="selectIndustry('tech')">Technology</button>
+        <button class="industry-tab" data-industry="consulting" onclick="selectIndustry('consulting')">Consulting</button>
+        <button class="industry-tab" data-industry="manufacturing" onclick="selectIndustry('manufacturing')">Manufacturing</button>
+      </div>
+      <div class="scenario-buttons" id="scenarioButtons">
+        <!-- Populated by selectIndustry() on init -->
+      </div>
+    </div>
+    <div class="chatgpt-input-area">
+      <div class="chatgpt-input-wrap">
+        <textarea id="promptInput" placeholder="Message ChatGPT..." rows="1"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();submitPrompt()}"
+          oninput="onTyping()"></textarea>
+        <button class="send-btn" id="sendBtn" onclick="submitPrompt()">&#9654;</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: Iron Gate Monitor -->
+  <div class="monitor-panel">
+    <div class="monitor-header">
+      <span class="shield">&#128737;</span>
+      Iron Gate Extension Monitor
+      <span style="margin-left:auto;font-size:11px;color:#555" id="timestamp"></span>
+    </div>
+    <div class="monitor-scroll" id="monitorScroll">
+
+      <!-- Step 1: What the extension reads -->
+      <div class="section">
+        <div class="section-header">
+          <div style="display:flex;align-items:center"><span class="step-num">1</span> DOM Capture — What Extension Reads</div>
+          <span id="captureMethod" style="font-size:11px;color:#4dabf7"></span>
+        </div>
+        <div class="section-body" id="step1Body">
+          <span class="empty">Waiting for input...</span>
+        </div>
+      </div>
+
+      <!-- Step 2: PII Detection -->
+      <div class="section">
+        <div class="section-header">
+          <div style="display:flex;align-items:center"><span class="step-num">2</span> PII Detection — Entities Found</div>
+          <span id="entityCount" style="font-size:11px;color:#ff922b"></span>
+        </div>
+        <div class="section-body" id="step2Body">
+          <span class="empty">No entities detected yet</span>
+        </div>
+      </div>
+
+      <!-- Step 3: Sensitivity Score -->
+      <div class="section">
+        <div class="section-header">
+          <div style="display:flex;align-items:center"><span class="step-num">3</span> Sensitivity Scoring</div>
+        </div>
+        <div class="section-body" id="step3Body">
+          <span class="empty">Awaiting analysis...</span>
+        </div>
+      </div>
+
+      <!-- Step 4: Local Storage -->
+      <div class="section">
+        <div class="section-header">
+          <div style="display:flex;align-items:center"><span class="step-num">4</span> Chrome Local Storage — What's Stored</div>
+        </div>
+        <div class="section-body" id="step4Body">
+          <span class="empty">No events stored yet</span>
+        </div>
+      </div>
+
+      <!-- Step 5: What's sent -->
+      <div class="section">
+        <div class="section-header">
+          <div style="display:flex;align-items:center"><span class="step-num">5</span> <span id="step5Title">Network — What's Sent to ChatGPT</span></div>
+          <span id="routeLabel" style="font-size:11px"></span>
+        </div>
+        <div class="section-body" id="step5Body">
+          <span class="empty">No request sent yet</span>
+        </div>
+      </div>
+
+      <!-- Step 6: Response -->
+      <div class="section">
+        <div class="section-header">
+          <div style="display:flex;align-items:center"><span class="step-num">6</span> Response — What You See Back</div>
+        </div>
+        <div class="section-body" id="step6Body">
+          <span class="empty">Waiting for response...</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================================
+// IRON GATE LIVE SIMULATION ENGINE
+// All detection, scoring, and pseudonymization runs client-side,
+// mirroring the actual extension logic.
+// ============================================================================
+
+let currentMode = 'proxy'; // 'audit' or 'proxy'
+let eventLog = [];
+let typingTimeout = null;
+
+/**
+ * Simulate AES-256-GCM encryption for display purposes.
+ * Generates realistic-looking base64 ciphertext from input data.
+ * In production, this uses the real Web Crypto API (@iron-gate/crypto).
+ */
+function simulateAES256(plaintext) {
+  // Generate deterministic but realistic-looking "ciphertext"
+  // Real implementation: crypto.subtle.encrypt({name: 'AES-GCM', iv}, key, data)
+  let hash = 0;
+  for (let i = 0; i < plaintext.length; i++) {
+    hash = ((hash << 5) - hash + plaintext.charCodeAt(i)) | 0;
+  }
+  const bytes = new Uint8Array(64); // IV(12) + ciphertext + authTag(16)
+  for (let i = 0; i < 64; i++) {
+    hash = ((hash << 5) - hash + i * 7 + 0x9E3779B9) | 0;
+    bytes[i] = Math.abs(hash) & 0xFF;
+  }
+  // Convert to base64
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+// --- Industry Scenarios (3 per industry × 5 industries = 15 total) ---
+// Each industry has: Generic (keep_real) → Client/Confidential (pseudonymize) → Computation (private_llm)
+const SCENARIOS = {
+
+  // ===== LEGAL =====
+  legal_generic: `What is the standard statute of limitations for a breach of fiduciary duty claim in Delaware? Also, if the damages are $2.5 million and the statutory interest rate is 5.25% per annum, what would the prejudgment interest be over 3 years?`,
+
+  legal_client: `Draft a cease-and-desist letter to Marcus Rivera, CEO of TechVault Inc (mrivera@techvault.com), regarding their unauthorized use of our client Pinnacle Dynamics' (Matter #CLT-2024-0847) proprietary trade secrets.
+
+The settlement we're prepared to offer is $3.2 million. Our client contact is Amanda Chen, VP Legal at amanda.chen@pinnacledynamics.com, phone (415) 555-0382.
+
+This communication is protected by attorney-client privilege. DO NOT DISTRIBUTE.`,
+
+  legal_damages: `I'm preparing the damages calculation for our client Rebecca Torres (SSN: 481-73-2956, rebecca.torres@gmail.com).
+
+Here are the numbers I need you to calculate:
+- Medical bills: $47,892.00
+- Lost wages: $12,400 (she earns $145,600/year salary at Meridian Technologies)
+- Pain and suffering multiplier: 3.5x of medical bills
+
+Can you calculate the total demand amount? Also add 8.5% for prejudgment interest over 14 months.
+
+The opposing adjuster is Linda Chen at (408) 555-1937. Please note this is privileged and confidential — attorney-client privilege applies.
+
+Matter #2026-0394`,
+
+  // ===== HEALTHCARE =====
+  health_generic: `What are the current clinical guidelines for initiating statin therapy in adults? If a patient has an LDL cholesterol of 190 mg/dL and the target reduction is 50%, what should the target LDL level be? What are the recommended starting doses for atorvastatin vs rosuvastatin for high-intensity therapy?`,
+
+  health_patient: `Please summarize this discharge summary for the care coordination team:
+
+PATIENT: Sarah Williams
+MRN: 4892761
+DOB: 06/22/1965
+ATTENDING: Dr. James Chen
+
+ADMISSION: 01/15/2025
+DIAGNOSIS: Acute myocardial infarction (STEMI), anterior wall
+
+Patient presented to ED via EMS with chest pain radiating to left arm. Troponin I elevated at 12.4 ng/mL. ECG showed ST elevation in V1-V4. Taken emergently to cath lab. PCI with drug-eluting stent to LAD.
+
+DISCHARGE MEDS:
+- Aspirin 81mg daily
+- Clopidogrel 75mg daily
+- Atorvastatin 80mg daily
+- Metoprolol succinate 50mg daily
+- Lisinopril 10mg daily
+
+Contact Dr. Chen's office at (312) 555-0478 or j.chen@mercyhealth.org for follow-up.
+
+CONFIDENTIAL — Protected health information under HIPAA.`,
+
+  health_dosage: `URGENT: Calculate medication adjustments for:
+
+Patient: Michael Torres
+MRN: 7234891
+Weight: 92 kg, Height: 178 cm, Age: 58
+Current eGFR: 34 mL/min (Stage 3b CKD)
+
+Current medications:
+- Metformin 1000mg BID (needs renal dose adjustment)
+- Insulin glargine 28 units at bedtime
+
+HbA1c came back at 9.8% (up from 8.1% last visit).
+
+Please calculate:
+1. Appropriate metformin dose given eGFR of 34 (max 1000mg/day for eGFR 30-45)
+2. Suggested insulin increase using rule of 1800 (correction factor = 1800 / total daily dose)
+3. Estimated daily insulin requirement based on weight (0.5 units/kg/day)
+4. New correction factor after adjustment
+
+Primary care: Dr. Lisa Park, lisa.park@meridianhealth.com, (415) 555-0293`,
+
+  // ===== FINANCIAL SERVICES =====
+  finance_generic: `Can you walk me through a standard DCF valuation model? If a company has free cash flow of $10 million growing at 8% annually for 5 years, then 3% terminal growth rate, with a WACC of 12%, what's the enterprise value? Show me the year-by-year calculation including the terminal value.`,
+
+  finance_deal: `CONFIDENTIAL — Project Falcon
+
+Acquisition target: Pinnacle Technologies (Acct: 5523901847)
+Valuation: $340 million (12.5x EBITDA)
+Lead advisor: Jennifer Hartwell, jennifer.hartwell@sterling.com
+
+Key financials:
+- Revenue: $89.2 million (FY2025)
+- EBITDA margin: 30.5%
+- Cap table: Founder (45%), Series B investors (35%), ESOP (20%)
+
+Wire instructions for the $15 million earnest deposit:
+Bank: First National Trust
+Routing: 021000089
+Account: 8847291056
+
+Target CEO: Robert Chen, SSN 456-78-9012, (650) 555-0384
+IP: Primary server at 10.0.42.156
+
+Next call: March 3, 2026 — all parties under NDA (Matter #2026-1547)`,
+
+  finance_portfolio: `I need to rebalance the Henderson Family Trust portfolio. Account #TRS-4472891, advisor: Margaret Wu (margaret.wu@sterling.com).
+
+Current positions:
+
+Equities ($4.2M total):
+- AAPL: 2,500 shares @ $178.50 = $446,250
+- MSFT: 1,800 shares @ $412.30 = $742,140
+- NVDA: 800 shares @ $875.20 = $700,160
+- AMZN: 1,200 shares @ $185.40 = $222,480
+
+Fixed Income ($2.8M total):
+- US Treasury 10Y: $1,200,000 face value @ 4.35% yield
+- Corporate bonds (IG): $1,600,000 face value @ 5.12% yield
+
+Target allocation is 60/40 equities/fixed income. Current allocation has drifted.
+
+Please calculate:
+1. Current allocation percentages (equities vs fixed income)
+2. Dollar amounts to buy/sell to reach 60/40 target
+3. If NVDA cost basis is $285/share, what's the capital gains tax at 20%?
+4. Expected annual income from the fixed income portion at current yields`,
+
+  // ===== TECHNOLOGY =====
+  tech_generic: `I'm implementing a rate limiter for our API. Can you compare the token bucket vs sliding window log algorithms? If we need to handle 1,000 requests per second with burst capacity of 5,000, and the average request takes 50ms to process, how many concurrent connections do we need to support?`,
+
+  tech_secrets: `Review this authentication middleware from our production codebase for security issues:
+
+\`\`\`javascript
+// auth-middleware.js — internal API gateway
+const jwt = require('jsonwebtoken');
+const SECRET = 'sk_prod_Kj8mN2pL5qR9vX4wY7zA3bC6dE0fG1h';
+
+async function authenticate(req, res, next) {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'No token' });
+
+  try {
+    const decoded = jwt.verify(token, SECRET);
+    const user = await fetch('https://users.acmecorp.internal/api/v2/users/' + decoded.userId, {
+      headers: { 'X-Service-Auth': 'svc_key_9Hj4Km7Np2Qs5Tv8Wx1Yz' }
+    });
+    req.user = await user.json();
+    next();
+  } catch (err) {
+    return res.status(403).json({ error: 'Invalid token' });
+  }
+}
+\`\`\`
+
+Admin contact: admin@acmecorp-internal.com. Server IP: 10.0.42.156`,
+
+  tech_debug: `Our production API is throwing errors for specific users. Here's the error log:
+
+[2025-01-15 14:32:07] ERROR PaymentService: Failed to process transaction
+  User: jennifer.wu@techstartup.com (ID: usr_7k92m4p1)
+  Account: Acct#8847291034
+  Amount: $12,450.00
+  IP: 172.16.45.89
+  Error: "Insufficient funds" — but customer says balance is $45,000+
+
+[2025-01-15 14:32:08] DEBUG Gateway response:
+  {"status": "failed", "decline_code": "do_not_honor"}
+
+Can you help debug why the payment is being declined despite sufficient funds? The customer is a priority client — Jennifer Wu, VP Engineering at TechStartup Inc, phone (650) 555-0847.`,
+
+  // ===== CONSULTING / PROFESSIONAL SERVICES =====
+  consult_generic: `Can you outline Porter's Five Forces analysis framework? If an industry has a Herfindahl-Hirschman Index of 2,500 and the top 4 firms control 78% of the market, what does that tell us about competitive dynamics? How would you calculate the CR4 concentration ratio?`,
+
+  consult_strategy: `CONFIDENTIAL — Client Engagement #E-2024-0892
+
+Prepare executive talking points for the Pinnacle Industries board meeting:
+
+STRATEGIC ASSESSMENT:
+- Pinnacle's North American market share declined from 34% to 28% over 3 years
+- Key competitor Atlas Manufacturing (private, ~$2.1 billion revenue) gaining share
+- Pinnacle's EBITDA margin of 18.5% is 400bps below industry median
+- CEO Margaret Chen under pressure from activist investor Riverstone Capital (12.4% stake)
+
+RECOMMENDED ACTIONS:
+1. Divest underperforming Industrial Coatings division ($340 million revenue, 6% margin)
+2. Acquire Zenith Specialty Chemicals to strengthen specialty portfolio
+3. Implement $75 million cost reduction program targeting SG&A
+
+Contact: David Park, engagement lead, david.park@consulting.com, (212) 555-0394
+
+This analysis is proprietary and subject to NDA restrictions. DO NOT DISTRIBUTE.`,
+
+  consult_projection: `Build a 5-year financial projection for our client Orion Therapeutics (Engagement #E-2025-0134).
+Client contact: Dr. Sarah Kim, CFO, sarah.kim@oriontherapeutics.com.
+
+Current financials (FY2024):
+- Revenue: $287 million (growing 22% YoY)
+- COGS: $115 million (40% of revenue)
+- R&D: $86 million (30% of revenue)
+- SG&A: $52 million (18% of revenue)
+- EBITDA: $34 million (11.8% margin)
+
+Assumptions for projection:
+- Revenue growth decelerates: 22% to 18% to 15% to 12% to 10%
+- Gross margin improves 200bps per year (manufacturing scale)
+- R&D as % of revenue decreases to 25% by Year 5
+- SG&A leverage: decrease 100bps per year
+
+Calculate:
+1. Year-by-year P&L through FY2029
+2. EBITDA margin trajectory
+3. Cumulative free cash flow (assume 15% capex/revenue, 25% tax rate)
+4. Implied enterprise value at exit assuming 15x forward EBITDA`,
+
+  // ===== MANUFACTURING / R&D =====
+  mfg_generic: `What's the difference between anionic and nonionic surfactants in cleaning product formulation? What are the typical concentration ranges used in commercial liquid detergents? Also, what's the critical micelle concentration for sodium laureth sulfate and how does temperature affect it?`,
+
+  mfg_formula: `Review our CleanMax Pro dishwashing liquid formula for stability issues:
+
+PROPRIETARY FORMULATION — BrightStar Labs R&D
+Product: CleanMax Pro Concentrate
+Batch: FM-2024-0891
+Lab Director: Dr. Karen Yamamoto, k.yamamoto@brightstarlabs.com
+
+Primary Surfactant System:
+- Sodium Laureth Sulfate (SLES): 15.0%
+- Cocamidopropyl Betaine: 8.0%
+- Lauramine Oxide: 3.5%
+
+Additives:
+- Citric Acid to pH 5.5
+- Methylisothiazolinone: 0.02% (preservative)
+- Sodium Chloride: 2.0% (viscosity builder)
+- D-Limonene: 0.8% (fragrance/degreaser)
+- FD&C Yellow #5: 0.001%
+- Purified Water: q.s. to 100%
+
+Process: Mix surfactants at 45°C, add salt slowly while monitoring viscosity (target 3,500 cP). Add preservative at <40°C.
+
+This formula achieved 94.2% consumer preference in blind testing vs. ProClean (our main competitor). The specific SLES/betaine ratio of 1.875:1 is our key differentiator — do NOT share externally.`,
+
+  mfg_optimize: `Our production team needs to optimize the batch process for our industrial degreaser:
+
+CONFIDENTIAL — Production Engineering
+Product: ToughClean HD Industrial
+Plant: Building 7, Line 3
+Supervisor: Mike Rodriguez, m.rodriguez@acmechem.com, (408) 555-0219
+
+Current process parameters:
+- Reactor temperature: 65°C ± 2°C
+- Mix time: 22 minutes at 450 RPM
+- Batch size: 5,000 liters
+- Current yield: 94.2%
+- Waste: 289 liters per batch ($12.50/liter raw material cost)
+
+Raw material costs per batch:
+- SLES (supplier: ChemCorp, $2.40/kg): 750 kg
+- Betaine (supplier: Pacific Chemicals, $4.80/kg): 400 kg
+- NaOH (supplier: National Chemical, $0.85/kg): 125 kg
+
+Calculate:
+1. If we increase temp to 72°C and reduce mix time to 15 min, what's the theoretical yield improvement using Arrhenius kinetics (Ea = 45 kJ/mol)?
+2. Current waste cost per batch and annual (running 3 batches/day, 250 days/year)
+3. ROI if yield improves to 97% — what's the annual savings?
+4. Break-even analysis for the $180,000 heat exchanger upgrade needed for higher temp`
+};
+
+// --- Industry-specific GPT responses ---
+const RESPONSES = {
+
+  // ===== LEGAL =====
+  legal_generic: `**Delaware Fiduciary Duty — Statute of Limitations:**
+
+The standard SOL is **3 years** from discovery (10 Del. C. § 8106). Equitable tolling may apply for self-dealing.
+
+**Prejudgment Interest Calculation:**
+- Principal: $2,500,000
+- Rate: 5.25% per annum (simple interest)
+- Period: 3 years
+
+Year 1: $2,500,000 × 5.25% = $131,250
+Year 2: $2,500,000 × 5.25% = $131,250
+Year 3: $2,500,000 × 5.25% = $131,250
+
+**Total prejudgment interest: $393,750**
+**Total with interest: $2,893,750**
+
+Note: Delaware uses simple interest (not compound) per *Summa Corp. v. Trans World Airlines*.`,
+
+  legal_client: `Here's a draft cease-and-desist:
+
+**[FIRM LETTERHEAD]**
+**VIA CERTIFIED MAIL**
+
+Dear Mr. [CEO Name]:
+
+This firm represents [Client] in connection with your unauthorized acquisition and use of proprietary trade secrets.
+
+**DEMAND:** Immediately:
+1. Cease all use of [Client]'s proprietary information
+2. Return or destroy all copies of confidential materials
+3. Provide written confirmation of compliance within 14 days
+
+Our client is prepared to settle this matter for $[amount] to avoid litigation. Failure to comply will result in immediate legal action seeking injunctive relief and damages under the Defend Trade Secrets Act, 18 U.S.C. § 1836.
+
+This letter is without prejudice to any rights or remedies.
+
+Very truly yours,
+[Attorney Name]`,
+
+  legal_damages: `Here's the damages calculation:
+
+**Medical Special Damages:**
+- Medical bills: $47,892.00
+
+**Lost Wages:**
+- Lost wages: $12,400.00
+- Annual salary: $145,600/year
+
+**Pain & Suffering (3.5x multiplier):**
+- $47,892.00 × 3.5 = **$167,622.00**
+
+**Subtotal:**
+- $47,892.00 + $12,400.00 + $167,622.00 = **$227,914.00**
+
+**Prejudgment Interest (8.5% over 14 months):**
+- 14 months = 1.1667 years
+- $227,914.00 × 8.5% × 1.1667 = **$22,596.83**
+
+**Total Demand Amount: $250,510.83**
+
+The 3.5x multiplier is reasonable for this injury type with ongoing treatment needs.`,
+
+  // ===== HEALTHCARE =====
+  health_generic: `**Statin Therapy Guidelines (ACC/AHA 2018, updated 2023):**
+
+**Initiation Criteria for High-Intensity:**
+- LDL ≥ 190 mg/dL (primary indication)
+- Clinical ASCVD (secondary prevention)
+- Diabetes, age 40-75, LDL 70-189
+- 10-year ASCVD risk ≥ 7.5%
+
+**Your Patient's Target:**
+- Current LDL: 190 mg/dL → Target reduction: 50%
+- **Target LDL: 95 mg/dL**
+
+**Recommended Starting Doses (High-Intensity):**
+| Statin | Dose | Expected LDL Reduction |
+|--------|------|----------------------|
+| Atorvastatin | 40-80 mg | 50-60% |
+| Rosuvastatin | 20-40 mg | 50-63% |
+
+Recommend **atorvastatin 40mg** first-line. Recheck lipids in 4-12 weeks. If not at goal, uptitrate before adding ezetimibe (+15-20% reduction).`,
+
+  health_patient: `**Discharge Summary — Key Points:**
+
+**Patient:** [Name], [Age] F
+**Admission:** STEMI, anterior wall
+**Procedure:** Emergency PCI with DES to LAD — successful
+
+**Critical Follow-Up:**
+1. **Dual Antiplatelet (DAPT)** — 12 months minimum. Do NOT stop clopidogrel without cardiology clearance
+2. **Statin** — Atorvastatin 80mg (secondary prevention, non-negotiable)
+3. **Beta-blocker + ACE-I** — Post-MI standard, monitor BP/HR
+4. **Cardiac Rehab** — Start within 2 weeks
+
+**Red Flags (call 911):** Recurrent chest pain, dyspnea at rest, syncope
+
+**Follow-up:** Cardiology 2 weeks, PCP 1 week for med reconciliation.
+
+**Coordination:** Verify pharmacy has all 5 discharge meds. Check drug interactions with existing prescriptions.`,
+
+  health_dosage: `**Medication Adjustment Calculations:**
+
+**1. Metformin (eGFR 34 = Stage 3b CKD):**
+- Current: 1000mg BID (2000mg/day) — **EXCEEDS renal limit**
+- FDA/ADA: eGFR 30-45 → max 1000mg/day
+- **New dose: 500mg BID (1000mg/day)**
+
+**2. Insulin — Rule of 1800:**
+- Current TDD: 28 units
+- Correction factor = 1800 ÷ 28 = **64 mg/dL per unit**
+
+**3. Weight-Based Requirement:**
+- 92 kg × 0.5 units/kg = **46 units/day**
+- **Increase glargine from 28 → 46 units** (+18 units)
+
+**4. New Correction Factor:**
+- 1800 ÷ 46 = **39 mg/dL per unit**
+- For every 39 mg/dL above target, add 1 unit rapid-acting
+
+**Summary:** Reduce metformin to 1000mg/day, increase glargine 28→46 units. Recheck A1c in 3 months. Monitor eGFR quarterly.`,
+
+  // ===== FINANCIAL SERVICES =====
+  finance_generic: `**DCF Valuation — Year-by-Year:**
+
+| Year | FCF | Discount Factor | PV |
+|------|-----|----------------|-----|
+| 1 | $10,800,000 | 0.8929 | $9,642,857 |
+| 2 | $11,664,000 | 0.7972 | $9,296,735 |
+| 3 | $12,597,120 | 0.7118 | $8,961,246 |
+| 4 | $13,604,890 | 0.6355 | $8,646,007 |
+| 5 | $14,693,281 | 0.5674 | $8,332,937 |
+
+**PV of Forecast Period: $44,879,782**
+
+**Terminal Value:**
+- $14,693,281 × 1.03 / (0.12 - 0.03) = $168,156,438
+- PV: $168,156,438 × 0.5674 = **$95,397,144**
+
+**Enterprise Value: $140,276,926**
+
+Terminal value = 68% of total (typical for growth companies). Highly sensitive to terminal growth assumption — 1% change swings EV by ~$25M.`,
+
+  finance_deal: `**[Project Codename] Acquisition Analysis:**
+
+**Valuation:** 12.5x EBITDA on 30.5% margins — within market range (11-14x for comparable SaaS transactions).
+
+**Key Risks:**
+1. Customer concentration — verify top 10 accounts
+2. ESOP dilution in cap table needs modeling
+3. Earnest deposit at 4.4% of deal value (standard)
+
+**Next Steps:**
+1. Financial due diligence (2-3 weeks)
+2. Technology audit and IP review
+3. Customer reference calls
+4. Key personnel employment reviews
+
+**Wire Verification:** Confirm banking details via separate secure channel before any transfer.`,
+
+  finance_portfolio: `**Portfolio Rebalancing Analysis:**
+
+**1. Current Allocation:**
+- Equities: $446,250 + $742,140 + $700,160 + $222,480 = **$2,111,030** (43.0%)
+- Fixed Income: $1,200,000 + $1,600,000 = **$2,800,000** (57.0%)
+- Total: **$4,911,030**
+
+**2. Target 60/40:**
+- Target Equities: $2,946,618 (+$835,588)
+- Target Fixed Income: $1,964,412 (-$835,588)
+
+**3. NVDA Capital Gains:**
+- Gain: (800 × $875.20) - (800 × $285) = **$472,160**
+- Tax at 20%: **$94,432**
+
+**4. Annual Fixed Income:**
+- Treasuries: $1,200,000 × 4.35% = $52,200
+- Corporate: $1,600,000 × 5.12% = $81,920
+- **Total: $134,120** (current) → ~$93,888 after rebalancing
+
+**Recommendation:** Sell corporate bonds first (lower tax impact). Avoid selling NVDA due to high embedded gains.`,
+
+  // ===== TECHNOLOGY =====
+  tech_generic: `**Token Bucket vs Sliding Window Log:**
+
+| Feature | Token Bucket | Sliding Window |
+|---------|-------------|---------------|
+| Memory | O(1)/client | O(n)/client |
+| Burst | Built-in | Strict |
+| Precision | Approximate | Exact |
+
+**For 1,000 RPS + 5,000 burst → Token Bucket:**
+- Bucket size: 5,000 (burst)
+- Refill rate: 1,000 tokens/sec
+
+**Concurrent Connections:**
+- Steady state: 1,000 × 0.05s = **50 connections**
+- Peak burst: 5,000 × 0.05s = **250 connections**
+- Set pool to 300 (250 + 20% headroom)
+
+Use Redis-backed token bucket for distributed rate limiting. Add nginx upstream limits as safety net.`,
+
+  tech_secrets: `**Security Audit — Critical Issues:**
+
+**1. Hardcoded JWT Secret (CRITICAL)**
+Secret in source code. Anyone with repo access can forge tokens.
+\`\`\`
+// Replace with: process.env.JWT_SECRET
+\`\`\`
+
+**2. Hardcoded Service Credential (CRITICAL)**
+Service auth key in plaintext — use environment variable or secrets manager.
+
+**3. Internal URL Exposure (HIGH)**
+Internal topology revealed. Use service mesh or env vars.
+
+**4. No Token Expiry (MEDIUM)**
+Add \`maxAge\` to \`jwt.verify()\`.
+
+**Immediate Actions:**
+1. Rotate ALL exposed credentials NOW
+2. Move secrets to vault (HashiCorp Vault, AWS SM)
+3. Add pre-commit hooks for secret detection
+4. Audit git history for other exposed secrets`,
+
+  tech_debug: `**"do_not_honor" — Payment Decline Analysis:**
+
+This is a **generic issuing bank rejection**, NOT insufficient funds.
+
+**Likely Causes:**
+1. **Fraud detection** — $12,450 may trigger bank rules
+2. **Velocity limits** — daily transaction cap hit
+3. **Card restrictions** — business cards may have MCC limits
+4. **3DS required** — bank wants additional authentication
+
+**Debug Steps:**
+1. Test with lower amount ($1.00) to isolate
+2. Customer should call issuing bank to whitelist
+3. Verify MCC is correct for your business type
+4. Check if 3DS is configured (often resolves "do_not_honor")
+5. Check gateway logs for sub-codes
+
+Add retry with exponential backoff + offer alternative payment method.`,
+
+  // ===== CONSULTING =====
+  consult_generic: `**Porter's Five Forces Framework:**
+1. Threat of New Entrants — barriers, capital, regulation
+2. Supplier Power — concentration, switching costs
+3. Buyer Power — concentration, price sensitivity
+4. Threat of Substitutes — alternatives available
+5. Industry Rivalry — competitors, growth, differentiation
+
+**Your Market (HHI = 2,500):**
+- HHI > 2,500 = **Highly concentrated** (DOJ scrutiny threshold)
+- CR4 = 78% = **Tight oligopoly**
+- Characteristics: price leadership, high barriers, strategic interdependence
+
+**CR4 Calculation:**
+CR4 = Sum of top 4 market shares
+Example: 25% + 22% + 18% + 13% = **78%**
+
+**Strategic Implication:** Price competition is suicidal in oligopoly. Win through differentiation, switching costs, and customer lock-in.`,
+
+  consult_strategy: `**Board Talking Points — [Client] Strategic Review:**
+
+**Current Position:**
+- Market share erosion signals structural competitive pressure
+- 400bps margin gap suggests operational inefficiency or unfavorable mix
+- Activist pressure requires decisive action within 2 quarters
+
+**1. Portfolio Optimization (Quick Win):**
+- Divest underperforming division → improve blended margins +200-300bps
+- Engage sell-side advisor, 6-month timeline
+
+**2. Inorganic Growth:**
+- Bolt-on acquisition for specialty portfolio strength
+- Focus on margin-accretive targets
+
+**3. Operational Excellence:**
+- Cost program targeting 8-12% of SG&A (achievable)
+- Quick wins: procurement, shared services, spans & layers
+- Full run-rate in 18-24 months
+
+**Activist Response:** Proactive engagement. Announce transformation before proxy fight. Frame as "strategic evolution, not distress."`,
+
+  consult_projection: `**5-Year Financial Projection ($M):**
+
+| | FY24 | FY25 | FY26 | FY27 | FY28 | FY29 |
+|---|---|---|---|---|---|---|
+| Revenue | $287 | $339 | $390 | $436 | $489 | $537 |
+| Growth | 22% | 18% | 15% | 12% | 12% | 10% |
+| Gross Margin | 60% | 62% | 64% | 66% | 68% | 70% |
+| EBITDA | $34 | $50 | $70 | $94 | $120 | $149 |
+| Margin | 11.8% | 14.7% | 17.9% | 21.6% | 24.6% | 27.7% |
+
+**EBITDA Margin:** 11.8% → **27.7%** (+1,590bps from operating leverage)
+
+**Cumulative FCF:** Inflects positive FY27. 5-year total: **+$22M**
+
+**Exit Valuation (15x EBITDA):**
+- FY29 EBITDA: $149M × 15 = **$2,235M enterprise value**
+- vs. implied current ~$1.1B → **2x+ value creation**`,
+
+  // ===== MANUFACTURING =====
+  mfg_generic: `**Anionic vs. Nonionic Surfactants:**
+
+| Property | Anionic (e.g., SLES) | Nonionic (e.g., APG) |
+|----------|---------------------|---------------------|
+| Charge | Negative head group | No charge |
+| Foam | High, dense foam | Low-moderate foam |
+| Cleaning | Excellent degreasing | Gentle, low-irritation |
+| Cost | Lower ($2-4/kg) | Higher ($5-8/kg) |
+| Hard water | Sensitive (Ca²⁺) | Resistant |
+
+**Typical Concentrations in Liquid Detergents:**
+- Primary surfactant (SLES): 10-20%
+- Co-surfactant (betaine): 3-8%
+- Total active: 15-30%
+- Water: 60-80%
+
+**SLES Critical Micelle Concentration:**
+- CMC: ~0.0007 mol/L (at 25°C)
+- Temperature effect: CMC decreases with temperature (more micelles form)
+- At 40°C: ~0.0005 mol/L (better cleaning at warm temps)
+- Practical: Always formulate well above CMC for consistent performance`,
+
+  mfg_formula: `**Formulation Stability Review:**
+
+**Overall Assessment: GOOD — minor concerns below**
+
+**1. Surfactant System (26.5% total active):**
+- SLES/Betaine ratio of 1.875:1 — excellent synergy
+- Betaine acts as foam booster + viscosity aid
+- Lauramine oxide adds grease cutting + antimicrobial
+
+**2. Stability Concerns:**
+- ⚠️ **Methylisothiazolinone at 0.02%** — EU has restricted MI in leave-on products. Consider switching to phenoxyethanol (0.5-1.0%) for future-proofing
+- ⚠️ **D-Limonene + pH 5.5** — Limonene oxidizes over time, especially below pH 6. Add BHT (0.01%) as antioxidant or raise pH to 6.0-6.5
+- ✅ NaCl viscosity building at 2.0% — within safe range (over-salting >3% causes phase separation)
+
+**3. Process Note:**
+- 45°C mixing is correct for SLES dissolution
+- Preservative addition <40°C is critical — MI degrades above 50°C
+
+**Recommendation:** Add 0.01% BHT, consider preservative switch, raise pH to 6.0.`,
+
+  mfg_optimize: `**Process Optimization Analysis:**
+
+**1. Arrhenius Yield Improvement (65°C → 72°C):**
+- k₂/k₁ = exp[(Ea/R)(1/T₁ - 1/T₂)]
+- Ea = 45,000 J/mol, R = 8.314
+- T₁ = 338K (65°C), T₂ = 345K (72°C)
+- k₂/k₁ = exp[(45000/8.314)(1/338 - 1/345)] = exp[5413 × 0.0000600] = **e^0.325 = 1.384**
+- ~38.4% faster reaction rate
+- **Projected yield: 96.8%** (diminishing returns near 100%)
+
+**2. Current Waste Cost:**
+- Per batch: 289L × $12.50 = **$3,612.50**
+- Annual: $3,612.50 × 3 × 250 = **$2,709,375/year**
+
+**3. Improved Yield (97%) Savings:**
+- New waste: 150L/batch (vs 289L)
+- New annual cost: $1,406,250
+- **Annual savings: $1,303,125**
+
+**4. Heat Exchanger ROI:**
+- Investment: $180,000
+- Annual savings: $1,303,125
+- **Payback: 50 days** (< 2 months)
+- 5-year ROI: **3,520%**
+
+**Strong recommendation to proceed.** The yield improvement alone pays for the upgrade in under 2 months.`
+};
+
+// ============================================================================
+// REGEX PII DETECTION (mirrors apps/extension/src/detection/fallback-regex.ts)
+// ============================================================================
+const REGEX_PATTERNS = [
+  { type: 'SSN', pattern: /\b\d{3}-\d{2}-\d{4}\b/g, confidence: 0.95 },
+  { type: 'CREDIT_CARD', pattern: /\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\b/g, confidence: 0.9 },
+  { type: 'CREDIT_CARD', pattern: /\b(?:\d{4}[-\s]){3}\d{4}\b/g, confidence: 0.85 },
+  { type: 'EMAIL', pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, confidence: 0.95 },
+  { type: 'PHONE_NUMBER', pattern: /\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, confidence: 0.8 },
+  { type: 'IP_ADDRESS', pattern: /\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g, confidence: 0.9 },
+  { type: 'MONETARY_AMOUNT', pattern: /\$\s?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?\s?(?:million|billion|M|B|k|K)?/g, confidence: 0.85 },
+  { type: 'ACCOUNT_NUMBER', pattern: /\b(?:acct?\.?\s*#?\s*|account\s*#?\s*)\d{6,12}\b/gi, confidence: 0.8 },
+  { type: 'ACCOUNT_NUMBER', pattern: /\b(?:Account|Acct|Routing)[:\s]*\d{6,12}\b/gi, confidence: 0.75 },
+  { type: 'MATTER_NUMBER', pattern: /\b(?:matter|case|docket)\s*(?:#|no\.?|number)?\s*\d{2,4}[-./]\d{3,6}\b/gi, confidence: 0.75 },
+  { type: 'MATTER_NUMBER', pattern: /\bMatter\s+#?\d{4}-\d{3,6}\b/gi, confidence: 0.8 },
+  // Healthcare: Medical Record Numbers
+  { type: 'MEDICAL_RECORD', pattern: /\bMRN[:#\s]*(\d{5,10})\b/gi, confidence: 0.9 },
+  // Healthcare: engagement/case IDs
+  { type: 'MATTER_NUMBER', pattern: /\bEngagement\s*#?\s*[A-Z]?-?\d{4}-\d{3,6}\b/gi, confidence: 0.8 },
+  // Finance: Account patterns with letters
+  { type: 'ACCOUNT_NUMBER', pattern: /\bAccount\s*#?\s*[A-Z]{2,4}-\d{5,10}\b/gi, confidence: 0.8 },
+];
+
+// Person detection (expanded for all industries)
+const PERSON_PATTERNS = [
+  /\b(?:client|Mr\.|Mrs\.|Ms\.|Dr\.|CEO|CFO|VP|counsel|adjuster|advisor)\s+([A-Z][a-z]+\s+[A-Z][a-z]+)\b/g,
+  /\b(?:TO|FROM|of|by|for|deposition of|advisor|contact)\s*:?\s*([A-Z][a-z]+\s+[A-Z][a-z]+)\b/g,
+  // Healthcare: PATIENT: Name, ATTENDING: Dr. Name
+  /\b(?:PATIENT|Patient|ATTENDING|Attending)[:\s]+(?:Dr\.?\s+)?([A-Z][a-z]+\s+[A-Z][a-z]+)\b/g,
+  // Consulting/Finance: client contact, engagement lead
+  /\b(?:Client contact|engagement lead)[:\s]+(?:Dr\.?\s+)?([A-Z][a-z]+\s+[A-Z][a-z]+)\b/gi,
+];
+
+const ORG_PATTERNS = [
+  /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Corp(?:oration)?|Inc|LLC|LLP|Ltd|Holdings|Technologies|Partners|Associates|Trust|Industries|Therapeutics|Manufacturing|Chemicals|Capital))\b/g,
+];
+
+const PRIVILEGE_PATTERNS = [
+  { pattern: /attorney[- ]client privilege/gi, type: 'PRIVILEGE_MARKER' },
+  { pattern: /privileged and confidential/gi, type: 'PRIVILEGE_MARKER' },
+  { pattern: /attorney work product/gi, type: 'PRIVILEGE_MARKER' },
+  { pattern: /do not distribute/gi, type: 'PRIVILEGE_MARKER' },
+];
+
+function detectEntities(text) {
+  const entities = [];
+  const seen = new Set();
+
+  // Regex patterns
+  for (const { type, pattern, confidence } of REGEX_PATTERNS) {
+    pattern.lastIndex = 0;
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      const key = `${match.index}-${match.index + match[0].length}-${type}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        entities.push({ type, text: match[0], start: match.index, end: match.index + match[0].length, confidence, source: 'regex' });
+      }
+    }
+  }
+
+  // Person names
+  for (const pattern of PERSON_PATTERNS) {
+    pattern.lastIndex = 0;
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      const name = match[1];
+      const start = match.index + match[0].indexOf(name);
+      const key = `${start}-${start + name.length}-PERSON`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        entities.push({ type: 'PERSON', text: name, start, end: start + name.length, confidence: 0.7, source: 'regex' });
+      }
+    }
+  }
+
+  // Organizations
+  for (const pattern of ORG_PATTERNS) {
+    pattern.lastIndex = 0;
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      const org = match[1];
+      const start = match.index;
+      const key = `${start}-${start + org.length}-ORGANIZATION`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        entities.push({ type: 'ORGANIZATION', text: org, start, end: start + org.length, confidence: 0.7, source: 'regex' });
+      }
+    }
+  }
+
+  // Privilege markers
+  for (const { pattern, type } of PRIVILEGE_PATTERNS) {
+    pattern.lastIndex = 0;
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      const key = `${match.index}-${match.index + match[0].length}-${type}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        entities.push({ type, text: match[0], start: match.index, end: match.index + match[0].length, confidence: 0.95, source: 'regex' });
+      }
+    }
+  }
+
+  entities.sort((a, b) => a.start - b.start);
+  return removeOverlaps(entities);
+}
+
+function removeOverlaps(entities) {
+  if (entities.length <= 1) return entities;
+  const result = [entities[0]];
+  for (let i = 1; i < entities.length; i++) {
+    const current = entities[i];
+    const last = result[result.length - 1];
+    if (current.start < last.end) {
+      if (current.confidence > last.confidence) result[result.length - 1] = current;
+    } else {
+      result.push(current);
+    }
+  }
+  return result;
+}
+
+// ============================================================================
+// SENSITIVITY SCORING (mirrors apps/extension/src/detection/scorer.ts)
+// ============================================================================
+const ENTITY_WEIGHTS = {
+  PERSON: 10, ORGANIZATION: 8, LOCATION: 3, DATE: 2, PHONE_NUMBER: 15,
+  EMAIL: 12, CREDIT_CARD: 30, SSN: 40, MONETARY_AMOUNT: 12,
+  ACCOUNT_NUMBER: 25, IP_ADDRESS: 8, MEDICAL_RECORD: 35, PASSPORT_NUMBER: 35,
+  DRIVERS_LICENSE: 30, MATTER_NUMBER: 20, CLIENT_MATTER_PAIR: 25,
+  PRIVILEGE_MARKER: 30, DEAL_CODENAME: 20, OPPOSING_COUNSEL: 15,
+};
+
+const LEGAL_KEYWORDS = [
+  'privileged', 'attorney-client', 'work product', 'confidential',
+  'settlement', 'deposition', 'subpoena', 'discovery', 'litigation hold',
+  'retainer', 'motion to compel', 'protective order',
+];
+const PRIVILEGE_MARKERS = [
+  'attorney-client privilege', 'work product doctrine',
+  'privileged and confidential', 'attorney work product',
+  'do not distribute',
+];
+
+function computeScore(text, entities) {
+  let entityScore = 0;
+  for (const e of entities) {
+    entityScore += (ENTITY_WEIGHTS[e.type] || 5) * e.confidence;
+  }
+  const uniqueTypes = new Set(entities.map(e => e.type));
+  if (uniqueTypes.size >= 3) entityScore *= 1.3;
+  else if (uniqueTypes.size >= 2) entityScore *= 1.15;
+  if (entities.length >= 10) entityScore *= 1.4;
+  else if (entities.length >= 5) entityScore *= 1.2;
+  entityScore = Math.min(70, entityScore);
+
+  // Volume
+  let volumeScore = 0;
+  if (text.length >= 5000) volumeScore = 20;
+  else if (text.length >= 2000) volumeScore = 10;
+  else if (text.length >= 500) volumeScore = 5;
+
+  // Context
+  let contextScore = 0;
+  const lower = text.toLowerCase();
+  for (const e of entities) {
+    const surrounding = lower.substring(Math.max(0, e.start - 200), Math.min(text.length, e.end + 200));
+    for (const kw of LEGAL_KEYWORDS) {
+      if (surrounding.includes(kw)) { contextScore += 5; break; }
+    }
+  }
+  contextScore = Math.min(25, contextScore);
+
+  // Legal boost
+  let legalBoost = 0;
+  for (const m of PRIVILEGE_MARKERS) {
+    if (lower.includes(m)) legalBoost += 15;
+  }
+  const caseCites = text.match(/\b[A-Z][a-z]+\s+v\.?\s+[A-Z][a-z]+\b/g);
+  if (caseCites) legalBoost += caseCites.length * 5;
+  if (/\b(?:matter|case|docket)\s*(?:#|no\.?|number)?\s*\d/gi.test(text)) legalBoost += 10;
+  legalBoost = Math.min(25, legalBoost);
+
+  const raw = entityScore + volumeScore + contextScore + legalBoost;
+  const score = Math.min(100, Math.max(0, Math.round(raw)));
+  const level = score <= 25 ? 'low' : score <= 60 ? 'medium' : score <= 85 ? 'high' : 'critical';
+
+  return { score, level, entityScore: Math.round(entityScore), volumeScore, contextScore, legalBoost };
+}
+
+// ============================================================================
+// PSEUDONYMIZATION (mirrors apps/api/src/proxy/pseudonymizer.ts)
+// ============================================================================
+const FAKE_PERSONS = ['James Mitchell', 'Sarah Chen', 'Robert Alvarez', 'Emily Nakamura', 'David Kowalski', 'Maria Rossi', 'Michael Okonkwo', 'Lisa Johansson', 'Thomas Brennan', 'Amanda Singh'];
+const FAKE_ORGS = ['Meridian Holdings', 'Atlas Group', 'Pinnacle Advisors', 'Summit Capital', 'Horizon Legal Partners', 'Apex Dynamics', 'Cornerstone Ventures'];
+const FAKE_DEALS = ['Project Falcon', 'Project Orion', 'Project Nexus', 'Project Horizon', 'Project Zenith'];
+
+// ---------------------------------------------------------------------------
+// Holistic Context Intelligence Engine
+// ---------------------------------------------------------------------------
+// Instead of keyword-matching near each entity, we analyze the WHOLE document
+// like a human would:
+//
+//   1. What kind of document is this? (legal memo, casual question, etc.)
+//   2. Are there real people identified? (names + SSNs = real case)
+//   3. Are numbers tied to those people? (her salary, his account balance)
+//   4. Does the user need computation on those numbers?
+//
+// Example: "I'm negotiating a $5,000 bill" → no real people, just a bill
+//          → numbers stay real (not confidential)
+//
+// Example: "Rebecca Torres (SSN: 481-73-2956) has $47,892 in medical bills"
+//          → real person identified, numbers are HER data
+//          → if math needed: route to private LLM (data stays safe, math works)
+//          → if no math: pseudonymize everything
+//
+// Example: "Hospital revenue was $12M with EBITDA of $3.2M"
+//          → confidential financial document, even without named persons
+//          → pseudonymize the values
+// ---------------------------------------------------------------------------
+const ALWAYS_IDENTIFYING_TYPES = new Set([
+  'PERSON', 'ORGANIZATION', 'EMAIL', 'PHONE_NUMBER', 'SSN',
+  'CREDIT_CARD', 'ACCOUNT_NUMBER', 'PASSPORT_NUMBER',
+  'DRIVERS_LICENSE', 'IP_ADDRESS', 'LOCATION', 'MEDICAL_RECORD',
+]);
+
+// ---------------------------------------------------------------------------
+// EXECUTIVE LENS — "Would the CEO + General Counsel approve sharing this?"
+// ---------------------------------------------------------------------------
+// For each industry, we define what content the CEO and GC would NEVER allow
+// to leave the building. This goes beyond PII — it covers trade secrets,
+// strategies, formulas, and competitive intelligence.
+//
+// Key insight: A chemical formula has NO person names, NO SSNs, NO emails —
+// but a CEO would fire you for sending it to ChatGPT. The formula IS the IP.
+// You can't pseudonymize "15% sodium laureth sulfate" — changing the number
+// breaks the formula, and the chemical name IS the trade secret.
+//
+// Similarly, legal strategy ("we plan to argue X") is privileged even without
+// client names. Supplier pricing is competitively sensitive. Trading algorithms
+// are proprietary. The CONTENT is the secret, not just the entities in it.
+// ---------------------------------------------------------------------------
+const EXECUTIVE_LENS = {
+  manufacturing: {
+    role: 'CEO + VP R&D',
+    neverShare: [
+      { category: 'PROPRIETARY_FORMULA', label: 'Proprietary Formula / Recipe',
+        patterns: [/\d+(\.\d+)?%\s*(?:sodium|potassium|sulfate|betaine|acid|hydroxide|surfactant|glycol|silicone|preservative|oxide|chloride|limonene|phenoxyethanol|isothiazolinone|laureth|cocamido)/gi,
+                   /\bpH\s*(?:of\s*)?\d+(\.\d+)?/gi,
+                   /\bheat(?:ed)?\s+to\s+\d+\s*°?[CF]?\b/gi,
+                   /\bformul(?:a|ation)\b/gi,
+                   /\bproprietary\s+(?:blend|formula|process|recipe|formulation)\b/gi,
+                   /\bq\.?\s*s\.?\s*to\s*100\s*%/gi,
+                   /\bviscosity\s*(?:\(|target|of)?\s*\d/gi,
+                   /\bconsumer\s+preference\b/gi],
+        action: 'private_llm', reason: 'Trade secret — formulation IP cannot be sent externally. Numbers ARE the IP.' },
+      { category: 'MANUFACTURING_PROCESS', label: 'Manufacturing Process Parameters',
+        patterns: [/\b(?:reactor|batch|mixing|curing|distill|extrusion|ferment)\s+(?:temp|temperature|time|speed|size|pressure)/gi,
+                   /\b\d+\s*(?:RPM|rpm|psi|bar|cP|mPa)\b/g,
+                   /\b\d+\s*°[CF]\b/g,
+                   /\byield[:\s]+\d+(\.\d+)?%/gi,
+                   /\bwaste[:\s]+\d+/gi,
+                   /\bbatch\s+(?:size|cycle|process)\b/gi],
+        action: 'private_llm', reason: 'Proprietary manufacturing process — competitive advantage if kept secret' },
+      { category: 'SUPPLIER_TERMS', label: 'Supplier Pricing / Terms',
+        patterns: [/\bsupplier[:\s]+[A-Z]/gi,
+                   /\$\d+(\.\d+)?\/(?:kg|lb|ton|liter|gallon|unit)\b/gi,
+                   /\bcost\s+per\s+(?:unit|kg|lb|ton|liter|gallon|batch)\b/gi,
+                   /\braw\s+material\s+cost/gi],
+        action: 'pseudonymize', reason: 'Supplier relationships and pricing are competitively sensitive' },
+    ],
+    okToShare: ['general chemistry knowledge', 'published safety data sheets', 'regulatory requirements', 'industry standard processes'],
+  },
+  legal: {
+    role: 'General Counsel',
+    neverShare: [
+      { category: 'LEGAL_STRATEGY', label: 'Litigation / Negotiation Strategy',
+        patterns: [/\b(?:our|we|firm'?s?)\s+(?:strategy|position|argument|approach|theory)\b/gi,
+                   /\bwe\s+(?:plan|intend|will|should)\s+to\s+(?:argue|file|settle|motion|depose|subpoena)\b/gi,
+                   /\bsettlement\s+(?:demand|offer|position|range|authority|we'?re?\s+prepared)\b/gi,
+                   /\bprepared\s+to\s+(?:offer|settle|accept)\b/gi],
+        action: 'private_llm', reason: 'Legal strategy is work product — the strategy itself is privileged, can\'t be pseudonymized' },
+      { category: 'CLIENT_MATTER', label: 'Client-Matter Data',
+        patterns: [/\battorney[- ]client\s+privilege\b/gi,
+                   /\bprivileged\s+and\s+confidential\b/gi,
+                   /\bwork\s+product\b/gi],
+        action: 'private_llm', reason: 'Attorney-client privilege — entire communication must stay on-prem' },
+    ],
+    okToShare: ['case law citations', 'statutes and regulations', 'general legal principles', 'court procedures'],
+  },
+  healthcare: {
+    role: 'Chief Medical Officer + Privacy Officer',
+    neverShare: [
+      { category: 'PATIENT_DATA', label: 'Protected Health Information',
+        patterns: [/\bpatient\b.*\b(?:diagnos|condition|medication|treatment|procedure|admitted|discharge)/gi,
+                   /\bprotected\s+health\b/gi,
+                   /\bHIPAA\b/g],
+        action: 'pseudonymize', reason: 'HIPAA: PHI must be de-identified before external transmission' },
+      { category: 'CLINICAL_IP', label: 'Unpublished Clinical / Drug Data',
+        patterns: [/\bproprietary\s+(?:drug|compound|therapy|formulation|protocol|treatment)\b/gi,
+                   /\bclinical\s+trial\s+(?:data|results|phase)\b/gi,
+                   /\bunpublished\s+(?:data|findings|results|study)\b/gi,
+                   /\binvestigational\s+(?:drug|compound|device)\b/gi],
+        action: 'private_llm', reason: 'Pre-publication clinical IP — premature disclosure could void patent rights' },
+    ],
+    okToShare: ['published clinical guidelines', 'FDA-approved drug info', 'general medical knowledge', 'textbook pharmacology'],
+  },
+  finance: {
+    role: 'Chief Compliance Officer',
+    neverShare: [
+      { category: 'MNPI', label: 'Material Non-Public Information',
+        patterns: [/\b(?:non-public|unreleased|pre-announcement|insider)\b/gi,
+                   /\bacquisition\s+target\b/gi,
+                   /\bproject\s+[A-Z][a-z]+\b/g,
+                   /\bunder\s+NDA\b/gi,
+                   /\bcap\s+table\b/gi,
+                   /\bwire\s+(?:instructions|transfer)\b/gi],
+        action: 'private_llm', reason: 'MNPI — deal structure itself is material, pseudonymizing names alone doesn\'t protect it' },
+      { category: 'CLIENT_PORTFOLIO', label: 'Client Portfolio / Positions',
+        patterns: [/\b\d[\d,]*\s+shares?\s+@\s*\$/gi,
+                   /\bface\s+value\b/gi,
+                   /\bcurrent\s+positions?\b/gi,
+                   /\btarget\s+allocation\b/gi],
+        action: 'private_llm', reason: 'Portfolio positions reveal trading strategy — pattern itself is identifiable even pseudonymized' },
+    ],
+    okToShare: ['published market data', 'SEC filings', 'general financial concepts', 'textbook valuation methods'],
+  },
+  technology: {
+    role: 'CTO + CISO',
+    neverShare: [
+      { category: 'CREDENTIALS', label: 'API Keys / Secrets / Credentials',
+        patterns: [/\b(?:sk_|api_key_|svc_key_|secret_|token_|key_)[A-Za-z0-9_]{8,}/g,
+                   /\bpassword\s*[:=]\s*['"][^'"]+['"]/gi,
+                   /['"][A-Za-z0-9+/]{32,}['"]/g],
+        action: 'pseudonymize', reason: 'CISO: Exposed credentials — immediate security incident if shared' },
+      { category: 'INTERNAL_INFRA', label: 'Internal Infrastructure',
+        patterns: [/\b\w+\.(?:internal|corp|local)\b/g,
+                   /\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g,
+                   /\b172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b/g],
+        action: 'pseudonymize', reason: 'Internal network topology — CISO would flag as security risk' },
+    ],
+    okToShare: ['open-source patterns', 'general algorithms', 'public documentation', 'standard protocols'],
+  },
+  consulting: {
+    role: 'Managing Partner + Chief Risk Officer',
+    neverShare: [
+      { category: 'CLIENT_STRATEGY', label: 'Client Strategic Recommendations',
+        patterns: [/\b(?:recommend|advise|propose)\b.*\b(?:divest|acquire|merge|restructur|expand|exit|cost\s+reduction)\b/gi,
+                   /\bstrategic\s+(?:assessment|recommendation|option|direction|review)\b/gi,
+                   /\bboard\s+(?:talking\s+points|presentation|meeting|materials)\b/gi,
+                   /\bactivist\s+(?:investor|pressure|response|engagement)\b/gi],
+        action: 'private_llm', reason: 'Client strategy IS the deliverable — "divest X, acquire Y" reveals the advice even without names' },
+      { category: 'COMPETITIVE_INTEL', label: 'Competitive Intelligence',
+        patterns: [/\bmarket\s+share\s+(?:declined|grew|gained|lost|dropped|increased)\b/gi,
+                   /\bcompetitor\b.*\b(?:revenue|margin|pricing|strategy|share)\b/gi,
+                   /\b(?:private|estimated)\s*,?\s*~?\s*\$[\d.]+\s*(?:billion|million|B|M)\s+revenue\b/gi],
+        action: 'private_llm', reason: 'Competitive intelligence IS the IP — data patterns identify the client even without names' },
+    ],
+    okToShare: ['published frameworks', 'general business concepts', 'public company filings', 'industry benchmarks'],
+  },
+};
+
+/**
+ * Analyze the FULL document context to decide how to handle values.
+ * Now with Executive Lens: thinks like the CEO + GC of each industry.
+ *
+ * Decision flow:
+ *  0. Detect industry
+ *  0.5. Run Executive Lens — would the CEO/GC flag this content?
+ *  1. Are there identified real people?
+ *  2. Is this a confidential document?
+ *  3. Does the user need computation?
+ *  4. Decide strategy: Executive Lens can OVERRIDE basic PII logic
+ */
+function analyzeContext(text, entities) {
+  const lower = text.toLowerCase();
+
+  // ===================================================================
+  // STEP 0: Detect industry context
+  // ===================================================================
+  const industrySignals = {
+    legal:         [/\battorney\b/i, /\blitigation\b/i, /\bcounsel\b/i, /\bdeposition\b/i, /\bplaintiff\b/i, /\bdefendant\b/i, /\bstatute\b/i, /\bfiduciary\b/i, /\bcease.and.desist\b/i, /\btrade secret/i, /\bsettlement\b/i, /\bprejudgment/i],
+    healthcare:    [/\bpatient\b/i, /\bdiagnos/i, /\bmedication\b/i, /\bdosage\b/i, /\bMRN\b/i, /\bclinical\b/i, /\bHIPAA\b/i, /\bdischarge\b/i, /\bprescri/i, /\bsurgery\b/i, /\binsulin\b/i, /\beGFR\b/i, /\bstatin\b/i, /\bHbA1c\b/i],
+    finance:       [/\bportfolio\b/i, /\bEBITDA\b/i, /\bDCF\b/i, /\bacquisition\b/i, /\bvaluation\b/i, /\bIPO\b/i, /\bequities\b/i, /\bfixed income\b/i, /\bWACC\b/i, /\bterminal value\b/i, /\bcap table\b/i, /\brebalance\b/i],
+    technology:    [/\bAPI\b/, /\bendpoint\b/i, /\bserver\b/i, /\bmiddleware\b/i, /\bauthenticat/i, /\btoken\b/i, /\bdebug/i, /\bproduction\b.*\b(?:error|log)/i, /\brepository\b/i, /\bsource code\b/i],
+    consulting:    [/\bengagement\b/i, /\bmarket share\b/i, /\bTAM\b/i, /\bSWOT\b/i, /\bFive Forces\b/i, /\bCR4\b/i, /\bHHI\b/i, /\bboard meeting\b/i, /\bactivist\b/i, /\bdivestiture\b/i, /\bprojection\b/i],
+    manufacturing: [/\bformul(?:a|ation)\b/i, /\bsurfactant\b/i, /\bbatch\b/i, /\breactor\b/i, /\byield\b/i, /\bviscosity\b/i, /\bpH\b/, /\bsodium\b/i, /\bpreservative\b/i, /\braw\s+material/i, /\bsupplier\b/i, /\bchemical\b/i, /\bmanufactur/i, /\bproduction\s+line/i],
+  };
+  let detectedIndustry = null;
+  let bestScore = 0;
+  for (const [industry, patterns] of Object.entries(industrySignals)) {
+    const hits = patterns.filter(p => p.test(text)).length;
+    if (hits > bestScore) {
+      bestScore = hits;
+      detectedIndustry = industry;
+    }
+  }
+
+  // ===================================================================
+  // STEP 0.5: EXECUTIVE LENS — "Would the CEO + GC approve sharing this?"
+  // ===================================================================
+  // This is the critical new step. Before even checking for PII entities,
+  // we ask: does this content contain SEMANTIC secrets that can't be
+  // protected by entity replacement alone?
+  //
+  // A chemical formula has NO names, NO SSNs — but a CEO would fire you
+  // for sending it to ChatGPT. Legal strategy IS privileged even without
+  // client names. Trading patterns identify portfolios even if you swap
+  // the advisor's name.
+  //
+  // The Executive Lens can OVERRIDE the basic PII logic — escalating
+  // to private_llm even when no persons are detected.
+  // ===================================================================
+  const executiveFlags = [];
+  let executiveAction = null;
+  let executiveRole = null;
+  const lens = detectedIndustry ? EXECUTIVE_LENS[detectedIndustry] : null;
+
+  if (lens) {
+    executiveRole = lens.role;
+    for (const rule of lens.neverShare) {
+      const hits = rule.patterns.filter(p => {
+        p.lastIndex = 0;
+        return p.test(text);
+      }).length;
+      if (hits >= 2) {  // Require 2+ pattern matches to reduce false positives
+        executiveFlags.push({
+          category: rule.category,
+          label: rule.label,
+          action: rule.action,
+          reason: rule.reason,
+          hits,
+        });
+        // Upgrade action priority: private_llm > pseudonymize > keep_real
+        if (rule.action === 'private_llm') {
+          executiveAction = 'private_llm';
+        } else if (rule.action === 'pseudonymize' && executiveAction !== 'private_llm') {
+          executiveAction = 'pseudonymize';
+        }
+      }
+    }
+  }
+  const hasExecutiveFlags = executiveFlags.length > 0;
+
+  // ===================================================================
+  // STEP 1: Are there identified real people?
+  // ===================================================================
+  const hasPersons = entities.some(e => e.type === 'PERSON');
+  const hasSSN = entities.some(e => e.type === 'SSN');
+  const hasEmail = entities.some(e => e.type === 'EMAIL');
+  const hasPhone = entities.some(e => e.type === 'PHONE_NUMBER');
+  const hasMRN = entities.some(e => e.type === 'MEDICAL_RECORD');
+  const hasIdentifiedPersons = hasPersons || hasSSN || hasEmail || hasPhone || hasMRN;
+
+  // ===================================================================
+  // STEP 2: Is this a confidential document?
+  // ===================================================================
+  const confidentialSignals = [
+    /privileged/i, /confidential/i, /attorney[- ]client/i,
+    /work product/i, /do not distribute/i, /under seal/i,
+    /\bNDA\b/, /memorandum/i,
+  ];
+  const financialSignals = [
+    /revenue/i, /ebitda/i, /valuation/i, /cap table/i,
+    /acquisition/i, /earnings report/i, /balance sheet/i,
+  ];
+  const healthcareSignals = [
+    /\bHIPAA\b/i, /protected health/i, /\bPHI\b/, /discharge summary/i,
+    /medical record/i, /\bMRN\b/,
+  ];
+  const hasConfidentialMarkers = confidentialSignals.some(p => p.test(text));
+  const hasFinancialContext = financialSignals.some(p => p.test(text));
+  const hasHealthcareContext = healthcareSignals.some(p => p.test(text));
+
+  const isConfidentialDocument = hasConfidentialMarkers || hasFinancialContext ||
+    (detectedIndustry === 'healthcare' && hasIdentifiedPersons) ||
+    hasHealthcareContext || hasExecutiveFlags;  // Executive flags = confidential
+
+  // ===================================================================
+  // STEP 3: Does the user need computation?
+  // ===================================================================
+  const computationSignals = [
+    /\bcalculate\b/i, /\bcompute\b/i, /\btotal\b/i,
+    /\bmultip/i, /\bdivide\b/i, /\bpercentage\b/i,
+    /\d+\s*[x×]\s*(of|the|medical|total)/i,
+    /\d+(\.\d+)?%/,  // percentages like 8.5%
+    /how much/i, /what is.*\$/i, /add.*interest/i,
+    // Healthcare-specific
+    /\brule of \d+\b/i, /\bunits\/kg\b/i, /\bdose\b.*\b(?:adjust|calculat|reduc)/i,
+    // Finance-specific
+    /\brebalance\b/i, /\ballocation\b/i, /\bcapital gains\b/i,
+    /year.by.year/i, /\bprojection\b/i, /\bforecast\b/i,
+    // Manufacturing-specific
+    /\byield\s+improv/i, /\bArrhenius\b/i, /\bROI\b/i, /\bbreak[\s-]even\b/i,
+    /\bannual\s+savings\b/i, /\bcost\s+per\b/i,
+  ];
+  const needsComputation = computationSignals.some(p => p.test(text));
+
+  // ===================================================================
+  // STEP 4: Decide strategy — EXECUTIVE LENS OVERRIDES basic PII logic
+  // ===================================================================
+  // Priority order:
+  //   1. Executive Lens says private_llm → ALWAYS private_llm
+  //      (content IS the IP — formulas, strategies, MNPI, trade secrets)
+  //   2. Executive Lens says pseudonymize + no override → pseudonymize
+  //   3. PII + computation → private_llm
+  //   4. PII or confidential → pseudonymize
+  //   5. Nothing flagged → keep_real
+  // ===================================================================
+  let valueStrategy, reasoning;
+
+  if (hasExecutiveFlags && executiveAction === 'private_llm') {
+    // CEO/GC says: this content IS the IP — cannot leave the building
+    valueStrategy = 'private_llm';
+    const topFlag = executiveFlags.find(f => f.action === 'private_llm');
+    reasoning = `${executiveRole}: ${topFlag.reason}`;
+  } else if (hasExecutiveFlags && executiveAction === 'pseudonymize') {
+    // Executive flags but entity-replaceable (e.g., supplier terms, credentials)
+    valueStrategy = 'pseudonymize';
+    reasoning = `${executiveRole}: ${executiveFlags[0].reason}`;
+  } else if (hasIdentifiedPersons && needsComputation) {
+    // PII + math → private LLM (need real numbers for accurate computation)
+    valueStrategy = 'private_llm';
+    if (detectedIndustry === 'healthcare') {
+      reasoning = 'Patient data + dosage/clinical calculation needed — routing to HIPAA-compliant private LLM';
+    } else if (detectedIndustry === 'finance') {
+      reasoning = 'Client financial data + portfolio math needed — routing to private LLM (real data stays on-prem)';
+    } else if (detectedIndustry === 'manufacturing') {
+      reasoning = 'Proprietary process data + optimization math — routing to private LLM';
+    } else if (detectedIndustry === 'consulting') {
+      reasoning = 'Client proprietary data + financial projection needed — routing to private LLM';
+    } else {
+      reasoning = 'Real people\'s data + computation needed — routing to private LLM where math works and data stays safe';
+    }
+  } else if (hasIdentifiedPersons || isConfidentialDocument) {
+    // PII or confidential markers → pseudonymize entities
+    valueStrategy = 'pseudonymize';
+    if (detectedIndustry === 'healthcare') {
+      reasoning = `Patient identifiers (${hasMRN ? 'MRN, ' : ''}${hasPersons ? 'name, ' : ''}${hasPhone ? 'phone' : ''}) — HIPAA requires de-identification`;
+    } else if (detectedIndustry === 'finance') {
+      reasoning = `${hasConfidentialMarkers ? 'Confidential deal' : 'Client financial'} data — pseudonymizing to prevent MNPI leakage`;
+    } else if (detectedIndustry === 'consulting') {
+      reasoning = 'Proprietary client analysis — pseudonymizing to protect engagement confidentiality';
+    } else if (detectedIndustry === 'technology') {
+      reasoning = `${hasEmail ? 'Customer PII' : 'Identifiable data'} in ${/debug|error|log/i.test(text) ? 'debug logs' : 'code'} — pseudonymizing before sending to cloud`;
+    } else if (detectedIndustry === 'manufacturing') {
+      reasoning = 'Identified persons in manufacturing context — pseudonymizing identifiers';
+    } else {
+      reasoning = `Numbers linked to ${hasIdentifiedPersons ? 'identified persons' : 'confidential document'} — pseudonymizing all values`;
+    }
+  } else {
+    valueStrategy = 'keep_real';
+    const industryNote = detectedIndustry ? ` (${detectedIndustry} context)` : '';
+    reasoning = `No identified persons, confidential markers, or executive flags${industryNote} — safe to send`;
+  }
+
+  return {
+    isConfidentialDocument,
+    hasIdentifiedPersons,
+    needsComputation,
+    valueStrategy,
+    reasoning,
+    detectedIndustry,
+    executiveFlags,
+    executiveRole,
+    executiveAction,
+    signals: {
+      persons: hasPersons,
+      ssn: hasSSN,
+      email: hasEmail,
+      phone: hasPhone,
+      mrn: hasMRN,
+      confidentialMarkers: hasConfidentialMarkers,
+      financialContext: hasFinancialContext,
+      healthcareContext: hasHealthcareContext,
+      computation: needsComputation,
+    }
+  };
+}
+
+/**
+ * Determine if a specific entity should be pseudonymized, given the holistic context.
+ */
+function shouldPseudonymize(entityType, contextAnalysis) {
+  // Identity entities are ALWAYS pseudonymized regardless of context
+  if (ALWAYS_IDENTIFYING_TYPES.has(entityType)) return true;
+
+  // For value entities (amounts, dates, matter numbers):
+  // the holistic document context decides
+  if (contextAnalysis.valueStrategy === 'pseudonymize') return true;
+  if (contextAnalysis.valueStrategy === 'keep_real') return false;
+  if (contextAnalysis.valueStrategy === 'private_llm') return false; // sent to private LLM with real data
+
+  return true; // unknown → safe default
+}
+
+function simpleHash(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
+
+function pseudonymize(text, entities) {
+  const map = {};
+  const kept = [];
+
+  // Holistic context analysis — run ONCE for the whole document.
+  // This is the key difference: instead of checking keywords near each entity,
+  // we understand the overall situation like a human would.
+  const contextAnalysis = analyzeContext(text, entities);
+
+  const sorted = [...entities].sort((a, b) => b.start - a.start);
+  let masked = text;
+
+  for (const e of sorted) {
+    // Skip privilege markers — they're legal context signals, not PII
+    if (e.type === 'PRIVILEGE_MARKER') {
+      kept.push(e);
+      continue;
+    }
+
+    // The holistic context decides whether value entities get pseudonymized
+    const shouldMask = shouldPseudonymize(e.type, contextAnalysis);
+
+    if (!shouldMask) {
+      kept.push(e);
+      continue;
+    }
+
+    if (map[e.text]) {
+      masked = masked.slice(0, e.start) + map[e.text] + masked.slice(e.end);
+      continue;
+    }
+    const h = simpleHash(e.text);
+    let fake;
+    switch (e.type) {
+      case 'PERSON': fake = FAKE_PERSONS[h % FAKE_PERSONS.length]; break;
+      case 'ORGANIZATION': fake = FAKE_ORGS[h % FAKE_ORGS.length]; break;
+      case 'EMAIL': { const p = FAKE_PERSONS[h % FAKE_PERSONS.length].toLowerCase().replace(/[' ]/g,'.'); fake = p + '@example.com'; break; }
+      case 'PHONE_NUMBER': fake = `(${200+(h%800)}) ${100+(h%900)}-${1000+(h%9000)}`; break;
+      case 'SSN': fake = `${100+(h%899)}-${10+(h%90)}-${1000+(h%9000)}`; break;
+      case 'CREDIT_CARD': fake = `4${String(h).padStart(15,'0').slice(0,15)}`; break;
+      case 'ACCOUNT_NUMBER': fake = 'Acct#' + String(1000000000 + (h % 9000000000)); break;
+      case 'IP_ADDRESS': fake = `192.0.2.${1+(h%254)}`; break;
+      case 'LOCATION': fake = `${100+(h%9900)} Elm Street, Suite ${100+(h%900)}`; break;
+      default: fake = `[REDACTED_${e.type}]`;
+    }
+    map[e.text] = fake;
+    masked = masked.slice(0, e.start) + fake + masked.slice(e.end);
+  }
+  return { masked, map, kept, contextAnalysis };
+}
+
+// ============================================================================
+// UI RENDERING
+// ============================================================================
+
+function toggleMode() {
+  const btn = document.getElementById('modeBtn');
+  const label = document.getElementById('modeLabel');
+  if (currentMode === 'proxy') {
+    currentMode = 'audit';
+    btn.className = 'mode-badge mode-audit';
+    label.textContent = 'Audit Mode';
+  } else {
+    currentMode = 'proxy';
+    btn.className = 'mode-badge mode-proxy';
+    label.textContent = 'Proxy Mode';
+  }
+}
+
+// --- Industry tab system ---
+const INDUSTRY_SCENARIOS = {
+  legal: [
+    { key: 'legal_generic', label: 'Generic Legal Q', strategy: 'keep_real' },
+    { key: 'legal_client', label: 'Client Letter', strategy: 'private_llm' },
+    { key: 'legal_damages', label: 'Damages Calc', strategy: 'private_llm' },
+  ],
+  healthcare: [
+    { key: 'health_generic', label: 'Clinical Guidelines', strategy: 'keep_real' },
+    { key: 'health_patient', label: 'Patient Record', strategy: 'pseudonymize' },
+    { key: 'health_dosage', label: 'Dosage Calc', strategy: 'private_llm' },
+  ],
+  finance: [
+    { key: 'finance_generic', label: 'DCF Valuation', strategy: 'keep_real' },
+    { key: 'finance_deal', label: 'M&A Deal', strategy: 'private_llm' },
+    { key: 'finance_portfolio', label: 'Portfolio Rebalance', strategy: 'private_llm' },
+  ],
+  tech: [
+    { key: 'tech_generic', label: 'Algorithm Q', strategy: 'keep_real' },
+    { key: 'tech_secrets', label: 'Code + Secrets', strategy: 'pseudonymize' },
+    { key: 'tech_debug', label: 'Debug + PII', strategy: 'pseudonymize' },
+  ],
+  consulting: [
+    { key: 'consult_generic', label: 'Framework Q', strategy: 'keep_real' },
+    { key: 'consult_strategy', label: 'Client Strategy', strategy: 'private_llm' },
+    { key: 'consult_projection', label: 'Revenue Projection', strategy: 'private_llm' },
+  ],
+  manufacturing: [
+    { key: 'mfg_generic', label: 'General Chemistry', strategy: 'keep_real' },
+    { key: 'mfg_formula', label: 'Proprietary Formula', strategy: 'private_llm' },
+    { key: 'mfg_optimize', label: 'Process Optimization', strategy: 'private_llm' },
+  ],
+};
+
+const INDUSTRY_NAMES = { legal: 'Legal', healthcare: 'Healthcare', finance: 'Finance', tech: 'Technology', consulting: 'Consulting', manufacturing: 'Manufacturing' };
+let currentIndustry = 'legal';
+let lastScenarioKey = null;
+
+function selectIndustry(industry) {
+  currentIndustry = industry;
+  document.querySelectorAll('.industry-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.industry === industry);
+  });
+  const scenarios = INDUSTRY_SCENARIOS[industry];
+  const strategyColors = { keep_real: '#51cf66', pseudonymize: '#fcc419', private_llm: '#ff922b' };
+  const strategyLabels = { keep_real: 'SAFE', pseudonymize: 'MASK', private_llm: 'PRIVATE' };
+  document.getElementById('scenarioButtons').innerHTML = scenarios.map(s => `
+    <button class="scenario-btn" onclick="loadScenario('${s.key}')">
+      <span class="strategy-dot" style="background:${strategyColors[s.strategy]}"></span>
+      ${s.label}
+      <span class="strategy-label" style="color:${strategyColors[s.strategy]}">${strategyLabels[s.strategy]}</span>
+    </button>
+  `).join('');
+}
+
+function loadScenario(name) {
+  lastScenarioKey = name;
+  document.getElementById('promptInput').value = SCENARIOS[name];
+  onTyping();
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function highlightEntities(text, entities) {
+  if (!entities.length) return escapeHtml(text);
+  const sorted = [...entities].sort((a, b) => b.start - a.start);
+  let result = text;
+  for (const e of sorted) {
+    const cls = `hl-${e.type in ENTITY_WEIGHTS ? e.type : 'default'}`;
+    const before = result.slice(0, e.start);
+    const match = result.slice(e.start, e.end);
+    const after = result.slice(e.end);
+    result = before + `\x00HL_START:${cls}\x00` + match + `\x00HL_END\x00` + after;
+  }
+  // Now escape and replace markers
+  result = escapeHtml(result);
+  result = result.replace(/\x00HL_START:([^\x00]+)\x00/g, '<span class="highlight $1">');
+  result = result.replace(/\x00HL_END\x00/g, '</span>');
+  return result;
+}
+
+function entityTagHtml(type, count) {
+  const cls = `entity-${type in ENTITY_WEIGHTS ? type : 'default'}`;
+  return `<span class="entity-tag ${cls}">${type}${count > 1 ? ' x'+count : ''}</span>`;
+}
+
+function scoreColor(level) {
+  return { low: '#51cf66', medium: '#fcc419', high: '#ff922b', critical: '#ff6b6b' }[level] || '#999';
+}
+
+function addChatMessage(role, text) {
+  const container = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = 'chat-msg';
+  const formatted = escapeHtml(text).replace(/```(\w*)\n([\s\S]*?)```/g, '<pre>$2</pre>').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
+  const avatarLabel = role === 'user' ? 'SS' : role === 'private' ? 'PL' : 'G';
+  const avatarClass = role === 'private' ? 'gpt' : role;
+  div.innerHTML = `
+    <div class="chat-avatar ${avatarClass}" ${role === 'private' ? 'style="background:#ff922b"' : ''}>${avatarLabel}</div>
+    <div class="chat-content">${role === 'private' ? '<div style="font-size:9px;color:#ff922b;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">&#128737; Private LLM Response (on-prem)</div>' : ''}${formatted}</div>
+  `;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function addTypingIndicator() {
+  const container = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = 'chat-msg';
+  div.id = 'typingIndicator';
+  div.innerHTML = `
+    <div class="chat-avatar gpt">G</div>
+    <div class="chat-content"><div class="typing"><span></span><span></span><span></span></div></div>
+  `;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function removeTypingIndicator() {
+  const el = document.getElementById('typingIndicator');
+  if (el) el.remove();
+}
+
+// --- Real-time typing monitor (Step 1) ---
+function onTyping() {
+  clearTimeout(typingTimeout);
+  const text = document.getElementById('promptInput').value;
+  if (!text.trim()) {
+    document.getElementById('step1Body').innerHTML = '<span class="empty">Waiting for input...</span>';
+    document.getElementById('step2Body').innerHTML = '<span class="empty">No entities detected yet</span>';
+    document.getElementById('step3Body').innerHTML = '<span class="empty">Awaiting analysis...</span>';
+    document.getElementById('captureMethod').textContent = '';
+    document.getElementById('entityCount').textContent = '';
+    return;
+  }
+
+  document.getElementById('captureMethod').textContent = 'DOM Observer: #prompt-textarea';
+
+  // Debounced real-time analysis
+  typingTimeout = setTimeout(() => {
+    const entities = detectEntities(text);
+
+    // Step 1: show what extension reads with highlights
+    document.getElementById('step1Body').innerHTML =
+      `<div style="font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:1.7;white-space:pre-wrap;max-height:200px;overflow-y:auto">${highlightEntities(text, entities)}</div>
+       <div style="margin-top:8px;font-size:11px;color:#555">Captured via: DOM MutationObserver on <code>#prompt-textarea</code> (contenteditable div)</div>`;
+
+    // Step 2: show entities
+    if (entities.length === 0) {
+      document.getElementById('step2Body').innerHTML = '<span style="color:#51cf66">&#10003; No PII or sensitive entities detected</span>';
+      document.getElementById('entityCount').textContent = '0 entities';
+    } else {
+      const counts = {};
+      entities.forEach(e => { counts[e.type] = (counts[e.type] || 0) + 1; });
+      let html = '<div style="margin-bottom:8px">';
+      for (const [type, count] of Object.entries(counts)) {
+        html += entityTagHtml(type, count);
+      }
+      html += '</div>';
+      html += '<div style="font-size:12px;line-height:1.7">';
+      for (const e of entities) {
+        const cls = `entity-${e.type in ENTITY_WEIGHTS ? e.type : 'default'}`;
+        html += `<div style="margin-bottom:2px"><span class="entity-tag ${cls}" style="font-size:10px">${e.type}</span> <span class="mono" style="color:#ccc">${escapeHtml(e.text)}</span> <span style="color:#555;font-size:11px">(conf: ${(e.confidence*100).toFixed(0)}%, pos: ${e.start}-${e.end})</span></div>`;
+      }
+      html += '</div>';
+      document.getElementById('step2Body').innerHTML = html;
+      document.getElementById('entityCount').textContent = `${entities.length} entities`;
+    }
+
+    // Step 3: scoring
+    const scoring = computeScore(text, entities);
+    const col = scoreColor(scoring.level);
+    document.getElementById('step3Body').innerHTML = `
+      <div class="score-row">
+        <div class="score-badge" style="color:${col}">${scoring.score}</div>
+        <div class="score-meta">
+          <div style="font-weight:700;text-transform:uppercase;color:${col}">${scoring.level}</div>
+          <div style="color:#777;font-size:11px">
+            Entity: ${scoring.entityScore} &middot; Volume: ${scoring.volumeScore} &middot; Context: ${scoring.contextScore} &middot; Legal: ${scoring.legalBoost}
+          </div>
+        </div>
+      </div>
+      <div class="score-bar"><div class="score-bar-fill" style="width:${scoring.score}%;background:${col}"></div></div>
+    `;
+  }, 300);
+}
+
+// --- Submit prompt ---
+async function submitPrompt() {
+  const input = document.getElementById('promptInput');
+  const text = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  document.getElementById('sendBtn').disabled = true;
+
+  // Add user message to chat
+  addChatMessage('user', text);
+
+  // Full analysis
+  const entities = detectEntities(text);
+  const scoring = computeScore(text, entities);
+  const col = scoreColor(scoring.level);
+  const now = new Date().toISOString();
+  document.getElementById('timestamp').textContent = now.replace('T', ' ').split('.')[0];
+
+  // Step 1
+  document.getElementById('captureMethod').textContent = 'Submit Handler + Fetch Interceptor';
+  document.getElementById('step1Body').innerHTML =
+    `<div style="font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:1.7;white-space:pre-wrap;max-height:200px;overflow-y:auto">${highlightEntities(text, entities)}</div>
+     <div style="margin-top:8px;font-size:11px;color:#555">
+       <strong>Capture method:</strong> Submit button click intercepted + Fetch API monkey-patch<br>
+       <strong>Target element:</strong> <code>button[data-testid="send-button"]</code><br>
+       <strong>Fetch URL:</strong> <code>POST https://chatgpt.com/backend-api/conversation</code>
+     </div>`;
+
+  // Step 2
+  if (entities.length > 0) {
+    const counts = {};
+    entities.forEach(e => { counts[e.type] = (counts[e.type] || 0) + 1; });
+    let html = '<div style="margin-bottom:8px">';
+    for (const [type, count] of Object.entries(counts)) html += entityTagHtml(type, count);
+    html += '</div><div style="font-size:12px;line-height:1.7">';
+    for (const e of entities) {
+      const cls = `entity-${e.type in ENTITY_WEIGHTS ? e.type : 'default'}`;
+      html += `<div style="margin-bottom:2px"><span class="entity-tag ${cls}" style="font-size:10px">${e.type}</span> <span class="mono" style="color:#ccc">${escapeHtml(e.text)}</span> <span style="color:#555;font-size:11px">(${(e.confidence*100).toFixed(0)}%)</span></div>`;
+    }
+    html += '</div>';
+    document.getElementById('step2Body').innerHTML = html;
+    document.getElementById('entityCount').textContent = `${entities.length} entities`;
+  }
+
+  // Step 3
+  document.getElementById('step3Body').innerHTML = `
+    <div class="score-row">
+      <div class="score-badge" style="color:${col}">${scoring.score}</div>
+      <div class="score-meta">
+        <div style="font-weight:700;text-transform:uppercase;color:${col}">${scoring.level}</div>
+        <div style="color:#777;font-size:11px">
+          Entity: ${scoring.entityScore} &middot; Volume: ${scoring.volumeScore} &middot; Context: ${scoring.contextScore} &middot; Legal: ${scoring.legalBoost}
+        </div>
+      </div>
+    </div>
+    <div class="score-bar"><div class="score-bar-fill" style="width:${scoring.score}%;background:${col}"></div></div>
+    <div style="margin-top:10px;font-size:11px;color:#888">
+      ${scoring.level === 'critical' ? '&#128680; BLOCKED — Requires override with justification' :
+        scoring.level === 'high' ? '&#9888; WARNING — High sensitivity, proxy recommended' :
+        scoring.level === 'medium' ? '&#128274; PROXIED — Text pseudonymized before sending' :
+        '&#9989; ALLOWED — Low risk, passthrough to ChatGPT'}
+    </div>`;
+
+  // Step 4: local storage
+  const eventId = crypto.randomUUID().slice(0, 8);
+  const storageEvent = {
+    id: eventId,
+    aiToolId: 'chatgpt',
+    captureMethod: 'submit+fetch',
+    timestamp: now,
+    score: scoring.score,
+    level: scoring.level,
+    entityTypes: [...new Set(entities.map(e => e.type))],
+    textLength: text.length,
+    mode: currentMode,
+  };
+  eventLog.push(storageEvent);
+
+  // Simulate AES-256-GCM encryption of the event data
+  const eventJson = JSON.stringify(storageEvent);
+  const simulatedCiphertext = simulateAES256(eventJson);
+
+  document.getElementById('step4Body').innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <div style="font-size:11px;color:#888">chrome.storage.local — ${eventLog.length} event(s)</div>
+      <span style="padding:2px 8px;border-radius:10px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;background:#4dabf722;color:#4dabf7;border:1px solid #4dabf744">&#128274; AES-256-GCM</span>
+    </div>
+
+    <div style="margin-bottom:10px;padding:8px 10px;background:#0f3460;border-radius:6px;border-left:3px solid #4dabf7">
+      <div style="font-size:10px;font-weight:700;color:#4dabf7;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Encryption Pipeline</div>
+      <div style="display:flex;align-items:center;gap:6px;font-size:10px;margin-bottom:6px">
+        <span style="color:#888">Plaintext</span>
+        <span style="color:#4dabf7">→</span>
+        <span style="color:#4dabf7;font-weight:700">PBKDF2 (100k iter)</span>
+        <span style="color:#4dabf7">→</span>
+        <span style="color:#4dabf7;font-weight:700">AES-256-GCM</span>
+        <span style="color:#4dabf7">→</span>
+        <span style="color:#888">Ciphertext</span>
+      </div>
+      <div style="font-size:10px;color:#666;line-height:1.5">
+        Key: <span style="color:#51cf66">Per-firm derived (256-bit)</span> &nbsp;|&nbsp;
+        IV: <span style="color:#51cf66">Random 96-bit</span> &nbsp;|&nbsp;
+        Auth Tag: <span style="color:#51cf66">128-bit (tamper-proof)</span>
+      </div>
+    </div>
+
+    <div style="margin-bottom:8px">
+      <div style="font-size:10px;font-weight:700;color:#ff8787;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">&#10060; Before Encryption (never stored)</div>
+      <div style="font-size:10px;color:#888;font-family:'SF Mono','Fira Code',monospace;background:#1a1a2e;padding:6px 8px;border-radius:4px;max-height:60px;overflow:hidden;word-break:break-all">${escapeHtml(eventJson.slice(0, 200))}${eventJson.length > 200 ? '...' : ''}</div>
+    </div>
+
+    <div style="margin-bottom:8px">
+      <div style="font-size:10px;font-weight:700;color:#51cf66;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">&#10003; After Encryption (what's actually stored)</div>
+      <div style="font-size:10px;color:#4dabf7;font-family:'SF Mono','Fira Code',monospace;background:#1a1a2e;padding:6px 8px;border-radius:4px;max-height:60px;overflow:hidden;word-break:break-all">${simulatedCiphertext}</div>
+    </div>
+
+    ${eventLog.slice(-2).reverse().map(evt => `
+      <div class="storage-entry">
+        <span class="storage-key">"iron_gate_event_${evt.id}"</span>: <span style="color:#4dabf7;font-size:10px">&#128274; [AES-256-GCM ENCRYPTED]</span>
+      </div>
+    `).join('')}
+    <div style="font-size:10px;color:#555;margin-top:6px">
+      &#128274; All local storage is AES-256-GCM encrypted with per-firm keys.<br>
+      Raw text is NEVER stored — only encrypted metadata, scores, and entity types.
+    </div>`;
+
+  // Step 5: what's sent to ChatGPT
+  const { masked, map, kept, contextAnalysis } = pseudonymize(text, entities);
+
+  // Route is driven by Executive Lens FIRST, then holistic context analysis.
+  // Executive Lens private_llm overrides EVERYTHING — even low score / audit mode.
+  // Proprietary content must NEVER reach a cloud service, regardless of PII score.
+  let route;
+  if (contextAnalysis.valueStrategy === 'private_llm') {
+    // Executive Lens: content IS the IP — always route to private LLM
+    route = 'private_llm';
+  } else if (currentMode === 'audit' || scoring.level === 'low') {
+    route = 'passthrough';
+  } else if (contextAnalysis.valueStrategy === 'pseudonymize') {
+    route = 'cloud_masked';
+  } else if (scoring.level === 'critical') {
+    route = 'BLOCKED';
+  } else {
+    route = 'passthrough';
+  }
+
+  const routeColors = { passthrough: '#51cf66', cloud_masked: '#fcc419', private_llm: '#ff922b', BLOCKED: '#ff6b6b' };
+  const routeLabels = { passthrough: 'Passthrough', cloud_masked: 'Cloud (Pseudonymized)', private_llm: 'Private LLM (Real Data)', BLOCKED: 'BLOCKED' };
+  document.getElementById('routeLabel').innerHTML = `<span style="color:${routeColors[route]}">Route: ${routeLabels[route]}</span>`;
+
+  // Update Step 5 header to reflect actual destination
+  if (route === 'private_llm') {
+    document.getElementById('step5Title').innerHTML = 'Network — Routed to <span style="color:#ff922b">Private LLM</span> (NOT ChatGPT)';
+  } else if (route === 'BLOCKED') {
+    document.getElementById('step5Title').innerHTML = 'Network — <span style="color:#ff6b6b">BLOCKED</span>';
+  } else if (route === 'cloud_masked') {
+    document.getElementById('step5Title').innerHTML = 'Network — Sent to ChatGPT <span style="color:#fcc419">(Pseudonymized)</span>';
+  } else {
+    document.getElementById('step5Title').textContent = 'Network — What\'s Sent to ChatGPT';
+  }
+
+  if ((currentMode === 'proxy' && entities.length > 0 && scoring.level !== 'low') || route === 'private_llm') {
+    const pseudonymizedEntities = entities.filter(e => shouldPseudonymize(e.type, contextAnalysis) && e.type !== 'PRIVILEGE_MARKER');
+    const keptEntities = kept.filter(e => e.type !== 'PRIVILEGE_MARKER');
+
+    // Holistic Document Analysis panel — Executive Lens + PII Analysis
+    const strategyColors = { pseudonymize: '#fcc419', keep_real: '#51cf66', private_llm: '#ff922b' };
+    const strategyIcons = { pseudonymize: '&#128274;', keep_real: '&#9989;', private_llm: '&#128737;' };
+
+    const industryColors = { legal: '#4dabf7', healthcare: '#ff6b9d', finance: '#51cf66', technology: '#fcc419', consulting: '#cc5de8', manufacturing: '#e599f7' };
+    const industryNames = { legal: 'Legal', healthcare: 'Healthcare', finance: 'Finance', technology: 'Technology', consulting: 'Consulting', manufacturing: 'Manufacturing' };
+    const industryRules = { healthcare: 'HIPAA de-identification rules apply', finance: 'MNPI/insider information rules apply', legal: 'attorney-client privilege rules apply', manufacturing: 'trade secret protection rules apply', consulting: 'NDA/engagement confidentiality rules apply', technology: 'credential/infrastructure security rules apply' };
+
+    let step5Html = `
+      <div style="margin-bottom:12px;padding:10px 12px;background:#16213e;border-radius:8px;border-left:3px solid ${strategyColors[contextAnalysis.valueStrategy]};font-size:11px;line-height:1.8">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-weight:700;font-size:12px;color:${strategyColors[contextAnalysis.valueStrategy]}">
+            ${strategyIcons[contextAnalysis.valueStrategy]} Document Analysis — "${contextAnalysis.valueStrategy.replace(/_/g, ' ').toUpperCase()}" Strategy
+          </div>
+          ${contextAnalysis.detectedIndustry ? `<span style="padding:2px 8px;border-radius:10px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;background:${industryColors[contextAnalysis.detectedIndustry]}22;color:${industryColors[contextAnalysis.detectedIndustry]};border:1px solid ${industryColors[contextAnalysis.detectedIndustry]}44">${industryNames[contextAnalysis.detectedIndustry] || contextAnalysis.detectedIndustry}</span>` : ''}
+        </div>
+        <div style="color:#ccc;margin-bottom:8px;font-style:italic">${escapeHtml(contextAnalysis.reasoning)}</div>
+
+        ${contextAnalysis.executiveFlags && contextAnalysis.executiveFlags.length > 0 ? `
+        <div style="margin-bottom:10px;padding:8px 10px;background:#ff922b11;border:1px solid #ff922b33;border-radius:6px">
+          <div style="font-weight:700;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:#ff922b;margin-bottom:6px">
+            &#128737; Executive Lens — ${escapeHtml(contextAnalysis.executiveRole || 'CEO + GC')}
+          </div>
+          ${contextAnalysis.executiveFlags.map(f => `
+          <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:4px">
+            <span style="color:#ff6b6b;font-size:10px;margin-top:1px">&#9632;</span>
+            <div>
+              <span style="font-weight:700;color:#ff922b;font-size:10px">${escapeHtml(f.label)}</span>
+              <span style="color:#999;font-size:10px"> — ${escapeHtml(f.reason)}</span>
+            </div>
+          </div>`).join('')}
+          <div style="margin-top:6px;font-size:10px;color:#ff922b;font-weight:600">
+            Verdict: ${contextAnalysis.executiveAction === 'private_llm' ? 'Content IS the IP — must stay on-prem (private LLM only)' : 'Entities replaceable — pseudonymize before sending'}
+          </div>
+        </div>` : ''}
+
+        <table style="width:100%;font-size:11px;border-collapse:collapse">
+          ${contextAnalysis.detectedIndustry ? `<tr>
+            <td style="padding:3px 0;color:#888;width:180px">Detected industry</td>
+            <td style="padding:3px 0;color:${industryColors[contextAnalysis.detectedIndustry] || '#888'}">
+              ${industryNames[contextAnalysis.detectedIndustry] || 'Unknown'}
+              ${industryRules[contextAnalysis.detectedIndustry] ? ' — ' + industryRules[contextAnalysis.detectedIndustry] : ''}
+            </td>
+          </tr>` : ''}
+          ${contextAnalysis.executiveFlags && contextAnalysis.executiveFlags.length > 0 ? `<tr>
+            <td style="padding:3px 0;color:#888;width:180px">Executive Lens</td>
+            <td style="padding:3px 0;color:#ff922b;font-weight:700">
+              &#9888; ${contextAnalysis.executiveFlags.length} semantic risk(s) flagged by ${escapeHtml(contextAnalysis.executiveRole || 'CEO + GC')}
+            </td>
+          </tr>` : `<tr>
+            <td style="padding:3px 0;color:#888;width:180px">Executive Lens</td>
+            <td style="padding:3px 0;color:#51cf66">&#10003; No semantic IP risks detected — safe per ${contextAnalysis.detectedIndustry ? escapeHtml(EXECUTIVE_LENS[contextAnalysis.detectedIndustry]?.role || 'CEO') : 'CEO'}</td>
+          </tr>`}
+          <tr>
+            <td style="padding:3px 0;color:#888;width:180px">Identified real persons?</td>
+            <td style="padding:3px 0;color:${contextAnalysis.hasIdentifiedPersons ? '#ff8787' : '#51cf66'}">
+              ${contextAnalysis.hasIdentifiedPersons ? '&#10060; YES' : '&#10003; NO'}
+              ${contextAnalysis.signals.persons ? ' (names)' : ''}${contextAnalysis.signals.ssn ? ' (SSN)' : ''}${contextAnalysis.signals.email ? ' (email)' : ''}${contextAnalysis.signals.phone ? ' (phone)' : ''}${contextAnalysis.signals.mrn ? ' (MRN)' : ''}
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:3px 0;color:#888">Confidential document?</td>
+            <td style="padding:3px 0;color:${contextAnalysis.isConfidentialDocument ? '#ff922b' : '#51cf66'}">
+              ${contextAnalysis.isConfidentialDocument ? '&#9888; YES' : '&#10003; NO'}
+              ${contextAnalysis.signals.confidentialMarkers ? ' (privilege/NDA)' : ''}${contextAnalysis.signals.financialContext ? ' (financial data)' : ''}${contextAnalysis.signals.healthcareContext ? ' (PHI/HIPAA)' : ''}${contextAnalysis.executiveFlags && contextAnalysis.executiveFlags.length > 0 ? ' (executive flagged)' : ''}
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:3px 0;color:#888">Computation requested?</td>
+            <td style="padding:3px 0;color:${contextAnalysis.needsComputation ? '#4dabf7' : '#888'}">
+              ${contextAnalysis.needsComputation ? '&#128290; YES — math/calculation needed' : '&#8212; No computation detected'}
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:3px 0;color:#888;font-weight:700">Strategy</td>
+            <td style="padding:3px 0;font-weight:700;color:${strategyColors[contextAnalysis.valueStrategy]}">
+              ${contextAnalysis.valueStrategy === 'pseudonymize' ? '&#128274; Pseudonymize — entities replaceable, content safe after masking' :
+                contextAnalysis.valueStrategy === 'private_llm' ? '&#128737; Private LLM — content IS the IP, must stay on-prem' :
+                '&#9989; Keep real — generic content, no IP or PII risk'}
+            </td>
+          </tr>
+        </table>
+      </div>`;
+
+    if (contextAnalysis.valueStrategy === 'private_llm') {
+      // Private LLM: show that content NEVER leaves the firm's infrastructure
+      step5Html += `<div style="margin-bottom:12px;padding:12px;background:#ff922b11;border:2px solid #ff922b44;border-radius:8px;text-align:center">
+        <div style="font-size:14px;font-weight:700;color:#ff922b;margin-bottom:6px">&#128737; PRIVATE LLM — Content Never Leaves Your Infrastructure</div>
+        <div style="font-size:11px;color:#ccc;margin-bottom:8px">
+          The Executive Lens determined this content IS the intellectual property.<br>
+          Pseudonymizing names alone would not protect it. The entire prompt stays on-prem.
+        </div>
+        <div style="display:flex;gap:12px;justify-content:center;align-items:center;margin:8px 0">
+          <div style="padding:6px 12px;background:#ff6b6b22;border:1px solid #ff6b6b44;border-radius:6px">
+            <div style="font-size:9px;color:#ff6b6b;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px">&#10060; NOT Sent Here</div>
+            <div style="font-size:11px;color:#ff8787;text-decoration:line-through">chatgpt.com / OpenAI</div>
+          </div>
+          <div style="font-size:16px;color:#ff922b">&#8594;</div>
+          <div style="padding:6px 12px;background:#ff922b22;border:1px solid #ff922b44;border-radius:6px">
+            <div style="font-size:9px;color:#ff922b;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px">&#10003; Sent Here Instead</div>
+            <div style="font-size:11px;color:#ff922b;font-weight:700">your-private-llm.internal</div>
+          </div>
+        </div>
+      </div>`;
+
+      step5Html += `<div class="compare-box">
+        <div class="compare-col original">
+          <div class="compare-label" style="color:#ff922b">&#128737; Prompt sent to Private LLM (identities still masked)</div>
+          <div style="white-space:pre-wrap;font-size:11px;line-height:1.6;max-height:200px;overflow-y:auto;color:#a9b7c6">${escapeHtml(masked)}</div>
+        </div>
+        <div class="compare-col masked">
+          <div class="compare-label" style="color:#ff6b6b">&#128683; What OpenAI sees: NOTHING</div>
+          <div style="padding:20px;text-align:center;color:#ff6b6b;font-size:12px;font-weight:600">
+            This request was blocked from all cloud AI services.<br>
+            <span style="font-size:10px;color:#888;font-weight:400">Zero bytes transmitted to external APIs.</span>
+          </div>
+        </div>
+      </div>`;
+    } else {
+      step5Html += `<div class="compare-box">
+        <div class="compare-col original">
+          <div class="compare-label" style="color:#ff8787">&#10060; Original (intercepted)</div>
+          <div style="white-space:pre-wrap;font-size:11px;line-height:1.6;max-height:200px;overflow-y:auto">${highlightEntities(text, entities)}</div>
+        </div>
+        <div class="compare-col masked">
+          <div class="compare-label" style="color:#51cf66">&#10003; Pseudonymized (sent to cloud)</div>
+          <div style="white-space:pre-wrap;font-size:11px;line-height:1.6;max-height:200px;overflow-y:auto;color:#a9b7c6">${escapeHtml(masked)}</div>
+        </div>
+      </div>`;
+    }
+
+    // Show entity-level decision table
+    const allEntities = entities.filter(e => e.type !== 'PRIVILEGE_MARKER');
+    if (allEntities.length > 0) {
+      step5Html += `<div style="margin-top:10px;font-size:11px;font-weight:700;color:#7f8c8d;text-transform:uppercase;letter-spacing:0.5px">Per-Entity Decisions (driven by holistic context)</div>`;
+      step5Html += `<table class="pseudo-table" style="margin-top:6px">
+        <thead><tr><th>Value</th><th></th><th>Sent As</th><th>Type</th><th>Why</th></tr></thead>
+        <tbody>`;
+
+      const seen = new Set();
+      for (const e of allEntities) {
+        const key = e.text + e.type;
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        const wasMasked = shouldPseudonymize(e.type, contextAnalysis);
+        if (wasMasked) {
+          const fake = map[e.text] || '[REDACTED]';
+          step5Html += `<tr>
+            <td class="pseudo-original mono">${escapeHtml(e.text)}</td>
+            <td class="pseudo-arrow">&#8594;</td>
+            <td class="pseudo-fake mono">${escapeHtml(fake)}</td>
+            <td><span class="entity-tag entity-${e.type || 'default'}" style="font-size:10px">${e.type}</span></td>
+            <td style="font-size:10px;color:#ff8787">${ALWAYS_IDENTIFYING_TYPES.has(e.type) ? 'Always identifies a person' : 'Document context: ' + contextAnalysis.valueStrategy}</td>
+          </tr>`;
+        } else {
+          step5Html += `<tr>
+            <td class="mono" style="color:#51cf66">${escapeHtml(e.text)}</td>
+            <td class="pseudo-arrow" style="color:#51cf66">&#61;</td>
+            <td class="mono" style="color:#51cf66">${escapeHtml(e.text)}</td>
+            <td><span class="entity-tag entity-${e.type || 'default'}" style="font-size:10px">${e.type}</span></td>
+            <td style="font-size:10px;color:#51cf66">${contextAnalysis.valueStrategy === 'private_llm' ? 'Kept real — routed to private LLM for safe computation' : 'Kept real — no confidential context'}</td>
+          </tr>`;
+        }
+      }
+      step5Html += '</tbody></table>';
+    }
+
+    const execFlagSummary = contextAnalysis.executiveFlags && contextAnalysis.executiveFlags.length > 0
+      ? `<br><strong>Executive Lens:</strong> <span style="color:#ff922b">${contextAnalysis.executiveRole} flagged ${contextAnalysis.executiveFlags.map(f => f.label).join(', ')}</span> — content IS the IP`
+      : '';
+    step5Html += `<div style="margin-top:10px;font-size:11px;color:#555">
+      <strong>Request:</strong> POST ${route === 'private_llm' ? 'https://your-private-llm.internal/v1/chat' : 'https://chatgpt.com/backend-api/conversation'}<br>
+      <strong>Payload:</strong> ${pseudonymizedEntities.length} identifiers pseudonymized, ${keptEntities.length} values ${contextAnalysis.valueStrategy === 'private_llm' ? 'kept real (safe on private infra)' : contextAnalysis.valueStrategy === 'keep_real' ? 'kept real (generic context)' : 'pseudonymized (confidential context)'}${execFlagSummary}<br>
+      <strong>Intelligence:</strong> Executive Lens + holistic document analysis — thinks like ${contextAnalysis.executiveRole || 'CEO + GC'}, not just keyword proximity
+    </div>`;
+
+    document.getElementById('step5Body').innerHTML = step5Html;
+  } else if (currentMode === 'audit' || scoring.level === 'low') {
+    document.getElementById('step5Body').innerHTML = `
+      <div style="white-space:pre-wrap;font-size:12px;line-height:1.6;max-height:200px;overflow-y:auto;color:#a9b7c6;font-family:'SF Mono','Fira Code',monospace">${escapeHtml(text)}</div>
+      <div style="margin-top:10px;font-size:11px;color:#555">
+        <strong>Route:</strong> <span style="color:${routeColors[currentMode === 'audit' ? 'passthrough' : route]}">${currentMode === 'audit' ? 'Passthrough (audit mode — observe only)' : 'Passthrough (low risk)'}</span><br>
+        <strong>Request:</strong> POST https://chatgpt.com/backend-api/conversation<br>
+        Original text sent unchanged — ${currentMode === 'audit' ? 'audit mode does not modify requests' : 'score below proxy threshold'}
+      </div>`;
+  } else {
+    document.getElementById('step5Body').innerHTML = `
+      <div style="text-align:center;padding:20px;color:#ff6b6b;font-weight:700;font-size:16px">
+        &#128683; REQUEST BLOCKED<br>
+        <span style="font-size:12px;font-weight:400;color:#888">Score ${scoring.score}/100 (${scoring.level}) — requires override with justification</span>
+      </div>`;
+  }
+
+  // Step 6: simulated response
+  addTypingIndicator();
+  document.getElementById('step6Body').innerHTML = `<div class="typing"><span></span><span></span><span></span></div> Waiting for ${route === 'private_llm' ? 'Private LLM' : 'ChatGPT'} response...`;
+
+  // Determine response — use scenario key if loaded, otherwise detect from content
+  let responseKey = lastScenarioKey;
+  if (!responseKey) {
+    // Fallback: detect from content for custom prompts
+    const industry = contextAnalysis.detectedIndustry;
+    if (industry === 'legal') responseKey = 'legal_generic';
+    else if (industry === 'healthcare') responseKey = 'health_generic';
+    else if (industry === 'finance') responseKey = 'finance_generic';
+    else if (industry === 'technology') responseKey = 'tech_generic';
+    else if (industry === 'consulting') responseKey = 'consult_generic';
+    else if (industry === 'manufacturing') responseKey = 'mfg_generic';
+    else responseKey = 'legal_generic';
+  }
+  lastScenarioKey = null;
+
+  const responseText = RESPONSES[responseKey] || RESPONSES.legal_generic;
+
+  // Simulate latency
+  await new Promise(r => setTimeout(r, 1500 + Math.random() * 1000));
+
+  removeTypingIndicator();
+  addChatMessage(route === 'private_llm' ? 'private' : 'gpt', responseText);
+
+  // Step 6: show response analysis
+  if ((currentMode === 'proxy' && entities.length > 0 && scoring.level !== 'low') || route === 'private_llm') {
+    const hasExecFlags = contextAnalysis.executiveFlags && contextAnalysis.executiveFlags.length > 0;
+    const strategyExplanations = {
+      pseudonymize: `All values pseudonymized — numbers were linked to ${contextAnalysis.hasIdentifiedPersons ? 'identified persons' : 'a confidential document'}`,
+      private_llm: hasExecFlags
+        ? `Executive Lens (${contextAnalysis.executiveRole}): content IS the IP — entire prompt routed to private LLM, never touched a cloud service`
+        : 'Routed to private LLM — real numbers used for accurate math, data never left your infrastructure',
+      keep_real: 'Values kept real — no confidential context detected',
+    };
+
+    document.getElementById('step6Body').innerHTML = `
+      <div style="font-size:12px;color:#51cf66;font-weight:600;margin-bottom:8px">&#10003; Response received${contextAnalysis.valueStrategy === 'pseudonymize' ? ' and de-pseudonymized' : ''}</div>
+      <div style="white-space:pre-wrap;font-size:12px;line-height:1.6;max-height:200px;overflow-y:auto;color:#d1d5db">${escapeHtml(responseText)}</div>
+      <div style="margin-top:10px;padding:8px;background:#51cf6611;border:1px solid #51cf6644;border-radius:6px;font-size:11px">
+        <strong style="color:#51cf66">&#128274; ${hasExecFlags ? 'Executive Lens' : 'Holistic'} Proxy Summary:</strong><br>
+        &bull; <strong>Strategy:</strong> ${contextAnalysis.valueStrategy.replace(/_/g, ' ')} — ${strategyExplanations[contextAnalysis.valueStrategy]}<br>
+        ${hasExecFlags ? `&bull; <strong>${contextAnalysis.executiveFlags.length} semantic IP risk(s)</strong> detected: ${contextAnalysis.executiveFlags.map(f => f.label).join(', ')}<br>` : ''}
+        &bull; <strong>${Object.keys(map).length} identifying entities</strong> (names, SSNs, emails, phones) were <strong>never sent</strong> to OpenAI<br>
+        ${contextAnalysis.valueStrategy === 'private_llm'
+          ? hasExecFlags
+            ? '&bull; <strong>Entire prompt stays on-prem</strong> — content itself is the secret, not just the entities in it<br>'
+            : '&bull; <strong>All dollar amounts kept real</strong> — private LLM computed accurate results on real data<br>'
+          : contextAnalysis.valueStrategy === 'pseudonymize'
+            ? '&bull; <strong>Values pseudonymized</strong> — numbers were someone\'s real data, replaced with realistic fakes<br>'
+            : '&bull; <strong>Values kept real</strong> — generic context, no person or document at risk<br>'}
+        &bull; ${contextAnalysis.valueStrategy === 'pseudonymize' ? 'Response de-pseudonymized: real names/values restored in your view' : 'Response delivered with real data — safe on private infrastructure'}<br>
+        &bull; Session map stored for conversation continuity (1hr TTL)
+      </div>`;
+  } else {
+    document.getElementById('step6Body').innerHTML = `
+      <div style="font-size:12px;color:#4dabf7;font-weight:600;margin-bottom:8px">${currentMode === 'audit' ? '&#128065; Response logged (audit mode)' : '&#9989; Response received (passthrough)'}</div>
+      <div style="white-space:pre-wrap;font-size:12px;line-height:1.6;max-height:200px;overflow-y:auto;color:#d1d5db">${escapeHtml(responseText)}</div>
+      <div style="margin-top:10px;font-size:11px;color:#555">
+        ${currentMode === 'audit'
+          ? 'Audit mode: Response delivered unchanged. Event logged for compliance dashboard.'
+          : 'Low sensitivity: Response delivered unchanged. No proxy intervention needed.'}
+      </div>`;
+  }
+
+  // Scroll monitor to top
+  document.getElementById('monitorScroll').scrollTop = 0;
+  document.getElementById('sendBtn').disabled = false;
+}
+
+// Initialize
+document.getElementById('timestamp').textContent = new Date().toISOString().replace('T', ' ').split('.')[0];
+selectIndustry('legal'); // Load initial industry tab
+</script>
+</body>
+</html>

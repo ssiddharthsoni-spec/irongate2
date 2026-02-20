@@ -1,0 +1,27 @@
+version: '3.8'
+
+# Development overrides — only runs infrastructure services
+# App services run locally via pnpm dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: irongate
+      POSTGRES_PASSWORD: irongate_dev
+      POSTGRES_DB: irongate
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:
