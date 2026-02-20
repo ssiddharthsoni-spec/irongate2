@@ -731,12 +731,23 @@ export class Pseudonymizer {
 
   /**
    * Return a snapshot of the current pseudonym map for persistence.
+   * De-duplicates entries (since we store under both text and hash keys).
    */
   getMap(): PseudonymMap {
+    const deduplicated = new Map<string, PseudonymEntry>();
+    const seenHashes = new Set<string>();
+
+    for (const [key, entry] of this.mappings) {
+      if (seenHashes.has(entry.originalHash)) continue;
+      seenHashes.add(entry.originalHash);
+      // Use hash-based key for persistence (original text is not stored in DB)
+      deduplicated.set(`hash::${entry.originalHash}`, entry);
+    }
+
     return {
       sessionId: this.sessionId,
       firmId: this.firmId,
-      mappings: new Map(this.mappings),
+      mappings: deduplicated,
       createdAt: this.createdAt,
       expiresAt: this.expiresAt,
     };
@@ -744,7 +755,14 @@ export class Pseudonymizer {
 
   /**
    * Load an existing pseudonym map (e.g., from the database) to restore
-   * session continuity.
+   * session continuity. Supports maps where original text is empty
+   * (privacy by design — originals are never persisted to DB).
+   *
+   * For depseudonymization to work on loaded maps, the reverse mappings
+   * use pseudonym → original. When original is empty (loaded from DB),
+   * depseudonymization won't work until the same entity is seen again
+   * in a new pseudonymize() call, which upgrades the entry with the
+   * original text.
    */
   loadMap(map: PseudonymMap): void {
     this.sessionId = map.sessionId;
@@ -753,10 +771,12 @@ export class Pseudonymizer {
     this.expiresAt = map.expiresAt;
     this.mappings = new Map(map.mappings);
 
-    // Rebuild reverse mappings
+    // Rebuild reverse mappings for entries that have original text
     this.reverseMappings.clear();
     for (const [, entry] of this.mappings) {
-      this.reverseMappings.set(entry.pseudonym, entry.original);
+      if (entry.original) {
+        this.reverseMappings.set(entry.pseudonym, entry.original);
+      }
     }
   }
 
@@ -773,18 +793,31 @@ export class Pseudonymizer {
 
   /**
    * Look up or create a pseudonym entry for a given original value.
-   * Uses the original text as the mapping key so identical values always
-   * receive the same pseudonym within a session.
+   * Uses both a text-based key (for same-session lookups) and a hash-based key
+   * (for cross-session lookups after loading from DB where originals aren't stored).
    */
   private getOrCreateEntry(original: string, entityType: EntityType): PseudonymEntry {
-    const key = `${entityType}::${original}`;
+    const textKey = `${entityType}::${original}`;
 
-    const existing = this.mappings.get(key);
+    // Check text-based key first (same session)
+    const existing = this.mappings.get(textKey);
     if (existing) {
       return existing;
     }
 
     const hash = sha256Sync(original);
+    const hashKey = `hash::${hash}`;
+
+    // Check hash-based key (loaded from DB)
+    const fromDb = this.mappings.get(hashKey);
+    if (fromDb) {
+      // Upgrade: set the original text now that we have it and add text-based key
+      fromDb.original = original;
+      this.mappings.set(textKey, fromDb);
+      this.reverseMappings.set(fromDb.pseudonym, original);
+      return fromDb;
+    }
+
     const pseudonym = generatePseudonym(entityType, original, hash);
 
     const entry: PseudonymEntry = {
@@ -794,7 +827,9 @@ export class Pseudonymizer {
       entityType,
     };
 
-    this.mappings.set(key, entry);
+    // Store under both keys for future lookups
+    this.mappings.set(textKey, entry);
+    this.mappings.set(hashKey, entry);
     this.reverseMappings.set(pseudonym, original);
 
     return entry;

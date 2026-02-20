@@ -155,7 +155,9 @@ export class PseudonymStore {
         entityType = (row.entityType || 'PERSON') as EntityType;
       }
 
-      const mapKey = `${entityType}::hash::${originalHash}`;
+      // Use hash-based key that matches what Pseudonymizer.loadMap() expects.
+      // We use the hash as the lookup key since original text is not persisted.
+      const mapKey = `hash::${originalHash}`;
 
       mappings.set(mapKey, {
         original: '', // Original text is never persisted (privacy by design)

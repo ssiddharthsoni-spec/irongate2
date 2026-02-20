@@ -1,17 +1,36 @@
 import { createMiddleware } from 'hono/factory';
 
 /**
- * Simple in-memory rate limiter.
- * In production, use Redis for distributed rate limiting.
+ * In-memory rate limiter with automatic eviction of expired entries.
+ * In production, replace with Redis for distributed rate limiting.
  */
 const requestCounts = new Map<string, { count: number; resetTime: number }>();
 
 const WINDOW_MS = 60_000; // 1 minute
 const MAX_REQUESTS = 300; // 300 requests per minute
+const CLEANUP_INTERVAL = 5 * 60_000; // Clean up every 5 minutes
+
+// Periodic cleanup of expired entries to prevent memory leak
+let lastCleanup = Date.now();
+
+function evictExpiredEntries() {
+  const now = Date.now();
+  if (now - lastCleanup < CLEANUP_INTERVAL) return;
+  lastCleanup = now;
+
+  for (const [key, entry] of requestCounts) {
+    if (now > entry.resetTime) {
+      requestCounts.delete(key);
+    }
+  }
+}
 
 export const rateLimitMiddleware = createMiddleware(async (c, next) => {
   const key = c.get('userId') || c.req.header('x-forwarded-for') || 'anonymous';
   const now = Date.now();
+
+  // Periodically evict expired entries
+  evictExpiredEntries();
 
   let entry = requestCounts.get(key);
 

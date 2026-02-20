@@ -14,19 +14,56 @@ import type { AppEnv } from './types';
 
 const app = new Hono<AppEnv>();
 
+// Build allowed origins from environment
+const allowedOrigins: string[] = [
+  'http://localhost:3001',  // Dashboard dev
+  'http://localhost:3000',  // API dev (for testing)
+];
+if (process.env.DASHBOARD_URL) allowedOrigins.push(process.env.DASHBOARD_URL);
+if (process.env.CHROME_EXTENSION_ID) {
+  allowedOrigins.push(`chrome-extension://${process.env.CHROME_EXTENSION_ID}`);
+}
+
 // Global middleware
 app.use('*', logger());
 app.use(
   '*',
   cors({
-    origin: ['chrome-extension://*', 'http://localhost:3001', 'http://localhost:3000'],
+    origin: (origin) => {
+      if (!origin) return allowedOrigins[0];
+      // In development, allow any chrome extension for testing
+      if (process.env.NODE_ENV === 'development' && origin.startsWith('chrome-extension://')) {
+        return origin;
+      }
+      return allowedOrigins.includes(origin) ? origin : null;
+    },
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization', 'X-Firm-ID'],
   })
 );
 
-// Health check (no auth)
-app.get('/health', (c) => c.json({ status: 'ok', version: '0.1.0', timestamp: new Date().toISOString() }));
+// Health check (no auth) — checks DB connectivity in production
+app.get('/health', async (c) => {
+  const health: Record<string, unknown> = {
+    status: 'ok',
+    version: '0.1.0',
+    timestamp: new Date().toISOString(),
+  };
+
+  // Deep health check with ?deep=true
+  if (c.req.query('deep') === 'true') {
+    try {
+      const { db } = await import('./db/client');
+      const result = await db.execute({ sql: 'SELECT 1' } as any);
+      health.database = 'connected';
+    } catch {
+      health.database = 'disconnected';
+      health.status = 'degraded';
+    }
+  }
+
+  return c.json(health);
+});
 
 // API routes (with auth)
 app.use('/v1/*', authMiddleware);
@@ -53,12 +90,10 @@ const port = parseInt(process.env.PORT || '3000');
 
 // Support both Bun (export default) and Node.js (@hono/node-server)
 if (typeof globalThis.Bun !== 'undefined') {
-  // Bun runtime — use native server
   console.log(`[Iron Gate API] Starting on port ${port} (Bun)`);
   // @ts-ignore Bun export default syntax
   module.exports = { port, fetch: app.fetch };
 } else {
-  // Node.js runtime — use @hono/node-server
   import('@hono/node-server').then(({ serve }) => {
     serve({ fetch: app.fetch, port }, () => {
       console.log(`[Iron Gate API] Running on http://localhost:${port} (Node.js)`);

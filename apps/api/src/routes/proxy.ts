@@ -18,12 +18,18 @@ const DETECTION_SERVICE_URL = process.env.DETECTION_SERVICE_URL || 'http://local
 // ---------------------------------------------------------------------------
 
 const analyzeRequestSchema = z.object({
-  promptText: z.string().min(1, 'promptText is required'),
+  // Accept both 'promptText' and 'text' for compatibility with extension
+  promptText: z.string().min(1).optional(),
+  text: z.string().min(1).optional(),
   aiToolId: z.string().min(1, 'aiToolId is required'),
   sessionId: z.string().uuid('sessionId must be a valid UUID'),
   userId: z.string().uuid('userId must be a valid UUID').optional(),
   firmId: z.string().uuid('firmId must be a valid UUID').optional(),
-});
+  timestamp: z.number().optional(),
+}).refine(
+  (data) => data.promptText || data.text,
+  { message: 'Either promptText or text is required' },
+);
 
 const sendRequestSchema = z.object({
   maskedPrompt: z.string().min(1, 'maskedPrompt is required'),
@@ -113,6 +119,7 @@ proxyRoutes.post('/analyze', async (c) => {
     const body = await c.req.json();
     const parsed = analyzeRequestSchema.parse(body);
 
+    const promptText = (promptText || parsed.text)!;
     const firmId = parsed.firmId || c.get('firmId');
     const userId = parsed.userId || c.get('userId');
 
@@ -131,7 +138,7 @@ proxyRoutes.post('/analyze', async (c) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        text: parsed.promptText,
+        text: promptText,
         firmId,
       }),
     });
@@ -149,7 +156,7 @@ proxyRoutes.post('/analyze', async (c) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        text: parsed.promptText,
+        text: promptText,
         entities: detectResult.entities,
         firmId,
       }),
@@ -167,12 +174,12 @@ proxyRoutes.post('/analyze', async (c) => {
     const recommendedRoute = determineRoute(scoreResult.score, thresholds);
 
     // 5. Pseudonymize if route is not passthrough and entities were found
-    let maskedPrompt = parsed.promptText;
+    let maskedPrompt = promptText;
     let pseudonymMap: Record<string, string> = {};
 
     if (recommendedRoute !== 'passthrough' && detectResult.entities.length > 0) {
       const pseudonymizer = new Pseudonymizer(parsed.sessionId, firmId);
-      const result = pseudonymizer.pseudonymize(parsed.promptText, detectResult.entities);
+      const result = pseudonymizer.pseudonymize(promptText, detectResult.entities);
       maskedPrompt = result.maskedText;
       pseudonymMap = buildPseudonymRecord(result.map);
 
