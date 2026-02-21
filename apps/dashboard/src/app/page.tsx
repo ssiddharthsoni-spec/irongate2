@@ -19,7 +19,7 @@ export default function LandingPage() {
             Sign In
           </Link>
           <Link
-            href="/dashboard"
+            href="/demo"
             className="px-4 py-2 bg-iron-600 hover:bg-iron-700 text-white text-sm font-medium rounded-lg transition-colors"
           >
             Try Live Demo
@@ -43,7 +43,7 @@ export default function LandingPage() {
           </p>
           <div className="mt-10 flex flex-wrap gap-4">
             <Link
-              href="/dashboard"
+              href="/demo"
               className="px-6 py-3 bg-iron-600 hover:bg-iron-700 text-white font-semibold rounded-lg text-base transition-colors shadow-lg shadow-iron-600/25"
             >
               Try Live Demo
@@ -156,7 +156,7 @@ export default function LandingPage() {
             Explore the live dashboard with demo data. No sign-up required to browse — all charts, reports, and features are fully interactive.
           </p>
           <Link
-            href="/dashboard"
+            href="/demo"
             className="inline-block px-8 py-3 bg-white text-iron-700 font-semibold rounded-lg text-base hover:bg-iron-50 transition-colors shadow-lg"
           >
             Try Live Demo

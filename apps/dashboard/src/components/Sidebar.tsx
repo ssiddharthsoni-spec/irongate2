@@ -76,10 +76,11 @@ export default function Sidebar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  // Hide sidebar on the landing and onboarding pages
+  // Hide sidebar on the landing, demo, and onboarding pages
   const isLanding = pathname === '/';
+  const isDemo = pathname === '/demo';
   const isOnboarding = pathname.startsWith('/onboarding');
-  if (isLanding || isOnboarding) return null;
+  if (isLanding || isDemo || isOnboarding) return null;
 
   return (
     <>
