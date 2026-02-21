@@ -50,8 +50,8 @@ app.use(
   cors({
     origin: (origin) => {
       if (!origin) return allowedOrigins[0];
-      // In development, allow any chrome extension for testing
-      if (process.env.NODE_ENV === 'development' && origin.startsWith('chrome-extension://')) {
+      // Always allow Chrome extensions (each install has a unique ID)
+      if (origin.startsWith('chrome-extension://')) {
         return origin;
       }
       return allowedOrigins.includes(origin) ? origin : null;

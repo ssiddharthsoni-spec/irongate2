@@ -77,7 +77,9 @@ export function App() {
     const url = apiUrlDraft.replace(/\/+$/, '');
 
     try {
-      const res = await fetch(`${url}/health`, {
+      // Health endpoint is at the root, not under /v1
+      const baseUrl = url.replace(/\/v1\/?$/, '');
+      const res = await fetch(`${baseUrl}/health`, {
         method: 'GET',
         headers: { 'Accept': 'application/json' },
       });
