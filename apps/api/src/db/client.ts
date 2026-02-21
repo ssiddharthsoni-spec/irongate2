@@ -8,6 +8,7 @@ dns.setDefaultResultOrder('ipv4first');
 
 const connectionString = process.env.DATABASE_URL || 'postgresql://localhost:5432/irongate';
 const isRemote = connectionString.includes('supabase') || connectionString.includes('neon');
+const isPooler = connectionString.includes('pooler.supabase.com');
 
 // Create postgres client
 const client = postgres(connectionString, {
@@ -15,6 +16,7 @@ const client = postgres(connectionString, {
   idle_timeout: 20,
   connect_timeout: 10,
   ssl: isRemote ? 'require' : false,
+  prepare: isPooler ? false : true,
 });
 
 // Create drizzle instance
