@@ -43,14 +43,26 @@ export function createDOMObserver(
     // Disconnect existing observer
     if (observer) observer.disconnect();
 
+    // Verify the element is a valid DOM node before observing
+    if (!(input instanceof Node) || !input.isConnected) {
+      console.warn('[Iron Gate] Prompt input is not a valid connected DOM node, skipping');
+      return;
+    }
+
     currentInput = input;
     observer = new MutationObserver(handleMutation);
-    observer.observe(input, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-      attributes: false,
-    });
+    try {
+      observer.observe(input, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: false,
+      });
+    } catch (err) {
+      console.warn('[Iron Gate] Failed to observe prompt input:', err);
+      currentInput = null;
+      return;
+    }
 
     // Also listen for 'input' events as a backup
     input.addEventListener('input', handleMutation);
