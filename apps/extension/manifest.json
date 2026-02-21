@@ -43,7 +43,7 @@
         "https://groq.com/*"
       ],
       "js": ["src/content/index.ts"],
-      "run_at": "document_start"
+      "run_at": "document_idle"
     }
   ],
   "side_panel": {

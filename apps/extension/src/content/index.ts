@@ -8,49 +8,68 @@ import { createSensitivityBadge } from './ui/sensitivity-badge';
  * Detects the active AI tool and starts capturing prompts.
  */
 
-const currentUrl = window.location.href;
-const detector = detectAITool(currentUrl);
+let detector: ReturnType<typeof detectAITool> = null;
+let engine: ReturnType<typeof createCaptureEngine> | null = null;
+let badge: ReturnType<typeof createSensitivityBadge> | null = null;
 
-if (detector) {
-  console.log(`[Iron Gate] Detected AI tool: ${detector.name}`);
-
-  // Initialize the capture engine for this AI tool
-  const engine = createCaptureEngine(detector);
-  engine.start();
-
-  // Initialize the sensitivity badge when an AI tool is detected
-  const badge = createSensitivityBadge();
-
-  // Listen for messages from the service worker
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+// Register message listener IMMEDIATELY so sidepanel can always reach us
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  try {
     switch (message.type) {
       case 'GET_STATUS':
         sendResponse({
-          active: true,
-          aiTool: detector.id,
-          aiToolName: detector.name,
+          active: !!detector,
+          aiTool: detector?.id || null,
+          aiToolName: detector?.name || null,
         });
         break;
       case 'CONFIG_UPDATE':
-        engine.updateConfig(message.payload);
+        engine?.updateConfig(message.payload);
         sendResponse({ ok: true });
         break;
       case 'SENSITIVITY_SCORE':
-        // Update the sensitivity badge with the latest score
-        badge.update(message.payload.score, message.payload.level);
+        badge?.update(message.payload.score, message.payload.level);
         sendResponse({ ok: true });
         break;
       case 'MODE_CHANGED':
-        // Switch between audit and proxy mode
-        engine.updateConfig({ mode: message.payload.mode });
+        engine?.updateConfig({ mode: message.payload.mode });
         console.log(`[Iron Gate] Mode switched to: ${message.payload.mode}`);
         sendResponse({ ok: true });
         break;
       default:
         sendResponse({ ok: false, error: 'Unknown message type' });
     }
-    return true; // Keep message channel open for async response
-  });
+  } catch (err) {
+    console.warn('[Iron Gate] Message handler error:', err);
+    sendResponse({ ok: false, error: String(err) });
+  }
+  return true;
+});
+
+// Initialize detection (may run before DOM is ready, that's OK)
+function initialize() {
+  try {
+    const currentUrl = window.location.href;
+    detector = detectAITool(currentUrl);
+
+    if (detector) {
+      console.log(`[Iron Gate] Detected AI tool: ${detector.name} on ${currentUrl}`);
+
+      engine = createCaptureEngine(detector);
+      engine.start();
+
+      badge = createSensitivityBadge();
+    } else {
+      console.log(`[Iron Gate] No AI tool detected on: ${currentUrl}`);
+    }
+  } catch (err) {
+    console.error('[Iron Gate] Initialization error:', err);
+  }
+}
+
+// Run initialization when DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initialize);
 } else {
-  console.log('[Iron Gate] No AI tool detected on this page');
+  initialize();
 }
