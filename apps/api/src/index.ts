@@ -86,6 +86,15 @@ app.get('/health', async (c) => {
   return c.json(health);
 });
 
+// Mirror health check under /v1 so extension connect works without auth
+app.get('/v1/health', async (c) => {
+  return c.json({
+    status: 'ok',
+    version: '0.2.0',
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // Auth routes (self-authenticated — must be mounted before the global auth middleware)
 app.route('/v1/auth', authRoutes);
 
