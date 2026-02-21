@@ -109,9 +109,9 @@ function scoreColor(score: number): string {
 }
 
 function scoreBg(score: number): string {
-  if (score >= 80) return 'bg-green-50 border-green-200';
-  if (score >= 60) return 'bg-yellow-50 border-yellow-200';
-  return 'bg-red-50 border-red-200';
+  if (score >= 80) return 'bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800';
+  if (score >= 60) return 'bg-yellow-50 border-yellow-200 dark:bg-yellow-900/20 dark:border-yellow-800';
+  return 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800';
 }
 
 function gaugeStrokeColor(score: number): string {
@@ -173,7 +173,7 @@ function CircularGauge({ score }: { score: number }) {
       {/* Center label — positioned over the SVG */}
       <div className="flex flex-col items-center -mt-[156px] mb-[72px]">
         <span className={`text-5xl font-bold ${scoreColor(score)}`}>{score}</span>
-        <span className="text-sm text-gray-500 mt-1">{scoreLabel(score)}</span>
+        <span className="text-sm text-gray-500 dark:text-gray-400 mt-1">{scoreLabel(score)}</span>
       </div>
     </div>
   );
@@ -189,8 +189,8 @@ function DimensionCard({ dimension }: { dimension: Dimension }) {
   return (
     <div className={`rounded-xl p-5 border ${scoreBg(dimension.score)}`}>
       <div className="flex items-start justify-between mb-3">
-        <h3 className="text-sm font-semibold text-gray-900">{dimension.name}</h3>
-        <span className="text-xs font-medium text-gray-500 bg-white/70 rounded-full px-2 py-0.5">
+        <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{dimension.name}</h3>
+        <span className="text-xs font-medium text-gray-500 dark:text-gray-400 bg-white/70 dark:bg-black/20 rounded-full px-2 py-0.5">
           {dimension.weight}% weight
         </span>
       </div>
@@ -200,7 +200,7 @@ function DimensionCard({ dimension }: { dimension: Dimension }) {
       </div>
 
       {/* Progress bar */}
-      <div className="w-full h-2 bg-white/60 rounded-full mb-3 overflow-hidden">
+      <div className="w-full h-2 bg-white/60 dark:bg-white/10 rounded-full mb-3 overflow-hidden">
         <div
           className="h-full rounded-full transition-all duration-700"
           style={{
@@ -210,7 +210,7 @@ function DimensionCard({ dimension }: { dimension: Dimension }) {
         />
       </div>
 
-      <p className="text-xs text-gray-600 leading-relaxed">{dimension.description}</p>
+      <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">{dimension.description}</p>
     </div>
   );
 }
@@ -254,16 +254,16 @@ export default function TrustScorePage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Trust Score</h1>
-          <p className="text-sm text-gray-500">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Trust Score</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
             Composite governance health across 5 dimensions
             {!isLive && (
-              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
+              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
                 Demo Data
               </span>
             )}
             {syncing && (
-              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
                 Syncing...
               </span>
             )}
@@ -279,17 +279,17 @@ export default function TrustScorePage() {
       </div>
 
       {/* Composite Score Gauge */}
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200 mb-6 flex flex-col items-center">
-        <h2 className="text-lg font-semibold text-gray-900 mb-6">Composite Trust Score</h2>
+      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700 mb-6 flex flex-col items-center">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-6">Composite Trust Score</h2>
         <CircularGauge score={score.overall} />
-        <p className="text-xs text-gray-400 mt-2" suppressHydrationWarning>
+        <p className="text-xs text-gray-400 dark:text-gray-500 mt-2" suppressHydrationWarning>
           Computed {new Date(score.computedAt).toLocaleString()}
         </p>
       </div>
 
       {/* Dimension Cards */}
       <div className="mb-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Score Dimensions</h2>
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Score Dimensions</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {score.dimensions.map((dim) => (
             <DimensionCard key={dim.name} dimension={dim} />
@@ -298,35 +298,35 @@ export default function TrustScorePage() {
       </div>
 
       {/* 30-Day Trend */}
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">30-Day Trend</h2>
+      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">30-Day Trend</h2>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
-              <tr className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <tr className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                 <th className="pb-3 pr-4">Date</th>
                 <th className="pb-3 pr-4">Events</th>
                 <th className="pb-3 pr-4">Avg Score</th>
                 <th className="pb-3">Compliance Rate</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
               {history.map((entry) => (
-                <tr key={entry.date} className="hover:bg-gray-50">
-                  <td className="py-2.5 pr-4 text-sm text-gray-900 font-medium">
+                <tr key={entry.date} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                  <td className="py-2.5 pr-4 text-sm text-gray-900 dark:text-white font-medium">
                     {entry.date}
                   </td>
-                  <td className="py-2.5 pr-4 text-sm text-gray-600">
+                  <td className="py-2.5 pr-4 text-sm text-gray-600 dark:text-gray-400">
                     {entry.totalEvents.toLocaleString()}
                   </td>
                   <td className="py-2.5 pr-4 text-sm">
                     <span
                       className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
                         entry.avgScore >= 80
-                          ? 'bg-green-100 text-green-700'
+                          ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
                           : entry.avgScore >= 60
-                          ? 'bg-yellow-100 text-yellow-700'
-                          : 'bg-red-100 text-red-700'
+                          ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300'
+                          : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
                       }`}
                     >
                       {entry.avgScore}
@@ -334,13 +334,13 @@ export default function TrustScorePage() {
                   </td>
                   <td className="py-2.5 text-sm">
                     <div className="flex items-center gap-2">
-                      <div className="w-20 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                      <div className="w-20 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
                         <div
                           className="h-full rounded-full bg-green-500"
                           style={{ width: `${Math.min(entry.complianceRate, 100)}%` }}
                         />
                       </div>
-                      <span className="text-gray-700 text-xs font-medium">
+                      <span className="text-gray-700 dark:text-gray-300 text-xs font-medium">
                         {entry.complianceRate}%
                       </span>
                     </div>

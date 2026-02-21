@@ -89,16 +89,16 @@ export default function DashboardPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">{firmName || 'Your Organization'}</h1>
-          <p className="text-sm text-gray-500">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{firmName || 'Your Organization'}</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
             Iron Gate — Shadow AI Governance Dashboard
             {!isLive && (
-              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
+              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
                 Demo Data
               </span>
             )}
             {syncing && (
-              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
                 Syncing...
               </span>
             )}
@@ -112,7 +112,7 @@ export default function DashboardPage() {
               className={`px-3 py-1.5 text-sm rounded-lg ${
                 timeRange === days
                   ? 'bg-iron-600 text-white'
-                  : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
+                  : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-700 dark:hover:bg-gray-700'
               }`}
             >
               {days}d
@@ -133,15 +133,15 @@ export default function DashboardPage() {
 
       {/* Charts Row 1 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Sensitivity Distribution</h2>
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Sensitivity Distribution</h2>
           <div style={{ width: '100%', height: 300 }}>
             <SensitivityDistributionChart data={distributionData} />
           </div>
         </div>
 
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">AI Tool Usage</h2>
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">AI Tool Usage</h2>
           <div style={{ width: '100%', height: 300 }}>
             <ToolBreakdownChart data={data.toolBreakdown} />
           </div>
@@ -149,8 +149,8 @@ export default function DashboardPage() {
       </div>
 
       {/* Charts Row 2 */}
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200 mb-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Daily Trend</h2>
+      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700 mb-6">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Daily Trend</h2>
         <div style={{ width: '100%', height: 300 }}>
           <DailyTrendChart data={data.dailyTrend} />
         </div>
@@ -159,22 +159,22 @@ export default function DashboardPage() {
       {/* Tables Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Top Users */}
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Top Users</h2>
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Top Users</h2>
           <table className="w-full">
             <thead>
-              <tr className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <tr className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                 <th className="pb-3">User</th>
                 <th className="pb-3">Prompts</th>
                 <th className="pb-3">Avg Score</th>
                 <th className="pb-3">High Risk</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
               {data.topUsers.map((user) => (
                 <tr key={user.userId}>
-                  <td className="py-2 text-sm text-gray-900">{user.displayName}</td>
-                  <td className="py-2 text-sm text-gray-600">{user.promptCount}</td>
+                  <td className="py-2 text-sm text-gray-900 dark:text-white">{user.displayName}</td>
+                  <td className="py-2 text-sm text-gray-600 dark:text-gray-400">{user.promptCount}</td>
                   <td className="py-2 text-sm">
                     <span className={user.avgScore > 60 ? 'text-risk-high font-medium' : user.avgScore > 25 ? 'text-risk-medium' : 'text-risk-low'}>
                       {user.avgScore}
@@ -188,17 +188,17 @@ export default function DashboardPage() {
         </div>
 
         {/* Recent High Risk */}
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Recent High Risk Events</h2>
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Recent High Risk Events</h2>
           <div className="space-y-3 max-h-96 overflow-y-auto">
             {data.recentHighRisk.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-8">No high risk events</p>
+              <p className="text-sm text-gray-400 dark:text-gray-500 text-center py-8">No high risk events</p>
             ) : (
               data.recentHighRisk.slice(0, 10).map((event: any) => (
-                <div key={event.id} className="flex items-center justify-between p-3 bg-red-50 rounded-lg">
+                <div key={event.id} className="flex items-center justify-between p-3 bg-red-50 dark:bg-red-900/20 rounded-lg">
                   <div>
-                    <span className="text-sm font-medium text-gray-900">{event.aiToolId}</span>
-                    <span className="text-xs text-gray-500 ml-2" suppressHydrationWarning>
+                    <span className="text-sm font-medium text-gray-900 dark:text-white">{event.aiToolId}</span>
+                    <span className="text-xs text-gray-500 dark:text-gray-400 ml-2" suppressHydrationWarning>
                       {new Date(event.createdAt).toLocaleString()}
                     </span>
                   </div>
@@ -215,8 +215,8 @@ export default function DashboardPage() {
 
 function ChartPlaceholder() {
   return (
-    <div className="flex items-center justify-center h-[300px] bg-gray-50 rounded-lg animate-pulse">
-      <span className="text-sm text-gray-400">Loading chart...</span>
+    <div className="flex items-center justify-center h-[300px] bg-gray-50 dark:bg-gray-700/50 rounded-lg animate-pulse">
+      <span className="text-sm text-gray-400 dark:text-gray-500">Loading chart...</span>
     </div>
   );
 }
@@ -233,10 +233,10 @@ function SummaryCard({
   color?: string;
 }) {
   return (
-    <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-      <p className="text-sm font-medium text-gray-500">{title}</p>
+    <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
+      <p className="text-sm font-medium text-gray-500 dark:text-gray-400">{title}</p>
       <p className={`text-3xl font-bold mt-1 ${color}`}>{value}</p>
-      {subtitle && <p className="text-xs text-gray-400 mt-1">{subtitle}</p>}
+      {subtitle && <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{subtitle}</p>}
     </div>
   );
 }

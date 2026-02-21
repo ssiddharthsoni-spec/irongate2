@@ -218,11 +218,11 @@ export default function AuditPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Cryptographic Audit Chain</h1>
-          <p className="text-sm text-gray-500 mt-1">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Cryptographic Audit Chain</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
             Tamper-proof event log with hash-linked integrity verification
             {!isLive && (
-              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
+              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
                 Demo Data
               </span>
             )}
@@ -234,8 +234,8 @@ export default function AuditPage() {
       <div
         className={`rounded-xl p-5 mb-6 border ${
           status.isValid
-            ? 'bg-green-50 border-green-200'
-            : 'bg-red-50 border-red-200'
+            ? 'bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800'
+            : 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800'
         }`}
       >
         <div className="flex items-center gap-3">
@@ -249,10 +249,10 @@ export default function AuditPage() {
             </svg>
           )}
           <div>
-            <h2 className={`text-lg font-semibold ${status.isValid ? 'text-green-800' : 'text-red-800'}`}>
+            <h2 className={`text-lg font-semibold ${status.isValid ? 'text-green-800 dark:text-green-300' : 'text-red-800 dark:text-red-300'}`}>
               {status.isValid ? 'Chain Integrity Verified' : 'Chain Integrity Broken'}
             </h2>
-            <p className={`text-sm mt-0.5 ${status.isValid ? 'text-green-700' : 'text-red-700'}`}>
+            <p className={`text-sm mt-0.5 ${status.isValid ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
               {status.isValid
                 ? 'All events are cryptographically linked and unmodified.'
                 : 'The audit chain has been tampered with or contains inconsistencies.'}
@@ -263,42 +263,42 @@ export default function AuditPage() {
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-          <p className="text-sm font-medium text-gray-500">Chain Length</p>
-          <p className="text-3xl font-bold text-gray-900 mt-1">
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
+          <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Chain Length</p>
+          <p className="text-3xl font-bold text-gray-900 dark:text-white mt-1">
             {statusLoading ? '--' : status.chainLength.toLocaleString()}
           </p>
-          <p className="text-xs text-gray-400 mt-1">total events recorded</p>
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">total events recorded</p>
         </div>
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-          <p className="text-sm font-medium text-gray-500">Last Position</p>
-          <p className="text-3xl font-bold text-gray-900 mt-1">
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
+          <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Last Position</p>
+          <p className="text-3xl font-bold text-gray-900 dark:text-white mt-1">
             {statusLoading ? '--' : status.lastPosition.toLocaleString()}
           </p>
-          <p className="text-xs text-gray-400 mt-1">most recent chain index</p>
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">most recent chain index</p>
         </div>
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-          <p className="text-sm font-medium text-gray-500">Last Hash</p>
-          <p className="text-lg font-mono font-bold text-gray-900 mt-1 break-all">
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
+          <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Last Hash</p>
+          <p className="text-lg font-mono font-bold text-gray-900 dark:text-white mt-1 break-all">
             {statusLoading ? '--' : truncateHash(status.lastHash, 20)}
           </p>
-          <p className="text-xs text-gray-400 mt-1">SHA-256 head of chain</p>
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">SHA-256 head of chain</p>
         </div>
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-          <p className="text-sm font-medium text-gray-500">Status</p>
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
+          <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Status</p>
           <p className={`text-3xl font-bold mt-1 ${status.isValid ? 'text-green-600' : 'text-red-600'}`}>
             {statusLoading ? '--' : status.isValid ? 'Valid' : 'Broken'}
           </p>
-          <p className="text-xs text-gray-400 mt-1">chain integrity</p>
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">chain integrity</p>
         </div>
       </div>
 
       {/* Verify Section */}
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200 mb-6">
+      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700 mb-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">Chain Verification</h2>
-            <p className="text-sm text-gray-500 mt-1">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Chain Verification</h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
               Run a full cryptographic verification of the entire audit chain.
             </p>
           </div>
@@ -307,7 +307,7 @@ export default function AuditPage() {
             disabled={verifying}
             className={`px-5 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
               verifying
-                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                ? 'bg-gray-100 text-gray-400 cursor-not-allowed dark:bg-gray-700 dark:text-gray-500'
                 : 'bg-iron-600 text-white hover:bg-iron-700'
             }`}
           >
@@ -326,8 +326,8 @@ export default function AuditPage() {
           <div
             className={`mt-4 p-4 rounded-lg border ${
               verifyResult.valid
-                ? 'bg-green-50 border-green-200'
-                : 'bg-red-50 border-red-200'
+                ? 'bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800'
+                : 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800'
             }`}
           >
             <div className="flex items-center gap-2">
@@ -340,7 +340,7 @@ export default function AuditPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               )}
-              <span className={`text-sm font-medium ${verifyResult.valid ? 'text-green-800' : 'text-red-800'}`}>
+              <span className={`text-sm font-medium ${verifyResult.valid ? 'text-green-800 dark:text-green-300' : 'text-red-800 dark:text-red-300'}`}>
                 {verifyResult.valid
                   ? `Verification passed -- all ${verifyResult.totalEvents.toLocaleString()} events are intact.`
                   : `Verification failed -- chain broken at position ${verifyResult.brokenAt?.toLocaleString() ?? 'unknown'} (${verifyResult.totalEvents.toLocaleString()} events checked).`}
@@ -351,17 +351,17 @@ export default function AuditPage() {
 
         {/* Verify error */}
         {verifyError && (
-          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-sm text-red-700">{verifyError}</p>
+          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg dark:bg-red-900/20 dark:border-red-800">
+            <p className="text-sm text-red-700 dark:text-red-400">{verifyError}</p>
           </div>
         )}
       </div>
 
       {/* Chain Events Table */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900">Audit Chain Events</h2>
-          <p className="text-sm text-gray-500 mt-0.5">
+      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Audit Chain Events</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
             {chain.total.toLocaleString()} total entries
           </p>
         </div>
@@ -369,7 +369,7 @@ export default function AuditPage() {
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
-              <tr className="bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <tr className="bg-gray-50 dark:bg-gray-800/50 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                 <th className="px-6 py-3">Position</th>
                 <th className="px-6 py-3">Event Hash</th>
                 <th className="px-6 py-3">Previous Hash</th>
@@ -378,12 +378,12 @@ export default function AuditPage() {
                 <th className="px-6 py-3">Created At</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
               {chainLoading ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-gray-400">
+                  <td colSpan={6} className="px-6 py-12 text-center text-gray-400 dark:text-gray-500">
                     <div className="flex items-center justify-center gap-2">
-                      <svg className="animate-spin h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <svg className="animate-spin h-5 w-5 text-gray-400 dark:text-gray-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                       </svg>
@@ -393,24 +393,24 @@ export default function AuditPage() {
                 </tr>
               ) : chain.entries.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-gray-400">
+                  <td colSpan={6} className="px-6 py-12 text-center text-gray-400 dark:text-gray-500">
                     No audit entries found
                   </td>
                 </tr>
               ) : (
                 chain.entries.map((entry) => (
-                  <tr key={entry.chainPosition} className="hover:bg-gray-50">
-                    <td className="px-6 py-3 text-sm font-medium text-gray-900">
+                  <tr key={entry.chainPosition} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                    <td className="px-6 py-3 text-sm font-medium text-gray-900 dark:text-white">
                       #{entry.chainPosition.toLocaleString()}
                     </td>
-                    <td className="px-6 py-3 text-sm font-mono text-gray-600" title={entry.eventHash}>
+                    <td className="px-6 py-3 text-sm font-mono text-gray-600 dark:text-gray-400" title={entry.eventHash}>
                       {truncateHash(entry.eventHash, 12)}
                     </td>
-                    <td className="px-6 py-3 text-sm font-mono text-gray-400" title={entry.previousHash}>
+                    <td className="px-6 py-3 text-sm font-mono text-gray-400 dark:text-gray-500" title={entry.previousHash}>
                       {truncateHash(entry.previousHash, 12)}
                     </td>
-                    <td className="px-6 py-3 text-sm text-gray-900">
-                      <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                    <td className="px-6 py-3 text-sm text-gray-900 dark:text-white">
+                      <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">
                         {formatAction(entry.action)}
                       </span>
                     </td>
@@ -418,18 +418,18 @@ export default function AuditPage() {
                       <span
                         className={`inline-flex px-2.5 py-0.5 rounded-full text-sm font-bold ${
                           entry.sensitivityScore > 85
-                            ? 'text-red-700 bg-red-50'
+                            ? 'text-red-700 bg-red-50 dark:text-red-300 dark:bg-red-900/20'
                             : entry.sensitivityScore > 60
-                            ? 'text-orange-700 bg-orange-50'
+                            ? 'text-orange-700 bg-orange-50 dark:text-orange-300 dark:bg-orange-900/20'
                             : entry.sensitivityScore > 25
-                            ? 'text-yellow-700 bg-yellow-50'
-                            : 'text-green-700 bg-green-50'
+                            ? 'text-yellow-700 bg-yellow-50 dark:text-yellow-300 dark:bg-yellow-900/20'
+                            : 'text-green-700 bg-green-50 dark:text-green-300 dark:bg-green-900/20'
                         }`}
                       >
                         {Math.round(entry.sensitivityScore)}
                       </span>
                     </td>
-                    <td className="px-6 py-3 text-sm text-gray-600" suppressHydrationWarning>
+                    <td className="px-6 py-3 text-sm text-gray-600 dark:text-gray-400" suppressHydrationWarning>
                       {new Date(entry.createdAt).toLocaleString()}
                     </td>
                   </tr>
@@ -440,7 +440,7 @@ export default function AuditPage() {
         </div>
 
         {/* Pagination */}
-        <div className="px-6 py-3 border-t border-gray-200 flex items-center justify-between">
+        <div className="px-6 py-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
           <button
             onClick={() =>
               setPagination((p) => ({
@@ -449,11 +449,11 @@ export default function AuditPage() {
               }))
             }
             disabled={pagination.offset === 0}
-            className="px-3 py-1.5 text-sm rounded border disabled:opacity-50 hover:bg-gray-50 transition-colors"
+            className="px-3 py-1.5 text-sm rounded border dark:border-gray-700 disabled:opacity-50 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
           >
             Previous
           </button>
-          <span className="text-sm text-gray-500">
+          <span className="text-sm text-gray-500 dark:text-gray-400">
             Page {currentPage} of {totalPages} ({chain.total.toLocaleString()} entries)
           </span>
           <button
@@ -464,7 +464,7 @@ export default function AuditPage() {
               }))
             }
             disabled={pagination.offset + pagination.limit >= chain.total}
-            className="px-3 py-1.5 text-sm rounded border disabled:opacity-50 hover:bg-gray-50 transition-colors"
+            className="px-3 py-1.5 text-sm rounded border dark:border-gray-700 disabled:opacity-50 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
           >
             Next
           </button>

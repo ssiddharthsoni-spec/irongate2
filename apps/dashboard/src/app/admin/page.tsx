@@ -151,11 +151,11 @@ export default function AdminPage() {
   if (loading) {
     return (
       <div className="max-w-3xl">
-        <h1 className="text-2xl font-bold text-gray-900 mb-8">Admin Settings</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-8">Admin Settings</h1>
         <div className="flex items-center justify-center py-16">
           <div className="flex items-center gap-3">
             <div className="w-6 h-6 border-2 border-iron-200 border-t-iron-600 rounded-full animate-spin" />
-            <span className="text-sm text-gray-500">Loading configuration...</span>
+            <span className="text-sm text-gray-500 dark:text-gray-400">Loading configuration...</span>
           </div>
         </div>
       </div>
@@ -167,39 +167,39 @@ export default function AdminPage() {
   // ---------------------------------------------------------------------------
   return (
     <div className="max-w-3xl">
-      <h1 className="text-2xl font-bold text-gray-900 mb-8">Admin Settings</h1>
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-8">Admin Settings</h1>
 
       {/* Mode Selection */}
-      <div className="bg-white rounded-xl p-6 shadow-sm border mb-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Operation Mode</h2>
+      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border dark:border-gray-700 mb-6">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Operation Mode</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <button
             onClick={() => setMode('audit')}
             className={`p-4 rounded-lg border-2 text-left ${
-              mode === 'audit' ? 'border-iron-500 bg-iron-50' : 'border-gray-200'
+              mode === 'audit' ? 'border-iron-500 bg-iron-50 dark:bg-iron-900/20' : 'border-gray-200 dark:border-gray-700'
             }`}
           >
-            <p className="font-medium">Audit Mode</p>
-            <p className="text-sm text-gray-500 mt-1">Monitor only. No interference with AI tool usage.</p>
+            <p className="font-medium dark:text-white">Audit Mode</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Monitor only. No interference with AI tool usage.</p>
           </button>
           <button
             onClick={() => setMode('proxy')}
             className={`p-4 rounded-lg border-2 text-left ${
-              mode === 'proxy' ? 'border-iron-500 bg-iron-50' : 'border-gray-200'
+              mode === 'proxy' ? 'border-iron-500 bg-iron-50 dark:bg-iron-900/20' : 'border-gray-200 dark:border-gray-700'
             }`}
           >
-            <p className="font-medium">Proxy Mode</p>
-            <p className="text-sm text-gray-500 mt-1">Intercept and protect sensitive prompts automatically.</p>
+            <p className="font-medium dark:text-white">Proxy Mode</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Intercept and protect sensitive prompts automatically.</p>
           </button>
         </div>
       </div>
 
       {/* Thresholds */}
-      <div className="bg-white rounded-xl p-6 shadow-sm border mb-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Sensitivity Thresholds</h2>
+      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border dark:border-gray-700 mb-6">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Sensitivity Thresholds</h2>
         <div className="space-y-4">
           <div>
-            <label className="text-sm font-medium text-gray-700">Warn Threshold: {thresholds.warn}</label>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Warn Threshold: {thresholds.warn}</label>
             <input
               type="range" min="0" max="100"
               value={thresholds.warn}
@@ -208,7 +208,7 @@ export default function AdminPage() {
             />
           </div>
           <div>
-            <label className="text-sm font-medium text-gray-700">Block Threshold: {thresholds.block}</label>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Block Threshold: {thresholds.block}</label>
             <input
               type="range" min="0" max="100"
               value={thresholds.block}
@@ -217,7 +217,7 @@ export default function AdminPage() {
             />
           </div>
           <div>
-            <label className="text-sm font-medium text-gray-700">Proxy Threshold: {thresholds.proxy}</label>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Proxy Threshold: {thresholds.proxy}</label>
             <input
               type="range" min="0" max="100"
               value={thresholds.proxy}
@@ -233,7 +233,7 @@ export default function AdminPage() {
             disabled={saving}
             className={`px-4 py-2 rounded-lg text-sm text-white transition-colors ${
               saving
-                ? 'bg-iron-400 cursor-not-allowed'
+                ? 'bg-iron-400 dark:bg-iron-800 cursor-not-allowed'
                 : 'bg-iron-600 hover:bg-iron-700'
             }`}
           >
@@ -260,21 +260,21 @@ export default function AdminPage() {
       </div>
 
       {/* Client/Matter Import */}
-      <div className="bg-white rounded-xl p-6 shadow-sm border">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Client/Matter Data</h2>
-        <p className="text-sm text-gray-500 mb-4">
+      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border dark:border-gray-700">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Client/Matter Data</h2>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
           Import client and matter data to enhance detection accuracy.
           Upload a CSV with columns: clientName, matterNumber, aliases, parties.
         </p>
-        <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
+        <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-8 text-center">
           {uploading ? (
             <div className="flex flex-col items-center gap-2">
               <div className="w-6 h-6 border-2 border-iron-200 border-t-iron-600 rounded-full animate-spin" />
-              <p className="text-sm text-gray-500">Uploading and processing CSV...</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Uploading and processing CSV...</p>
             </div>
           ) : (
             <>
-              <p className="text-sm text-gray-400">Drag and drop CSV file here, or click to browse</p>
+              <p className="text-sm text-gray-400 dark:text-gray-500">Drag and drop CSV file here, or click to browse</p>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -284,7 +284,7 @@ export default function AdminPage() {
               />
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="mt-3 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm hover:bg-gray-200"
+                className="mt-3 px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-sm hover:bg-gray-200 dark:hover:bg-gray-600"
               >
                 Browse Files
               </button>
@@ -296,8 +296,8 @@ export default function AdminPage() {
           <div
             className={`mt-4 p-3 rounded-lg text-sm font-medium ${
               uploadMessage.type === 'success'
-                ? 'bg-green-50 text-green-700 border border-green-200'
-                : 'bg-red-50 text-red-700 border border-red-200'
+                ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800'
+                : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800'
             }`}
           >
             {uploadMessage.text}
