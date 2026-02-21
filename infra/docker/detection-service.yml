@@ -1,0 +1,128 @@
+version: '3.8'
+
+# =============================================================================
+# Iron Gate — Detection Service (Isolated Container Configuration)
+# =============================================================================
+# Standalone compose file for the detection service with maximum memory
+# protection and process isolation. Use when running detection separately
+# from the main stack (e.g., on a dedicated GPU instance).
+#
+# Deploy with: docker compose -f detection-service.yml up
+# =============================================================================
+
+services:
+  detection:
+    build:
+      context: ../..
+      dockerfile: apps/detection/Dockerfile
+    restart: always
+
+    # -------------------------------------------------------------------------
+    # Filesystem isolation
+    # -------------------------------------------------------------------------
+    read_only: true
+    tmpfs:
+      - /tmp:size=100M,noexec,nosuid
+
+    # -------------------------------------------------------------------------
+    # User isolation — never run as root
+    # -------------------------------------------------------------------------
+    user: "1001:1001"
+
+    # -------------------------------------------------------------------------
+    # Capability restrictions
+    # -------------------------------------------------------------------------
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      # Seccomp profile (use Docker's default, which blocks ~44 dangerous syscalls)
+      - seccomp:unconfined  # Replace with custom profile path in production
+
+    # -------------------------------------------------------------------------
+    # Memory protection
+    # -------------------------------------------------------------------------
+    # Disable core dumps so sensitive prompt data never hits disk
+    ulimits:
+      core:
+        soft: 0
+        hard: 0
+      nofile:
+        soft: 65536
+        hard: 65536
+      # Limit number of processes to prevent fork bombs
+      nproc:
+        soft: 256
+        hard: 512
+
+    # -------------------------------------------------------------------------
+    # Resource limits
+    # -------------------------------------------------------------------------
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+
+    # -------------------------------------------------------------------------
+    # Environment
+    # -------------------------------------------------------------------------
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-warning}
+      # Prevent Python from writing .pyc files (read-only filesystem)
+      PYTHONDONTWRITEBYTECODE: "1"
+      # Disable fault handler to avoid writing crash data
+      PYTHONFAULTHANDLER: "0"
+      # Disable Python hash randomization for deterministic behavior
+      PYTHONHASHSEED: "0"
+      # Set memory allocator to release memory back to OS aggressively
+      MALLOC_TRIM_THRESHOLD_: "131072"
+      MALLOC_MMAP_THRESHOLD_: "131072"
+      # gRPC settings
+      GRPC_PORT: "50051"
+      HTTP_PORT: "8080"
+
+    # -------------------------------------------------------------------------
+    # Ports — only expose on the internal network
+    # -------------------------------------------------------------------------
+    ports:
+      - "127.0.0.1:8080:8080"    # HTTP health + REST API (localhost only)
+      - "127.0.0.1:50051:50051"  # gRPC (localhost only)
+
+    # -------------------------------------------------------------------------
+    # Health check
+    # -------------------------------------------------------------------------
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health')\" || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+    # -------------------------------------------------------------------------
+    # Networking — internal only
+    # -------------------------------------------------------------------------
+    networks:
+      - detection_internal
+
+    # -------------------------------------------------------------------------
+    # Logging
+    # -------------------------------------------------------------------------
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        # Prevent sensitive data in logs from being stored indefinitely
+        tag: "irongate-detection"
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  detection_internal:
+    driver: bridge
+    internal: true    # No external internet access

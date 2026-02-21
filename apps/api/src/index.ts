@@ -11,9 +11,12 @@ import { proxyRoutes } from './routes/proxy';
 import { documentRoutes } from './routes/documents';
 import { auditRoutes } from './routes/audit';
 import { authRoutes } from './routes/auth';
+import { securityRoutes } from './routes/security';
 import { authMiddleware } from './middleware/auth';
 import { rateLimitMiddleware } from './middleware/rate-limit';
 import { firmContextMiddleware } from './middleware/firm-context';
+import { securityHeadersMiddleware } from './middleware/security-headers';
+import { requestLoggerMiddleware } from './middleware/request-logger';
 import type { AppEnv } from './types';
 
 const app = new Hono<AppEnv>();
@@ -30,6 +33,8 @@ if (process.env.CHROME_EXTENSION_ID) {
 
 // Global middleware
 app.use('*', logger());
+app.use('*', securityHeadersMiddleware);
+app.use('*', requestLoggerMiddleware);
 app.use(
   '*',
   cors({
@@ -42,7 +47,7 @@ app.use(
       return allowedOrigins.includes(origin) ? origin : null;
     },
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization', 'X-Firm-ID'],
+    allowHeaders: ['Content-Type', 'Authorization', 'X-Firm-ID', 'X-Admin-Key-1', 'X-Admin-Key-2', 'X-Admin-Justification'],
   })
 );
 
@@ -87,6 +92,7 @@ app.route('/v1/feedback', feedbackRoutes);
 app.route('/v1/proxy', proxyRoutes);
 app.route('/v1/documents', documentRoutes);
 app.route('/v1/audit', auditRoutes);
+app.route('/v1/security', securityRoutes);
 
 // 404 handler
 app.notFound((c) => c.json({ error: 'Not found' }, 404));

@@ -1,0 +1,287 @@
+version: '3.8'
+
+# =============================================================================
+# Iron Gate — Production Docker Compose (Security-Hardened)
+# =============================================================================
+# This file layers production security settings on top of the base compose.
+# Deploy with: docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+#
+# Security measures applied:
+#   - read_only root filesystem on all app containers
+#   - Non-root users (UID 1001)
+#   - cap_drop: ALL (no Linux capabilities)
+#   - no-new-privileges security option
+#   - Resource limits (CPU + memory)
+#   - Health checks on every service
+#   - Detection service on internal-only network
+#   - Core dumps disabled on detection service
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL — hardened
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    read_only: true
+    user: "999:999"   # default postgres user in alpine image
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-irongate}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - /tmp   # postgres needs a writable /tmp for sockets
+    tmpfs:
+      - /run/postgresql:size=10M
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-irongate}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - backend
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ---------------------------------------------------------------------------
+  # Redis — hardened
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: always
+    read_only: true
+    user: "999:999"
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --rename-command FLUSHALL ""
+      --rename-command FLUSHDB ""
+      --rename-command DEBUG ""
+      --rename-command CONFIG ""
+      --save ""
+      --appendonly no
+    volumes:
+      - redis_data:/data
+    tmpfs:
+      - /tmp:size=10M
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 768M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  # ---------------------------------------------------------------------------
+  # Iron Gate API — hardened
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+    restart: always
+    read_only: true
+    user: "1001:1001"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
+      JWT_SIGNING_KEY: ${JWT_SIGNING_KEY}
+      DETECTION_SERVICE_URL: http://detection:8080
+      DASHBOARD_URL: ${DASHBOARD_URL}
+      CHROME_EXTENSION_ID: ${CHROME_EXTENSION_ID}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      SECRETS_MANAGER_NAME: ${SECRETS_MANAGER_NAME:-irongate/production}
+    tmpfs:
+      - /tmp:size=50M
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+      replicas: 2
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - frontend
+      - backend
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ---------------------------------------------------------------------------
+  # Iron Gate Detection Service — hardened + isolated
+  # ---------------------------------------------------------------------------
+  detection:
+    build:
+      context: ../..
+      dockerfile: apps/detection/Dockerfile
+    restart: always
+    read_only: true
+    user: "1001:1001"
+    environment:
+      LOG_LEVEL: warning
+      PYTHONDONTWRITEBYTECODE: "1"
+      # Disable core dumps for memory protection
+      PYTHONFAULTHANDLER: "0"
+    tmpfs:
+      - /tmp:size=100M
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Disable core dumps at the container level
+    ulimits:
+      core:
+        soft: 0
+        hard: 0
+      nofile:
+        soft: 65536
+        hard: 65536
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+      replicas: 2
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health')\" || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - backend    # Internal only — not exposed to frontend network
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ---------------------------------------------------------------------------
+  # Iron Gate Dashboard — hardened
+  # ---------------------------------------------------------------------------
+  dashboard:
+    build:
+      context: ../..
+      dockerfile: apps/dashboard/Dockerfile
+    restart: always
+    read_only: true
+    user: "1001:1001"
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL}
+    tmpfs:
+      - /tmp:size=50M
+      - /app/.next/cache:size=200M
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      - api
+    networks:
+      - frontend
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  # Frontend network: API + Dashboard (exposed to load balancer)
+  frontend:
+    driver: bridge
+
+  # Backend network: API + Detection + Postgres + Redis (internal only)
+  backend:
+    driver: bridge
+    internal: true
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
