@@ -170,17 +170,42 @@ export function App() {
   }, [lastScore]);
 
   useEffect(() => {
-    // Check current tab for AI tool
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]?.id) {
-        chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_STATUS' }, (response) => {
-          if (response?.active) {
-            setStatus('monitoring');
-            setCurrentTool(response.aiToolName);
-          }
-        });
+    // Check current tab for AI tool — with retry since content script may not be ready yet
+    function checkCurrentTab() {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]?.id) {
+          chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_STATUS' }, (response) => {
+            // Suppress errors when content script isn't available
+            if (chrome.runtime.lastError) return;
+            if (response?.active) {
+              setStatus('monitoring');
+              setCurrentTool(response.aiToolName);
+            }
+          });
+        }
+      });
+    }
+
+    // Check immediately, then retry a few times (content script may load after sidepanel)
+    checkCurrentTab();
+    const retryTimers = [
+      setTimeout(checkCurrentTab, 1000),
+      setTimeout(checkCurrentTab, 3000),
+      setTimeout(checkCurrentTab, 5000),
+    ];
+
+    // Also re-check when the active tab changes
+    const tabListener = (_tabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+      if (changeInfo.status === 'complete') {
+        setTimeout(checkCurrentTab, 500);
       }
-    });
+    };
+    chrome.tabs.onUpdated.addListener(tabListener);
+
+    const activatedListener = () => {
+      setTimeout(checkCurrentTab, 300);
+    };
+    chrome.tabs.onActivated.addListener(activatedListener);
 
     // Listen for detection results from service worker
     chrome.runtime.onMessage.addListener((message) => {
@@ -216,6 +241,12 @@ export function App() {
         ]);
       }
     });
+
+    return () => {
+      retryTimers.forEach(clearTimeout);
+      chrome.tabs.onUpdated.removeListener(tabListener);
+      chrome.tabs.onActivated.removeListener(activatedListener);
+    };
   }, []);
 
   // -- Not connected: show Connect form --
