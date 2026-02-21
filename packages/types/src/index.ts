@@ -52,7 +52,14 @@ export type EntityType =
   | 'PRIVATE_KEY'
   | 'AWS_CREDENTIAL'
   | 'GCP_CREDENTIAL'
-  | 'AZURE_CREDENTIAL';
+  | 'AZURE_CREDENTIAL'
+  // Industry-specific entity types
+  | 'FINANCIAL_INSTRUMENT'
+  | 'TRADE_SECRET'
+  | 'LITIGATION_STRATEGY'
+  | 'PROPRIETARY_FORMULA'
+  | 'MNPI'
+  | 'CLINICAL_DATA';
 
 export interface DetectedEntity {
   type: EntityType;
@@ -225,6 +232,12 @@ export interface ProxyAnalysis {
 }
 
 export type LLMRoute = 'passthrough' | 'cloud_masked' | 'private_llm';
+
+export type RouteDecision = LLMRoute;
+
+export type FirmMode = 'monitor' | 'protect' | 'enforce';
+
+export type CaptureMethod = 'dom' | 'fetch' | 'submit' | 'dom_observer' | 'fetch_intercept' | 'submit_handler';
 
 export interface LLMProviderConfig {
   provider: 'openai' | 'anthropic' | 'ollama' | 'azure';

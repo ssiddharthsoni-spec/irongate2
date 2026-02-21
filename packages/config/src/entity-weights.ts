@@ -24,6 +24,21 @@ export const ENTITY_WEIGHTS: Record<EntityType, number> = {
   PRIVILEGE_MARKER: 30,
   DEAL_CODENAME: 20,
   OPPOSING_COUNSEL: 15,
+  // Secret/credential types
+  API_KEY: 50,
+  DATABASE_URI: 50,
+  AUTH_TOKEN: 45,
+  PRIVATE_KEY: 50,
+  AWS_CREDENTIAL: 50,
+  GCP_CREDENTIAL: 45,
+  AZURE_CREDENTIAL: 45,
+  // Industry-specific entity types
+  FINANCIAL_INSTRUMENT: 30,
+  TRADE_SECRET: 50,
+  LITIGATION_STRATEGY: 45,
+  PROPRIETARY_FORMULA: 50,
+  MNPI: 50,
+  CLINICAL_DATA: 40,
 };
 
 export const LEGAL_KEYWORDS = [

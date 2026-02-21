@@ -1,10 +1,14 @@
 """
 Detection Pipeline
-Combines Presidio + GLiNER + Custom Recognizers for comprehensive PII detection.
+Combines Presidio + GLiNER + Custom Recognizers + Secret Scanner + Plugins
+for comprehensive PII detection.
 """
 
 from typing import Optional
 import logging
+
+from .secret_scanner import SecretScanner
+from .plugin_runner import PluginRunner
 
 logger = logging.getLogger(__name__)
 
@@ -15,12 +19,16 @@ class DetectionPipeline:
     1. Microsoft Presidio (rule-based + NER)
     2. GLiNER (transformer-based NER)
     3. Custom legal recognizers
+    4. Secret scanner (credentials, API keys, tokens)
+    5. Firm-specific detection plugins
     """
 
     def __init__(self):
         self._presidio_engine = None
         self._gliner_model = None
         self._custom_recognizers = []
+        self._secret_scanner = SecretScanner()
+        self._plugin_runner = PluginRunner()
         self._initialized = False
         self._initialize()
 
@@ -110,6 +118,7 @@ class DetectionPipeline:
         entity_types: Optional[list[str]] = None,
         language: str = "en",
         score_threshold: float = 0.3,
+        plugins: Optional[list[dict]] = None,
     ) -> list[dict]:
         """
         Run detection across all engines and merge results.
@@ -179,6 +188,37 @@ class DetectionPipeline:
             except Exception as e:
                 logger.error(f"Custom recognizer error ({recognizer.__class__.__name__}): {e}")
 
+        # 4. Run secret scanner (credentials, API keys, tokens)
+        try:
+            secret_results = self._secret_scanner.detect(text)
+            for secret in secret_results:
+                all_entities.append({
+                    "type": secret.type,
+                    "text": secret.text,
+                    "start": secret.start,
+                    "end": secret.end,
+                    "confidence": secret.confidence,
+                    "source": "secret_scanner",
+                })
+        except Exception as e:
+            logger.error(f"Secret scanner error: {e}")
+
+        # 5. Run firm-specific plugins
+        if plugins:
+            try:
+                plugin_results = self._plugin_runner.run_plugins(text, plugins)
+                for result in plugin_results:
+                    all_entities.append({
+                        "type": result.type,
+                        "text": result.text,
+                        "start": result.start,
+                        "end": result.end,
+                        "confidence": result.confidence,
+                        "source": result.source,
+                    })
+            except Exception as e:
+                logger.error(f"Plugin runner error: {e}")
+
         # Merge overlapping entities (prefer higher confidence)
         merged = self._merge_entities(all_entities)
 
@@ -209,6 +249,10 @@ class DetectionPipeline:
             engines.append("gliner")
         if self._custom_recognizers:
             engines.append("custom")
+        if self._secret_scanner:
+            engines.append("secret_scanner")
+        if self._plugin_runner:
+            engines.append("plugin_runner")
         return engines
 
     def _normalize_entity_type(self, label: str) -> str:

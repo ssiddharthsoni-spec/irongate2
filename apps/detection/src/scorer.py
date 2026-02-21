@@ -25,6 +25,21 @@ ENTITY_WEIGHTS = {
     "PRIVILEGE_MARKER": 30,
     "DEAL_CODENAME": 20,
     "OPPOSING_COUNSEL": 15,
+    # Credential entity types
+    "API_KEY": 50,
+    "DATABASE_URI": 50,
+    "AUTH_TOKEN": 45,
+    "PRIVATE_KEY": 50,
+    "AWS_CREDENTIAL": 50,
+    "GCP_CREDENTIAL": 45,
+    "AZURE_CREDENTIAL": 45,
+    # Domain-specific entity types
+    "FINANCIAL_INSTRUMENT": 30,
+    "TRADE_SECRET": 50,
+    "LITIGATION_STRATEGY": 45,
+    "PROPRIETARY_FORMULA": 50,
+    "MNPI": 50,
+    "CLINICAL_DATA": 40,
 }
 
 LEGAL_KEYWORDS = [

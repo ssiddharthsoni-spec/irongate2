@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, Legend,
+  AreaChart, Area,
 } from 'recharts';
 
 const RISK_COLORS = {
@@ -55,20 +56,27 @@ export function SensitivityDistributionChart({ data }: { data: DistributionItem[
   const t = useChartTheme();
   return (
     <ResponsiveContainer width="100%" height={300}>
-      <BarChart data={data}>
-        <CartesianGrid strokeDasharray="3 3" stroke={t.gridStroke} />
-        <XAxis dataKey="name" tick={{ fontSize: 12, fill: t.tickColor }} />
-        <YAxis tick={{ fill: t.tickColor }} />
-        <Tooltip
-          contentStyle={{ backgroundColor: t.tooltipBg, borderColor: t.tooltipBorder, color: t.tooltipText, borderRadius: 8 }}
-          labelStyle={{ color: t.tooltipText }}
-        />
-        <Bar dataKey="value" name="Events">
+      <PieChart>
+        <Pie
+          data={data}
+          cx="50%"
+          cy="50%"
+          innerRadius={60}
+          outerRadius={100}
+          paddingAngle={3}
+          dataKey="value"
+          nameKey="name"
+          label={({ name, value }) => `${name}: ${value}`}
+        >
           {data.map((entry, index) => (
             <Cell key={index} fill={entry.color} />
           ))}
-        </Bar>
-      </BarChart>
+        </Pie>
+        <Tooltip
+          contentStyle={{ backgroundColor: t.tooltipBg, borderColor: t.tooltipBorder, color: t.tooltipText, borderRadius: 8 }}
+        />
+        <Legend />
+      </PieChart>
     </ResponsiveContainer>
   );
 }
@@ -104,19 +112,28 @@ export function DailyTrendChart({ data }: { data: TrendItem[] }) {
   const t = useChartTheme();
   return (
     <ResponsiveContainer width="100%" height={300}>
-      <LineChart data={data}>
+      <AreaChart data={data}>
+        <defs>
+          <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor="#5c7cfa" stopOpacity={0.3}/>
+            <stop offset="95%" stopColor="#5c7cfa" stopOpacity={0}/>
+          </linearGradient>
+          <linearGradient id="colorScore" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor="#ff922b" stopOpacity={0.3}/>
+            <stop offset="95%" stopColor="#ff922b" stopOpacity={0}/>
+          </linearGradient>
+        </defs>
         <CartesianGrid strokeDasharray="3 3" stroke={t.gridStroke} />
-        <XAxis dataKey="date" tick={{ fontSize: 12, fill: t.tickColor }} />
-        <YAxis yAxisId="left" tick={{ fill: t.tickColor }} />
-        <YAxis yAxisId="right" orientation="right" tick={{ fill: t.tickColor }} />
+        <XAxis dataKey="date" stroke={t.tickColor} tick={{ fontSize: 12 }} />
+        <YAxis yAxisId="left" stroke={t.tickColor} tick={{ fontSize: 12 }} />
+        <YAxis yAxisId="right" orientation="right" stroke={t.tickColor} tick={{ fontSize: 12 }} />
         <Tooltip
-          contentStyle={{ backgroundColor: t.tooltipBg, borderColor: t.tooltipBorder, color: t.tooltipText, borderRadius: 8 }}
-          labelStyle={{ color: t.tooltipText }}
+          contentStyle={{ backgroundColor: t.tooltipBg, border: 'none', borderRadius: 8, color: t.tooltipText }}
         />
-        <Legend wrapperStyle={{ color: t.labelColor }} />
-        <Line yAxisId="left" type="monotone" dataKey="count" stroke="#4c6ef5" name="Interactions" strokeWidth={2} />
-        <Line yAxisId="right" type="monotone" dataKey="avgScore" stroke="#ff6b6b" name="Avg Score" strokeWidth={2} />
-      </LineChart>
+        <Legend />
+        <Area yAxisId="left" type="monotone" dataKey="count" stroke="#5c7cfa" fill="url(#colorCount)" name="Events" />
+        <Area yAxisId="right" type="monotone" dataKey="avgScore" stroke="#ff922b" fill="url(#colorScore)" name="Avg Score" />
+      </AreaChart>
     </ResponsiveContainer>
   );
 }

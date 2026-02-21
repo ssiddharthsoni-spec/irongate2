@@ -89,11 +89,11 @@ export default function LandingPage() {
             <div className="mt-16 flex flex-wrap items-center justify-center gap-x-8 gap-y-3 text-xs text-gray-400 dark:text-gray-500 font-medium">
               <span className="flex items-center gap-1.5">
                 <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
-                SOC 2 Type II Ready
+                Compliance-Ready Architecture
               </span>
               <span className="flex items-center gap-1.5">
                 <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
-                No data stored on our servers
+                Data stays in your infrastructure
               </span>
               <span className="flex items-center gap-1.5">
                 <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
@@ -101,7 +101,7 @@ export default function LandingPage() {
               </span>
               <span className="flex items-center gap-1.5">
                 <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
-                Works with every AI tool
+                Works with all major AI tools
               </span>
             </div>
           </div>
@@ -141,7 +141,7 @@ export default function LandingPage() {
         <div className="grid md:grid-cols-5 gap-4">
           {[
             { step: '01', title: 'Capture', desc: 'Browser extension intercepts every prompt and file upload to ChatGPT, Claude, Gemini, and Copilot.', color: 'from-iron-500 to-iron-600' },
-            { step: '02', title: 'Detect', desc: '30+ entity detectors scan for SSNs, case names, deal codenames, client data, and privileged content.', color: 'from-iron-600 to-purple-500' },
+            { step: '02', title: 'Detect', desc: '25+ entity detectors scan for SSNs, case names, deal codenames, client data, and privileged content.', color: 'from-iron-600 to-purple-500' },
             { step: '03', title: 'Score', desc: 'Weighted sensitivity scoring with firm-specific rules, client-matter matching, and context awareness.', color: 'from-purple-500 to-purple-600' },
             { step: '04', title: 'Decide', desc: 'Based on your thresholds: allow, warn, pseudonymize, or block. Configurable per team or user.', color: 'from-purple-600 to-pink-500' },
             { step: '05', title: 'Protect', desc: 'Sensitive data is either blocked entirely or replaced with pseudonyms before reaching the AI.', color: 'from-pink-500 to-red-500' },
@@ -184,7 +184,7 @@ export default function LandingPage() {
               {
                 icon: <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" /></svg>,
                 title: 'Real-Time Entity Detection',
-                desc: 'Identifies SSNs, client names, case numbers, deal codenames, privileged content, and 30+ entity types the instant they are typed.',
+                desc: 'Identifies SSNs, client names, case numbers, deal codenames, privileged content, and 25+ entity types the instant they are typed.',
                 tag: 'Core',
               },
               {

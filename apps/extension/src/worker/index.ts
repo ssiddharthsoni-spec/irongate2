@@ -5,10 +5,22 @@
 
 import { analyzePrompt, sendProxiedPrompt, handleProxyFlow, analyzeFile } from './proxy-handler';
 import { eventQueue } from './queue';
-import { apiRequest } from './api-client';
-import { getFirmId, getUserId } from './auth';
+import { apiRequest, configureApiClient } from './api-client';
+import { initAuth, getFirmId, getUserId, getToken } from './auth';
+import { detectWithRegex } from '../detection/fallback-regex';
+import { computeScore } from '../detection/scorer';
+import { scanForSecrets } from './detectors/secret-scanner';
 
 console.log('[Iron Gate] Service worker started');
+
+// ─── Startup: restore auth & wire API client ────────────────────────────────
+initAuth().then(() => {
+  configureApiClient({
+    firmId: getFirmId() || '',
+    getToken,
+  });
+  console.log('[Iron Gate] Auth initialized & API client configured');
+}).catch((err) => console.warn('[Iron Gate] Startup init failed:', err));
 
 // Open side panel on extension icon click
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
@@ -52,6 +64,38 @@ async function handleMessage(
         userId: getUserId(),
         timestamp: Date.now(),
       }).catch((err) => console.warn('[Iron Gate] Failed to queue event:', err));
+
+      // ── Local detection: regex PII + secret scanning ──
+      const regexEntities = detectWithRegex(text);
+      const secrets = scanForSecrets(text);
+
+      // Merge secret hits into the entity list so the scorer sees them
+      const allEntities = [
+        ...regexEntities,
+        ...secrets.map((s) => ({
+          type: s.type,
+          text: s.text,
+          start: s.start,
+          end: s.end,
+          confidence: s.confidence,
+          source: s.source as 'regex',
+        })),
+      ];
+
+      const sensitivityResult = computeScore(text, allEntities);
+
+      // Broadcast score to the originating content-script tab
+      if (sender.tab?.id) {
+        chrome.tabs.sendMessage(sender.tab.id, {
+          type: 'SENSITIVITY_SCORE',
+          payload: {
+            score: sensitivityResult.score,
+            level: sensitivityResult.level,
+            explanation: sensitivityResult.explanation,
+            entities: sensitivityResult.entities,
+          },
+        }).catch(() => {});
+      }
 
       return { received: true, eventId };
     }
@@ -174,6 +218,16 @@ async function handleMessage(
         timestamp: Date.now(),
       }).catch((err) => console.warn('[Iron Gate] Failed to queue override event:', err));
 
+      return { ok: true };
+    }
+
+    case 'OPEN_SIDE_PANEL': {
+      const tabId = sender.tab?.id;
+      if (tabId) {
+        chrome.sidePanel.open({ tabId }).catch((err) =>
+          console.warn('[Iron Gate] Failed to open side panel:', err)
+        );
+      }
       return { ok: true };
     }
 

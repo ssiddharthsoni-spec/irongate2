@@ -6,10 +6,22 @@ import type { AppEnv } from '../types';
 
 export const reportsRoutes = new Hono<AppEnv>();
 
+/** Support both ?period=30d and ?days=30 query parameter formats */
+function parsePeriodDays(c: any): number {
+  const period = c.req.query('period');
+  if (period) {
+    const match = period.match(/^(\d+)d$/);
+    if (match) return parseInt(match[1]);
+  }
+  const days = c.req.query('days');
+  if (days) return parseInt(days) || 30;
+  return 30;
+}
+
 // GET /v1/reports/exposure — Shadow AI Exposure Report data
 reportsRoutes.get('/exposure', async (c) => {
   const firmId = c.get('firmId');
-  const daysBack = parseInt(c.req.query('days') || '30');
+  const daysBack = parsePeriodDays(c);
   const since = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000);
   const firmCondition = and(eq(events.firmId, firmId), gte(events.createdAt, since));
 

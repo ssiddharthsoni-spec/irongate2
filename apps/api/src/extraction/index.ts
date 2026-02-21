@@ -1,4 +1,5 @@
-import pdfParse from 'pdf-parse';
+import * as pdfParseModule from 'pdf-parse';
+const pdfParse = (pdfParseModule as any).default || pdfParseModule;
 import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 

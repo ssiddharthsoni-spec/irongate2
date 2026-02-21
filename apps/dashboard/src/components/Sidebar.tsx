@@ -170,6 +170,8 @@ export default function Sidebar() {
               <p className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Admin</p>
               {[
                 { href: '/admin', label: 'Settings' },
+                { href: '/admin/users', label: 'Users' },
+                { href: '/admin/matters', label: 'Matters' },
                 { href: '/admin/weights', label: 'Weights' },
                 { href: '/admin/plugins', label: 'Plugins' },
                 { href: '/admin/webhooks', label: 'Webhooks' },

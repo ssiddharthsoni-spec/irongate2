@@ -31,6 +31,34 @@ auditRoutes.get('/status', async (c) => {
   });
 });
 
+// GET /v1/audit/export — Export full audit chain as JSON
+auditRoutes.get('/export', async (c) => {
+  const firmId = c.get('firmId');
+
+  const chainEvents = await db
+    .select({
+      eventHash: events.eventHash,
+      previousHash: events.previousHash,
+      chainPosition: events.chainPosition,
+      timestamp: events.createdAt,
+      aiTool: events.aiToolId,
+      sensitivityScore: events.sensitivityScore,
+      sensitivityLevel: events.sensitivityLevel,
+      routeDecision: events.action,
+    })
+    .from(events)
+    .where(eq(events.firmId, firmId))
+    .orderBy(asc(events.chainPosition));
+
+  c.header('Content-Disposition', 'attachment; filename="irongate-audit-chain.json"');
+  c.header('Content-Type', 'application/json');
+  return c.json({
+    exportedAt: new Date().toISOString(),
+    firmId,
+    chain: chainEvents,
+  });
+});
+
 // GET /v1/audit/chain — Paginated chain entries
 auditRoutes.get('/chain', async (c) => {
   const firmId = c.get('firmId');

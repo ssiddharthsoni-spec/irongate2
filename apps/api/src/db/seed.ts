@@ -6,7 +6,18 @@
  */
 
 import { db } from './client';
-import { firms, users, events, clientMatters } from './schema';
+import {
+  firms,
+  users,
+  events,
+  clientMatters,
+  weightOverrides,
+  entityCoOccurrences,
+  inferredEntities,
+  sensitivityPatterns,
+  firmPlugins,
+  webhookSubscriptions,
+} from './schema';
 
 async function seed() {
   console.log('[Seed] Starting...\n');
@@ -23,6 +34,7 @@ async function seed() {
         defaultCloudProvider: 'openai',
         pseudonymTtlMinutes: 60,
       },
+      encryptionSalt: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6', // dev salt
     })
     .returning();
 
@@ -54,7 +66,7 @@ async function seed() {
       sensitivityLevel: 'low' as const,
       entities: [],
       action: 'pass' as const,
-      captureMethod: 'extension',
+      captureMethod: 'dom',
       metadata: { browser: 'Chrome 120' },
     },
     {
@@ -70,7 +82,7 @@ async function seed() {
         { type: 'ORGANIZATION', text: 'Acme Corp', confidence: 0.88 },
       ],
       action: 'warn' as const,
-      captureMethod: 'extension',
+      captureMethod: 'submit',
       metadata: { browser: 'Chrome 120' },
     },
     {
@@ -87,7 +99,7 @@ async function seed() {
         { type: 'MONETARY_AMOUNT', text: '$2.5M', confidence: 0.85 },
       ],
       action: 'proxy' as const,
-      captureMethod: 'extension',
+      captureMethod: 'fetch',
       metadata: { browser: 'Chrome 120' },
     },
     {
@@ -105,7 +117,7 @@ async function seed() {
         { type: 'MATTER_NUMBER', text: 'M-2024-001', confidence: 0.90 },
       ],
       action: 'block' as const,
-      captureMethod: 'extension',
+      captureMethod: 'dom',
       metadata: { browser: 'Chrome 120', blocked: true },
     },
     {
@@ -118,7 +130,7 @@ async function seed() {
       sensitivityLevel: 'low' as const,
       entities: [],
       action: 'pass' as const,
-      captureMethod: 'extension',
+      captureMethod: 'submit',
       metadata: { browser: 'Chrome 120' },
     },
     {
@@ -134,7 +146,7 @@ async function seed() {
         { type: 'IP_ADDRESS', text: '10.0.1.55', confidence: 0.95 },
       ],
       action: 'warn' as const,
-      captureMethod: 'extension',
+      captureMethod: 'fetch',
       metadata: { browser: 'Chrome 120' },
     },
     {
@@ -151,7 +163,7 @@ async function seed() {
         { type: 'DEAL_CODENAME', text: 'Project Phoenix', confidence: 0.88 },
       ],
       action: 'proxy' as const,
-      captureMethod: 'extension',
+      captureMethod: 'dom',
       metadata: { browser: 'Chrome 120' },
     },
     {
@@ -166,7 +178,7 @@ async function seed() {
         { type: 'ORGANIZATION', text: 'Global Finance Ltd', confidence: 0.85 },
       ],
       action: 'pass' as const,
-      captureMethod: 'extension',
+      captureMethod: 'fetch',
       metadata: { browser: 'Chrome 120' },
     },
   ];
@@ -191,14 +203,201 @@ async function seed() {
 
   console.log(`[Seed] Created client matter: ${matter.clientName} (${matter.matterNumber})`);
 
+  // 5. Create weight overrides (Data Flywheel)
+  const insertedWeights = await db
+    .insert(weightOverrides)
+    .values([
+      {
+        firmId: firm.id,
+        entityType: 'SSN',
+        weightMultiplier: 1.45,
+        sampleCount: 120,
+        falsePositiveRate: 0.03,
+      },
+      {
+        firmId: firm.id,
+        entityType: 'PRIVILEGE_MARKER',
+        weightMultiplier: 1.50,
+        sampleCount: 85,
+        falsePositiveRate: 0.08,
+      },
+      {
+        firmId: firm.id,
+        entityType: 'API_KEY',
+        weightMultiplier: 1.55,
+        sampleCount: 42,
+        falsePositiveRate: 0.02,
+      },
+    ])
+    .returning({ id: weightOverrides.id });
+
+  console.log(`[Seed] Created ${insertedWeights.length} weight overrides`);
+
+  // 6. Create entity co-occurrences (Sensitivity Graph)
+  const insertedCoOccurrences = await db
+    .insert(entityCoOccurrences)
+    .values([
+      {
+        firmId: firm.id,
+        entityAHash: 'aa11bb22cc33dd44ee55ff66aa11bb22cc33dd44ee55ff66aa11bb22cc33dd44',
+        entityAType: 'PERSON',
+        entityBHash: 'bb22cc33dd44ee55ff66aa11bb22cc33dd44ee55ff66aa11bb22cc33dd44ee55',
+        entityBType: 'SSN',
+        coOccurrenceCount: 34,
+        avgContextScore: 78.5,
+      },
+      {
+        firmId: firm.id,
+        entityAHash: 'cc33dd44ee55ff66aa11bb22cc33dd44ee55ff66aa11bb22cc33dd44ee55ff66',
+        entityAType: 'PERSON',
+        entityBHash: 'dd44ee55ff66aa11bb22cc33dd44ee55ff66aa11bb22cc33dd44ee55ff66aa11',
+        entityBType: 'MATTER_NUMBER',
+        coOccurrenceCount: 21,
+        avgContextScore: 62.3,
+      },
+      {
+        firmId: firm.id,
+        entityAHash: 'ee55ff66aa11bb22cc33dd44ee55ff66aa11bb22cc33dd44ee55ff66aa11bb22',
+        entityAType: 'ORGANIZATION',
+        entityBHash: 'ff66aa11bb22cc33dd44ee55ff66aa11bb22cc33dd44ee55ff66aa11bb22cc33',
+        entityBType: 'MONETARY_AMOUNT',
+        coOccurrenceCount: 15,
+        avgContextScore: 55.0,
+      },
+      {
+        firmId: firm.id,
+        entityAHash: '1122334455667788990011223344556677889900112233445566778899001122',
+        entityAType: 'PERSON',
+        entityBHash: '2233445566778899001122334455667788990011223344556677889900112233',
+        entityBType: 'EMAIL',
+        coOccurrenceCount: 47,
+        avgContextScore: 41.2,
+      },
+      {
+        firmId: firm.id,
+        entityAHash: '3344556677889900112233445566778899001122334455667788990011223344',
+        entityAType: 'CREDIT_CARD',
+        entityBHash: '4455667788990011223344556677889900112233445566778899001122334455',
+        entityBType: 'PERSON',
+        coOccurrenceCount: 9,
+        avgContextScore: 88.1,
+      },
+    ])
+    .returning({ id: entityCoOccurrences.id });
+
+  console.log(`[Seed] Created ${insertedCoOccurrences.length} entity co-occurrences`);
+
+  // 7. Create inferred entities (Inference Engine)
+  const insertedInferred = await db
+    .insert(inferredEntities)
+    .values([
+      {
+        firmId: firm.id,
+        textHash: 'aabb001122334455aabb001122334455aabb001122334455aabb001122334455',
+        inferredType: 'DEAL_CODENAME',
+        confidence: 0.92,
+        evidenceCount: 8,
+        status: 'confirmed',
+        confirmedBy: user.id,
+        promotedAt: new Date(),
+      },
+      {
+        firmId: firm.id,
+        textHash: 'bbcc112233445566bbcc112233445566bbcc112233445566bbcc112233445566',
+        inferredType: 'MATTER_NUMBER',
+        confidence: 0.74,
+        evidenceCount: 3,
+        status: 'pending',
+      },
+      {
+        firmId: firm.id,
+        textHash: 'ccdd223344556677ccdd223344556677ccdd223344556677ccdd223344556677',
+        inferredType: 'PRIVILEGE_MARKER',
+        confidence: 0.41,
+        evidenceCount: 1,
+        status: 'rejected',
+      },
+    ])
+    .returning({ id: inferredEntities.id });
+
+  console.log(`[Seed] Created ${insertedInferred.length} inferred entities`);
+
+  // 8. Create sensitivity patterns
+  const insertedPatterns = await db
+    .insert(sensitivityPatterns)
+    .values([
+      {
+        firmId: firm.id,
+        patternHash: 'ppaa112233445566ppaa112233445566ppaa112233445566ppaa112233445566',
+        entityTypes: ['PERSON', 'SSN', 'MONETARY_AMOUNT'],
+        triggerCount: 12,
+        avgScore: 81.5,
+        isGlobal: false,
+      },
+      {
+        firmId: firm.id,
+        patternHash: 'ppbb223344556677ppbb223344556677ppbb223344556677ppbb223344556677',
+        entityTypes: ['ORGANIZATION', 'CREDIT_CARD', 'EMAIL'],
+        triggerCount: 7,
+        avgScore: 72.0,
+        isGlobal: true,
+      },
+    ])
+    .returning({ id: sensitivityPatterns.id });
+
+  console.log(`[Seed] Created ${insertedPatterns.length} sensitivity patterns`);
+
+  // 9. Create a sample firm plugin
+  const [plugin] = await db
+    .insert(firmPlugins)
+    .values({
+      firmId: firm.id,
+      name: 'Legal Privilege Detector',
+      description: 'Detects attorney-client privilege markers in prompts',
+      version: '1.0.0',
+      code: `export function detect(text) {
+  const markers = ['privileged', 'attorney-client', 'work product', 'confidential communication'];
+  const found = markers.filter(m => text.toLowerCase().includes(m));
+  return found.map(m => ({ type: 'PRIVILEGE_MARKER', text: m, confidence: 0.85 }));
+}`,
+      entityTypes: ['PRIVILEGE_MARKER'],
+      isActive: true,
+      hitCount: 23,
+      falsePositiveRate: 0.05,
+      createdBy: user.id,
+    })
+    .returning();
+
+  console.log(`[Seed] Created firm plugin: ${plugin.name} (${plugin.id})`);
+
+  // 10. Create a sample webhook subscription
+  const [webhook] = await db
+    .insert(webhookSubscriptions)
+    .values({
+      firmId: firm.id,
+      url: 'https://hooks.irongate.dev/audit-events',
+      eventTypes: ['event.created', 'event.blocked', 'sensitivity.critical'],
+      secret: 'whsec_dev_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6',
+      isActive: true,
+    })
+    .returning();
+
+  console.log(`[Seed] Created webhook subscription: ${webhook.url} (${webhook.id})`);
+
   // Print summary
   console.log('\n========================================');
   console.log('  SEED COMPLETE');
   console.log('========================================');
-  console.log(`  Firm ID:    ${firm.id}`);
-  console.log(`  User ID:    ${user.id}`);
-  console.log(`  Events:     ${insertedEvents.length}`);
-  console.log(`  Matters:    1`);
+  console.log(`  Firm ID:          ${firm.id}`);
+  console.log(`  User ID:          ${user.id}`);
+  console.log(`  Events:           ${insertedEvents.length}`);
+  console.log(`  Matters:          1`);
+  console.log(`  Weight Overrides: ${insertedWeights.length}`);
+  console.log(`  Co-occurrences:   ${insertedCoOccurrences.length}`);
+  console.log(`  Inferred:         ${insertedInferred.length}`);
+  console.log(`  Patterns:         ${insertedPatterns.length}`);
+  console.log(`  Plugins:          1`);
+  console.log(`  Webhooks:         1`);
   console.log('========================================');
   console.log(`\n  Add this to your .env file:`);
   console.log(`  DEFAULT_FIRM_ID=${firm.id}\n`);

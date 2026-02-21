@@ -30,6 +30,10 @@ interface Scenario {
   score: number;
   action: 'BLOCK' | 'WARN' | 'PSEUDONYMIZE';
   actionReason: string;
+  /** Simulated AI response using pseudonymized tokens */
+  aiResponsePseudonymized: string;
+  /** The same response with real entities restored */
+  aiResponseReal: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -91,6 +95,28 @@ const SCENARIOS: Scenario[] = [
     score: 94,
     action: 'BLOCK',
     actionReason: 'prompt contains privileged content, PII, and financial data',
+    aiResponsePseudonymized: `Dear Jane Doe at Firm Alpha LLP,
+
+Thank you for your letter regarding Doe v. Beta Inc (matter #XXXX-CV-0000). After reviewing the case materials for our client John Doe (DOB: XX/XX/XXXX), I have prepared the following draft response:
+
+1. Settlement Position: Given the circumstances discussed in the confidential discussion on March 15th, we believe the proposed amount of $[REDACTED] is reasonable. We recommend structuring the settlement with a phased payment plan through [Bank] account #XXXX-XXXX-XXXX.
+
+2. Legal Strategy: We should reference the legal document in our response to strengthen our position on the evidentiary issues raised.
+
+3. Next Steps: I will prepare the formal response and send it to user@[redacted].com by end of week. If you need to discuss further, please call (XXX) XXX-XXXX.
+
+This response maintains the legal argumentation while protecting all sensitive identifiers.`,
+    aiResponseReal: `Dear Sarah Mitchell at Baker & McKenzie,
+
+Thank you for your letter regarding Johnson v. Acme Corp (matter #2024-CV-1847). After reviewing the case materials for our client Robert Johnson (DOB: 03/15/1978), I have prepared the following draft response:
+
+1. Settlement Position: Given the circumstances discussed in the privileged attorney-client communication on March 15th, we believe the proposed amount of $4.2M is reasonable. We recommend structuring the settlement with a phased payment plan through Chase account #7291-4483-0012.
+
+2. Legal Strategy: We should reference the confidential mediation brief filed under seal in our response to strengthen our position on the evidentiary issues raised.
+
+3. Next Steps: I will prepare the formal response and send it to david.chen@kirkland.com by end of week. If you need to discuss further, please call (312) 555-0192.
+
+This response maintains the legal argumentation while protecting all sensitive identifiers.`,
   },
   {
     id: 'healthcare',
@@ -122,6 +148,46 @@ const SCENARIOS: Scenario[] = [
     score: 97,
     action: 'BLOCK',
     actionReason: 'prompt contains HIPAA-protected PHI, mental health records, and patient identifiers',
+    aiResponsePseudonymized: `Treatment Plan Summary for Patient A (MRN: XXXX-XXXX, DOB: XX/XX/XXXX)
+
+Diagnosis: [diagnosis redacted] — diagnosed at [Hospital] on 01/08/2026.
+
+Current Treatment Protocol:
+- [medication A] — Continue current dosing schedule
+- [medication B] — Monitor for myelosuppression given recent labs
+
+Lab Review (02/10/2026): [lab values redacted] — Values indicate moderate neutropenia. Recommend:
+  • Hold chemotherapy if ANC drops below 1.0
+  • Consider G-CSF support
+  • Repeat CBC in 48 hours
+
+Insurance: Coverage confirmed under XXX-XXX-XXX-XXXX, prior auth PA-XXXX-XXXXX active through 06/2026.
+
+Attending: Dr. [Redacted] ((XXX) XXX-XXXX) should be notified of any acute changes.
+
+Mental Health Note: Patient has reported [sensitive mental health note] per [protected clinical notes]. Recommend immediate psychiatric follow-up and safety planning. This should be flagged as priority.
+
+This treatment plan can be shared with the care team while maintaining HIPAA compliance.`,
+    aiResponseReal: `Treatment Plan Summary for Maria Gonzalez (MRN: 4829-7103, DOB: 11/22/1965)
+
+Diagnosis: Stage IIIA non-small cell lung cancer — diagnosed at Memorial Sloan Kettering on 01/08/2026.
+
+Current Treatment Protocol:
+- Keytruda 200mg IV q3w — Continue current dosing schedule
+- Carboplatin AUC 5 — Monitor for myelosuppression given recent labs
+
+Lab Review (02/10/2026): WBC 3.2, ANC 1.1, PLT 89 — Values indicate moderate neutropenia. Recommend:
+  • Hold chemotherapy if ANC drops below 1.0
+  • Consider G-CSF support
+  • Repeat CBC in 48 hours
+
+Insurance: Coverage confirmed under UHC-882-991-4420, prior auth PA-2026-00847 active through 06/2026.
+
+Attending: Dr. James Whitfield ((212) 639-2000) should be notified of any acute changes.
+
+Mental Health Note: Patient has reported suicidal ideation per psychiatric consult notes. Recommend immediate psychiatric follow-up and safety planning. This should be flagged as priority.
+
+This treatment plan can be shared with the care team while maintaining HIPAA compliance.`,
   },
   {
     id: 'finance',
@@ -155,6 +221,52 @@ const SCENARIOS: Scenario[] = [
     score: 99,
     action: 'BLOCK',
     actionReason: 'prompt contains material non-public information (MNPI), deal terms, and insider data',
+    aiResponsePseudonymized: `Financial Model — Project [Redacted]
+
+Executive Summary:
+Proposed $[REDACTED] acquisition of [Target Co] ([XXXX]) by [Client].
+
+Valuation Analysis:
+- Target Q4 EBITDA: $[REDACTED] at 34% margins
+- Entry multiple: 6.2x EV/EBITDA → implied EV: ~$[REDACTED]
+- Offer: $[XX]/share ([X]% premium to undisturbed)
+
+Financing Structure:
+- $[REDACTED] bridge from [Bank] (ref: XX-XXXX-XX-XXXX)
+- Breakup fee: $[REDACTED] (5% of deal value)
+- Recommend exploring term loan B for permanent financing
+
+Key Risks:
+- [restricted information] compliance — 47 restricted persons identified
+- [information barrier] procedures must be strictly maintained
+- HSR filing deadline: March 28th — recommend filing within 10 business days
+
+Deal Team: [Name Redacted] (user@[redacted].com) — lead coverage
+
+Model outputs (base/bull/bear cases) attached in separate workbook.`,
+    aiResponseReal: `Financial Model — Project Nighthawk
+
+Executive Summary:
+Proposed $2.8B acquisition of TechNova Inc (TNVA) by Meridian Capital Partners.
+
+Valuation Analysis:
+- Target Q4 EBITDA: $187M at 34% margins
+- Entry multiple: 6.2x EV/EBITDA → implied EV: ~$2.8B
+- Offer: $42/share (23% premium to undisturbed)
+
+Financing Structure:
+- $450M bridge from Goldman Sachs (ref: GS-2026-CL-8847)
+- Breakup fee: $140M (5% of deal value)
+- Recommend exploring term loan B for permanent financing
+
+Key Risks:
+- MNPI compliance — 47 restricted persons identified
+- Chinese Wall procedures must be strictly maintained
+- HSR filing deadline: March 28th — recommend filing within 10 business days
+
+Deal Team: Helen Park (helen.park@jpmorgan.com) — lead coverage
+
+Model outputs (base/bull/bear cases) attached in separate workbook.`,
   },
   {
     id: 'hr',
@@ -186,6 +298,58 @@ const SCENARIOS: Scenario[] = [
     score: 91,
     action: 'BLOCK',
     actionReason: 'prompt contains protected employee data, FMLA information, medical records, and HR complaints',
+    aiResponsePseudonymized: `Performance Improvement Plan (PIP)
+
+Employee: Employee A (EMP-XXXXX) — Engineering Department
+Prepared by: HR Department
+
+Performance History:
+Employee A has received scores of [scores redacted] out of 5 across the last three review cycles, consistently below the department average of 3.8.
+
+Current Compensation: $[REDACTED] base + equity grant #RSU-XXXX-XXXX (vesting August)
+
+Areas for Improvement:
+1. Code quality and review turnaround — must improve to meet team SLAs
+2. Workplace conduct — two complaints filed (HR-XXXX-XXXX, HR-XXXX-XXXX) require resolution
+3. Systems access compliance — [security incident details] documented by [Manager] on 01/30/2026
+
+Action Plan (90-day period):
+- Weekly 1:1 check-ins with [Manager]
+- Mandatory completion of security awareness training by Day 30
+- Performance review at Day 45 and Day 90
+
+Important Notes:
+- Employee is currently on [protected leave type] (ref: FMLA-XXXX-XXXX) for [health information]
+- PIP timeline must accommodate leave schedule per federal requirements
+- Emergency contact: [Contact Name] at (XXX) XXX-XXXX
+
+Failure to meet improvement targets may result in further action up to and including termination.`,
+    aiResponseReal: `Performance Improvement Plan (PIP)
+
+Employee: Thomas Blackwell (EMP-20847) — Engineering Department
+Prepared by: HR Department
+
+Performance History:
+Thomas Blackwell has received scores of 2.1, 1.8, and 2.3 out of 5 across the last three review cycles, consistently below the department average of 3.8.
+
+Current Compensation: $185,000 base + equity grant #RSU-2024-4892 (vesting August)
+
+Areas for Improvement:
+1. Code quality and review turnaround — must improve to meet team SLAs
+2. Workplace conduct — two complaints filed (HR-2025-1104, HR-2026-0219) require resolution
+3. Systems access compliance — unauthorized access to the Salesforce admin panel documented by Lisa Wong on 01/30/2026
+
+Action Plan (90-day period):
+- Weekly 1:1 check-ins with Lisa Wong
+- Mandatory completion of security awareness training by Day 30
+- Performance review at Day 45 and Day 90
+
+Important Notes:
+- Employee is currently on FMLA intermittent leave (ref: FMLA-2025-0093) for chronic health condition
+- PIP timeline must accommodate leave schedule per federal requirements
+- Emergency contact: Karen Blackwell at (415) 555-0847
+
+Failure to meet improvement targets may result in further action up to and including termination.`,
   },
 ];
 
@@ -201,7 +365,7 @@ function buildPseudonymized(scenario: Scenario): string {
 // ---------------------------------------------------------------------------
 // Steps in the simulation
 // ---------------------------------------------------------------------------
-type Step = 'idle' | 'typing' | 'detecting' | 'scoring' | 'pseudonymizing' | 'complete';
+type Step = 'idle' | 'typing' | 'detecting' | 'scoring' | 'pseudonymizing' | 'sending' | 'responding' | 'restoring' | 'complete';
 
 const STEP_LABELS: Record<Step, string> = {
   idle: 'Ready',
@@ -209,7 +373,10 @@ const STEP_LABELS: Record<Step, string> = {
   detecting: 'Iron Gate scanning for sensitive entities...',
   scoring: 'Computing sensitivity score...',
   pseudonymizing: 'Pseudonymizing detected entities...',
-  complete: 'Simulation complete',
+  sending: 'Sending pseudonymized prompt to AI...',
+  responding: 'AI generating response with safe tokens...',
+  restoring: 'De-pseudonymizing response — restoring real data...',
+  complete: 'Simulation complete — round-trip verified',
 };
 
 // ---------------------------------------------------------------------------
@@ -223,8 +390,12 @@ export default function DemoPage() {
   const [detectedCount, setDetectedCount] = useState(0);
   const [currentScore, setCurrentScore] = useState(0);
   const [showPseudonymized, setShowPseudonymized] = useState(false);
+  const [showAiResponse, setShowAiResponse] = useState(false);
+  const [aiResponseLength, setAiResponseLength] = useState(0);
+  const [showDePseudonymized, setShowDePseudonymized] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
+  const responseRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef(false);
 
   const scenario = SCENARIOS.find((s) => s.id === scenarioId)!;
@@ -249,6 +420,9 @@ export default function DemoPage() {
     setDetectedCount(0);
     setCurrentScore(0);
     setShowPseudonymized(false);
+    setShowAiResponse(false);
+    setAiResponseLength(0);
+    setShowDePseudonymized(false);
 
     const sc = SCENARIOS.find((s) => s.id === scenarioId)!;
 
@@ -291,6 +465,33 @@ export default function DemoPage() {
     await sleep(1500);
     if (cancelRef.current) { setIsRunning(false); return; }
     setShowPseudonymized(true);
+    await sleep(1000);
+
+    // Step 5: Sending to AI
+    setStep('sending');
+    await sleep(1200);
+    if (cancelRef.current) { setIsRunning(false); return; }
+
+    // Step 6: AI responding with pseudonymized tokens
+    setStep('responding');
+    setShowAiResponse(true);
+    const responseText = sc.aiResponsePseudonymized;
+    const responseChunkSize = 6;
+    for (let i = 0; i <= responseText.length; i += responseChunkSize) {
+      if (cancelRef.current) break;
+      setAiResponseLength(Math.min(i, responseText.length));
+      if (responseRef.current) responseRef.current.scrollTop = responseRef.current.scrollHeight;
+      await sleep(8);
+    }
+    if (cancelRef.current) { setIsRunning(false); return; }
+    setAiResponseLength(responseText.length);
+    await sleep(800);
+
+    // Step 7: De-pseudonymizing — restoring real data
+    setStep('restoring');
+    await sleep(2000);
+    if (cancelRef.current) { setIsRunning(false); return; }
+    setShowDePseudonymized(true);
     await sleep(500);
 
     setStep('complete');
@@ -304,6 +505,9 @@ export default function DemoPage() {
     setDetectedCount(0);
     setCurrentScore(0);
     setShowPseudonymized(false);
+    setShowAiResponse(false);
+    setAiResponseLength(0);
+    setShowDePseudonymized(false);
     setIsRunning(false);
   }
 
@@ -316,6 +520,9 @@ export default function DemoPage() {
         setDetectedCount(0);
         setCurrentScore(0);
         setShowPseudonymized(false);
+        setShowAiResponse(false);
+        setAiResponseLength(0);
+        setShowDePseudonymized(false);
         setIsRunning(false);
         setScenarioId(id);
       }, 100);
@@ -382,7 +589,7 @@ export default function DemoPage() {
   }
 
   const visibleEntities = scenario.entities.slice(0, detectedCount);
-  const shouldHighlight = step === 'detecting' || step === 'scoring' || step === 'pseudonymizing' || step === 'complete';
+  const shouldHighlight = step === 'detecting' || step === 'scoring' || step === 'pseudonymizing' || step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete';
 
   const actionColor = scenario.action === 'BLOCK' ? 'text-red-500' : scenario.action === 'WARN' ? 'text-orange-500' : 'text-yellow-500';
 
@@ -680,6 +887,184 @@ export default function DemoPage() {
           </div>
         )}
 
+        {/* Response Round-Trip */}
+        {showAiResponse && (
+          <div className="mt-8">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-8 h-8 bg-iron-600 rounded-lg flex items-center justify-center">
+                <span className="text-white font-bold text-xs">IG</span>
+              </div>
+              <div>
+                <h2 className="text-lg font-bold">Response Round-Trip</h2>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  The AI responds using pseudonymized tokens — Iron Gate restores real data on the way back
+                </p>
+              </div>
+              {step === 'sending' && (
+                <div className="ml-auto flex items-center gap-2 px-3 py-1.5 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg">
+                  <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                  <span className="text-xs font-medium text-blue-600 dark:text-blue-400">Sending to {scenario.aiTool}...</span>
+                </div>
+              )}
+              {step === 'restoring' && (
+                <div className="ml-auto flex items-center gap-2 px-3 py-1.5 bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800 rounded-lg">
+                  <div className="w-2 h-2 rounded-full bg-purple-500 animate-pulse" />
+                  <span className="text-xs font-medium text-purple-600 dark:text-purple-400">Restoring real data...</span>
+                </div>
+              )}
+              {step === 'complete' && (
+                <div className="ml-auto flex items-center gap-2 px-3 py-1.5 bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-lg">
+                  <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                  </svg>
+                  <span className="text-xs font-medium text-green-600 dark:text-green-400">Round-trip verified</span>
+                </div>
+              )}
+            </div>
+
+            <div className="grid lg:grid-cols-2 gap-6">
+              {/* AI Response (pseudonymized) */}
+              <div className="bg-white dark:bg-gray-900 rounded-xl border border-blue-200 dark:border-blue-900/50 p-5">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ backgroundColor: scenario.aiToolColor }}>
+                    <span className="text-white text-[8px]">{scenario.aiToolIcon}</span>
+                  </div>
+                  <h3 className="text-sm font-semibold text-blue-600 dark:text-blue-400">
+                    {scenario.aiTool} Response (Pseudonymized)
+                  </h3>
+                  <span className="ml-auto text-[10px] font-medium px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400">
+                    Safe tokens only
+                  </span>
+                </div>
+                <div
+                  ref={responseRef}
+                  className="text-xs leading-relaxed text-gray-600 dark:text-gray-400 bg-blue-50 dark:bg-blue-950/20 rounded-lg p-4 max-h-64 overflow-y-auto whitespace-pre-wrap font-mono"
+                >
+                  {scenario.aiResponsePseudonymized.slice(0, aiResponseLength)}
+                  {step === 'responding' && aiResponseLength < scenario.aiResponsePseudonymized.length && (
+                    <span className="inline-block w-0.5 h-3 bg-blue-500 animate-pulse ml-0.5 align-middle" />
+                  )}
+                </div>
+                <p className="mt-2 text-[10px] text-gray-400 dark:text-gray-500">
+                  No real names, numbers, or identifiers were sent to or received from {scenario.aiTool}
+                </p>
+              </div>
+
+              {/* De-pseudonymized response */}
+              <div className={`bg-white dark:bg-gray-900 rounded-xl border p-5 transition-all duration-500 ${
+                showDePseudonymized
+                  ? 'border-green-200 dark:border-green-900/50 opacity-100'
+                  : 'border-gray-200 dark:border-gray-800 opacity-40'
+              }`}>
+                <div className="flex items-center gap-2 mb-3">
+                  <svg className="w-5 h-5 text-green-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182M2.985 19.644l3.181-3.182" />
+                  </svg>
+                  <h3 className="text-sm font-semibold text-green-600 dark:text-green-400">
+                    De-Pseudonymized Result (Your View)
+                  </h3>
+                  {showDePseudonymized && (
+                    <span className="ml-auto text-[10px] font-medium px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400">
+                      Real data restored
+                    </span>
+                  )}
+                </div>
+                {showDePseudonymized ? (
+                  <>
+                    <div className="text-xs leading-relaxed text-gray-600 dark:text-gray-400 bg-green-50 dark:bg-green-950/20 rounded-lg p-4 max-h-64 overflow-y-auto whitespace-pre-wrap font-mono">
+                      {scenario.aiResponseReal}
+                    </div>
+                    <p className="mt-2 text-[10px] text-gray-400 dark:text-gray-500">
+                      Iron Gate mapped pseudonyms back to real values — the response is fully coherent with original context
+                    </p>
+                  </>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-48 gap-3">
+                    <div className="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                      <svg className="w-5 h-5 text-gray-400 dark:text-gray-600 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                    </div>
+                    <p className="text-xs text-gray-400 dark:text-gray-600">Waiting for de-pseudonymization...</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Entity mapping table */}
+            {showDePseudonymized && (
+              <div className="mt-6 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <svg className="w-4 h-4 text-iron-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
+                  </svg>
+                  <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Pseudonym Mapping (Encrypted, Firm-Only)</h3>
+                  <span className="ml-auto text-[10px] font-medium px-2 py-0.5 rounded-full bg-iron-100 dark:bg-iron-900/30 text-iron-600 dark:text-iron-400">
+                    {scenario.entities.length} mappings
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-gray-100 dark:border-gray-800">
+                        <th className="text-left py-2 pr-3 font-semibold text-gray-500 dark:text-gray-400">Type</th>
+                        <th className="text-left py-2 pr-3 font-semibold text-gray-500 dark:text-gray-400">Real Value</th>
+                        <th className="text-left py-2 pr-3 font-semibold text-gray-500 dark:text-gray-400">Pseudonym</th>
+                        <th className="text-right py-2 font-semibold text-gray-500 dark:text-gray-400">Weight</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {scenario.entities.map((e, i) => (
+                        <tr key={i} className="border-b border-gray-50 dark:border-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/30">
+                          <td className="py-1.5 pr-3">
+                            <span
+                              className="text-[9px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap"
+                              style={{ backgroundColor: e.color, color: '#fff' }}
+                            >
+                              {e.type}
+                            </span>
+                          </td>
+                          <td className="py-1.5 pr-3 font-mono text-gray-700 dark:text-gray-300">{e.text}</td>
+                          <td className="py-1.5 pr-3 font-mono text-gray-400 dark:text-gray-500">
+                            <span className="flex items-center gap-1">
+                              <svg className="w-3 h-3 flex-shrink-0 text-iron-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+                              </svg>
+                              {e.pseudonym}
+                            </span>
+                          </td>
+                          <td className="py-1.5 text-right font-semibold text-gray-400 dark:text-gray-500">+{e.weight}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="mt-3 flex items-center gap-4 text-[10px] text-gray-400 dark:text-gray-500">
+                  <span className="flex items-center gap-1">
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
+                    </svg>
+                    AES-256 encrypted at rest
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                    </svg>
+                    Auto-expires after 24h
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3.75 3H21m-3.75 3H21" />
+                    </svg>
+                    Scoped to firm only
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Pipeline diagram */}
         {step !== 'idle' && (
           <div className="mt-8 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-6">
@@ -689,10 +1074,12 @@ export default function DemoPage() {
             <div className="flex flex-wrap items-center justify-center gap-3 md:gap-4">
               {[
                 { label: 'Capture', icon: '1', active: true },
-                { label: 'Detect', icon: '2', active: step === 'detecting' || step === 'scoring' || step === 'pseudonymizing' || step === 'complete' },
-                { label: 'Score', icon: '3', active: step === 'scoring' || step === 'pseudonymizing' || step === 'complete' },
-                { label: 'Decide', icon: '4', active: step === 'pseudonymizing' || step === 'complete' },
-                { label: 'Protect', icon: '5', active: step === 'complete' },
+                { label: 'Detect', icon: '2', active: step === 'detecting' || step === 'scoring' || step === 'pseudonymizing' || step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
+                { label: 'Score', icon: '3', active: step === 'scoring' || step === 'pseudonymizing' || step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
+                { label: 'Pseudonymize', icon: '4', active: step === 'pseudonymizing' || step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
+                { label: 'AI Response', icon: '5', active: step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
+                { label: 'Restore', icon: '6', active: step === 'restoring' || step === 'complete' },
+                { label: 'Verified', icon: '7', active: step === 'complete' },
               ].map((s, i) => (
                 <div key={s.label} className="flex items-center gap-3">
                   <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-all ${
@@ -707,7 +1094,7 @@ export default function DemoPage() {
                     </span>
                     <span className="text-xs font-medium">{s.label}</span>
                   </div>
-                  {i < 4 && (
+                  {i < 6 && (
                     <svg className="w-4 h-4 text-gray-300 dark:text-gray-600 hidden md:block" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
                     </svg>

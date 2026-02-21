@@ -339,6 +339,32 @@ adminRoutes.put('/plugins/:id', async (c) => {
   return c.json(updated);
 });
 
+// GET /v1/admin/plugins/:id/stats — Get plugin statistics
+adminRoutes.get('/plugins/:id/stats', async (c) => {
+  const firmId = c.get('firmId');
+  const pluginId = c.req.param('id');
+
+  const [plugin] = await db
+    .select({
+      id: firmPlugins.id,
+      name: firmPlugins.name,
+      hitCount: firmPlugins.hitCount,
+      falsePositiveRate: firmPlugins.falsePositiveRate,
+      lastTriggered: firmPlugins.updatedAt,
+      entityTypes: firmPlugins.entityTypes,
+      isActive: firmPlugins.isActive,
+    })
+    .from(firmPlugins)
+    .where(and(eq(firmPlugins.id, pluginId), eq(firmPlugins.firmId, firmId)))
+    .limit(1);
+
+  if (!plugin) {
+    return c.json({ error: 'Plugin not found' }, 404);
+  }
+
+  return c.json(plugin);
+});
+
 // DELETE /v1/admin/plugins/:id — Remove a plugin
 adminRoutes.delete('/plugins/:id', async (c) => {
   const id = c.req.param('id');

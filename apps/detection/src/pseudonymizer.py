@@ -275,6 +275,68 @@ def _generate_privilege_marker(hex_hash: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Credential entity generators
+# ---------------------------------------------------------------------------
+
+def _generate_api_key(original: str, hex_hash: str) -> str:
+    prefix = "sk-"
+    pad_len = max(0, len(original) - len(prefix))
+    return prefix + "x" * pad_len
+
+
+def _generate_database_uri(hex_hash: str) -> str:
+    return "postgresql://user:pass@localhost:5432/dbname"
+
+
+def _generate_auth_token(hex_hash: str) -> str:
+    return "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.REDACTED.REDACTED"
+
+
+def _generate_private_key(hex_hash: str) -> str:
+    return "-----BEGIN PRIVATE KEY-----\n[REDACTED]\n-----END PRIVATE KEY-----"
+
+
+def _generate_aws_credential(hex_hash: str) -> str:
+    return "AKIAIOSFODNN7EXAMPLE"
+
+
+def _generate_gcp_credential(hex_hash: str) -> str:
+    return "AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+
+
+def _generate_azure_credential(hex_hash: str) -> str:
+    return "DefaultEndpointsProtocol=https;AccountName=example;..."
+
+
+# ---------------------------------------------------------------------------
+# Domain-specific entity generators
+# ---------------------------------------------------------------------------
+
+def _generate_financial_instrument(hex_hash: str) -> str:
+    return "[TICKER_REDACTED]"
+
+
+def _generate_trade_secret(hex_hash: str) -> str:
+    return "[TRADE_SECRET_REDACTED]"
+
+
+def _generate_litigation_strategy(hex_hash: str) -> str:
+    return "[STRATEGY_REDACTED]"
+
+
+def _generate_proprietary_formula(hex_hash: str) -> str:
+    return "[FORMULA_REDACTED]"
+
+
+def _generate_mnpi(hex_hash: str) -> str:
+    return "[MNPI_REDACTED]"
+
+
+def _generate_clinical_data(hex_hash: str) -> str:
+    return "[CLINICAL_REDACTED]"
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
@@ -300,6 +362,21 @@ def generate_pseudonym(entity_type: str, original: str, hex_hash: str) -> str:
         "DRIVERS_LICENSE": lambda: _generate_drivers_license(hex_hash),
         "OPPOSING_COUNSEL": lambda: _generate_opposing_counsel(hex_hash),
         "PRIVILEGE_MARKER": lambda: _generate_privilege_marker(hex_hash),
+        # Credential entity types
+        "API_KEY": lambda: _generate_api_key(original, hex_hash),
+        "DATABASE_URI": lambda: _generate_database_uri(hex_hash),
+        "AUTH_TOKEN": lambda: _generate_auth_token(hex_hash),
+        "PRIVATE_KEY": lambda: _generate_private_key(hex_hash),
+        "AWS_CREDENTIAL": lambda: _generate_aws_credential(hex_hash),
+        "GCP_CREDENTIAL": lambda: _generate_gcp_credential(hex_hash),
+        "AZURE_CREDENTIAL": lambda: _generate_azure_credential(hex_hash),
+        # Domain-specific entity types
+        "FINANCIAL_INSTRUMENT": lambda: _generate_financial_instrument(hex_hash),
+        "TRADE_SECRET": lambda: _generate_trade_secret(hex_hash),
+        "LITIGATION_STRATEGY": lambda: _generate_litigation_strategy(hex_hash),
+        "PROPRIETARY_FORMULA": lambda: _generate_proprietary_formula(hex_hash),
+        "MNPI": lambda: _generate_mnpi(hex_hash),
+        "CLINICAL_DATA": lambda: _generate_clinical_data(hex_hash),
     }
 
     gen = generators.get(entity_type)
