@@ -13,23 +13,27 @@
     "db:seed": "tsx src/db/seed.ts"
   },
   "dependencies": {
-    "@iron-gate/types": "workspace:*",
-    "@iron-gate/config": "workspace:*",
-    "hono": "^4.6.0",
-    "@hono/node-server": "^1.13.0",
-    "drizzle-orm": "^0.38.0",
-    "@neondatabase/serverless": "^0.10.0",
-    "postgres": "^3.4.0",
-    "ioredis": "^5.4.0",
-    "zod": "^3.23.0",
     "@clerk/backend": "^1.15.0",
+    "@hono/node-server": "^1.13.0",
+    "@iron-gate/config": "workspace:*",
+    "@iron-gate/types": "workspace:*",
+    "@neondatabase/serverless": "^0.10.0",
+    "drizzle-orm": "^0.38.0",
+    "hono": "^4.6.0",
+    "ioredis": "^5.4.0",
+    "mammoth": "^1.11.0",
+    "pdf-parse": "^2.4.5",
+    "postgres": "^3.4.0",
+    "tsx": "^4.19.0",
     "uuid": "^10.0.0",
-    "tsx": "^4.19.0"
+    "xlsx": "^0.18.5",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
-    "drizzle-kit": "^0.30.0",
+    "@types/pdf-parse": "^1.1.5",
+    "@types/uuid": "^10.0.0",
     "bun-types": "^1.1.0",
-    "typescript": "^5.7.0",
-    "@types/uuid": "^10.0.0"
+    "drizzle-kit": "^0.30.0",
+    "typescript": "^5.7.0"
   }
 }

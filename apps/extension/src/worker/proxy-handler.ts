@@ -9,7 +9,7 @@
  * 5. Returns the de-pseudonymized LLM response to the content script
  */
 
-import { apiRequest, ApiError } from './api-client';
+import { apiRequest, apiUploadFile, ApiError } from './api-client';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -211,5 +211,46 @@ export async function handleProxyFlow(
     model: sendResult.model,
     provider: sendResult.provider,
     latencyMs: sendResult.latencyMs,
+  };
+}
+
+// ─── File Upload Analysis ──────────────────────────────────────────────────
+
+export interface FileAnalysisResult {
+  fileName: string;
+  score: number;
+  level: string;
+  entitiesFound: number;
+  explanation: string;
+  entities: Array<{ type: string; text: string; confidence: number }>;
+}
+
+/**
+ * Send a file to the backend for document scanning.
+ * Converts base64 back to a Blob/File and uploads via multipart/form-data.
+ */
+export async function analyzeFile(
+  fileName: string,
+  fileBase64: string,
+  fileType: string
+): Promise<FileAnalysisResult> {
+  const result = await apiUploadFile<any>('/documents/scan', fileName, fileBase64, fileType);
+
+  console.log(
+    `[Iron Gate] File scan complete — "${fileName}", score: ${result.score}, ` +
+    `level: ${result.level}, entities: ${result.entitiesFound}`
+  );
+
+  return {
+    fileName: result.fileName,
+    score: result.score,
+    level: result.level,
+    entitiesFound: result.entitiesFound,
+    explanation: result.explanation,
+    entities: result.entities?.map((e: any) => ({
+      type: e.type,
+      text: e.text,
+      confidence: e.confidence,
+    })) || [],
   };
 }

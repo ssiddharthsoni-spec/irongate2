@@ -7,6 +7,7 @@ import { createDOMObserver, type DOMObserverHandle } from './dom-observer';
 import { installFetchInterceptor, extractPromptFromPayload, type InterceptedRequest } from './fetch-interceptor';
 import { installSubmitHandler, type SubmitHandlerHandle, type SubmitMode } from './submit-handler';
 import { createClipboardMonitor, type ClipboardMonitorHandle, type ClipboardEvent as IronClipboardEvent } from './clipboard-monitor';
+import { createFileUploadMonitor, type FileUploadMonitorHandle, type FileUploadEvent } from './file-upload-monitor';
 import { showBlockOverlay } from '../ui/block-overlay';
 import { injectProxyResponse } from '../ui/response-injector';
 
@@ -35,6 +36,7 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
   let fetchCleanup: (() => void) | null = null;
   let submitHandler: SubmitHandlerHandle | null = null;
   let clipboardMonitor: ClipboardMonitorHandle | null = null;
+  let fileUploadMonitor: FileUploadMonitorHandle | null = null;
   let config: CaptureEngineConfig = { mode: 'audit' };
 
   // Send message to service worker
@@ -167,6 +169,71 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
     }
   }
 
+  // Handler: file upload detected
+  async function onFileUpload(event: FileUploadEvent) {
+    console.log(`[Iron Gate] File upload detected: ${event.fileName} (${event.fileSize} bytes)`);
+
+    // Send to service worker for analysis
+    try {
+      const result = await new Promise<any>((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          {
+            type: 'FILE_UPLOAD_DETECTED',
+            payload: {
+              ...event,
+              aiToolId: detector.id,
+            },
+          },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else {
+              resolve(response);
+            }
+          }
+        );
+      });
+
+      // If high/critical sensitivity, show block overlay
+      if (result && !result.error && (result.level === 'high' || result.level === 'critical')) {
+        const entityCounts = new Map<string, number>();
+        for (const e of result.entities || []) {
+          entityCounts.set(e.type, (entityCounts.get(e.type) || 0) + 1);
+        }
+        await showBlockOverlay({
+          score: result.score,
+          level: result.level,
+          entities: Array.from(entityCounts.entries()).map(([type, count]) => ({ type, count })),
+          explanation: result.explanation || `Document "${event.fileName}" contains sensitive information.`,
+        });
+      }
+    } catch (err) {
+      console.warn('[Iron Gate] File analysis failed:', err);
+    }
+  }
+
+  // Handler: file detected in FormData during fetch interception
+  function onFileInFormData(file: File) {
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    if (!['pdf', 'docx', 'xlsx'].includes(ext)) return;
+    if (file.size > 10 * 1024 * 1024) return;
+
+    // Read and send for analysis
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const base64 = dataUrl.split(',')[1] || '';
+      onFileUpload({
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: ext,
+        fileBase64: base64,
+        timestamp: Date.now(),
+      });
+    };
+    reader.readAsDataURL(file);
+  }
+
   // Handler: clipboard paste
   function onPaste(event: IronClipboardEvent) {
     sendToWorker('CLIPBOARD_PASTE', {
@@ -191,7 +258,7 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
       console.log(`[Iron Gate] Starting capture engine for ${detector.name}`);
 
       // 1. Install fetch interceptor FIRST (needs to be before page scripts)
-      fetchCleanup = installFetchInterceptor(onFetchRequest);
+      fetchCleanup = installFetchInterceptor(onFetchRequest, onFileInFormData);
 
       // 2. Start DOM observer for real-time typing
       domObserver = createDOMObserver(detector, onPromptChange);
@@ -205,6 +272,9 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
       // 4. Start clipboard monitor
       clipboardMonitor = createClipboardMonitor(detector, onPaste);
 
+      // 5. Start file upload monitor
+      fileUploadMonitor = createFileUploadMonitor(onFileUpload);
+
       console.log(`[Iron Gate] Capture engine started for ${detector.name}`);
     },
 
@@ -213,11 +283,13 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
       fetchCleanup?.();
       submitHandler?.destroy();
       clipboardMonitor?.destroy();
+      fileUploadMonitor?.destroy();
 
       domObserver = null;
       fetchCleanup = null;
       submitHandler = null;
       clipboardMonitor = null;
+      fileUploadMonitor = null;
 
       console.log(`[Iron Gate] Capture engine stopped for ${detector.name}`);
     },

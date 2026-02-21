@@ -92,6 +92,53 @@ export async function apiRequest<T>(options: RequestOptions): Promise<T> {
   throw lastError || new Error('Request failed after retries');
 }
 
+/**
+ * Upload a file to the API as multipart/form-data.
+ * Used for document scanning — converts base64 back to a Blob.
+ */
+export async function apiUploadFile<T>(
+  path: string,
+  fileName: string,
+  fileBase64: string,
+  fileType: string
+): Promise<T> {
+  const url = `${config.baseUrl}${path}`;
+  const token = await config.getToken();
+
+  // Convert base64 to Blob
+  const binaryString = atob(fileBase64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+
+  const mimeTypes: Record<string, string> = {
+    pdf: 'application/pdf',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  };
+
+  const blob = new Blob([bytes], { type: mimeTypes[fileType] || 'application/octet-stream' });
+  const formData = new FormData();
+  formData.append('file', blob, fileName);
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'X-Firm-ID': config.firmId,
+    },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    throw new ApiError(response.status, errorBody.error || response.statusText, errorBody);
+  }
+
+  return (await response.json()) as T;
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,

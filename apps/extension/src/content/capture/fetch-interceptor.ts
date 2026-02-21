@@ -86,7 +86,8 @@ function extractPromptFromPayload(body: any): string | null {
 }
 
 export function installFetchInterceptor(
-  onRequest: (request: InterceptedRequest) => void
+  onRequest: (request: InterceptedRequest) => void,
+  onFileInFormData?: (file: File) => void
 ): () => void {
   // Save original implementations
   const originalFetch = window.fetch;
@@ -107,6 +108,16 @@ export function installFetchInterceptor(
         let parsedBody: any = body;
         if (typeof body === 'string') {
           parsedBody = JSON.parse(body);
+        } else if (body instanceof FormData) {
+          // Detect file uploads in FormData — notify about attached files
+          parsedBody = '[FormData]';
+          if (onFileInFormData) {
+            for (const [, value] of (body as FormData).entries()) {
+              if (value instanceof File && value.size > 0) {
+                onFileInFormData(value);
+              }
+            }
+          }
         } else if (body instanceof ReadableStream) {
           // Can't easily read streams without consuming them
           parsedBody = '[ReadableStream]';

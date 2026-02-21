@@ -3,7 +3,7 @@
  * Handles background tasks: event queuing, API communication, model management.
  */
 
-import { analyzePrompt, sendProxiedPrompt, handleProxyFlow } from './proxy-handler';
+import { analyzePrompt, sendProxiedPrompt, handleProxyFlow, analyzeFile } from './proxy-handler';
 
 console.log('[Iron Gate] Service worker started');
 
@@ -102,6 +102,19 @@ async function handleMessage(
       } catch (error) {
         console.error('[Iron Gate] Proxy send error:', error);
         return { error: 'Proxy send failed' };
+      }
+    }
+
+    case 'FILE_UPLOAD_DETECTED': {
+      const { fileName, fileBase64, fileType, aiToolId } = message.payload;
+      console.log(`[Iron Gate] File upload detected: ${fileName} on ${aiToolId}`);
+
+      try {
+        const result = await analyzeFile(fileName, fileBase64, fileType);
+        return result;
+      } catch (error) {
+        console.error('[Iron Gate] File analysis error:', error);
+        return { error: 'File analysis failed' };
       }
     }
 
