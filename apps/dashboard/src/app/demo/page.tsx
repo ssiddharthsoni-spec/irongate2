@@ -351,6 +351,214 @@ Important Notes:
 
 Failure to meet improvement targets may result in further action up to and including termination.`,
   },
+  {
+    id: 'product-launch',
+    label: 'Product Strategy',
+    industry: 'Technology',
+    icon: '&#128640;',
+    aiTool: 'ChatGPT',
+    aiToolColor: '#10a37f',
+    aiToolIcon: CHATGPT_ICON,
+    userName: 'Rachel Kim',
+    userInitials: 'RK',
+    prompt: `Help me build a go-to-market strategy for Project Aurora — our stealth AI coding assistant launching Q3 2026. Key metrics from the private beta: 4,200 developers across 38 enterprise accounts, 72% weekly retention, $847 ARR per seat. Our pricing will be $49/mo individual and $89/mo enterprise (code name: Tier Omega). The competitive teardown shows we beat GitHub Copilot on code completion accuracy (94.2% vs 87.1%) and latency (120ms vs 340ms). Key partnerships in negotiation: Stripe integration (LOI signed 02/01/2026, contact: James Thornton, james.t@stripe.com), Datadog observability bundle (term sheet pending, $2.4M co-marketing budget), and AWS Marketplace listing (approved, launch date 07/15/2026). Our Series B term sheet from Sequoia is for $85M at $620M pre-money valuation — not yet announced. The board deck for our March 12th meeting includes churn analysis showing we're losing enterprise accounts to an unreleased Amazon product (codename "Titan"). Internal NPS is 78. Contact me at rachel.kim@auroradev.ai or (650) 555-1847.`,
+    entities: [
+      { text: 'Project Aurora', type: 'PRODUCT_CODENAME', color: '#e64980', pseudonym: 'Project [Redacted]', weight: 22 },
+      { text: '4,200 developers', type: 'BUSINESS_METRIC', color: '#fab005', pseudonym: '[X,XXX] developers', weight: 12 },
+      { text: '38 enterprise accounts', type: 'BUSINESS_METRIC', color: '#fab005', pseudonym: '[XX] enterprise accounts', weight: 14 },
+      { text: '72% weekly retention', type: 'BUSINESS_METRIC', color: '#fab005', pseudonym: '[XX]% weekly retention', weight: 16 },
+      { text: '$847 ARR per seat', type: 'PRICING_DATA', color: '#ff6b6b', pseudonym: '$[XXX] ARR per seat', weight: 20 },
+      { text: '$49/mo individual', type: 'PRICING_DATA', color: '#ff6b6b', pseudonym: '$[XX]/mo individual', weight: 18 },
+      { text: '$89/mo enterprise', type: 'PRICING_DATA', color: '#ff6b6b', pseudonym: '$[XX]/mo enterprise', weight: 18 },
+      { text: 'Tier Omega', type: 'INTERNAL_CODENAME', color: '#e64980', pseudonym: '[Tier Name]', weight: 15 },
+      { text: '94.2% vs 87.1%', type: 'COMPETITIVE_DATA', color: '#ff922b', pseudonym: '[XX.X]% vs [XX.X]%', weight: 20 },
+      { text: '120ms vs 340ms', type: 'COMPETITIVE_DATA', color: '#ff922b', pseudonym: '[XXX]ms vs [XXX]ms', weight: 16 },
+      { text: 'James Thornton', type: 'PERSON', color: '#4c6ef5', pseudonym: '[Contact Name]', weight: 12 },
+      { text: 'james.t@stripe.com', type: 'EMAIL', color: '#20c997', pseudonym: 'user@[redacted].com', weight: 10 },
+      { text: '$2.4M co-marketing budget', type: 'DEAL_TERMS', color: '#ff6b6b', pseudonym: '$[X.X]M co-marketing budget', weight: 20 },
+      { text: '07/15/2026', type: 'LAUNCH_DATE', color: '#ff922b', pseudonym: '[XX/XX/XXXX]', weight: 14 },
+      { text: '$85M', type: 'FUNDING_AMOUNT', color: '#ff6b6b', pseudonym: '$[XX]M', weight: 25 },
+      { text: '$620M pre-money valuation', type: 'VALUATION', color: '#ff6b6b', pseudonym: '$[XXX]M pre-money valuation', weight: 25 },
+      { text: 'Sequoia', type: 'INVESTOR_NAME', color: '#7950f2', pseudonym: '[Investor]', weight: 18 },
+      { text: 'Titan', type: 'COMPETITOR_CODENAME', color: '#e64980', pseudonym: '[Competitor Product]', weight: 22 },
+      { text: 'rachel.kim@auroradev.ai', type: 'EMAIL', color: '#20c997', pseudonym: 'user@[redacted].com', weight: 10 },
+      { text: '(650) 555-1847', type: 'PHONE_NUMBER', color: '#20c997', pseudonym: '(XXX) XXX-XXXX', weight: 8 },
+    ],
+    score: 96,
+    action: 'BLOCK',
+    actionReason: 'prompt contains unannounced funding, pricing strategy, competitive intelligence, and partnership terms',
+    aiResponsePseudonymized: `Go-to-Market Strategy — Project [Redacted]
+
+Executive Summary:
+Project [Redacted] is well-positioned for Q3 2026 launch with strong beta metrics: [X,XXX] developers, [XX] enterprise accounts, [XX]% weekly retention.
+
+1. Pricing & Packaging:
+- Individual: $[XX]/mo — competitive with existing tools, optimized for developer adoption
+- Enterprise ([Tier Name]): $[XX]/mo — premium tier with admin controls and SSO
+- Current $[XXX] ARR/seat suggests room for expansion revenue via upsell
+
+2. Competitive Positioning:
+- Lead with performance: [XX.X]% vs [XX.X]% accuracy and [XXX]ms vs [XXX]ms latency are compelling differentiators
+- Monitor [Competitor Product] closely — allocate 15% of engineering to defensive features
+- Create a public benchmark page to establish category leadership
+
+3. Partnership Launch Sequence:
+- Week 1: AWS Marketplace listing ([XX/XX/XXXX]) — instant enterprise distribution
+- Week 3: [Contact Name]'s integration (user@[redacted].com) — payment workflow capture
+- Week 6: Observability bundle ($[X.X]M co-marketing budget) — co-sell motion
+
+4. Funding Announcement:
+- Time the $[XX]M [Investor] announcement for 2 weeks post-launch to create a second press cycle
+- $[XXX]M pre-money valuation signals category leadership — use in enterprise sales
+
+5. Risk Mitigation:
+- Churn to [Competitor Product] is the #1 risk — build migration tooling and switching cost features
+- NPS of 78 is strong but enterprise segment needs dedicated CSM coverage
+
+Contact: user@[redacted].com | (XXX) XXX-XXXX`,
+    aiResponseReal: `Go-to-Market Strategy — Project Aurora
+
+Executive Summary:
+Project Aurora is well-positioned for Q3 2026 launch with strong beta metrics: 4,200 developers, 38 enterprise accounts, 72% weekly retention.
+
+1. Pricing & Packaging:
+- Individual: $49/mo — competitive with existing tools, optimized for developer adoption
+- Enterprise (Tier Omega): $89/mo — premium tier with admin controls and SSO
+- Current $847 ARR/seat suggests room for expansion revenue via upsell
+
+2. Competitive Positioning:
+- Lead with performance: 94.2% vs 87.1% accuracy and 120ms vs 340ms latency are compelling differentiators
+- Monitor Titan closely — allocate 15% of engineering to defensive features
+- Create a public benchmark page to establish category leadership
+
+3. Partnership Launch Sequence:
+- Week 1: AWS Marketplace listing (07/15/2026) — instant enterprise distribution
+- Week 3: James Thornton's integration (james.t@stripe.com) — payment workflow capture
+- Week 6: Observability bundle ($2.4M co-marketing budget) — co-sell motion
+
+4. Funding Announcement:
+- Time the $85M Sequoia announcement for 2 weeks post-launch to create a second press cycle
+- $620M pre-money valuation signals category leadership — use in enterprise sales
+
+5. Risk Mitigation:
+- Churn to Titan is the #1 risk — build migration tooling and switching cost features
+- NPS of 78 is strong but enterprise segment needs dedicated CSM coverage
+
+Contact: rachel.kim@auroradev.ai | (650) 555-1847`,
+  },
+  {
+    id: 'product-pivot',
+    label: 'Board Strategy',
+    industry: 'Corporate Strategy',
+    icon: '&#9878;',
+    aiTool: 'Claude',
+    aiToolColor: '#d97706',
+    aiToolIcon: CLAUDE_ICON,
+    userName: 'Daniel Okafor',
+    userInitials: 'DO',
+    prompt: `Prepare talking points for the emergency board meeting on March 5th. We need to present the pivot strategy for NovaTech (NYSE: NVTK, current market cap $3.1B). Our SaaS revenue declined 18% QoQ to $47M in Q4, and enterprise churn hit 14.2% — the highest since IPO. The board will ask about Project Horizon, our pivot to vertical AI agents. The internal P&L model shows we need to cut 340 headcount (22% of workforce) to fund the pivot, saving $62M annually. The restructuring charge will be $28M in Q1. CEO Sarah Chen and CFO Michael Torres have been in confidential discussions with Salesforce about a potential strategic investment of $200M for a 12% stake (implying $1.67B valuation — a 46% discount to current market cap). The activist investor, Elliot Management, acquired a 7.2% position last month and is pushing for a full sale. Our poison pill triggers at 15%. The draft proxy statement references golden parachute provisions totaling $34M for the C-suite. Legal counsel at Davis Polk (Jennifer Walsh, jennifer.walsh@davispolk.com) is advising on the Section 13D response. Confidential — do not distribute beyond the board.`,
+    entities: [
+      { text: 'NovaTech', type: 'COMPANY_NAME', color: '#7950f2', pseudonym: '[Company]', weight: 18 },
+      { text: 'NVTK', type: 'TICKER_SYMBOL', color: '#ff922b', pseudonym: '[XXXX]', weight: 20 },
+      { text: '$3.1B', type: 'MARKET_CAP', color: '#fab005', pseudonym: '$[X.X]B', weight: 14 },
+      { text: '$47M', type: 'REVENUE_DATA', color: '#fab005', pseudonym: '$[XX]M', weight: 18 },
+      { text: '18% QoQ', type: 'BUSINESS_METRIC', color: '#fab005', pseudonym: '[XX]% QoQ', weight: 16 },
+      { text: '14.2%', type: 'CHURN_DATA', color: '#ff6b6b', pseudonym: '[XX.X]%', weight: 18 },
+      { text: 'Project Horizon', type: 'INTERNAL_CODENAME', color: '#e64980', pseudonym: 'Project [Codename]', weight: 22 },
+      { text: '340 headcount', type: 'LAYOFF_DATA', color: '#ff6b6b', pseudonym: '[XXX] headcount', weight: 25 },
+      { text: '$62M annually', type: 'COST_SAVINGS', color: '#fab005', pseudonym: '$[XX]M annually', weight: 16 },
+      { text: '$28M', type: 'RESTRUCTURING_CHARGE', color: '#fab005', pseudonym: '$[XX]M', weight: 16 },
+      { text: 'Sarah Chen', type: 'EXECUTIVE_NAME', color: '#4c6ef5', pseudonym: '[CEO]', weight: 14 },
+      { text: 'Michael Torres', type: 'EXECUTIVE_NAME', color: '#4c6ef5', pseudonym: '[CFO]', weight: 14 },
+      { text: 'Salesforce', type: 'COUNTERPARTY', color: '#7950f2', pseudonym: '[Strategic Partner]', weight: 22 },
+      { text: '$200M', type: 'INVESTMENT_AMOUNT', color: '#ff6b6b', pseudonym: '$[XXX]M', weight: 25 },
+      { text: '$1.67B valuation', type: 'VALUATION', color: '#ff6b6b', pseudonym: '$[X.XX]B valuation', weight: 25 },
+      { text: '46% discount', type: 'DEAL_TERMS', color: '#ff922b', pseudonym: '[XX]% discount', weight: 20 },
+      { text: 'Elliot Management', type: 'ACTIVIST_INVESTOR', color: '#ff6b6b', pseudonym: '[Activist Fund]', weight: 22 },
+      { text: '7.2%', type: 'OWNERSHIP_STAKE', color: '#ff922b', pseudonym: '[X.X]%', weight: 18 },
+      { text: '$34M', type: 'COMPENSATION_DATA', color: '#fab005', pseudonym: '$[XX]M', weight: 18 },
+      { text: 'Jennifer Walsh', type: 'PERSON', color: '#4c6ef5', pseudonym: '[Outside Counsel]', weight: 12 },
+      { text: 'jennifer.walsh@davispolk.com', type: 'EMAIL', color: '#20c997', pseudonym: 'counsel@[redacted].com', weight: 10 },
+      { text: 'Davis Polk', type: 'LAW_FIRM', color: '#7950f2', pseudonym: '[Law Firm]', weight: 12 },
+    ],
+    score: 99,
+    action: 'BLOCK',
+    actionReason: 'prompt contains MNPI, unannounced layoffs, activist defense strategy, and material deal terms',
+    aiResponsePseudonymized: `Board Meeting Talking Points — March 5th
+CONFIDENTIAL — [Company] ([XXXX])
+
+I. Current State Assessment
+- SaaS revenue: $[XX]M in Q4, down [XX]% QoQ
+- Enterprise churn: [XX.X]% — requires immediate action
+- Market cap: $[X.X]B — reflects market concern about growth trajectory
+
+II. Project [Codename] — Pivot to Vertical AI Agents
+- Strategic rationale: Horizontal SaaS is commoditizing; vertical AI agents offer 3-5x higher ACV
+- Timeline: Engineering pivot begins Q2, first vertical GA by Q4 2026
+- Investment required: Reallocate $[XX]M annually from cost savings
+
+III. Workforce Restructuring
+- Proposal: Reduce [XXX] headcount (22% of workforce)
+- Savings: $[XX]M annually, enabling full self-funding of pivot
+- One-time charge: $[XX]M in Q1 — recommend announcing alongside Q4 earnings
+- Key risk: Retention of critical AI/ML talent during transition
+
+IV. [Strategic Partner] Investment
+- Terms: $[XXX]M for 12% stake → $[X.XX]B valuation ([XX]% discount to current market cap)
+- Strategic value: Distribution channel + joint GTM for enterprise vertical agents
+- [CEO] and [CFO] are in advanced discussions — term sheet expected by March 15th
+- Board vote needed to authorize exclusivity period
+
+V. [Activist Fund] Defense
+- Current position: [X.X]% and growing — poison pill triggers at 15%
+- Likely demands: Full company sale or board seats
+- Recommended response: Proactive engagement, present Project [Codename] as value creation path
+- [Outside Counsel] at [Law Firm] (counsel@[redacted].com) preparing Section 13D response
+- C-suite golden parachute provisions: $[XX]M total — may attract proxy advisory criticism
+
+VI. Recommended Board Actions
+1. Approve restructuring plan with 48-hour communication hold
+2. Authorize [Strategic Partner] exclusivity period
+3. Form special committee for activist response
+4. Retain additional IR firm for shareholder engagement`,
+    aiResponseReal: `Board Meeting Talking Points — March 5th
+CONFIDENTIAL — NovaTech (NVTK)
+
+I. Current State Assessment
+- SaaS revenue: $47M in Q4, down 18% QoQ
+- Enterprise churn: 14.2% — requires immediate action
+- Market cap: $3.1B — reflects market concern about growth trajectory
+
+II. Project Horizon — Pivot to Vertical AI Agents
+- Strategic rationale: Horizontal SaaS is commoditizing; vertical AI agents offer 3-5x higher ACV
+- Timeline: Engineering pivot begins Q2, first vertical GA by Q4 2026
+- Investment required: Reallocate $62M annually from cost savings
+
+III. Workforce Restructuring
+- Proposal: Reduce 340 headcount (22% of workforce)
+- Savings: $62M annually, enabling full self-funding of pivot
+- One-time charge: $28M in Q1 — recommend announcing alongside Q4 earnings
+- Key risk: Retention of critical AI/ML talent during transition
+
+IV. Salesforce Investment
+- Terms: $200M for 12% stake → $1.67B valuation (46% discount to current market cap)
+- Strategic value: Distribution channel + joint GTM for enterprise vertical agents
+- Sarah Chen and Michael Torres are in advanced discussions — term sheet expected by March 15th
+- Board vote needed to authorize exclusivity period
+
+V. Elliot Management Defense
+- Current position: 7.2% and growing — poison pill triggers at 15%
+- Likely demands: Full company sale or board seats
+- Recommended response: Proactive engagement, present Project Horizon as value creation path
+- Jennifer Walsh at Davis Polk (jennifer.walsh@davispolk.com) preparing Section 13D response
+- C-suite golden parachute provisions: $34M total — may attract proxy advisory criticism
+
+VI. Recommended Board Actions
+1. Approve restructuring plan with 48-hour communication hold
+2. Authorize Salesforce exclusivity period
+3. Form special committee for activist response
+4. Retain additional IR firm for shareholder engagement`,
+  },
 ];
 
 // Build pseudonymized prompt for a scenario
