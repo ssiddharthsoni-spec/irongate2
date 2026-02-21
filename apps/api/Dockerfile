@@ -24,10 +24,6 @@ COPY packages/config/ packages/config/
 COPY packages/crypto/ packages/crypto/
 COPY apps/api/ apps/api/
 
-# Capture SUPABASE_DB_URL at build time (Railway passes env vars as build args)
-ARG SUPABASE_DB_URL
-ENV SUPABASE_DB_URL=${SUPABASE_DB_URL}
-
 # Force IPv4 DNS resolution (Railway can't reach Supabase over IPv6)
 ENV NODE_OPTIONS="--dns-result-order=ipv4first"
 
