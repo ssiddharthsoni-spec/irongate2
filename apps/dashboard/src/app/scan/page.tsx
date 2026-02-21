@@ -156,6 +156,7 @@ export default function ScanPage() {
           type="file"
           accept=".pdf,.docx,.xlsx"
           onChange={handleFileChange}
+          aria-label="Select a document to scan"
           className="hidden"
         />
 
@@ -186,8 +187,14 @@ export default function ScanPage() {
 
       {/* Error */}
       {error && (
-        <div className="mt-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+        <div className="mt-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-center justify-between gap-3">
           <p className="text-sm text-red-700 dark:text-red-400">{error}</p>
+          <button
+            onClick={() => setError(null)}
+            className="text-xs font-medium text-red-600 dark:text-red-400 hover:underline flex-shrink-0"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
@@ -299,7 +306,7 @@ export default function ScanPage() {
                             {entity.type.replace(/_/g, ' ')}
                           </span>
                         </td>
-                        <td className="px-4 py-2 text-gray-700 dark:text-gray-300 font-mono text-xs max-w-xs truncate">
+                        <td className="px-4 py-2 text-gray-700 dark:text-gray-300 font-mono text-xs max-w-xs truncate" title={entity.text}>
                           {entity.text.length > 60 ? entity.text.slice(0, 60) + '...' : entity.text}
                         </td>
                         <td className="px-4 py-2 text-gray-500 dark:text-gray-400">

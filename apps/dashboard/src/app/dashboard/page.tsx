@@ -44,6 +44,7 @@ export default function DashboardPage() {
   const [firmName, setFirmName] = useState<string | null>(null);
   const [isLive, setIsLive] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [timeRange, setTimeRange] = useState(30);
 
   useEffect(() => {
@@ -53,6 +54,7 @@ export default function DashboardPage() {
   async function fetchDashboardData() {
     try {
       setSyncing(true);
+      setFetchError(null);
       const response = await apiFetch(`/dashboard/overview?days=${timeRange}`);
 
       if (!response.ok) throw new Error('Failed to fetch');
@@ -70,8 +72,9 @@ export default function DashboardPage() {
         }).catch(() => {});
       }
     } catch {
-      // API not available — keep using demo data silently
+      // API not available — keep using demo data
       setIsLive(false);
+      setFetchError('Unable to connect to API. Showing demo data.');
     } finally {
       setSyncing(false);
     }
@@ -86,17 +89,30 @@ export default function DashboardPage() {
 
   return (
     <div>
+      {/* Demo data banner */}
+      {!isLive && !syncing && (
+        <div className="mb-4 flex items-center gap-3 rounded-lg border border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20 px-4 py-3">
+          <svg className="w-5 h-5 text-yellow-600 dark:text-yellow-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+          </svg>
+          <p className="text-sm text-yellow-800 dark:text-yellow-300 flex-1">
+            <span className="font-medium">Demo Mode</span> — Showing sample data. {fetchError || 'Connect your API to see live metrics.'}
+          </p>
+          <button
+            onClick={fetchDashboardData}
+            className="text-xs font-medium text-yellow-700 dark:text-yellow-300 hover:underline flex-shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{firmName || 'Your Organization'}</h1>
           <p className="text-sm text-gray-500 dark:text-gray-400">
             Iron Gate — AI Governance & Security Dashboard
-            {!isLive && (
-              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
-                Demo Data
-              </span>
-            )}
             {syncing && (
               <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
                 Syncing...

@@ -95,9 +95,20 @@ dashboardRoutes.get('/overview', async (c) => {
     .orderBy(sql`count(*) desc`)
     .limit(10);
 
-  // Recent high risk events
+  // Recent high risk events — minimized projection (no raw PII)
   const recentHighRisk = await db
-    .select()
+    .select({
+      id: events.id,
+      aiToolId: events.aiToolId,
+      sensitivityScore: events.sensitivityScore,
+      sensitivityLevel: events.sensitivityLevel,
+      entities: events.entities,
+      action: events.action,
+      captureMethod: events.captureMethod,
+      eventHash: events.eventHash,
+      chainPosition: events.chainPosition,
+      createdAt: events.createdAt,
+    })
     .from(events)
     .where(and(firmCondition, gte(events.sensitivityScore, 60)))
     .orderBy(desc(events.createdAt))

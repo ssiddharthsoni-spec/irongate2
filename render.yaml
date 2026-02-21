@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: irongate-api
+    runtime: docker
+    dockerfilePath: apps/api/Dockerfile
+    repo: https://github.com/ssiddharthsoni-spec/irongate2
+    branch: main
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_DB_URL
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: DEFAULT_FIRM_ID
+        value: 6a3de5b8-2ad3-4d94-9171-c02951e09e4e
+      - key: DASHBOARD_URL
+        value: https://irongate-dashboard.vercel.app
+      - key: IRON_GATE_MASTER_SECRET
+        generateValue: true

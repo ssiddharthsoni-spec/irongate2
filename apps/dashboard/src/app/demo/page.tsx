@@ -828,7 +828,8 @@ export default function DemoPage() {
           <h1 className="text-3xl md:text-4xl font-bold mb-3">Live Simulation</h1>
           <p className="text-gray-500 dark:text-gray-400 max-w-2xl mx-auto">
             Watch how Iron Gate intercepts sensitive prompts, hashes entities client-side, detects confidential data,
-            encrypts with AES-256-GCM envelope encryption, and pseudonymizes content before it reaches the AI.
+            encrypts with AES-256-GCM, pseudonymizes content before it reaches the AI, and stores only
+            one-way hashes — never the raw PII itself.
           </p>
         </div>
 
@@ -1055,6 +1056,14 @@ export default function DemoPage() {
                             <span className="font-mono">{e.pseudonym}</span>
                           </p>
                         )}
+                        {step === 'complete' && (
+                          <p className="text-[10px] text-iron-500 dark:text-iron-400 mt-0.5 flex items-center gap-1">
+                            <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+                            </svg>
+                            <span className="font-mono">SHA-256 · {e.text.length} chars</span>
+                          </p>
+                        )}
                       </div>
                       <span className="ml-auto text-[10px] font-semibold text-gray-400 dark:text-gray-500 flex-shrink-0">
                         +{e.weight}
@@ -1218,8 +1227,9 @@ export default function DemoPage() {
                     <thead>
                       <tr className="border-b border-gray-100 dark:border-gray-800">
                         <th className="text-left py-2 pr-3 font-semibold text-gray-500 dark:text-gray-400">Type</th>
-                        <th className="text-left py-2 pr-3 font-semibold text-gray-500 dark:text-gray-400">Real Value</th>
+                        <th className="text-left py-2 pr-3 font-semibold text-gray-500 dark:text-gray-400">Detected (ephemeral)</th>
                         <th className="text-left py-2 pr-3 font-semibold text-gray-500 dark:text-gray-400">Pseudonym</th>
+                        <th className="text-left py-2 pr-3 font-semibold text-iron-500 dark:text-iron-400">Stored in DB</th>
                         <th className="text-right py-2 font-semibold text-gray-500 dark:text-gray-400">Weight</th>
                       </tr>
                     </thead>
@@ -1234,13 +1244,21 @@ export default function DemoPage() {
                               {e.type}
                             </span>
                           </td>
-                          <td className="py-1.5 pr-3 font-mono text-gray-700 dark:text-gray-300">{e.text}</td>
+                          <td className="py-1.5 pr-3 font-mono text-gray-700 dark:text-gray-300 line-through opacity-60">{e.text}</td>
                           <td className="py-1.5 pr-3 font-mono text-gray-400 dark:text-gray-500">
                             <span className="flex items-center gap-1">
                               <svg className="w-3 h-3 flex-shrink-0 text-iron-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
                               </svg>
                               {e.pseudonym}
+                            </span>
+                          </td>
+                          <td className="py-1.5 pr-3 font-mono text-iron-600 dark:text-iron-400">
+                            <span className="flex items-center gap-1">
+                              <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
+                              </svg>
+                              SHA-256 · {e.text.length} chars
                             </span>
                           </td>
                           <td className="py-1.5 text-right font-semibold text-gray-400 dark:text-gray-500">+{e.weight}</td>
@@ -1282,15 +1300,16 @@ export default function DemoPage() {
             </h3>
             <div className="flex flex-wrap items-center justify-center gap-3 md:gap-4">
               {[
-                { label: 'Capture', icon: '1', active: true },
-                { label: 'Hash', icon: '2', active: step === 'detecting' || step === 'scoring' || step === 'pseudonymizing' || step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
-                { label: 'Detect', icon: '3', active: step === 'detecting' || step === 'scoring' || step === 'pseudonymizing' || step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
-                { label: 'Score', icon: '4', active: step === 'scoring' || step === 'pseudonymizing' || step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
-                { label: 'Encrypt', icon: '5', active: step === 'pseudonymizing' || step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
-                { label: 'Pseudonymize', icon: '6', active: step === 'pseudonymizing' || step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
-                { label: 'AI Response', icon: '7', active: step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
-                { label: 'Restore', icon: '8', active: step === 'restoring' || step === 'complete' },
-                { label: 'Audit', icon: '9', active: step === 'complete' },
+                { label: 'Capture', icon: '01', active: true },
+                { label: 'Hash', icon: '02', active: step === 'detecting' || step === 'scoring' || step === 'pseudonymizing' || step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
+                { label: 'Detect', icon: '03', active: step === 'detecting' || step === 'scoring' || step === 'pseudonymizing' || step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
+                { label: 'Score', icon: '04', active: step === 'scoring' || step === 'pseudonymizing' || step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
+                { label: 'Encrypt', icon: '05', active: step === 'pseudonymizing' || step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
+                { label: 'Pseudonymize', icon: '06', active: step === 'pseudonymizing' || step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
+                { label: 'AI Response', icon: '07', active: step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
+                { label: 'Restore', icon: '08', active: step === 'restoring' || step === 'complete' },
+                { label: 'Minimize', icon: '09', active: step === 'complete' },
+                { label: 'Audit', icon: '10', active: step === 'complete' },
               ].map((s, i) => (
                 <div key={s.label} className="flex items-center gap-3">
                   <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-all ${
@@ -1305,7 +1324,7 @@ export default function DemoPage() {
                     </span>
                     <span className="text-xs font-medium">{s.label}</span>
                   </div>
-                  {i < 8 && (
+                  {i < 9 && (
                     <svg className="w-4 h-4 text-gray-300 dark:text-gray-600 hidden md:block" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
                     </svg>
@@ -1354,11 +1373,12 @@ export default function DemoPage() {
             <h3 className="text-sm font-semibold uppercase tracking-wider text-iron-600 dark:text-iron-400 mb-4">
               Security Layer Applied
             </h3>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
               {[
                 { label: 'Client Hashing', value: 'SHA-256 + salt', status: 'active' },
                 { label: 'Encryption', value: 'AES-256-GCM', status: 'active' },
                 { label: 'Key Wrapping', value: 'KMS envelope', status: 'active' },
+                { label: 'Data Minimization', value: 'Hash only, no PII', status: 'active' },
                 { label: 'Firm Isolation', value: 'RLS enforced', status: 'active' },
                 { label: 'Audit Chain', value: 'Hash verified', status: 'active' },
               ].map((item) => (
@@ -1370,6 +1390,79 @@ export default function DemoPage() {
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* Data Minimization — What Gets Stored */}
+        {step === 'complete' && (
+          <div className="mt-6 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-6">
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-4">
+              Never Store What You Don&apos;t Need
+            </h3>
+            <div className="grid md:grid-cols-2 gap-6">
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                  </svg>
+                  <span className="text-sm font-semibold text-green-600 dark:text-green-400">What Iron Gate Stores</span>
+                </div>
+                <ul className="space-y-2 text-xs text-gray-600 dark:text-gray-400">
+                  <li className="flex items-start gap-2">
+                    <span className="text-green-500 mt-0.5">&#10003;</span>
+                    <span>SHA-256 hash of the prompt (for deduplication)</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-green-500 mt-0.5">&#10003;</span>
+                    <span>Entity types + positions + confidence (PERSON at pos 42-52, 95%)</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-green-500 mt-0.5">&#10003;</span>
+                    <span>One-way SHA-256 hash of each entity value (irreversible)</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-green-500 mt-0.5">&#10003;</span>
+                    <span>Sensitivity score + routing decision + audit chain</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-green-500 mt-0.5">&#10003;</span>
+                    <span>Pseudonym maps (encrypted, auto-expiring)</span>
+                  </li>
+                </ul>
+              </div>
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <svg className="w-4 h-4 text-red-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
+                  </svg>
+                  <span className="text-sm font-semibold text-red-600 dark:text-red-400">What Iron Gate Never Stores</span>
+                </div>
+                <ul className="space-y-2 text-xs text-gray-600 dark:text-gray-400">
+                  <li className="flex items-start gap-2">
+                    <span className="text-red-500 mt-0.5">&#10007;</span>
+                    <span>The raw prompt text</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-red-500 mt-0.5">&#10007;</span>
+                    <span>The AI response</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-red-500 mt-0.5">&#10007;</span>
+                    <span>The actual PII values detected (names, SSNs, etc.)</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-red-500 mt-0.5">&#10007;</span>
+                    <span>Any data that could reconstruct the original content</span>
+                  </li>
+                </ul>
+                <div className="mt-3 p-2.5 bg-iron-50 dark:bg-iron-900/20 rounded-lg border border-iron-100 dark:border-iron-800">
+                  <p className="text-[10px] text-iron-700 dark:text-iron-300 font-medium">
+                    Iron Gate can prove it found sensitive data without ever being able to reconstruct that data.
+                    If the database is compromised, attackers get hashes — not PII.
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
         )}

@@ -5,18 +5,11 @@ import { events } from '../db/schema';
 import { detectFirmAware, scoreFirmAware } from '../detection';
 import { Pseudonymizer } from '../proxy/pseudonymizer';
 import { extractText } from '../extraction';
+import { sha256 as hashText } from '@iron-gate/crypto';
 import type { AppEnv } from '../types';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const ALLOWED_EXTENSIONS = new Set(['pdf', 'docx', 'xlsx', 'txt', 'csv']);
-
-async function sha256(text: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(text);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-}
 
 export const documentRoutes = new Hono<AppEnv>();
 
@@ -70,7 +63,20 @@ documentRoutes.post('/scan', async (c) => {
     const pseudonymResult = pseudonymizer.pseudonymize(extractedText, detectedEntities);
 
     // 7. Log to events table
-    const promptHash = await sha256(extractedText);
+    const promptHash = await hashText(extractedText);
+
+    // Data minimization: strip raw entity text, store only hashes + lengths
+    const minimizedEntities = await Promise.all(
+      detectedEntities.map(async (e) => ({
+        type: e.type,
+        textHash: await hashText(e.text),
+        start: e.start,
+        end: e.end,
+        confidence: e.confidence,
+        source: e.source,
+        length: e.text.length,
+      })),
+    );
 
     const [inserted] = await db.insert(events).values({
       firmId,
@@ -80,14 +86,7 @@ documentRoutes.post('/scan', async (c) => {
       promptLength: extractedText.length,
       sensitivityScore: scoreResult.score,
       sensitivityLevel: scoreResult.level,
-      entities: detectedEntities.map(e => ({
-        type: e.type,
-        text: e.text,
-        start: e.start,
-        end: e.end,
-        confidence: e.confidence,
-        source: e.source,
-      })),
+      entities: minimizedEntities,
       action: 'pass',
       captureMethod: 'upload',
       sessionId,
@@ -100,13 +99,20 @@ documentRoutes.post('/scan', async (c) => {
       },
     }).returning({ id: events.id });
 
-    // 8. Return results
+    // 8. Return results — entity types and positions only, not raw PII text
     return c.json({
       fileName,
       fileType: extension,
       fileSize: file.size,
       textLength: extractedText.length,
-      entities: detectedEntities,
+      entities: detectedEntities.map((e) => ({
+        type: e.type,
+        start: e.start,
+        end: e.end,
+        confidence: e.confidence,
+        source: e.source,
+        length: e.text.length,
+      })),
       entitiesFound: detectedEntities.length,
       score: scoreResult.score,
       level: scoreResult.level,

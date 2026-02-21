@@ -278,7 +278,7 @@ export default function AdminPage() {
           <button
             onClick={handleSave}
             disabled={saving}
-            className={`px-4 py-2 rounded-lg text-sm text-white transition-colors ${
+            className={`min-h-[44px] px-4 py-2 rounded-lg text-sm text-white transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800 ${
               saving
                 ? 'bg-iron-400 dark:bg-iron-800 cursor-not-allowed'
                 : 'bg-iron-600 hover:bg-iron-700'
@@ -326,6 +326,7 @@ export default function AdminPage() {
                 ref={fileInputRef}
                 type="file"
                 accept=".csv"
+                aria-label="Upload CSV file"
                 className="hidden"
                 onChange={handleFileUpload}
               />

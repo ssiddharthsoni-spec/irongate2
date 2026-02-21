@@ -143,22 +143,22 @@ export default function OnboardingPage() {
 
   // ----- Render -----
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
       {/* Top bar */}
-      <div className="bg-white border-b border-gray-200 px-8 py-4">
+      <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-8 py-4">
         <div className="flex items-center gap-3 max-w-3xl mx-auto">
           <div className="w-9 h-9 bg-iron-600 rounded-lg flex items-center justify-center">
             <span className="text-white font-bold text-sm">IG</span>
           </div>
           <div>
-            <h1 className="font-bold text-gray-900">Iron Gate</h1>
-            <p className="text-xs text-gray-500">Setup Wizard</p>
+            <h1 className="font-bold text-gray-900 dark:text-white">Iron Gate</h1>
+            <p className="text-xs text-gray-500 dark:text-gray-400">Setup Wizard</p>
           </div>
         </div>
       </div>
 
       {/* Progress bar */}
-      <div className="bg-white border-b border-gray-100">
+      <div className="bg-white dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700">
         <div className="max-w-3xl mx-auto px-8 py-4">
           <div className="flex items-center justify-between mb-2">
             {Array.from({ length: TOTAL_STEPS }, (_, i) => {
@@ -174,7 +174,7 @@ export default function OnboardingPage() {
                           ? 'bg-iron-600 text-white'
                           : isCurrent
                             ? 'bg-iron-100 text-iron-700 ring-2 ring-iron-600'
-                            : 'bg-gray-100 text-gray-400'
+                            : 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500'
                       }`}
                     >
                       {isCompleted ? (
@@ -187,7 +187,7 @@ export default function OnboardingPage() {
                     </div>
                     <span
                       className={`text-xs font-medium hidden sm:inline ${
-                        isCurrent ? 'text-iron-700' : isCompleted ? 'text-gray-700' : 'text-gray-400'
+                        isCurrent ? 'text-iron-700 dark:text-iron-300' : isCompleted ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400 dark:text-gray-500'
                       }`}
                     >
                       {['Welcome', 'Protection', 'Extension', 'Team', 'Done'][i]}
@@ -196,7 +196,7 @@ export default function OnboardingPage() {
                   {step < TOTAL_STEPS && (
                     <div
                       className={`flex-1 h-0.5 mx-2 rounded transition-colors ${
-                        step < currentStep ? 'bg-iron-600' : 'bg-gray-200'
+                        step < currentStep ? 'bg-iron-600' : 'bg-gray-200 dark:bg-gray-700'
                       }`}
                     />
                   )}
@@ -262,8 +262,8 @@ export default function OnboardingPage() {
                 disabled={currentStep === 1}
                 className={`px-5 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                   currentStep === 1
-                    ? 'text-gray-300 cursor-not-allowed'
-                    : 'text-gray-700 hover:bg-gray-100'
+                    ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed'
+                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
                 }`}
               >
                 Back
@@ -271,10 +271,10 @@ export default function OnboardingPage() {
               <button
                 onClick={handleNext}
                 disabled={!canProceed() || isSubmitting}
-                className={`px-6 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                className={`min-w-[120px] min-h-[44px] px-6 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                   canProceed() && !isSubmitting
                     ? 'bg-iron-600 text-white hover:bg-iron-700'
-                    : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                    : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
                 }`}
               >
                 {isSubmitting
@@ -304,16 +304,16 @@ function StepWelcome({
   return (
     <div>
       <div className="mb-8">
-        <h2 className="text-2xl font-bold text-gray-900">Welcome to Iron Gate</h2>
-        <p className="text-gray-500 mt-1">
+        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Welcome to Iron Gate</h2>
+        <p className="text-gray-500 dark:text-gray-400 mt-1">
           Let&apos;s set up AI governance for your organization. This only takes a few minutes.
         </p>
       </div>
 
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200 space-y-5">
+      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700 space-y-5">
         {/* Firm name */}
         <div>
-          <label htmlFor="firmName" className="block text-sm font-medium text-gray-700 mb-1.5">
+          <label htmlFor="firmName" className="block text-sm font-medium text-gray-700 dark:text-gray-300 dark:text-gray-300 mb-1.5">
             Firm Name
           </label>
           <input
@@ -322,20 +322,20 @@ function StepWelcome({
             value={state.firmName}
             onChange={(e) => updateState('firmName', e.target.value)}
             placeholder="e.g. Sterling & Associates LLP"
-            className="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 transition-shadow"
+            className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-white bg-white dark:bg-gray-700 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 transition-shadow"
           />
         </div>
 
         {/* Industry */}
         <div>
-          <label htmlFor="industry" className="block text-sm font-medium text-gray-700 mb-1.5">
+          <label htmlFor="industry" className="block text-sm font-medium text-gray-700 dark:text-gray-300 dark:text-gray-300 mb-1.5">
             Industry
           </label>
           <select
             id="industry"
             value={state.industry}
             onChange={(e) => updateState('industry', e.target.value)}
-            className="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 transition-shadow bg-white"
+            className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 transition-shadow bg-white dark:bg-gray-700"
           >
             <option value="" disabled>
               Select your industry
@@ -350,7 +350,7 @@ function StepWelcome({
 
         {/* Firm size */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 dark:text-gray-300 mb-2">
             Firm Size (employees)
           </label>
           <div className="grid grid-cols-4 gap-3">
@@ -388,8 +388,8 @@ function StepProtection({
   return (
     <div>
       <div className="mb-8">
-        <h2 className="text-2xl font-bold text-gray-900">Configure Protection</h2>
-        <p className="text-gray-500 mt-1">
+        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Configure Protection</h2>
+        <p className="text-gray-500 dark:text-gray-400 mt-1">
           Choose how Iron Gate monitors and protects AI interactions at your firm.
         </p>
       </div>
@@ -428,8 +428,8 @@ function StepProtection({
       </div>
 
       {/* Sensitivity thresholds */}
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-        <h3 className="text-sm font-semibold text-gray-900 mb-1">Sensitivity Thresholds</h3>
+      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
+        <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-1">Sensitivity Thresholds</h3>
         <p className="text-xs text-gray-500 mb-5">
           Set the sensitivity score thresholds that trigger each action level. Scores range from 0 (safe) to 100 (critical).
         </p>
@@ -539,31 +539,31 @@ function ModeCard({
       onClick={onSelect}
       className={`text-left rounded-xl p-5 border-2 transition-all ${
         isSelected
-          ? 'border-iron-600 bg-iron-50 shadow-sm'
-          : 'border-gray-200 bg-white hover:border-gray-300'
+          ? 'border-iron-600 bg-iron-50 dark:bg-iron-900/20 shadow-sm'
+          : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:border-gray-300 dark:hover:border-gray-600'
       }`}
     >
       <div className="flex items-center gap-3 mb-3">
         <div
           className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-            isSelected ? 'bg-iron-600 text-white' : 'bg-gray-100 text-gray-500'
+            isSelected ? 'bg-iron-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
           }`}
         >
           {icon}
         </div>
         <div>
-          <p className="text-sm font-semibold text-gray-900">{title}</p>
-          <p className="text-xs text-gray-500">{subtitle}</p>
+          <p className="text-sm font-semibold text-gray-900 dark:text-white">{title}</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">{subtitle}</p>
         </div>
       </div>
-      <p className="text-xs text-gray-600 mb-3 leading-relaxed">{description}</p>
+      <p className="text-xs text-gray-600 dark:text-gray-400 mb-3 leading-relaxed">{description}</p>
       <div className="space-y-1.5">
         {pros.map((pro) => (
           <div key={pro} className="flex items-start gap-1.5">
             <svg className="w-3.5 h-3.5 text-green-500 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
             </svg>
-            <span className="text-xs text-gray-600">{pro}</span>
+            <span className="text-xs text-gray-600 dark:text-gray-400">{pro}</span>
           </div>
         ))}
         {cons.map((con) => (
@@ -571,7 +571,7 @@ function ModeCard({
             <svg className="w-3.5 h-3.5 text-gray-400 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
             </svg>
-            <span className="text-xs text-gray-500">{con}</span>
+            <span className="text-xs text-gray-500 dark:text-gray-400">{con}</span>
           </div>
         ))}
       </div>
@@ -599,10 +599,10 @@ function ThresholdSlider({
       <div className="flex items-center justify-between mb-1.5">
         <div className="flex items-center gap-2">
           <div className={`w-2.5 h-2.5 rounded-full ${dotColor}`} />
-          <span className="text-sm font-medium text-gray-700">{label}</span>
+          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{label}</span>
           <span className="text-xs text-gray-400">{description}</span>
         </div>
-        <span className="text-sm font-semibold text-gray-900 tabular-nums w-8 text-right">
+        <span className="text-sm font-semibold text-gray-900 dark:text-white tabular-nums w-8 text-right">
           {value}
         </span>
       </div>
@@ -627,120 +627,85 @@ function ThresholdSlider({
 // Step 3: Deploy the Extension
 // ============================================================================
 function StepExtension() {
-  const [copied, setCopied] = useState(false);
-
-  const extensionUrl = 'https://github.com/ssiddharthsoni-spec/irongate2/releases';
-
-  function handleCopy() {
-    navigator.clipboard.writeText(extensionUrl).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  }
+  const extensionZipUrl = 'https://github.com/ssiddharthsoni-spec/irongate2/releases/latest/download/iron-gate-extension-v0.1.0.zip';
 
   return (
     <div>
       <div className="mb-8">
-        <h2 className="text-2xl font-bold text-gray-900">Deploy the Extension</h2>
-        <p className="text-gray-500 mt-1">
-          Install the Iron Gate Chrome extension to begin monitoring AI tool usage.
+        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Install the Extension</h2>
+        <p className="text-gray-500 dark:text-gray-400 mt-1">
+          The Chrome extension monitors AI tool usage and detects sensitive data in real-time.
         </p>
       </div>
 
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200 space-y-6">
+      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700 space-y-6">
+        {/* Download button */}
+        <div className="text-center py-4">
+          <a
+            href={extensionZipUrl}
+            className="inline-flex items-center gap-3 px-6 py-3 bg-iron-600 hover:bg-iron-700 text-white font-semibold rounded-xl transition-all shadow-lg shadow-iron-600/20"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+            </svg>
+            Download Extension (ZIP)
+          </a>
+        </div>
+
         {/* Step-by-step instructions */}
         <div>
-          <h3 className="text-sm font-semibold text-gray-900 mb-3">Installation Steps</h3>
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">After downloading:</h3>
           <ol className="space-y-3">
             <li className="flex items-start gap-3">
-              <span className="flex-shrink-0 w-6 h-6 bg-iron-100 text-iron-700 rounded-full flex items-center justify-center text-xs font-semibold">
+              <span className="flex-shrink-0 w-6 h-6 bg-iron-100 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 rounded-full flex items-center justify-center text-xs font-semibold">
                 1
               </span>
-              <div>
-                <p className="text-sm text-gray-700">
-                  Download the latest extension build from the releases page below.
-                </p>
-              </div>
+              <p className="text-sm text-gray-700 dark:text-gray-300">
+                <strong>Unzip</strong> the downloaded file to a folder on your computer.
+              </p>
             </li>
             <li className="flex items-start gap-3">
-              <span className="flex-shrink-0 w-6 h-6 bg-iron-100 text-iron-700 rounded-full flex items-center justify-center text-xs font-semibold">
+              <span className="flex-shrink-0 w-6 h-6 bg-iron-100 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 rounded-full flex items-center justify-center text-xs font-semibold">
                 2
               </span>
-              <div>
-                <p className="text-sm text-gray-700">
-                  Open <strong>chrome://extensions</strong>, enable <strong>Developer mode</strong>, and click <strong>&ldquo;Load unpacked&rdquo;</strong>.
-                </p>
-              </div>
+              <p className="text-sm text-gray-700 dark:text-gray-300">
+                Open <strong>chrome://extensions</strong>, enable <strong>Developer mode</strong> (top-right toggle).
+              </p>
             </li>
             <li className="flex items-start gap-3">
-              <span className="flex-shrink-0 w-6 h-6 bg-iron-100 text-iron-700 rounded-full flex items-center justify-center text-xs font-semibold">
+              <span className="flex-shrink-0 w-6 h-6 bg-iron-100 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 rounded-full flex items-center justify-center text-xs font-semibold">
                 3
               </span>
-              <div>
-                <p className="text-sm text-gray-700">
-                  Select the <strong>dist</strong> folder from the downloaded extension build.
-                </p>
-              </div>
+              <p className="text-sm text-gray-700 dark:text-gray-300">
+                Click <strong>&ldquo;Load unpacked&rdquo;</strong> and select the unzipped folder.
+              </p>
             </li>
             <li className="flex items-start gap-3">
-              <span className="flex-shrink-0 w-6 h-6 bg-iron-100 text-iron-700 rounded-full flex items-center justify-center text-xs font-semibold">
-                4
+              <span className="flex-shrink-0 w-6 h-6 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-full flex items-center justify-center">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                </svg>
               </span>
-              <div>
-                <p className="text-sm text-gray-700">
-                  The Iron Gate icon will appear in your toolbar. You&apos;re protected!
-                </p>
-              </div>
+              <p className="text-sm text-gray-700 dark:text-gray-300">
+                The Iron Gate icon appears in your toolbar. You&apos;re protected!
+              </p>
             </li>
           </ol>
         </div>
 
-        {/* Copy-able link */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">
-            Extension Install Link
-          </label>
-          <div className="flex items-center gap-2">
-            <div className="flex-1 px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-600 font-mono truncate">
-              {extensionUrl}
-            </div>
-            <button
-              onClick={handleCopy}
-              className="px-4 py-2.5 bg-iron-600 text-white rounded-lg text-sm font-medium hover:bg-iron-700 transition-colors flex items-center gap-2 flex-shrink-0"
-            >
-              {copied ? (
-                <>
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
-                  </svg>
-                  Copied!
-                </>
-              ) : (
-                <>
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9.75a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
-                  </svg>
-                  Copy
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-
         {/* Enterprise deployment note */}
-        <div className="p-4 bg-iron-50 rounded-lg border border-iron-100">
+        <div className="p-4 bg-iron-50 dark:bg-iron-900/20 rounded-lg border border-iron-100 dark:border-iron-800">
           <div className="flex gap-3">
-            <svg className="w-5 h-5 text-iron-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+            <svg className="w-5 h-5 text-iron-600 dark:text-iron-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
             </svg>
             <div>
-              <p className="text-sm font-medium text-iron-800">Enterprise Deployment</p>
-              <p className="text-xs text-iron-600 mt-1 leading-relaxed">
+              <p className="text-sm font-medium text-iron-800 dark:text-iron-300">Enterprise Deployment</p>
+              <p className="text-xs text-iron-600 dark:text-iron-400 mt-1 leading-relaxed">
                 For organization-wide deployment, use Chrome Enterprise policies to force-install the
-                extension across all managed devices. Refer to the{' '}
+                extension across all managed devices. Use the{' '}
                 <span className="font-medium">ExtensionInstallForcelist</span> policy in the Google
-                Chrome Enterprise documentation. This ensures all employees are protected automatically
-                without individual installations.
+                Chrome Enterprise documentation.
               </p>
             </div>
           </div>
@@ -781,13 +746,13 @@ function StepTeam({
   return (
     <div>
       <div className="mb-8">
-        <h2 className="text-2xl font-bold text-gray-900">Invite Your Team</h2>
-        <p className="text-gray-500 mt-1">
+        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Invite Your Team</h2>
+        <p className="text-gray-500 dark:text-gray-400 mt-1">
           Add team members who will use the Iron Gate dashboard. You can always invite more later.
         </p>
       </div>
 
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
+      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
         <div className="space-y-3">
           {state.teamMembers.map((member, index) => (
             <div key={index} className="flex items-center gap-3">
@@ -797,13 +762,13 @@ function StepTeam({
                   placeholder="colleague@yourfirm.com"
                   value={member.email}
                   onChange={(e) => updateMember(index, 'email', e.target.value)}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 transition-shadow"
+                  className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-white bg-white dark:bg-gray-700 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 transition-shadow"
                 />
               </div>
               <select
                 value={member.role}
                 onChange={(e) => updateMember(index, 'role', e.target.value)}
-                className="px-3 py-2.5 border border-gray-300 rounded-lg text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500"
+                className="px-3 py-2.5 border border-gray-300 rounded-lg text-sm text-gray-700 dark:text-gray-300 bg-white focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500"
               >
                 <option value="user">User</option>
                 <option value="admin">Admin</option>
@@ -880,8 +845,8 @@ function StepComplete({
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
             </svg>
           </div>
-          <h2 className="text-2xl font-bold text-gray-900">Setup Encountered an Issue</h2>
-          <p className="text-gray-500 mt-2 max-w-md mx-auto">
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Setup Encountered an Issue</h2>
+          <p className="text-gray-500 dark:text-gray-400 mt-2 max-w-md mx-auto">
             We couldn&apos;t complete the setup. This is usually a temporary connectivity issue.
           </p>
         </div>
@@ -920,15 +885,15 @@ function StepComplete({
             <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
           </svg>
         </div>
-        <h2 className="text-2xl font-bold text-gray-900">You&apos;re All Set!</h2>
-        <p className="text-gray-500 mt-2">
+        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">You&apos;re All Set!</h2>
+        <p className="text-gray-500 dark:text-gray-400 mt-2">
           Iron Gate is configured and ready to protect your organization.
         </p>
       </div>
 
       {/* Configuration summary */}
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200 mb-6">
-        <h3 className="text-sm font-semibold text-gray-900 mb-4">Configuration Summary</h3>
+      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700 mb-6">
+        <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">Configuration Summary</h3>
         <div className="space-y-3">
           <SummaryRow label="Firm" value={state.firmName} />
           <SummaryRow label="Industry" value={state.industry} />
@@ -995,9 +960,9 @@ function StepComplete({
 
 function SummaryRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
-      <span className="text-sm text-gray-500">{label}</span>
-      <span className="text-sm font-medium text-gray-900">{value}</span>
+    <div className="flex items-center justify-between py-2 border-b border-gray-50 dark:border-gray-700 last:border-0">
+      <span className="text-sm text-gray-500 dark:text-gray-400">{label}</span>
+      <span className="text-sm font-medium text-gray-900 dark:text-white">{value}</span>
     </div>
   );
 }
@@ -1016,11 +981,11 @@ function QuickLink({
   return (
     <a
       href={href}
-      className="block p-4 bg-white rounded-xl border border-gray-200 hover:border-iron-300 hover:shadow-sm transition-all group"
+      className="block p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-iron-300 dark:hover:border-iron-600 hover:shadow-sm transition-all group"
     >
       <div className="text-gray-400 group-hover:text-iron-600 transition-colors mb-2">{icon}</div>
-      <p className="text-sm font-medium text-gray-900">{title}</p>
-      <p className="text-xs text-gray-500">{description}</p>
+      <p className="text-sm font-medium text-gray-900 dark:text-white">{title}</p>
+      <p className="text-xs text-gray-500 dark:text-gray-400">{description}</p>
     </a>
   );
 }

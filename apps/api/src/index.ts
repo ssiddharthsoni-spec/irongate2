@@ -22,11 +22,15 @@ import type { AppEnv } from './types';
 const app = new Hono<AppEnv>();
 
 // Build allowed origins from environment
-const allowedOrigins: string[] = [
-  'http://localhost:3001',  // Dashboard dev
-  'http://localhost:3000',  // API dev (for testing)
-];
-if (process.env.DASHBOARD_URL) allowedOrigins.push(process.env.DASHBOARD_URL);
+const allowedOrigins: string[] = [];
+if (process.env.NODE_ENV === 'development') {
+  allowedOrigins.push('http://localhost:3001', 'http://localhost:3000');
+}
+if (process.env.DASHBOARD_URL) {
+  allowedOrigins.push(process.env.DASHBOARD_URL);
+} else {
+  allowedOrigins.push('https://irongate-dashboard.vercel.app');
+}
 if (process.env.CHROME_EXTENSION_ID) {
   allowedOrigins.push(`chrome-extension://${process.env.CHROME_EXTENSION_ID}`);
 }

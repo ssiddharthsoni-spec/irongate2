@@ -215,17 +215,30 @@ export default function AuditPage() {
 
   return (
     <div>
+      {/* Demo mode banner */}
+      {!isLive && !statusLoading && (
+        <div className="mb-4 flex items-center gap-3 rounded-lg border border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20 px-4 py-3">
+          <svg className="w-5 h-5 text-yellow-600 dark:text-yellow-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+          </svg>
+          <p className="text-sm text-yellow-800 dark:text-yellow-300 flex-1">
+            <span className="font-medium">Demo Mode</span> — Unable to connect to API. Showing sample data.
+          </p>
+          <button
+            onClick={fetchStatus}
+            className="text-xs font-medium text-yellow-700 dark:text-yellow-300 hover:underline flex-shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Cryptographic Audit Chain</h1>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
             Tamper-proof event log with hash-linked integrity verification
-            {!isLive && (
-              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
-                Demo Data
-              </span>
-            )}
           </p>
         </div>
       </div>
@@ -279,10 +292,10 @@ export default function AuditPage() {
         </div>
         <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
           <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Last Hash</p>
-          <p className="text-lg font-mono font-bold text-gray-900 dark:text-white mt-1 break-all">
+          <p className="text-lg font-mono font-bold text-gray-900 dark:text-white mt-1 break-all" title={status.lastHash}>
             {statusLoading ? '--' : truncateHash(status.lastHash, 20)}
           </p>
-          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">SHA-256 head of chain</p>
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1" title="SHA-256 is a cryptographic hash function that produces a unique 64-character fingerprint for any data">SHA-256 head of chain</p>
         </div>
         <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
           <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Status</p>
@@ -299,13 +312,13 @@ export default function AuditPage() {
           <div>
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Chain Verification</h2>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-              Run a full cryptographic verification of the entire audit chain.
+              Run a full cryptographic verification of the entire audit chain to confirm no events have been tampered with or deleted.
             </p>
           </div>
           <button
             onClick={handleVerify}
             disabled={verifying}
-            className={`px-5 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
+            className={`min-h-[44px] px-5 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 ${
               verifying
                 ? 'bg-gray-100 text-gray-400 cursor-not-allowed dark:bg-gray-700 dark:text-gray-500'
                 : 'bg-iron-600 text-white hover:bg-iron-700'
@@ -393,8 +406,14 @@ export default function AuditPage() {
                 </tr>
               ) : chain.entries.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-gray-400 dark:text-gray-500">
-                    No audit entries found
+                  <td colSpan={6} className="px-6 py-12 text-center">
+                    <div className="flex flex-col items-center gap-2">
+                      <svg className="w-10 h-10 text-gray-300 dark:text-gray-600" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
+                      </svg>
+                      <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">No audit entries found</p>
+                      <p className="text-xs text-gray-400 dark:text-gray-500">Events will appear here once AI interactions are captured by the Iron Gate extension.</p>
+                    </div>
                   </td>
                 </tr>
               ) : (
@@ -429,8 +448,14 @@ export default function AuditPage() {
                         {Math.round(entry.sensitivityScore)}
                       </span>
                     </td>
-                    <td className="px-6 py-3 text-sm text-gray-600 dark:text-gray-400" suppressHydrationWarning>
-                      {new Date(entry.createdAt).toLocaleString()}
+                    <td className="px-6 py-3 text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap" suppressHydrationWarning>
+                      {new Date(entry.createdAt).toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
                     </td>
                   </tr>
                 ))
@@ -449,7 +474,7 @@ export default function AuditPage() {
               }))
             }
             disabled={pagination.offset === 0}
-            className="px-3 py-1.5 text-sm rounded border dark:border-gray-700 disabled:opacity-50 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+            className="min-h-[44px] px-4 py-2.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500"
           >
             Previous
           </button>
@@ -464,7 +489,7 @@ export default function AuditPage() {
               }))
             }
             disabled={pagination.offset + pagination.limit >= chain.total}
-            className="px-3 py-1.5 text-sm rounded border dark:border-gray-700 disabled:opacity-50 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+            className="min-h-[44px] px-4 py-2.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500"
           >
             Next
           </button>

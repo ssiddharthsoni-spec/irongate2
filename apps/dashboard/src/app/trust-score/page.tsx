@@ -153,8 +153,9 @@ function CircularGauge({ score }: { score: number }) {
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke="#e5e7eb"
+          stroke="currentColor"
           strokeWidth={strokeWidth}
+          className="text-gray-200 dark:text-gray-600"
         />
         {/* Score arc */}
         <circle
@@ -187,7 +188,7 @@ function DimensionCard({ dimension }: { dimension: Dimension }) {
   const barWidth = `${Math.min(Math.max(dimension.score, 0), 100)}%`;
 
   return (
-    <div className={`rounded-xl p-5 border ${scoreBg(dimension.score)}`}>
+    <div className={`rounded-xl p-5 border transition-shadow hover:shadow-md ${scoreBg(dimension.score)}`}>
       <div className="flex items-start justify-between mb-3">
         <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{dimension.name}</h3>
         <span className="text-xs font-medium text-gray-500 dark:text-gray-400 bg-white/70 dark:bg-black/20 rounded-full px-2 py-0.5">
@@ -224,6 +225,7 @@ export default function TrustScorePage() {
   const [data, setData] = useState<TrustScoreResponse>(getDemoData());
   const [isLive, setIsLive] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchTrustScore();
@@ -233,6 +235,7 @@ export default function TrustScorePage() {
   async function fetchTrustScore() {
     try {
       setSyncing(true);
+      setFetchError(null);
       const response = await apiFetch('/dashboard/trust-score?days=30');
 
       if (!response.ok) throw new Error('Failed to fetch');
@@ -240,8 +243,8 @@ export default function TrustScorePage() {
       setData(json);
       setIsLive(true);
     } catch {
-      // API not available — keep using demo data silently
       setIsLive(false);
+      setFetchError('Unable to connect to API. Showing demo data.');
     } finally {
       setSyncing(false);
     }
@@ -251,17 +254,30 @@ export default function TrustScorePage() {
 
   return (
     <div>
+      {/* Demo/error banner */}
+      {!isLive && !syncing && (
+        <div className="mb-4 flex items-center gap-3 rounded-lg border border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20 px-4 py-3">
+          <svg className="w-5 h-5 text-yellow-600 dark:text-yellow-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+          </svg>
+          <p className="text-sm text-yellow-800 dark:text-yellow-300 flex-1">
+            <span className="font-medium">Demo Mode</span> — {fetchError || 'Showing sample data.'}
+          </p>
+          <button
+            onClick={fetchTrustScore}
+            className="text-xs font-medium text-yellow-700 dark:text-yellow-300 hover:underline flex-shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Trust Score</h1>
           <p className="text-sm text-gray-500 dark:text-gray-400">
             Composite governance health across 5 dimensions
-            {!isLive && (
-              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
-                Demo Data
-              </span>
-            )}
             {syncing && (
               <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
                 Syncing...
@@ -272,7 +288,7 @@ export default function TrustScorePage() {
         <button
           onClick={fetchTrustScore}
           disabled={syncing}
-          className="px-4 py-2 bg-iron-600 text-white rounded-lg text-sm hover:bg-iron-700 disabled:opacity-50"
+          className="min-h-[44px] px-4 py-2 bg-iron-600 text-white rounded-lg text-sm hover:bg-iron-700 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 transition-colors"
         >
           Refresh
         </button>

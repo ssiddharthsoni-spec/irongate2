@@ -8,7 +8,47 @@ import { recordCoOccurrences } from '../services/sensitivity-graph';
 import { dispatch as webhookDispatch } from '../services/webhook-dispatcher';
 import { forward as siemForward } from '../services/siem-forwarder';
 import { analyzePatterns } from '../services/inference-engine';
+import { sha256 } from '@iron-gate/crypto';
 import type { AppEnv } from '../types';
+
+// ---------------------------------------------------------------------------
+// Data Minimization: strip raw PII text from entities before storage.
+// Store only a one-way hash + length so Iron Gate can prove it found
+// sensitive data without ever being able to reconstruct it.
+// ---------------------------------------------------------------------------
+
+interface RawEntity {
+  type: string;
+  text: string;
+  start: number;
+  end: number;
+  confidence: number;
+  source: string;
+}
+
+interface MinimizedEntity {
+  type: string;
+  textHash: string;
+  start: number;
+  end: number;
+  confidence: number;
+  source: string;
+  length: number;
+}
+
+async function minimizeEntities(entities: RawEntity[]): Promise<MinimizedEntity[]> {
+  return Promise.all(
+    entities.map(async (e) => ({
+      type: e.type,
+      textHash: await sha256(e.text),
+      start: e.start,
+      end: e.end,
+      confidence: e.confidence,
+      source: e.source,
+      length: e.text.length,
+    })),
+  );
+}
 
 // Track event counts per firm for inference engine auto-trigger
 const firmEventCounters = new Map<string, number>();
@@ -52,6 +92,9 @@ eventsRoutes.post('/', async (c) => {
     const firmId = c.get('firmId');
     const userId = c.get('userId');
 
+    // Data minimization: strip raw PII text, store only hashes + lengths
+    const minimizedEntities = await minimizeEntities(parsed.entities as RawEntity[]);
+
     // Insert via audit chain for cryptographic trail
     const inserted = await appendEvent({
       firmId,
@@ -62,7 +105,7 @@ eventsRoutes.post('/', async (c) => {
       promptLength: parsed.promptLength,
       sensitivityScore: parsed.sensitivityScore,
       sensitivityLevel: parsed.sensitivityLevel,
-      entities: parsed.entities,
+      entities: minimizedEntities,
       action: parsed.action,
       overrideReason: parsed.overrideReason,
       captureMethod: parsed.captureMethod,
@@ -126,6 +169,9 @@ eventsRoutes.post('/batch', async (c) => {
     // Insert each event via audit chain (sequential for chain integrity)
     const results = [];
     for (const event of parsed.events) {
+      // Data minimization: strip raw PII text, store only hashes + lengths
+      const minimizedEntities = await minimizeEntities(event.entities as RawEntity[]);
+
       const inserted = await appendEvent({
         firmId,
         userId,
@@ -135,7 +181,7 @@ eventsRoutes.post('/batch', async (c) => {
         promptLength: event.promptLength,
         sensitivityScore: event.sensitivityScore,
         sensitivityLevel: event.sensitivityLevel as any,
-        entities: event.entities,
+        entities: minimizedEntities,
         action: event.action as any,
         overrideReason: event.overrideReason,
         captureMethod: event.captureMethod,

@@ -30,7 +30,7 @@ const ENTITY_TYPES = [
   'API_KEY', 'DATABASE_URI', 'AUTH_TOKEN', 'PRIVATE_KEY', 'AWS_CREDENTIAL',
 ];
 
-const DEFAULT_API_URL = 'http://localhost:3001';
+const DEFAULT_API_URL = 'https://irongate-api.onrender.com/v1';
 
 export function App() {
   const [status, setStatus] = useState<'idle' | 'monitoring' | 'error'>('idle');

@@ -10,7 +10,7 @@ export function MainContentInner({ children }: { children: React.ReactNode }) {
   const isFullWidth = isLanding || isDemo || isOnboarding;
 
   return (
-    <main className={isFullWidth ? '' : 'md:ml-64 ml-0 p-8'}>
+    <main className={isFullWidth ? '' : 'md:ml-64 ml-0 p-8 animate-fadeIn'}>
       {children}
     </main>
   );

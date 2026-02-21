@@ -5,6 +5,15 @@ const config: Config = {
   darkMode: 'class',
   theme: {
     extend: {
+      animation: {
+        fadeIn: 'fadeIn 0.3s ease-out',
+      },
+      keyframes: {
+        fadeIn: {
+          '0%': { opacity: '0', transform: 'translateY(4px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+      },
       colors: {
         iron: {
           50: '#f0f4ff',

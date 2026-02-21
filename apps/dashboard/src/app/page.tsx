@@ -30,8 +30,11 @@ export default function LandingPage() {
             <Link href="/sign-in" className="text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">
               Sign In
             </Link>
-            <Link href="/demo" className="px-4 py-2 bg-iron-600 hover:bg-iron-700 text-white text-sm font-semibold rounded-lg transition-all shadow-md shadow-iron-600/20 hover:shadow-lg hover:shadow-iron-600/30">
+            <Link href="/demo" className="hidden sm:inline-flex text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">
               Live Demo
+            </Link>
+            <Link href="/sign-up" className="px-4 py-2 bg-iron-600 hover:bg-iron-700 text-white text-sm font-semibold rounded-lg transition-all shadow-md shadow-iron-600/20 hover:shadow-lg hover:shadow-iron-600/30">
+              Get Started
             </Link>
           </div>
         </div>
@@ -70,20 +73,20 @@ export default function LandingPage() {
 
             <div className="mt-10 flex flex-wrap justify-center gap-4">
               <Link
-                href="/demo"
+                href="/sign-up"
                 className="group px-7 py-3.5 bg-iron-600 hover:bg-iron-700 text-white font-semibold rounded-xl text-base transition-all shadow-xl shadow-iron-600/25 hover:shadow-2xl hover:shadow-iron-600/30 flex items-center gap-2"
               >
-                Try Live Demo
+                Get Started Free
                 <svg className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
                 </svg>
               </Link>
-              <a
-                href="#how-it-works"
+              <Link
+                href="/demo"
                 className="px-7 py-3.5 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 font-semibold rounded-xl text-base transition-colors"
               >
-                How It Works
-              </a>
+                Try Live Demo
+              </Link>
             </div>
 
             {/* Trust strip */}
@@ -429,25 +432,25 @@ export default function LandingPage() {
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(255,255,255,0.1),transparent_60%)]" />
 
           <div className="relative px-8 py-16 md:px-16 md:py-24 text-center text-white">
-            <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight mb-5">See it in action</h2>
+            <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight mb-5">Start protecting your firm today</h2>
             <p className="text-iron-100/80 max-w-xl mx-auto mb-10 text-lg">
-              Run the interactive simulation with real-world scenarios from Legal, Healthcare, Finance, HR, and Product Strategy. Zero-knowledge security included.
+              Set up in minutes. Monitor every AI interaction. Detect sensitive data before it leaves your network. No credit card required.
             </p>
             <div className="flex flex-wrap justify-center gap-4">
               <Link
-                href="/demo"
+                href="/sign-up"
                 className="group px-8 py-3.5 bg-white text-iron-700 font-bold rounded-xl text-base hover:bg-iron-50 transition-all shadow-xl flex items-center gap-2"
               >
-                Try Live Demo
+                Get Started Free
                 <svg className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
                 </svg>
               </Link>
               <Link
-                href="/dashboard"
+                href="/demo"
                 className="px-8 py-3.5 bg-white/10 hover:bg-white/20 text-white font-bold rounded-xl text-base transition-all border border-white/20"
               >
-                View Dashboard
+                Try Live Demo
               </Link>
             </div>
           </div>

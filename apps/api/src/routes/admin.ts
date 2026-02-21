@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
+import crypto from 'crypto';
 import { db } from '../db/client';
 import { firms, users, clientMatters, weightOverrides, firmPlugins } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
@@ -7,6 +8,7 @@ import { analyzePatterns, getProposals, approveProposal, rejectProposal } from '
 import { registerWebhook, removeWebhook, listWebhooks } from '../services/webhook-dispatcher';
 import { invalidateCache } from '../services/plugin-loader';
 import { processFeedback } from '../services/feedback-processor';
+import { invalidateUserCache } from '../middleware/auth';
 import type { AppEnv } from '../types';
 
 export const adminRoutes = new Hono<AppEnv>();
@@ -21,6 +23,58 @@ adminRoutes.get('/firm', async (c) => {
   }
 
   return c.json(firm);
+});
+
+// POST /v1/admin/firm — Create firm during onboarding
+adminRoutes.post('/firm', async (c) => {
+  const userId = c.get('userId');
+  const clerkId = c.get('clerkId');
+  const body = await c.req.json();
+
+  const createSchema = z.object({
+    firmName: z.string().min(1).max(255),
+    industry: z.string().optional(),
+    firmSize: z.string().optional(),
+    protectionMode: z.enum(['audit', 'proxy']).optional().default('audit'),
+    thresholds: z.object({
+      warn: z.number().min(0).max(100).optional().default(30),
+      block: z.number().min(0).max(100).optional().default(60),
+      proxy: z.number().min(0).max(100).optional().default(80),
+    }).optional(),
+    teamMembers: z.array(z.object({
+      email: z.string().email(),
+      role: z.enum(['admin', 'user']).optional().default('user'),
+    })).optional().default([]),
+  });
+
+  const parsed = createSchema.parse(body);
+
+  // Create the new firm
+  const encryptionSalt = crypto.randomBytes(16).toString('hex');
+  const [newFirm] = await db
+    .insert(firms)
+    .values({
+      name: parsed.firmName,
+      mode: parsed.protectionMode,
+      config: {
+        industry: parsed.industry,
+        firmSize: parsed.firmSize,
+        thresholds: parsed.thresholds,
+      },
+      encryptionSalt,
+    })
+    .returning();
+
+  // Move the calling user to the new firm
+  await db
+    .update(users)
+    .set({ firmId: newFirm.id, role: 'admin', updatedAt: new Date() })
+    .where(eq(users.id, userId));
+
+  // Invalidate cached user so next request picks up the new firmId
+  invalidateUserCache(clerkId);
+
+  return c.json(newFirm, 201);
 });
 
 // PUT /v1/admin/firm — Update firm configuration

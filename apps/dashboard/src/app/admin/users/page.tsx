@@ -192,11 +192,26 @@ export default function UsersPage() {
   if (loading) {
     return (
       <div className="max-w-5xl">
+        {/* Breadcrumb */}
+        <nav aria-label="Breadcrumb" className="mb-4 text-sm">
+          <ol className="flex items-center gap-1.5 text-gray-500 dark:text-gray-400">
+            <li><a href="/admin" className="hover:text-gray-700 dark:hover:text-gray-300 transition-colors">Admin</a></li>
+            <li><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg></li>
+            <li className="font-medium text-gray-900 dark:text-white">Users</li>
+          </ol>
+        </nav>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-8">User Management</h1>
-        <div className="flex items-center justify-center py-16">
-          <div className="flex items-center gap-3">
-            <div className="w-6 h-6 border-2 border-iron-200 border-t-iron-600 rounded-full animate-spin" />
-            <span className="text-sm text-gray-500 dark:text-gray-400">Loading users...</span>
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
+          <div className="space-y-4">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-4 animate-pulse">
+                <div className="h-4 w-28 bg-gray-200 dark:bg-gray-700 rounded" />
+                <div className="h-4 w-40 bg-gray-200 dark:bg-gray-700 rounded" />
+                <div className="h-6 w-16 bg-gray-200 dark:bg-gray-700 rounded" />
+                <div className="h-4 w-24 bg-gray-200 dark:bg-gray-700 rounded" />
+                <div className="h-5 w-16 bg-gray-200 dark:bg-gray-700 rounded-full" />
+              </div>
+            ))}
           </div>
         </div>
       </div>
@@ -208,6 +223,15 @@ export default function UsersPage() {
   // ---------------------------------------------------------------------------
   return (
     <div className="max-w-5xl">
+      {/* Breadcrumb */}
+      <nav aria-label="Breadcrumb" className="mb-4 text-sm">
+        <ol className="flex items-center gap-1.5 text-gray-500 dark:text-gray-400">
+          <li><a href="/admin" className="hover:text-gray-700 dark:hover:text-gray-300 transition-colors">Admin</a></li>
+          <li><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg></li>
+          <li className="font-medium text-gray-900 dark:text-white">Users</li>
+        </ol>
+      </nav>
+
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">User Management</h1>
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
@@ -250,7 +274,7 @@ export default function UsersPage() {
           <button
             type="submit"
             disabled={inviting}
-            className={`px-4 py-2 rounded-lg text-sm text-white font-medium transition-colors ${
+            className={`min-h-[44px] px-4 py-2 rounded-lg text-sm text-white font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800 ${
               inviting
                 ? 'bg-iron-400 dark:bg-iron-800 cursor-not-allowed'
                 : 'bg-iron-600 hover:bg-iron-700'

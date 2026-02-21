@@ -1,14 +1,21 @@
 import { createMiddleware } from 'hono/factory';
 import { db } from '../db/client';
-import { users } from '../db/schema';
-import { eq, and } from 'drizzle-orm';
+import { users, firms } from '../db/schema';
+import { eq } from 'drizzle-orm';
+import crypto from 'crypto';
 
 // Cache user lookups to avoid querying on every request
 const userCache = new Map<string, { userId: string; firmId: string } | null>();
 
+/** Invalidate a cached user so the next request re-fetches from DB. */
+export function invalidateUserCache(clerkId: string) {
+  userCache.delete(clerkId);
+}
+
 /**
  * Authentication middleware.
  * In production, validates JWT via Clerk and resolves the internal user.
+ * New Clerk users are auto-provisioned on first request.
  * In development, looks up the dev user from the database.
  */
 export const authMiddleware = createMiddleware(async (c, next) => {
@@ -80,15 +87,47 @@ export const authMiddleware = createMiddleware(async (c, next) => {
       .where(eq(users.clerkId, clerkId))
       .limit(1);
 
-    if (rows.length === 0) {
-      return c.json({ error: 'Unauthorized: User not found' }, 401);
+    if (rows.length > 0) {
+      // Existing user — cache and proceed
+      userCache.set(clerkId, { userId: rows[0].id, firmId: rows[0].firmId });
+      c.set('userId', rows[0].id);
+      c.set('clerkId', clerkId);
+      c.set('firmId', rows[0].firmId);
+      await next();
+      return;
     }
 
-    // Cache and set context
-    userCache.set(clerkId, { userId: rows[0].id, firmId: rows[0].firmId });
-    c.set('userId', rows[0].id);
+    // --- Auto-provision new Clerk user ---
+    // Extract email from JWT claims (Clerk includes it in the token)
+    const email = (payload as any).email
+      || (payload as any).email_addresses?.[0]?.email_address
+      || `${clerkId}@irongate.app`;
+
+    // Assign to default firm (user will create their own during onboarding)
+    const defaultFirmId = process.env.DEFAULT_FIRM_ID;
+    if (!defaultFirmId) {
+      console.error('[Iron Gate Auth] DEFAULT_FIRM_ID not set — cannot auto-provision user');
+      return c.json({ error: 'Server configuration error' }, 500);
+    }
+
+    // Create user record
+    const [newUser] = await db
+      .insert(users)
+      .values({
+        clerkId,
+        firmId: defaultFirmId,
+        email,
+        displayName: email.split('@')[0],
+        role: 'admin',
+      })
+      .returning({ id: users.id, firmId: users.firmId });
+
+    console.log(`[Iron Gate Auth] Auto-provisioned user ${newUser.id} for Clerk ID ${clerkId}`);
+
+    userCache.set(clerkId, { userId: newUser.id, firmId: newUser.firmId });
+    c.set('userId', newUser.id);
     c.set('clerkId', clerkId);
-    c.set('firmId', rows[0].firmId);
+    c.set('firmId', newUser.firmId);
     await next();
   } catch (error) {
     console.error('[Iron Gate Auth] Token verification failed:', error);
