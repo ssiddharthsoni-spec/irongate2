@@ -20,6 +20,10 @@ export async function extractText(buffer: Buffer, extension: string): Promise<st
     case 'xlsx':
       text = extractFromXlsx(buffer);
       break;
+    case 'txt':
+    case 'csv':
+      text = buffer.toString('utf-8');
+      break;
     default:
       throw new Error(`Unsupported file extension: .${extension}`);
   }

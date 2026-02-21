@@ -8,6 +8,8 @@ interface ActivityItem {
   level: string;
   entityCount: number;
   timestamp: string;
+  isDocument?: boolean;
+  fileName?: string;
 }
 
 interface EntityFeedback {
@@ -83,6 +85,23 @@ export function App() {
             level: message.payload.level,
             entityCount: message.payload.entities?.length || 0,
             timestamp: new Date().toISOString(),
+          },
+          ...prev.slice(0, 49),
+        ]);
+      }
+
+      if (message.type === 'FILE_SCAN_RESULT') {
+        const p = message.payload;
+        setRecentActivity((prev) => [
+          {
+            id: crypto.randomUUID(),
+            aiTool: p.aiToolId || 'document',
+            score: p.score,
+            level: p.level,
+            entityCount: p.entitiesFound || 0,
+            timestamp: new Date().toISOString(),
+            isDocument: true,
+            fileName: p.fileName,
           },
           ...prev.slice(0, 49),
         ]);
@@ -234,13 +253,22 @@ export function App() {
           ) : (
             recentActivity.map((item) => (
               <div key={item.id} className="px-4 py-2 flex items-center justify-between">
-                <div>
-                  <span className="text-xs font-medium text-gray-600">{item.aiTool}</span>
-                  <span className="text-xs text-gray-400 ml-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    {item.isDocument && (
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-700">
+                        DOC
+                      </span>
+                    )}
+                    <span className="text-xs font-medium text-gray-600 truncate">
+                      {item.isDocument && item.fileName ? item.fileName : item.aiTool}
+                    </span>
+                  </div>
+                  <span className="text-xs text-gray-400">
                     {item.entityCount} entities
                   </span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-shrink-0">
                   <span
                     className={`text-sm font-semibold ${
                       item.level === 'critical'

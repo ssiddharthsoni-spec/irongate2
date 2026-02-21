@@ -32,7 +32,7 @@ export interface FileAnalysisResult {
   explanation: string;
 }
 
-const SUPPORTED_EXTENSIONS = new Set(['pdf', 'docx', 'xlsx']);
+const SUPPORTED_EXTENSIONS = new Set(['pdf', 'docx', 'xlsx', 'txt', 'csv']);
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
 function getExtension(fileName: string): string {

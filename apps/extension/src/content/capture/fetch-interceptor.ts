@@ -85,9 +85,12 @@ function extractPromptFromPayload(body: any): string | null {
   }
 }
 
+/** Timeout for file scanning before defaulting to allow (15 seconds) */
+const FILE_SCAN_TIMEOUT_MS = 15_000;
+
 export function installFetchInterceptor(
   onRequest: (request: InterceptedRequest) => void,
-  onFileInFormData?: (file: File) => void
+  onFileInFormData?: (file: File) => Promise<'allow' | 'block'>
 ): () => void {
   // Save original implementations
   const originalFetch = window.fetch;
@@ -106,15 +109,31 @@ export function installFetchInterceptor(
     if (isLLMEndpoint(url) && body) {
       try {
         let parsedBody: any = body;
+        let shouldBlock = false;
+
         if (typeof body === 'string') {
           parsedBody = JSON.parse(body);
         } else if (body instanceof FormData) {
-          // Detect file uploads in FormData — notify about attached files
+          // Detect file uploads in FormData — scan before allowing through
           parsedBody = '[FormData]';
           if (onFileInFormData) {
             for (const [, value] of (body as FormData).entries()) {
               if (value instanceof File && value.size > 0) {
-                onFileInFormData(value);
+                try {
+                  // Hold the fetch until scanning completes (with timeout)
+                  const decision = await Promise.race([
+                    onFileInFormData(value),
+                    new Promise<'allow'>((resolve) =>
+                      setTimeout(() => resolve('allow'), FILE_SCAN_TIMEOUT_MS)
+                    ),
+                  ]);
+                  if (decision === 'block') {
+                    shouldBlock = true;
+                    break; // One blocked file blocks the entire request
+                  }
+                } catch {
+                  // On error, default to allow
+                }
               }
             }
           }
@@ -129,12 +148,21 @@ export function installFetchInterceptor(
           body: parsedBody,
           timestamp: Date.now(),
         });
+
+        // If a file was blocked, return a fake response instead of sending to LLM
+        if (shouldBlock) {
+          console.log('[Iron Gate] File upload BLOCKED — sensitive content detected');
+          return new Response(JSON.stringify({ blocked: true, reason: 'Iron Gate: sensitive document blocked' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
       } catch {
         // Don't break the original request on parse errors
       }
     }
 
-    // Always pass through to original
+    // Pass through to original
     return originalFetch.apply(this, [input, init]);
   };
 

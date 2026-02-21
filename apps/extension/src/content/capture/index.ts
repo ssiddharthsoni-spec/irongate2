@@ -9,6 +9,7 @@ import { installSubmitHandler, type SubmitHandlerHandle, type SubmitMode } from 
 import { createClipboardMonitor, type ClipboardMonitorHandle, type ClipboardEvent as IronClipboardEvent } from './clipboard-monitor';
 import { createFileUploadMonitor, type FileUploadMonitorHandle, type FileUploadEvent } from './file-upload-monitor';
 import { showBlockOverlay } from '../ui/block-overlay';
+import { showScanIndicator, hideScanIndicator } from '../ui/scan-indicator';
 import { injectProxyResponse } from '../ui/response-injector';
 
 interface AIToolDetector {
@@ -213,25 +214,91 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
   }
 
   // Handler: file detected in FormData during fetch interception
-  function onFileInFormData(file: File) {
+  // Returns 'allow' or 'block' — the fetch interceptor holds until this resolves
+  async function onFileInFormData(file: File): Promise<'allow' | 'block'> {
     const ext = (file.name.split('.').pop() || '').toLowerCase();
-    if (!['pdf', 'docx', 'xlsx'].includes(ext)) return;
-    if (file.size > 10 * 1024 * 1024) return;
+    if (!['pdf', 'docx', 'xlsx', 'txt', 'csv'].includes(ext)) return 'allow';
+    if (file.size > 10 * 1024 * 1024) return 'allow';
 
-    // Read and send for analysis
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      const base64 = dataUrl.split(',')[1] || '';
-      onFileUpload({
-        fileName: file.name,
-        fileSize: file.size,
-        fileType: ext,
-        fileBase64: base64,
-        timestamp: Date.now(),
+    // Show scanning indicator
+    const indicator = showScanIndicator(file.name);
+
+    try {
+      // Read file to base64
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = reader.result as string;
+          resolve(dataUrl.split(',')[1] || '');
+        };
+        reader.onerror = () => reject(new Error('Failed to read file'));
+        reader.readAsDataURL(file);
       });
-    };
-    reader.readAsDataURL(file);
+
+      // Send to service worker for scanning and await result
+      const result = await new Promise<any>((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          {
+            type: 'FILE_UPLOAD_DETECTED',
+            payload: {
+              fileName: file.name,
+              fileSize: file.size,
+              fileType: ext,
+              fileBase64: base64,
+              aiToolId: detector.id,
+              timestamp: Date.now(),
+            },
+          },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else {
+              resolve(response);
+            }
+          }
+        );
+      });
+
+      indicator.remove();
+
+      // If scan failed or returned no result, allow through
+      if (!result || result.error) {
+        console.warn('[Iron Gate] File scan failed, allowing through:', result?.error);
+        return 'allow';
+      }
+
+      // If high/critical sensitivity, show block overlay
+      if (result.level === 'high' || result.level === 'critical') {
+        const entityCounts = new Map<string, number>();
+        for (const e of result.entities || []) {
+          entityCounts.set(e.type, (entityCounts.get(e.type) || 0) + 1);
+        }
+        const overlayResult = await showBlockOverlay({
+          score: result.score,
+          level: result.level,
+          entities: Array.from(entityCounts.entries()).map(([type, count]) => ({ type, count })),
+          explanation: result.explanation || `Document "${file.name}" contains sensitive information.`,
+        });
+
+        if (overlayResult.action === 'allow' && overlayResult.overrideReason) {
+          sendToWorker('BLOCK_OVERRIDE', {
+            eventId: crypto.randomUUID(),
+            reason: overlayResult.overrideReason,
+            fileName: file.name,
+          });
+          return 'allow';
+        }
+
+        return 'block';
+      }
+
+      // Low/medium — allow through
+      return 'allow';
+    } catch (err) {
+      indicator.remove();
+      console.warn('[Iron Gate] File scan error, allowing through:', err);
+      return 'allow';
+    }
   }
 
   // Handler: clipboard paste

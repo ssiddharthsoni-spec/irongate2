@@ -139,6 +139,13 @@ async function handleMessage(
 
       try {
         const result = await analyzeFile(fileName, fileBase64, fileType);
+
+        // Broadcast scan result to sidepanel and all tabs
+        chrome.runtime.sendMessage({
+          type: 'FILE_SCAN_RESULT',
+          payload: { ...result, aiToolId },
+        }).catch(() => {});
+
         return result;
       } catch (error) {
         console.error('[Iron Gate] File analysis error:', error);

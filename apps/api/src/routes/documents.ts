@@ -2,13 +2,13 @@ import { Hono } from 'hono';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db/client';
 import { events } from '../db/schema';
-import { detect, score as scoreText } from '../detection';
+import { detectFirmAware, scoreFirmAware } from '../detection';
 import { Pseudonymizer } from '../proxy/pseudonymizer';
 import { extractText } from '../extraction';
 import type { AppEnv } from '../types';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
-const ALLOWED_EXTENSIONS = new Set(['pdf', 'docx', 'xlsx']);
+const ALLOWED_EXTENSIONS = new Set(['pdf', 'docx', 'xlsx', 'txt', 'csv']);
 
 async function sha256(text: string): Promise<string> {
   const encoder = new TextEncoder();
@@ -56,15 +56,15 @@ documentRoutes.post('/scan', async (c) => {
       return c.json({ error: 'Could not extract any text from this document. It may be a scanned/image-based PDF.' }, 400);
     }
 
-    // 4. Run detection pipeline
-    const detectedEntities = detect(extractedText);
+    // 4. Run firm-aware detection pipeline (plugins, client-matters, secrets)
+    const firmId = c.get('firmId');
+    const detectedEntities = await detectFirmAware(extractedText, { firmId });
 
-    // 5. Score sensitivity
-    const scoreResult = scoreText(extractedText, detectedEntities);
+    // 5. Score sensitivity (with graph boost, weight overrides, etc.)
+    const scoreResult = await scoreFirmAware(extractedText, detectedEntities, { firmId });
 
     // 6. Pseudonymize (redact)
     const sessionId = uuidv4();
-    const firmId = c.get('firmId');
     const userId = c.get('userId');
     const pseudonymizer = new Pseudonymizer(sessionId, firmId);
     const pseudonymResult = pseudonymizer.pseudonymize(extractedText, detectedEntities);
