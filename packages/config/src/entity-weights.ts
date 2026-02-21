@@ -39,6 +39,7 @@ export const ENTITY_WEIGHTS: Record<EntityType, number> = {
   PROPRIETARY_FORMULA: 50,
   MNPI: 50,
   CLINICAL_DATA: 40,
+  CONFIDENTIAL_METRIC: 35,
 };
 
 export const LEGAL_KEYWORDS = [

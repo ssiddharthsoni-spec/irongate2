@@ -382,11 +382,12 @@ Failure to meet improvement targets may result in further action up to and inclu
       { text: 'Sequoia', type: 'INVESTOR_NAME', color: '#7950f2', pseudonym: '[Investor]', weight: 18 },
       { text: 'Titan', type: 'COMPETITOR_CODENAME', color: '#e64980', pseudonym: '[Competitor Product]', weight: 22 },
       { text: 'rachel.kim@auroradev.ai', type: 'EMAIL', color: '#20c997', pseudonym: 'user@[redacted].com', weight: 10 },
+      { text: 'NPS is 78', type: 'CONFIDENTIAL_METRIC', color: '#ff6b6b', pseudonym: 'NPS is [XX]', weight: 18 },
       { text: '(650) 555-1847', type: 'PHONE_NUMBER', color: '#20c997', pseudonym: '(XXX) XXX-XXXX', weight: 8 },
     ],
     score: 96,
     action: 'BLOCK',
-    actionReason: 'prompt contains unannounced funding, pricing strategy, competitive intelligence, and partnership terms',
+    actionReason: 'prompt contains unannounced funding, pricing strategy, competitive intelligence, confidential NPS, and partnership terms',
     aiResponsePseudonymized: `Go-to-Market Strategy — Project [Redacted]
 
 Executive Summary:
@@ -413,7 +414,7 @@ Project [Redacted] is well-positioned for Q3 2026 launch with strong beta metric
 
 5. Risk Mitigation:
 - Churn to [Competitor Product] is the #1 risk — build migration tooling and switching cost features
-- NPS of 78 is strong but enterprise segment needs dedicated CSM coverage
+- NPS is [XX] — strong but enterprise segment needs dedicated CSM coverage
 
 Contact: user@[redacted].com | (XXX) XXX-XXXX`,
     aiResponseReal: `Go-to-Market Strategy — Project Aurora

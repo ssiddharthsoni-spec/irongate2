@@ -59,7 +59,8 @@ export type EntityType =
   | 'LITIGATION_STRATEGY'
   | 'PROPRIETARY_FORMULA'
   | 'MNPI'
-  | 'CLINICAL_DATA';
+  | 'CLINICAL_DATA'
+  | 'CONFIDENTIAL_METRIC';
 
 export interface DetectedEntity {
   type: EntityType;
