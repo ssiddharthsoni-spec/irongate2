@@ -7,7 +7,7 @@ import { ThemeToggle } from './ThemeToggle';
 
 const navItems = [
   {
-    href: '/',
+    href: '/dashboard',
     label: 'Overview',
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
@@ -76,9 +76,10 @@ export default function Sidebar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  // Hide sidebar on the onboarding page
+  // Hide sidebar on the landing and onboarding pages
+  const isLanding = pathname === '/';
   const isOnboarding = pathname.startsWith('/onboarding');
-  if (isOnboarding) return null;
+  if (isLanding || isOnboarding) return null;
 
   return (
     <>
@@ -122,8 +123,8 @@ export default function Sidebar() {
         <ul className="space-y-1 flex-1">
           {navItems.map((item) => {
             const isActive =
-              item.href === '/'
-                ? pathname === '/'
+              item.href === '/dashboard'
+                ? pathname === '/dashboard'
                 : pathname.startsWith(item.href);
 
             return (
