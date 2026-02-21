@@ -25,6 +25,7 @@ export default function LandingPage() {
           <div className="flex items-center gap-6">
             <a href="#features" className="hidden md:block text-sm text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">Features</a>
             <a href="#how-it-works" className="hidden md:block text-sm text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">How It Works</a>
+            <a href="#security" className="hidden md:block text-sm text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">Security</a>
             <a href="#industries" className="hidden md:block text-sm text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">Industries</a>
             <Link href="/sign-in" className="text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">
               Sign In
@@ -89,19 +90,27 @@ export default function LandingPage() {
             <div className="mt-16 flex flex-wrap items-center justify-center gap-x-8 gap-y-3 text-xs text-gray-400 dark:text-gray-500 font-medium">
               <span className="flex items-center gap-1.5">
                 <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
-                Compliance-Ready Architecture
+                Zero-Knowledge Architecture
               </span>
               <span className="flex items-center gap-1.5">
                 <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
-                Data stays in your infrastructure
+                AES-256-GCM Encryption
               </span>
               <span className="flex items-center gap-1.5">
                 <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
-                Deploys in under 10 minutes
+                SOC 2 Type II Ready
               </span>
               <span className="flex items-center gap-1.5">
                 <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
-                Works with all major AI tools
+                Row-Level Security Isolation
+              </span>
+              <span className="flex items-center gap-1.5">
+                <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+                Kill Switch Emergency Stop
+              </span>
+              <span className="flex items-center gap-1.5">
+                <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+                GDPR Right-to-Erasure
               </span>
             </div>
           </div>
@@ -115,7 +124,7 @@ export default function LandingPage() {
             {[
               { value: '2,847', label: 'Interactions monitored', sub: 'last 30 days' },
               { value: '187', label: 'Sensitive prompts caught', sub: 'before reaching AI' },
-              { value: '43', label: 'Document uploads blocked', sub: 'PDF, DOCX, CSV' },
+              { value: 'AES-256', label: 'Envelope encryption', sub: 'per-event unique keys' },
               { value: '<200ms', label: 'Detection latency', sub: 'zero user friction' },
             ].map((stat) => (
               <div key={stat.label} className="text-center md:text-left">
@@ -132,19 +141,21 @@ export default function LandingPage() {
       <section id="how-it-works" className="max-w-7xl mx-auto px-6 md:px-12 py-24 md:py-32">
         <div className="text-center mb-16">
           <p className="text-sm font-semibold uppercase tracking-widest text-iron-600 dark:text-iron-400 mb-3">How It Works</p>
-          <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight">Five steps. Zero data loss.</h2>
+          <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight">Seven steps. Zero data loss.</h2>
           <p className="mt-4 text-gray-500 dark:text-gray-400 max-w-xl mx-auto">
             Iron Gate operates as an invisible layer between your employees and AI tools.
           </p>
         </div>
 
-        <div className="grid md:grid-cols-5 gap-4">
+        <div className="grid md:grid-cols-7 gap-4">
           {[
             { step: '01', title: 'Capture', desc: 'Browser extension intercepts every prompt and file upload to ChatGPT, Claude, Gemini, and Copilot.', color: 'from-iron-500 to-iron-600' },
-            { step: '02', title: 'Detect', desc: '25+ entity detectors scan for SSNs, case names, deal codenames, client data, and privileged content.', color: 'from-iron-600 to-purple-500' },
-            { step: '03', title: 'Score', desc: 'Weighted sensitivity scoring with firm-specific rules, client-matter matching, and context awareness.', color: 'from-purple-500 to-purple-600' },
-            { step: '04', title: 'Decide', desc: 'Based on your thresholds: allow, warn, pseudonymize, or block. Configurable per team or user.', color: 'from-purple-600 to-pink-500' },
-            { step: '05', title: 'Protect', desc: 'Sensitive data is either blocked entirely or replaced with pseudonyms before reaching the AI.', color: 'from-pink-500 to-red-500' },
+            { step: '02', title: 'Hash', desc: 'Entity values are SHA-256 hashed client-side with a per-session salt. Raw PII never leaves the browser.', color: 'from-iron-600 to-cyan-500' },
+            { step: '03', title: 'Detect', desc: '25+ entity detectors scan for SSNs, case names, deal codenames, client data, and privileged content.', color: 'from-cyan-500 to-purple-500' },
+            { step: '04', title: 'Score', desc: 'Weighted sensitivity scoring with firm-specific rules, client-matter matching, and context awareness.', color: 'from-purple-500 to-purple-600' },
+            { step: '05', title: 'Encrypt', desc: 'Envelope encryption wraps each event with a unique AES-256-GCM data key, sealed by the firm\'s KMS master key.', color: 'from-purple-600 to-amber-500' },
+            { step: '06', title: 'Decide', desc: 'Based on your thresholds: allow, warn, pseudonymize, or block. Configurable per team or user.', color: 'from-amber-500 to-pink-500' },
+            { step: '07', title: 'Protect', desc: 'Sensitive data is blocked or replaced with pseudonyms. Audit trail hash-chained for tamper evidence.', color: 'from-pink-500 to-red-500' },
           ].map((item) => (
             <div key={item.step} className="relative group">
               <div className="bg-white dark:bg-gray-900 rounded-2xl p-6 border border-gray-100 dark:border-gray-800 h-full hover:border-iron-200 dark:hover:border-iron-800 transition-all hover:shadow-lg">
@@ -216,6 +227,24 @@ export default function LandingPage() {
                 title: 'Tamper-Proof Audit Trail',
                 desc: 'Every AI interaction is logged in a blockchain-style chain with SHA-256 hashing. Verify integrity at any time for regulatory compliance.',
                 tag: 'Compliance',
+              },
+              {
+                icon: <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z" /></svg>,
+                title: 'Envelope Encryption',
+                desc: 'Every event is encrypted with a unique AES-256-GCM data key, wrapped by the firm\'s KMS master key. Zero-knowledge architecture — we never see your data.',
+                tag: 'Security',
+              },
+              {
+                icon: <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m0-10.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285ZM12 15.75h.008v.008H12v-.008Z" /></svg>,
+                title: 'Kill Switch & Breach Detection',
+                desc: 'Global or per-firm emergency shutdown with dual-key authentication. 7 breach signals monitored in real-time with automated escalation.',
+                tag: 'Security',
+              },
+              {
+                icon: <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" /></svg>,
+                title: 'Row-Level Security & RBAC',
+                desc: 'PostgreSQL RLS policies enforce per-firm data isolation at the database layer. Role-based access control with 21 fine-grained permissions.',
+                tag: 'Infrastructure',
               },
             ].map((f) => (
               <div key={f.title} className="bg-white dark:bg-gray-900 rounded-2xl p-6 border border-gray-100 dark:border-gray-800 hover:shadow-lg transition-all group">
@@ -330,6 +359,68 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* ════════════════ SECURITY ARCHITECTURE ════════════════ */}
+      <section id="security" className="max-w-7xl mx-auto px-6 md:px-12 py-24 md:py-32">
+        <div className="text-center mb-16">
+          <p className="text-sm font-semibold uppercase tracking-widest text-iron-600 dark:text-iron-400 mb-3">Security</p>
+          <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight">Enterprise-grade security, built in</h2>
+          <p className="mt-4 text-gray-500 dark:text-gray-400 max-w-xl mx-auto">
+            Iron Gate was designed from day one with a zero-knowledge architecture. Your data is encrypted, isolated, and protected at every layer.
+          </p>
+        </div>
+
+        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5">
+          {[
+            {
+              title: 'Zero-Knowledge',
+              desc: 'Entity values are SHA-256 hashed client-side. Raw PII never reaches our servers. Only encrypted metadata is stored.',
+              icon: '🔒',
+            },
+            {
+              title: 'Envelope Encryption',
+              desc: 'AES-256-GCM with unique per-event data keys, wrapped by firm-level KMS master keys. Keys rotate automatically.',
+              icon: '🔑',
+            },
+            {
+              title: 'Firm Isolation',
+              desc: 'PostgreSQL Row-Level Security enforces data isolation at the database layer. No cross-firm data access is possible.',
+              icon: '🏢',
+            },
+            {
+              title: 'Tamper-Proof Audit',
+              desc: 'Every event is hash-chained using SHA-256. Break one link and the entire chain fails verification.',
+              icon: '⛓️',
+            },
+            {
+              title: 'Kill Switch',
+              desc: 'Global or per-firm emergency shutdown with dual-key authentication. Extension fails closed — protection never stops.',
+              icon: '🛑',
+            },
+            {
+              title: 'GDPR Compliance',
+              desc: 'Right-to-erasure with 24h grace period. Automated data retention cleanup. Full audit trail for regulators.',
+              icon: '📋',
+            },
+            {
+              title: 'Network Hardening',
+              desc: 'TLS 1.3, certificate pinning, host allowlists, security headers (HSTS, CSP), and rate limiting on every endpoint.',
+              icon: '🌐',
+            },
+            {
+              title: 'Breach Detection',
+              desc: '7 real-time breach signals: volume spikes, cross-firm leaks, audit tampering, bulk extraction, and more.',
+              icon: '🚨',
+            },
+          ].map((item) => (
+            <div key={item.title} className="bg-white dark:bg-gray-900 rounded-2xl p-6 border border-gray-100 dark:border-gray-800 hover:shadow-lg transition-all">
+              <span className="text-2xl mb-4 block">{item.icon}</span>
+              <h3 className="text-base font-bold mb-2">{item.title}</h3>
+              <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">{item.desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
       {/* ════════════════ CTA ════════════════ */}
       <section className="max-w-7xl mx-auto px-6 md:px-12 py-24 md:py-32">
         <div className="relative rounded-3xl overflow-hidden">
@@ -340,7 +431,7 @@ export default function LandingPage() {
           <div className="relative px-8 py-16 md:px-16 md:py-24 text-center text-white">
             <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight mb-5">See it in action</h2>
             <p className="text-iron-100/80 max-w-xl mx-auto mb-10 text-lg">
-              Run the interactive simulation with real-world scenarios from Legal, Healthcare, Finance, and HR. No sign-up required.
+              Run the interactive simulation with real-world scenarios from Legal, Healthcare, Finance, HR, and Product Strategy. Zero-knowledge security included.
             </p>
             <div className="flex flex-wrap justify-center gap-4">
               <Link
@@ -380,11 +471,12 @@ export default function LandingPage() {
             <div className="flex items-center gap-8 text-sm text-gray-400 dark:text-gray-500">
               <a href="#features" className="hover:text-gray-600 dark:hover:text-gray-300 transition-colors">Features</a>
               <a href="#how-it-works" className="hover:text-gray-600 dark:hover:text-gray-300 transition-colors">How It Works</a>
+              <a href="#security" className="hover:text-gray-600 dark:hover:text-gray-300 transition-colors">Security</a>
               <a href="#industries" className="hover:text-gray-600 dark:hover:text-gray-300 transition-colors">Industries</a>
               <Link href="/demo" className="hover:text-gray-600 dark:hover:text-gray-300 transition-colors">Demo</Link>
             </div>
 
-            <p className="text-xs text-gray-400 dark:text-gray-500">v0.2.0</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500">v0.3.0</p>
           </div>
         </div>
       </footer>

@@ -826,8 +826,8 @@ export default function DemoPage() {
         <div className="text-center mb-6">
           <h1 className="text-3xl md:text-4xl font-bold mb-3">Live Simulation</h1>
           <p className="text-gray-500 dark:text-gray-400 max-w-2xl mx-auto">
-            Watch how Iron Gate intercepts sensitive prompts across industries, detects confidential entities,
-            scores the risk, and pseudonymizes content before it reaches the AI.
+            Watch how Iron Gate intercepts sensitive prompts, hashes entities client-side, detects confidential data,
+            encrypts with AES-256-GCM envelope encryption, and pseudonymizes content before it reaches the AI.
           </p>
         </div>
 
@@ -1253,7 +1253,7 @@ export default function DemoPage() {
                     <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
                     </svg>
-                    AES-256 encrypted at rest
+                    AES-256-GCM envelope encrypted
                   </span>
                   <span className="flex items-center gap-1">
                     <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
@@ -1282,12 +1282,14 @@ export default function DemoPage() {
             <div className="flex flex-wrap items-center justify-center gap-3 md:gap-4">
               {[
                 { label: 'Capture', icon: '1', active: true },
-                { label: 'Detect', icon: '2', active: step === 'detecting' || step === 'scoring' || step === 'pseudonymizing' || step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
-                { label: 'Score', icon: '3', active: step === 'scoring' || step === 'pseudonymizing' || step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
-                { label: 'Pseudonymize', icon: '4', active: step === 'pseudonymizing' || step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
-                { label: 'AI Response', icon: '5', active: step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
-                { label: 'Restore', icon: '6', active: step === 'restoring' || step === 'complete' },
-                { label: 'Verified', icon: '7', active: step === 'complete' },
+                { label: 'Hash', icon: '2', active: step === 'detecting' || step === 'scoring' || step === 'pseudonymizing' || step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
+                { label: 'Detect', icon: '3', active: step === 'detecting' || step === 'scoring' || step === 'pseudonymizing' || step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
+                { label: 'Score', icon: '4', active: step === 'scoring' || step === 'pseudonymizing' || step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
+                { label: 'Encrypt', icon: '5', active: step === 'pseudonymizing' || step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
+                { label: 'Pseudonymize', icon: '6', active: step === 'pseudonymizing' || step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
+                { label: 'AI Response', icon: '7', active: step === 'sending' || step === 'responding' || step === 'restoring' || step === 'complete' },
+                { label: 'Restore', icon: '8', active: step === 'restoring' || step === 'complete' },
+                { label: 'Audit', icon: '9', active: step === 'complete' },
               ].map((s, i) => (
                 <div key={s.label} className="flex items-center gap-3">
                   <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-all ${
@@ -1302,7 +1304,7 @@ export default function DemoPage() {
                     </span>
                     <span className="text-xs font-medium">{s.label}</span>
                   </div>
-                  {i < 6 && (
+                  {i < 8 && (
                     <svg className="w-4 h-4 text-gray-300 dark:text-gray-600 hidden md:block" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
                     </svg>
@@ -1341,6 +1343,32 @@ export default function DemoPage() {
                   </div>
                 ));
               })()}
+            </div>
+          </div>
+        )}
+
+        {/* Security Layer Info */}
+        {step === 'complete' && (
+          <div className="mt-6 bg-white dark:bg-gray-900 rounded-xl border border-iron-200 dark:border-iron-800 p-6">
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-iron-600 dark:text-iron-400 mb-4">
+              Security Layer Applied
+            </h3>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              {[
+                { label: 'Client Hashing', value: 'SHA-256 + salt', status: 'active' },
+                { label: 'Encryption', value: 'AES-256-GCM', status: 'active' },
+                { label: 'Key Wrapping', value: 'KMS envelope', status: 'active' },
+                { label: 'Firm Isolation', value: 'RLS enforced', status: 'active' },
+                { label: 'Audit Chain', value: 'Hash verified', status: 'active' },
+              ].map((item) => (
+                <div key={item.label} className="flex items-center gap-2 p-3 rounded-lg bg-iron-50 dark:bg-iron-900/20 border border-iron-100 dark:border-iron-800">
+                  <div className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
+                  <div>
+                    <p className="text-[10px] font-bold text-iron-700 dark:text-iron-300">{item.label}</p>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400">{item.value}</p>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         )}
