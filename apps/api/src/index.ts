@@ -48,23 +48,12 @@ app.use(
 app.get('/health', async (c) => {
   const health: Record<string, unknown> = {
     status: 'ok',
-    version: '0.1.4',
+    version: '0.2.0',
     timestamp: new Date().toISOString(),
   };
 
   // Deep health check with ?deep=true
   if (c.req.query('deep') === 'true') {
-    // Show all env var NAMES (not values) for debugging
-    health.envVarNames = Object.keys(process.env).filter(k =>
-      ['DATABASE', 'SUPABASE', 'DB_', 'PG', 'CLERK', 'NODE_ENV', 'PORT', 'DEFAULT_FIRM'].some(prefix => k.includes(prefix))
-    ).sort();
-
-    const effectiveUrl = process.env.SUPABASE_DB_URL || process.env.DATABASE_URL;
-    health.supabaseDbUrlSet = !!process.env.SUPABASE_DB_URL;
-    health.supabaseDbUrlLen = (process.env.SUPABASE_DB_URL || '').length;
-    health.dbUrlHost = effectiveUrl?.match(/@([^:\/]+)/)?.[1] || 'not-found';
-    health.dbUrlPort = effectiveUrl?.match(/:(\d{4,5})\//)?.[1] || 'not-found';
-
     try {
       const { sql } = await import('drizzle-orm');
       const { db } = await import('./db/client');
@@ -109,7 +98,5 @@ const port = parseInt(process.env.PORT || '3000');
 import('@hono/node-server').then(({ serve }) => {
   serve({ fetch: app.fetch, port }, () => {
     console.log(`[Iron Gate API] Running on http://localhost:${port}`);
-    console.log(`[Iron Gate API] DATABASE_URL prefix: ${process.env.DATABASE_URL?.substring(0, 50)}...`);
-    console.log(`[Iron Gate API] DATABASE_URL host: ${process.env.DATABASE_URL?.match(/@([^:\/]+)/)?.[1] || 'not set'}`);
   });
 });
