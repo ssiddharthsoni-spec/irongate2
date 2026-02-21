@@ -48,18 +48,18 @@ app.use(
 app.get('/health', async (c) => {
   const health: Record<string, unknown> = {
     status: 'ok',
-    version: '0.1.2',
+    version: '0.1.3',
     timestamp: new Date().toISOString(),
   };
 
   // Deep health check with ?deep=true
   if (c.req.query('deep') === 'true') {
     // Env var diagnostics
-    health.dbUrlPrefix = process.env.DATABASE_URL?.substring(0, 55) + '...';
-    health.dbUrlHost = process.env.DATABASE_URL?.match(/@([^:\/]+)/)?.[1] || 'not-found';
-    health.dbUrlPort = process.env.DATABASE_URL?.match(/:(\d{4,5})\//)?.[1] || 'not-found';
-    health.pgHost = process.env.PGHOST || 'not-set';
-    health.pgPort = process.env.PGPORT || 'not-set';
+    const effectiveUrl = process.env.SUPABASE_DB_URL || process.env.DATABASE_URL;
+    health.supabaseDbUrlSet = !!process.env.SUPABASE_DB_URL;
+    health.dbUrlHost = effectiveUrl?.match(/@([^:\/]+)/)?.[1] || 'not-found';
+    health.dbUrlPort = effectiveUrl?.match(/:(\d{4,5})\//)?.[1] || 'not-found';
+    health.rawDbUrlHost = process.env.DATABASE_URL?.match(/@([^:\/]+)/)?.[1] || 'not-found';
 
     try {
       const { sql } = await import('drizzle-orm');

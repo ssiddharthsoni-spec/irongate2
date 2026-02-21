@@ -6,7 +6,8 @@ import * as schema from './schema';
 // Force IPv4 resolution — Railway can't reach Supabase over IPv6
 dns.setDefaultResultOrder('ipv4first');
 
-const connectionString = process.env.DATABASE_URL || 'postgresql://localhost:5432/irongate';
+// Use SUPABASE_DB_URL first (avoids Railway overriding DATABASE_URL), then DATABASE_URL
+const connectionString = process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || 'postgresql://localhost:5432/irongate';
 const isRemote = connectionString.includes('supabase') || connectionString.includes('neon');
 const isPooler = connectionString.includes('pooler.supabase.com');
 
