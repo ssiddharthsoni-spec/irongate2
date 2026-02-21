@@ -100,5 +100,7 @@ const port = parseInt(process.env.PORT || '3000');
 import('@hono/node-server').then(({ serve }) => {
   serve({ fetch: app.fetch, port }, () => {
     console.log(`[Iron Gate API] Running on http://localhost:${port}`);
+    console.log(`[Iron Gate API] DATABASE_URL prefix: ${process.env.DATABASE_URL?.substring(0, 50)}...`);
+    console.log(`[Iron Gate API] DATABASE_URL host: ${process.env.DATABASE_URL?.match(/@([^:\/]+)/)?.[1] || 'not set'}`);
   });
 });
