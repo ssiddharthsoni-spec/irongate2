@@ -48,7 +48,7 @@ app.use(
 app.get('/health', async (c) => {
   const health: Record<string, unknown> = {
     status: 'ok',
-    version: '0.1.0',
+    version: '0.1.1',
     timestamp: new Date().toISOString(),
   };
 
