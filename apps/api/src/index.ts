@@ -48,12 +48,19 @@ app.use(
 app.get('/health', async (c) => {
   const health: Record<string, unknown> = {
     status: 'ok',
-    version: '0.1.1',
+    version: '0.1.2',
     timestamp: new Date().toISOString(),
   };
 
   // Deep health check with ?deep=true
   if (c.req.query('deep') === 'true') {
+    // Env var diagnostics
+    health.dbUrlPrefix = process.env.DATABASE_URL?.substring(0, 55) + '...';
+    health.dbUrlHost = process.env.DATABASE_URL?.match(/@([^:\/]+)/)?.[1] || 'not-found';
+    health.dbUrlPort = process.env.DATABASE_URL?.match(/:(\d{4,5})\//)?.[1] || 'not-found';
+    health.pgHost = process.env.PGHOST || 'not-set';
+    health.pgPort = process.env.PGPORT || 'not-set';
+
     try {
       const { sql } = await import('drizzle-orm');
       const { db } = await import('./db/client');
@@ -63,8 +70,6 @@ app.get('/health', async (c) => {
       health.database = 'disconnected';
       health.status = 'degraded';
       health.dbError = e instanceof Error ? e.message : String(e);
-      health.dbUrlSet = !!process.env.DATABASE_URL;
-      health.dbUrlPrefix = process.env.DATABASE_URL?.substring(0, 30) + '...';
     }
   }
 
