@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "tsx --watch src/index.ts",
-    "start": "tsx src/index.ts"
+    "start": "tsx src/index.ts",
+    "build": "echo 'Gateway runs via tsx — no tsc build needed'"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.0",

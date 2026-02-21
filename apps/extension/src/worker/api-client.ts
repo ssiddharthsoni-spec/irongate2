@@ -3,7 +3,7 @@
  * Handles authentication, retries, and error handling.
  */
 
-let API_BASE_URL = 'http://localhost:3000/v1';
+let API_BASE_URL = 'https://irongate-api.onrender.com/v1';
 
 // Load configurable API base URL from chrome.storage
 chrome.storage.local.get('apiBaseUrl', (result) => {

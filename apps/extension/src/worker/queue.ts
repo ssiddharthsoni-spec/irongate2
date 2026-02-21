@@ -203,7 +203,7 @@ class EventQueue {
 
   private async checkOnlineStatus(): Promise<void> {
     try {
-      const response = await fetch('http://localhost:3000/health', {
+      const response = await fetch('https://irongate-api.onrender.com/health', {
         method: 'GET',
         signal: AbortSignal.timeout(5000),
       });
