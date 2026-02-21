@@ -233,3 +233,123 @@ export const webhookSubscriptions = pgTable('webhook_subscriptions', {
 }, (table) => [
   index('webhook_subs_firm_idx').on(table.firmId),
 ]);
+
+// --- Invites ---
+export const invites = pgTable('invites', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  email: varchar('email', { length: 255 }).notNull(),
+  role: varchar('role', { length: 50 }).notNull().default('user'),
+  token: varchar('token', { length: 255 }).unique().notNull(),
+  invitedBy: uuid('invited_by').notNull().references(() => users.id),
+  acceptedAt: timestamp('accepted_at'),
+  expiresAt: timestamp('expires_at').notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  index('invites_firm_idx').on(table.firmId),
+  index('invites_token_idx').on(table.token),
+]);
+
+// ============================================================================
+// Stripe Billing Tables
+// ============================================================================
+
+export const subscriptionTierEnum = pgEnum('subscription_tier', ['free', 'pro', 'business', 'enterprise']);
+export const subscriptionStatusEnum = pgEnum('subscription_status', ['active', 'past_due', 'canceled', 'trialing']);
+
+// --- Subscriptions ---
+export const subscriptions = pgTable('subscriptions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  stripeCustomerId: varchar('stripe_customer_id', { length: 255 }).notNull(),
+  stripeSubscriptionId: varchar('stripe_subscription_id', { length: 255 }),
+  stripePriceId: varchar('stripe_price_id', { length: 255 }),
+  tier: subscriptionTierEnum('tier').notNull().default('free'),
+  status: subscriptionStatusEnum('status').notNull().default('active'),
+  currentPeriodStart: timestamp('current_period_start'),
+  currentPeriodEnd: timestamp('current_period_end'),
+  cancelAtPeriodEnd: boolean('cancel_at_period_end').notNull().default(false),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => [
+  index('subscriptions_firm_id_idx').on(table.firmId),
+  index('subscriptions_stripe_customer_idx').on(table.stripeCustomerId),
+  index('subscriptions_stripe_sub_idx').on(table.stripeSubscriptionId),
+]);
+
+// --- Invoices ---
+export const invoices = pgTable('invoices', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  stripeInvoiceId: varchar('stripe_invoice_id', { length: 255 }).notNull().unique(),
+  amount: integer('amount').notNull(),
+  currency: varchar('currency', { length: 10 }).notNull().default('usd'),
+  status: varchar('status', { length: 50 }).notNull(),
+  paidAt: timestamp('paid_at'),
+  invoiceUrl: text('invoice_url'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  index('invoices_firm_id_idx').on(table.firmId),
+  index('invoices_stripe_invoice_idx').on(table.stripeInvoiceId),
+]);
+
+// ============================================================================
+// Alert System Tables
+// ============================================================================
+
+export const alertSeverityEnum = pgEnum('alert_severity', ['info', 'warning', 'critical']);
+
+// --- Alerts ---
+export const alerts = pgTable('alerts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  alertType: varchar('alert_type', { length: 100 }).notNull(),
+  severity: alertSeverityEnum('severity').notNull(),
+  title: text('title').notNull(),
+  body: text('body'),
+  metadata: jsonb('metadata').default({}),
+  acknowledgedAt: timestamp('acknowledged_at'),
+  acknowledgedBy: uuid('acknowledged_by'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  index('alerts_firm_id_idx').on(table.firmId),
+  index('alerts_firm_created_idx').on(table.firmId, table.createdAt),
+  index('alerts_severity_idx').on(table.severity),
+]);
+
+// --- Audit Log (admin actions) ---
+export const auditLog = pgTable('audit_log', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  actorId: uuid('actor_id').references(() => users.id),
+  actorEmail: varchar('actor_email', { length: 255 }),
+  action: varchar('action', { length: 100 }).notNull(),
+  resourceType: varchar('resource_type', { length: 50 }),
+  resourceId: uuid('resource_id'),
+  oldValue: jsonb('old_value'),
+  newValue: jsonb('new_value'),
+  ipAddress: varchar('ip_address', { length: 45 }),
+  userAgent: text('user_agent'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  index('audit_log_firm_idx').on(table.firmId),
+  index('audit_log_firm_created_idx').on(table.firmId, table.createdAt),
+  index('audit_log_action_idx').on(table.action),
+]);
+
+// --- API Keys ---
+export const apiKeys = pgTable('api_keys', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  name: varchar('name', { length: 255 }).notNull(),
+  keyHash: varchar('key_hash', { length: 64 }).unique().notNull(),
+  keyPrefix: varchar('key_prefix', { length: 12 }).notNull(),
+  scope: varchar('scope', { length: 20 }).notNull().default('read'),
+  createdBy: uuid('created_by').notNull().references(() => users.id),
+  lastUsedAt: timestamp('last_used_at'),
+  revokedAt: timestamp('revoked_at'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  index('api_keys_firm_idx').on(table.firmId),
+  index('api_keys_hash_idx').on(table.keyHash),
+]);

@@ -12,6 +12,12 @@ import { documentRoutes } from './routes/documents';
 import { auditRoutes } from './routes/audit';
 import { authRoutes } from './routes/auth';
 import { securityRoutes } from './routes/security';
+import { billingRoutes } from './routes/billing';
+import { notificationRoutes } from './routes/notifications';
+import { inviteRoutes } from './routes/invites';
+import { stripeWebhookRoutes } from './routes/stripe-webhook';
+import { alertRoutes } from './routes/alerts';
+import { apiKeyRoutes } from './routes/api-keys';
 import { authMiddleware } from './middleware/auth';
 import { rateLimitMiddleware } from './middleware/rate-limit';
 import { firmContextMiddleware } from './middleware/firm-context';
@@ -83,6 +89,9 @@ app.get('/health', async (c) => {
 // Auth routes (self-authenticated — must be mounted before the global auth middleware)
 app.route('/v1/auth', authRoutes);
 
+// Stripe webhook (no auth — verified via webhook signature)
+app.route('/v1/webhooks/stripe', stripeWebhookRoutes);
+
 // API routes (with auth)
 app.use('/v1/*', authMiddleware);
 app.use('/v1/*', rateLimitMiddleware);
@@ -97,6 +106,11 @@ app.route('/v1/proxy', proxyRoutes);
 app.route('/v1/documents', documentRoutes);
 app.route('/v1/audit', auditRoutes);
 app.route('/v1/security', securityRoutes);
+app.route('/v1/billing', billingRoutes);
+app.route('/v1/notifications', notificationRoutes);
+app.route('/v1/invites', inviteRoutes);
+app.route('/v1/alerts', alertRoutes);
+app.route('/v1/api-keys', apiKeyRoutes);
 
 // 404 handler
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
