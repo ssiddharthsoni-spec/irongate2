@@ -629,7 +629,7 @@ function ThresholdSlider({
 function StepExtension() {
   const [copied, setCopied] = useState(false);
 
-  const extensionUrl = 'https://chrome.google.com/webstore/detail/iron-gate/placeholder-extension-id';
+  const extensionUrl = 'https://github.com/ssiddharthsoni-spec/irongate2/releases';
 
   function handleCopy() {
     navigator.clipboard.writeText(extensionUrl).then(() => {
@@ -658,7 +658,7 @@ function StepExtension() {
               </span>
               <div>
                 <p className="text-sm text-gray-700">
-                  Copy the extension link below and open it in Chrome.
+                  Download the latest extension build from the releases page below.
                 </p>
               </div>
             </li>
@@ -668,7 +668,7 @@ function StepExtension() {
               </span>
               <div>
                 <p className="text-sm text-gray-700">
-                  Click <strong>&ldquo;Add to Chrome&rdquo;</strong> and confirm the permissions.
+                  Open <strong>chrome://extensions</strong>, enable <strong>Developer mode</strong>, and click <strong>&ldquo;Load unpacked&rdquo;</strong>.
                 </p>
               </div>
             </li>
@@ -678,7 +678,7 @@ function StepExtension() {
               </span>
               <div>
                 <p className="text-sm text-gray-700">
-                  Sign in with your organization credentials when prompted.
+                  Select the <strong>dist</strong> folder from the downloaded extension build.
                 </p>
               </div>
             </li>

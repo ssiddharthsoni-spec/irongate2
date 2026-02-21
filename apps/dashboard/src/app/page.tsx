@@ -41,6 +41,7 @@ export default function DashboardPage() {
   const { apiFetch } = useApiClient();
   // Start with demo data immediately — no loading/error state flash
   const [data, setData] = useState<FirmOverview>(getDemoData());
+  const [firmName, setFirmName] = useState<string | null>(null);
   const [isLive, setIsLive] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [timeRange, setTimeRange] = useState(30);
@@ -58,6 +59,16 @@ export default function DashboardPage() {
       const json = await response.json();
       setData(json);
       setIsLive(true);
+
+      // Fetch firm name if we don't have it yet
+      if (!firmName) {
+        apiFetch('/admin/firm').then(async (r) => {
+          if (r.ok) {
+            const firm = await r.json();
+            if (firm.name) setFirmName(firm.name);
+          }
+        }).catch(() => {});
+      }
     } catch {
       // API not available — keep using demo data silently
       setIsLive(false);
@@ -78,7 +89,7 @@ export default function DashboardPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Sterling & Associates LLP</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{firmName || 'Your Organization'}</h1>
           <p className="text-sm text-gray-500">
             Iron Gate — Shadow AI Governance Dashboard
             {!isLive && (

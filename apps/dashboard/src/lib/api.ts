@@ -2,23 +2,28 @@
 
 import { useAuth } from '@clerk/nextjs';
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://irongate-api.onrender.com/v1';
+
 export function useApiClient() {
   const { getToken } = useAuth();
 
-  async function apiFetch(path: string, options?: RequestInit): Promise<Response> {
-    const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/v1';
-    let token: string | null = null;
+  async function resolveToken(): Promise<string> {
     try {
-      token = await getToken();
+      const token = await getToken();
+      return token || '';
     } catch {
-      // Clerk not configured yet — fall through to dev token
+      return '';
     }
+  }
 
-    return fetch(`${baseUrl}${path}`, {
+  async function apiFetch(path: string, options?: RequestInit): Promise<Response> {
+    const token = await resolveToken();
+
+    return fetch(`${API_BASE_URL}${path}`, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token || 'dev-token'}`,
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
         ...options?.headers,
       },
     });
@@ -29,18 +34,12 @@ export function useApiClient() {
    * where the browser must set the boundary automatically.
    */
   async function apiFetchRaw(path: string, options?: RequestInit): Promise<Response> {
-    const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/v1';
-    let token: string | null = null;
-    try {
-      token = await getToken();
-    } catch {
-      // Clerk not configured yet
-    }
+    const token = await resolveToken();
 
-    return fetch(`${baseUrl}${path}`, {
+    return fetch(`${API_BASE_URL}${path}`, {
       ...options,
       headers: {
-        'Authorization': `Bearer ${token || 'dev-token'}`,
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
         ...options?.headers,
       },
     });

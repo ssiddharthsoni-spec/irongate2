@@ -4,6 +4,8 @@
  */
 
 import { analyzePrompt, sendProxiedPrompt, handleProxyFlow, analyzeFile } from './proxy-handler';
+import { eventQueue } from './queue';
+import { getFirmId, getUserId } from './auth';
 
 console.log('[Iron Gate] Service worker started');
 
@@ -36,9 +38,21 @@ async function handleMessage(
       const { text, aiToolId, captureMethod } = message.payload;
       console.log(`[Iron Gate] Prompt captured from ${aiToolId} via ${captureMethod}, length: ${text.length}`);
 
-      // Send to detection pipeline (will be implemented in Task 2.1)
-      // For now, just acknowledge
-      return { received: true, eventId: crypto.randomUUID() };
+      const eventId = crypto.randomUUID();
+      // Queue event for backend — fire-and-forget
+      eventQueue.enqueue({
+        eventId,
+        type: 'prompt_detected',
+        aiToolId,
+        captureMethod,
+        promptLength: text.length,
+        promptHash: await hashText(text),
+        firmId: getFirmId(),
+        userId: getUserId(),
+        timestamp: Date.now(),
+      }).catch((err) => console.warn('[Iron Gate] Failed to queue event:', err));
+
+      return { received: true, eventId };
     }
 
     case 'PROMPT_SUBMITTED': {
@@ -57,7 +71,20 @@ async function handleMessage(
         }
       }
 
-      // Queue event for backend submission (Task 3.3)
+      // Audit mode: queue event for backend
+      eventQueue.enqueue({
+        eventId: crypto.randomUUID(),
+        type: 'prompt_submitted',
+        aiToolId,
+        sensitivityScore,
+        promptLength: text.length,
+        promptHash: await hashText(text),
+        action: 'pass',
+        firmId: getFirmId(),
+        userId: getUserId(),
+        timestamp: Date.now(),
+      }).catch((err) => console.warn('[Iron Gate] Failed to queue event:', err));
+
       return { actionRequired: 'pass' };
     }
 
@@ -126,6 +153,22 @@ async function handleMessage(
       return { ok: true, mode };
     }
 
+    case 'BLOCK_OVERRIDE': {
+      const { eventId, reason } = message.payload;
+      console.log(`[Iron Gate] Block override: ${eventId}, reason: ${reason}`);
+
+      eventQueue.enqueue({
+        eventId: eventId || crypto.randomUUID(),
+        type: 'block_override',
+        reason,
+        firmId: getFirmId(),
+        userId: getUserId(),
+        timestamp: Date.now(),
+      }).catch((err) => console.warn('[Iron Gate] Failed to queue override event:', err));
+
+      return { ok: true };
+    }
+
     default:
       return { error: 'Unknown message type' };
   }
@@ -135,7 +178,19 @@ async function handleMessage(
 chrome.alarms.create('flush-events', { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'flush-events') {
-    // Will be implemented in Task 3.3
     console.log('[Iron Gate] Flushing event queue...');
+    eventQueue.flush().catch((err) =>
+      console.warn('[Iron Gate] Queue flush failed:', err)
+    );
   }
 });
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** SHA-256 hash of prompt text — we never store or transmit plaintext prompts */
+async function hashText(text: string): Promise<string> {
+  const data = new TextEncoder().encode(text);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}

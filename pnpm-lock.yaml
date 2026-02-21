@@ -151,6 +151,9 @@ importers:
       '@iron-gate/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@iron-gate/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
       '@iron-gate/types':
         specifier: workspace:*
         version: link:../../packages/types

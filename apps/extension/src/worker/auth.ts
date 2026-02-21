@@ -175,23 +175,26 @@ export async function initAuth(): Promise<void> {
 
 /**
  * Get a valid authentication token.
- * Refreshes if expired.
+ * Returns the stored token if still valid, or an empty string if unauthenticated.
+ * The API will return 401 for unauthenticated requests, which the side panel
+ * surfaces as a "please log in" prompt.
  */
 export async function getToken(): Promise<string> {
+  // Valid token — return it
   if (authState.token && Date.now() < authState.expiresAt - 60_000) {
     return authState.token;
   }
 
-  if (process.env.NODE_ENV === 'development' || !authState.token) {
-    return 'dev-token';
+  // Token exists but may be expiring soon — still return it and let
+  // the API decide (better to try a near-expired token than fail silently)
+  if (authState.token) {
+    console.warn('[Iron Gate Auth] Token may be expired, using it anyway');
+    return authState.token;
   }
 
-  try {
-    return authState.token || 'dev-token';
-  } catch (error) {
-    console.error('[Iron Gate Auth] Token refresh failed:', error);
-    return authState.token || 'dev-token';
-  }
+  // No token at all — return empty string so API returns 401
+  console.warn('[Iron Gate Auth] No token available — user needs to authenticate');
+  return '';
 }
 
 /**

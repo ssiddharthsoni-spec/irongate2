@@ -7,10 +7,12 @@
  * - Offline queue stored in chrome.storage.local
  * - Flushes when back online
  * - Max queue size: 1000 events (drops oldest if exceeded)
+ *
+ * Queue data is ephemeral (flushed within seconds) so plain JSON storage
+ * in chrome.storage.local is sufficient — no at-rest encryption needed.
  */
 
 import { apiRequest } from './api-client';
-import { encrypt, decrypt, deriveKey } from '@iron-gate/crypto';
 
 interface QueuedEvent {
   id: string;
@@ -29,30 +31,13 @@ class EventQueue {
   private batchTimer: ReturnType<typeof setTimeout> | null = null;
   private isFlushing = false;
   private isOnline = true;
-  private encryptionKey: CryptoKey | null = null;
 
   constructor() {
     // Restore queued events from storage on startup
-    this.initEncryption().then(() => this.restoreFromStorage());
+    this.restoreFromStorage();
 
     // Monitor online/offline status
-    // In service worker, we check via fetch
     this.checkOnlineStatus();
-  }
-
-  /**
-   * Initialize encryption key for queue storage.
-   * Uses a device-local key derived from a fixed salt (queue data is ephemeral).
-   */
-  private async initEncryption(): Promise<void> {
-    try {
-      // Derive a local encryption key for the queue
-      // This uses a static salt — the queue is ephemeral (events are deleted after sending)
-      const salt = new TextEncoder().encode('iron-gate-queue0');
-      this.encryptionKey = await deriveKey('iron-gate-queue-key', salt);
-    } catch {
-      console.warn('[Iron Gate Queue] Encryption init failed, queue will be unencrypted');
-    }
   }
 
   /**
@@ -153,14 +138,7 @@ class EventQueue {
 
   private async persistToStorage(): Promise<void> {
     try {
-      if (this.encryptionKey) {
-        // Encrypt the entire event array as a single AES-256-GCM ciphertext
-        const plaintext = JSON.stringify(this.pendingEvents);
-        const ciphertext = await encrypt(plaintext, this.encryptionKey);
-        await chrome.storage.local.set({ [STORAGE_KEY]: ciphertext });
-      } else {
-        await chrome.storage.local.set({ [STORAGE_KEY]: this.pendingEvents });
-      }
+      await chrome.storage.local.set({ [STORAGE_KEY]: this.pendingEvents });
     } catch (error) {
       console.warn('[Iron Gate Queue] Failed to persist to storage:', error);
     }
@@ -171,29 +149,11 @@ class EventQueue {
       const result = await chrome.storage.local.get(STORAGE_KEY);
       const stored = result[STORAGE_KEY];
 
-      if (!stored) return;
+      if (!stored || !Array.isArray(stored)) return;
 
-      let events: QueuedEvent[];
-
-      if (typeof stored === 'string' && this.encryptionKey) {
-        // Encrypted data — decrypt first
-        try {
-          const decrypted = await decrypt(stored, this.encryptionKey);
-          events = JSON.parse(decrypted);
-        } catch {
-          console.warn('[Iron Gate Queue] Decryption failed, discarding stored events');
-          return;
-        }
-      } else if (Array.isArray(stored)) {
-        // Legacy plaintext data
-        events = stored;
-      } else {
-        return;
-      }
-
-      if (events.length > 0) {
-        this.pendingEvents = events;
-        console.log(`[Iron Gate Queue] Restored ${events.length} events from storage (encrypted: ${typeof stored === 'string'})`);
+      if (stored.length > 0) {
+        this.pendingEvents = stored;
+        console.log(`[Iron Gate Queue] Restored ${stored.length} events from storage`);
         this.scheduleBatch();
       }
     } catch (error) {
