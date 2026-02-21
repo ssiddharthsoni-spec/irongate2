@@ -24,6 +24,9 @@ COPY packages/config/ packages/config/
 COPY packages/crypto/ packages/crypto/
 COPY apps/api/ apps/api/
 
+# Force IPv4 DNS resolution (Railway can't reach Supabase over IPv6)
+ENV NODE_OPTIONS="--dns-result-order=ipv4first"
+
 # Expose port
 EXPOSE 3000
 
