@@ -9,6 +9,7 @@ import { reportsRoutes } from './routes/reports';
 import { feedbackRoutes } from './routes/feedback';
 import { proxyRoutes } from './routes/proxy';
 import { documentRoutes } from './routes/documents';
+import { auditRoutes } from './routes/audit';
 import { authRoutes } from './routes/auth';
 import { authMiddleware } from './middleware/auth';
 import { rateLimitMiddleware } from './middleware/rate-limit';
@@ -85,6 +86,7 @@ app.route('/v1/reports', reportsRoutes);
 app.route('/v1/feedback', feedbackRoutes);
 app.route('/v1/proxy', proxyRoutes);
 app.route('/v1/documents', documentRoutes);
+app.route('/v1/audit', auditRoutes);
 
 // 404 handler
 app.notFound((c) => c.json({ error: 'Not found' }, 404));

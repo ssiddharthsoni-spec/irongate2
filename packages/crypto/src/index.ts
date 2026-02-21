@@ -1,4 +1,4 @@
-// @iron-gate/crypto — AES-256-GCM encryption for Iron Gate
+// @iron-gate/crypto — AES-256-GCM encryption + SHA-256 hashing for Iron Gate
 export {
   encrypt,
   decrypt,
@@ -7,3 +7,8 @@ export {
   saltToHex,
   hexToSalt,
 } from './aes-gcm';
+
+export {
+  sha256,
+  chainHash,
+} from './hashing';

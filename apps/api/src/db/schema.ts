@@ -4,11 +4,13 @@ import {
   text,
   varchar,
   integer,
+  bigint,
   timestamp,
   jsonb,
   real,
   boolean,
   index,
+  unique,
   pgEnum,
 } from 'drizzle-orm/pg-core';
 
@@ -62,6 +64,10 @@ export const events = pgTable('events', {
   captureMethod: varchar('capture_method', { length: 20 }).notNull(),
   sessionId: uuid('session_id'),
   metadata: jsonb('metadata').default({}),
+  // ★ MOAT: Cryptographic Audit Trail
+  eventHash: varchar('event_hash', { length: 64 }),
+  previousHash: varchar('previous_hash', { length: 64 }),
+  chainPosition: bigint('chain_position', { mode: 'number' }),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (table) => [
   index('events_firm_id_idx').on(table.firmId),
@@ -70,6 +76,7 @@ export const events = pgTable('events', {
   index('events_sensitivity_level_idx').on(table.sensitivityLevel),
   index('events_ai_tool_id_idx').on(table.aiToolId),
   index('events_firm_created_idx').on(table.firmId, table.createdAt),
+  index('events_firm_chain_idx').on(table.firmId, table.chainPosition),
 ]);
 
 // --- Feedback ---
@@ -138,4 +145,91 @@ export const weightOverrides = pgTable('weight_overrides', {
   lastUpdated: timestamp('last_updated').notNull().defaultNow(),
 }, (table) => [
   index('weight_overrides_firm_id_idx').on(table.firmId),
+  unique('weight_overrides_firm_entity_uniq').on(table.firmId, table.entityType),
+]);
+
+// ============================================================================
+// ★ MOAT Tables — Sensitivity Graph, Inference Engine, Plugins, Webhooks
+// ============================================================================
+
+// --- Entity Co-occurrences (Sensitivity Graph) ---
+export const entityCoOccurrences = pgTable('entity_co_occurrences', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  entityAHash: varchar('entity_a_hash', { length: 64 }).notNull(),
+  entityAType: varchar('entity_a_type', { length: 50 }).notNull(),
+  entityBHash: varchar('entity_b_hash', { length: 64 }).notNull(),
+  entityBType: varchar('entity_b_type', { length: 50 }).notNull(),
+  coOccurrenceCount: integer('co_occurrence_count').notNull().default(1),
+  avgContextScore: real('avg_context_score').notNull().default(0),
+  lastSeenAt: timestamp('last_seen_at').notNull().defaultNow(),
+  firstSeenAt: timestamp('first_seen_at').notNull().defaultNow(),
+}, (table) => [
+  unique('entity_co_occ_firm_pair').on(table.firmId, table.entityAHash, table.entityBHash),
+  index('entity_co_occ_firm_a_idx').on(table.firmId, table.entityAHash),
+  index('entity_co_occ_firm_count_idx').on(table.firmId, table.coOccurrenceCount),
+]);
+
+// --- Inferred Entities (Inference Engine) ---
+export const inferredEntities = pgTable('inferred_entities', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  textHash: varchar('text_hash', { length: 64 }).notNull(),
+  inferredType: varchar('inferred_type', { length: 50 }).notNull(),
+  confidence: real('confidence').notNull(),
+  evidenceCount: integer('evidence_count').notNull(),
+  status: varchar('status', { length: 20 }).notNull().default('pending'),
+  confirmedBy: uuid('confirmed_by'),
+  firstSeenAt: timestamp('first_seen_at').notNull().defaultNow(),
+  promotedAt: timestamp('promoted_at'),
+}, (table) => [
+  unique('inferred_firm_text').on(table.firmId, table.textHash),
+  index('inferred_firm_status_idx').on(table.firmId, table.status),
+]);
+
+// --- Sensitivity Patterns ---
+export const sensitivityPatterns = pgTable('sensitivity_patterns', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  patternHash: varchar('pattern_hash', { length: 64 }).notNull(),
+  entityTypes: jsonb('entity_types').notNull(),
+  triggerCount: integer('trigger_count').notNull().default(1),
+  avgScore: real('avg_score').notNull(),
+  isGlobal: boolean('is_global').notNull().default(false),
+  discoveredAt: timestamp('discovered_at').notNull().defaultNow(),
+}, (table) => [
+  unique('sensitivity_firm_pattern').on(table.firmId, table.patternHash),
+  index('sensitivity_firm_idx').on(table.firmId),
+]);
+
+// --- Firm Plugins (Plugin SDK) ---
+export const firmPlugins = pgTable('firm_plugins', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  name: varchar('name', { length: 255 }).notNull(),
+  description: text('description'),
+  version: varchar('version', { length: 50 }).notNull().default('1.0.0'),
+  code: text('code').notNull(),
+  entityTypes: jsonb('entity_types').notNull(),
+  isActive: boolean('is_active').notNull().default(true),
+  hitCount: integer('hit_count').notNull().default(0),
+  falsePositiveRate: real('false_positive_rate').default(0),
+  createdBy: uuid('created_by').notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => [
+  index('firm_plugins_firm_idx').on(table.firmId),
+]);
+
+// --- Webhook Subscriptions ---
+export const webhookSubscriptions = pgTable('webhook_subscriptions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  url: text('url').notNull(),
+  eventTypes: jsonb('event_types').notNull(),
+  secret: text('secret').notNull(),
+  isActive: boolean('is_active').notNull().default(true),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  index('webhook_subs_firm_idx').on(table.firmId),
 ]);

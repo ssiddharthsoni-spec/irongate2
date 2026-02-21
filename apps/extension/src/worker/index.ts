@@ -5,6 +5,7 @@
 
 import { analyzePrompt, sendProxiedPrompt, handleProxyFlow, analyzeFile } from './proxy-handler';
 import { eventQueue } from './queue';
+import { apiRequest } from './api-client';
 import { getFirmId, getUserId } from './auth';
 
 console.log('[Iron Gate] Service worker started');
@@ -167,6 +168,31 @@ async function handleMessage(
       }).catch((err) => console.warn('[Iron Gate] Failed to queue override event:', err));
 
       return { ok: true };
+    }
+
+    case 'ENTITY_FEEDBACK': {
+      const { entityType, entityText, isCorrect, feedbackType, correctedType } = message.payload;
+      console.log(`[Iron Gate] Entity feedback: ${entityType} — ${feedbackType}`);
+
+      try {
+        await apiRequest({
+          method: 'POST',
+          path: '/feedback',
+          body: {
+            entityType,
+            entityText,
+            isCorrect,
+            feedbackType,
+            correctedType,
+            firmId: getFirmId(),
+            userId: getUserId(),
+          },
+        });
+        return { ok: true };
+      } catch (err) {
+        console.warn('[Iron Gate] Failed to send feedback:', err);
+        return { ok: false, error: 'Failed to send feedback' };
+      }
     }
 
     default:

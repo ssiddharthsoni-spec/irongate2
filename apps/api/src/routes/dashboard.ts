@@ -2,6 +2,8 @@ import { Hono } from 'hono';
 import { db } from '../db/client';
 import { events, users } from '../db/schema';
 import { eq, sql, desc, gte, and } from 'drizzle-orm';
+import { computeTrustScore, getTrustHistory } from '../services/trust-score';
+import { getGraph } from '../services/sensitivity-graph';
 import type { AppEnv } from '../types';
 
 export const dashboardRoutes = new Hono<AppEnv>();
@@ -115,4 +117,24 @@ dashboardRoutes.get('/overview', async (c) => {
     })),
     recentHighRisk,
   });
+});
+
+// GET /v1/dashboard/trust-score — Firm trust score with dimensions
+dashboardRoutes.get('/trust-score', async (c) => {
+  const firmId = c.get('firmId');
+  const days = parseInt(c.req.query('days') || '30');
+
+  const [score, history] = await Promise.all([
+    computeTrustScore(firmId),
+    getTrustHistory(firmId, days),
+  ]);
+
+  return c.json({ score, history });
+});
+
+// GET /v1/dashboard/sensitivity-graph — Entity co-occurrence graph
+dashboardRoutes.get('/sensitivity-graph', async (c) => {
+  const firmId = c.get('firmId');
+  const graph = await getGraph(firmId);
+  return c.json({ edges: graph });
 });

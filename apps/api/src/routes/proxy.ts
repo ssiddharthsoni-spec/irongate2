@@ -9,7 +9,7 @@ import { PseudonymStore } from '../proxy/pseudonym-store';
 import { LLMRouter } from '../proxy/llm-router';
 import type { FirmLLMConfig } from '../proxy/llm-router';
 import type { AppEnv } from '../types';
-import { detect, score as scoreText } from '../detection';
+import { detectFirmAware, scoreFirmAware } from '../detection';
 
 // ---------------------------------------------------------------------------
 // Zod schemas
@@ -117,11 +117,11 @@ proxyRoutes.post('/analyze', async (c) => {
     const firmConfig = (firm?.config ?? {}) as FirmConfig;
     const thresholds = firmConfig.thresholds ?? {};
 
-    // 2. Detect entities using local regex engine
-    const detectedEntities = detect(promptText);
+    // 2. Detect entities using firm-aware pipeline (regex + plugins + client-matters)
+    const detectedEntities = await detectFirmAware(promptText, { firmId });
 
-    // 3. Score sensitivity
-    const scoreResult = scoreText(promptText, detectedEntities);
+    // 3. Score sensitivity with firm graph boost + weight overrides
+    const scoreResult = await scoreFirmAware(promptText, detectedEntities, { firmId });
 
     // 4. Determine recommended route based on score vs firm thresholds
     const recommendedRoute = determineRoute(scoreResult.score, thresholds);

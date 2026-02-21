@@ -24,7 +24,25 @@ const navItems = [
     ),
   },
   {
-    href: '/reports',
+    href: '/audit',
+    label: 'Audit Trail',
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
+      </svg>
+    ),
+  },
+  {
+    href: '/trust-score',
+    label: 'Trust Score',
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
+      </svg>
+    ),
+  },
+  {
+    href: '/reports/exposure',
     label: 'Reports',
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
@@ -143,10 +161,36 @@ export default function Sidebar() {
             </div>
           </div>
 
+          {/* Admin sub-pages */}
+          {pathname.startsWith('/admin') && (
+            <div className="px-3 py-2 space-y-1">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Admin</p>
+              {[
+                { href: '/admin', label: 'Settings' },
+                { href: '/admin/weights', label: 'Weights' },
+                { href: '/admin/plugins', label: 'Plugins' },
+                { href: '/admin/webhooks', label: 'Webhooks' },
+                { href: '/admin/inferred', label: 'Inferred Entities' },
+              ].map((sub) => (
+                <Link
+                  key={sub.href}
+                  href={sub.href}
+                  className={`block text-xs px-2 py-1 rounded ${
+                    pathname === sub.href
+                      ? 'bg-iron-100 text-iron-700 font-medium'
+                      : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  {sub.label}
+                </Link>
+              ))}
+            </div>
+          )}
+
           {/* Version badge */}
           <div className="px-3 py-2 bg-iron-50 rounded-lg">
-            <p className="text-xs font-medium text-iron-700">Phase 1: Shadow AI Auditor</p>
-            <p className="text-xs text-iron-500">v0.1.0</p>
+            <p className="text-xs font-medium text-iron-700">Iron Gate</p>
+            <p className="text-xs text-iron-500">v0.2.0</p>
           </div>
         </div>
       </nav>

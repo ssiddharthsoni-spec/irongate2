@@ -14,21 +14,36 @@ feedbackRoutes.post('/', async (c) => {
   const userId = c.get('userId');
 
   const feedbackSchema = z.object({
-    eventId: z.string().uuid(),
+    eventId: z.string().uuid().optional(),
     entityType: z.string(),
-    entityHash: z.string(),
+    entityHash: z.string().optional(),
+    entityText: z.string().optional(),
     isCorrect: z.boolean(),
     correctedType: z.string().optional(),
+    feedbackType: z.enum(['correct', 'not_pii', 'wrong_type', 'partial_match']).optional(),
   });
 
   const parsed = feedbackSchema.parse(body);
 
+  // Generate entityHash from entityText if not provided
+  let entityHash = parsed.entityHash || '';
+  if (!entityHash && parsed.entityText) {
+    const data = new TextEncoder().encode(parsed.entityText);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    entityHash = Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  }
+
+  // Use a sentinel UUID when no eventId is provided (e.g., extension feedback)
+  const eventId = parsed.eventId || '00000000-0000-0000-0000-000000000000';
+
   const [inserted] = await db.insert(feedback).values({
-    eventId: parsed.eventId,
+    eventId,
     firmId,
     userId,
     entityType: parsed.entityType,
-    entityHash: parsed.entityHash,
+    entityHash,
     isCorrect: parsed.isCorrect,
     correctedType: parsed.correctedType,
   }).returning({ id: feedback.id });

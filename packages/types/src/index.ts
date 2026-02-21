@@ -44,7 +44,15 @@ export type EntityType =
   | 'CLIENT_MATTER_PAIR'
   | 'PRIVILEGE_MARKER'
   | 'DEAL_CODENAME'
-  | 'OPPOSING_COUNSEL';
+  | 'OPPOSING_COUNSEL'
+  // Secret/credential types
+  | 'API_KEY'
+  | 'DATABASE_URI'
+  | 'AUTH_TOKEN'
+  | 'PRIVATE_KEY'
+  | 'AWS_CREDENTIAL'
+  | 'GCP_CREDENTIAL'
+  | 'AZURE_CREDENTIAL';
 
 export interface DetectedEntity {
   type: EntityType;
@@ -52,7 +60,7 @@ export interface DetectedEntity {
   start: number;
   end: number;
   confidence: number;
-  source: 'gliner' | 'regex' | 'presidio' | 'keyword';
+  source: 'gliner' | 'regex' | 'presidio' | 'keyword' | 'plugin' | 'client_matter';
 }
 
 export interface DetectionResult {
@@ -291,4 +299,128 @@ export type ExtensionMessage =
   | { type: 'PROXY_RESULT'; payload: ProxyAnalyzeResponse }
   | { type: 'PROXY_RESPONSE'; payload: ProxySendResponse }
   | { type: 'BLOCK_OVERRIDE'; payload: { eventId: string; reason: string } }
-  | { type: 'MODE_CHANGED'; payload: { mode: 'audit' | 'proxy' } };
+  | { type: 'MODE_CHANGED'; payload: { mode: 'audit' | 'proxy' } }
+  | { type: 'ENTITY_FEEDBACK'; payload: EntityFeedback }
+  | { type: 'PROMPT_SUBMITTED'; payload: { text: string; aiToolId: AIToolId; captureMethod: string } };
+
+// ==========================================
+// ★ MOAT Feature Types
+// ==========================================
+
+// --- Cryptographic Audit Trail ---
+
+export interface AuditChainEntry {
+  eventId: string;
+  eventHash: string;
+  previousHash: string | null;
+  chainPosition: number;
+  firmId: string;
+  timestamp: string;
+}
+
+export interface ChainVerification {
+  valid: boolean;
+  brokenAt?: number;
+  totalEvents: number;
+  lastHash?: string;
+  verifiedAt: string;
+}
+
+// --- Entity Co-occurrence (Sensitivity Graph) ---
+
+export interface CoOccurrence {
+  id: string;
+  firmId: string;
+  entityAHash: string;
+  entityAType: EntityType;
+  entityBHash: string;
+  entityBType: EntityType;
+  coOccurrenceCount: number;
+  avgContextScore: number;
+  lastSeenAt: string;
+  firstSeenAt: string;
+}
+
+// --- Inferred Entities (Inference Engine) ---
+
+export type InferredEntityStatus = 'pending' | 'confirmed' | 'rejected';
+
+export interface InferredEntity {
+  id: string;
+  firmId: string;
+  textHash: string;
+  inferredType: string;
+  confidence: number;
+  evidenceCount: number;
+  status: InferredEntityStatus;
+  confirmedBy?: string;
+  firstSeenAt: string;
+  promotedAt?: string;
+}
+
+// --- Sensitivity Patterns ---
+
+export interface SensitivityPattern {
+  id: string;
+  firmId: string;
+  patternHash: string;
+  entityTypes: EntityType[];
+  triggerCount: number;
+  avgScore: number;
+  isGlobal: boolean;
+  discoveredAt: string;
+}
+
+// --- Trust Score ---
+
+export interface TrustDimension {
+  name: string;
+  score: number;        // 0-100
+  weight: number;       // 0-1
+  description: string;
+}
+
+export interface TrustScore {
+  overall: number;      // 0-100
+  dimensions: TrustDimension[];
+  firmId: string;
+  computedAt: string;
+}
+
+// --- Firm Plugins ---
+
+export interface FirmPlugin {
+  id: string;
+  firmId: string;
+  name: string;
+  description?: string;
+  version: string;
+  code: string;
+  entityTypes: string[];
+  isActive: boolean;
+  hitCount: number;
+  falsePositiveRate: number;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// --- Webhook Subscriptions ---
+
+export type WebhookEventType =
+  | 'high_risk_detected'
+  | 'executive_lens_triggered'
+  | 'new_ai_tool_detected'
+  | 'anomaly_detected'
+  | 'chain_verification_failed'
+  | 'inference_entity_discovered';
+
+export interface WebhookSubscription {
+  id: string;
+  firmId: string;
+  url: string;
+  eventTypes: WebhookEventType[];
+  secret: string;
+  isActive: boolean;
+  createdAt: string;
+}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import type { SensitivityScore, DetectedEntity, AIToolId } from '@iron-gate/types';
 
 interface ActivityItem {
@@ -10,11 +10,53 @@ interface ActivityItem {
   timestamp: string;
 }
 
+interface EntityFeedback {
+  entityIndex: number;
+  feedbackType: 'correct' | 'not_pii' | 'wrong_type' | 'partial_match';
+  correctedType?: string;
+}
+
+const ENTITY_TYPES = [
+  'PERSON', 'ORGANIZATION', 'EMAIL', 'PHONE_NUMBER', 'SSN', 'CREDIT_CARD',
+  'IP_ADDRESS', 'MONETARY_AMOUNT', 'MATTER_NUMBER', 'PRIVILEGE_MARKER',
+  'API_KEY', 'DATABASE_URI', 'AUTH_TOKEN', 'PRIVATE_KEY', 'AWS_CREDENTIAL',
+];
+
 export function App() {
   const [status, setStatus] = useState<'idle' | 'monitoring' | 'error'>('idle');
   const [currentTool, setCurrentTool] = useState<string | null>(null);
   const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([]);
   const [lastScore, setLastScore] = useState<SensitivityScore | null>(null);
+  const [feedbackOpen, setFeedbackOpen] = useState<number | null>(null);
+  const [feedbackSent, setFeedbackSent] = useState<Set<number>>(new Set());
+
+  const sendEntityFeedback = useCallback(async (
+    entityIndex: number,
+    feedbackType: EntityFeedback['feedbackType'],
+    correctedType?: string,
+  ) => {
+    if (!lastScore) return;
+    const entity = lastScore.entities[entityIndex];
+    if (!entity) return;
+
+    try {
+      await chrome.runtime.sendMessage({
+        type: 'ENTITY_FEEDBACK',
+        payload: {
+          entityType: entity.type,
+          entityText: entity.text,
+          isCorrect: feedbackType === 'correct',
+          feedbackType,
+          correctedType,
+        },
+      });
+
+      setFeedbackSent((prev) => new Set(prev).add(entityIndex));
+      setFeedbackOpen(null);
+    } catch (err) {
+      console.warn('[Iron Gate] Failed to send feedback:', err);
+    }
+  }, [lastScore]);
 
   useEffect(() => {
     // Check current tab for AI tool
@@ -111,15 +153,69 @@ export function App() {
           {lastScore.explanation && (
             <p className="text-xs text-gray-600 mt-2">{lastScore.explanation}</p>
           )}
-          {/* Entity pills */}
+          {/* Entity pills with feedback */}
           <div className="flex flex-wrap gap-1 mt-3">
             {lastScore.entities.map((entity, i) => (
-              <span
-                key={i}
-                className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-iron-100 text-iron-700"
-              >
-                {entity.type}
-              </span>
+              <div key={i} className="relative">
+                <span
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
+                    feedbackSent.has(i)
+                      ? 'bg-green-100 text-green-700'
+                      : 'bg-iron-100 text-iron-700'
+                  }`}
+                >
+                  {entity.type}
+                  {!feedbackSent.has(i) && (
+                    <>
+                      <button
+                        onClick={() => sendEntityFeedback(i, 'correct')}
+                        className="ml-0.5 hover:text-green-600"
+                        title="Correct detection"
+                      >
+                        +
+                      </button>
+                      <button
+                        onClick={() => setFeedbackOpen(feedbackOpen === i ? null : i)}
+                        className="hover:text-red-600"
+                        title="Incorrect detection"
+                      >
+                        -
+                      </button>
+                    </>
+                  )}
+                  {feedbackSent.has(i) && (
+                    <span title="Feedback sent">&#10003;</span>
+                  )}
+                </span>
+                {/* Feedback dropdown */}
+                {feedbackOpen === i && (
+                  <div className="absolute top-full left-0 mt-1 w-48 bg-white rounded-lg shadow-lg border z-10 py-1">
+                    <button
+                      onClick={() => sendEntityFeedback(i, 'not_pii')}
+                      className="block w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                    >
+                      Not PII
+                    </button>
+                    <button
+                      onClick={() => sendEntityFeedback(i, 'partial_match')}
+                      className="block w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                    >
+                      Partial match
+                    </button>
+                    <div className="border-t my-1" />
+                    <p className="px-3 py-1 text-xs text-gray-400">Wrong type — correct to:</p>
+                    {ENTITY_TYPES.filter((t) => t !== entity.type).slice(0, 6).map((type) => (
+                      <button
+                        key={type}
+                        onClick={() => sendEntityFeedback(i, 'wrong_type', type)}
+                        className="block w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                      >
+                        {type}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             ))}
           </div>
         </div>
