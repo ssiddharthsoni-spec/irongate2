@@ -856,3 +856,238 @@ window.fetch = async function patchedFetch(
 };
 
 console.log('[Iron Gate MAIN] Fetch interceptor installed — mode:', mode);
+
+// ─── Patch XMLHttpRequest ──────────────────────────────────────────────────
+// Some AI tools (Copilot, Bing) use XHR instead of fetch.
+
+const originalXHROpen = XMLHttpRequest.prototype.open;
+const originalXHRSend = XMLHttpRequest.prototype.send;
+
+// Store request metadata on the XHR instance
+const xhrMetadata = new WeakMap<XMLHttpRequest, { method: string; url: string }>();
+
+XMLHttpRequest.prototype.open = function(method: string, url: string | URL, ...args: any[]) {
+  xhrMetadata.set(this, { method: String(method), url: String(url) });
+  return originalXHROpen.apply(this, [method, url, ...args] as any);
+};
+
+XMLHttpRequest.prototype.send = function(body?: any) {
+  const meta = xhrMetadata.get(this);
+  const url = meta?.url || '';
+
+  if (isLLMEndpoint(url) && body && typeof body === 'string') {
+    console.log(`[Iron Gate MAIN] XHR intercepted — mode: ${mode}, url: ${url.substring(0, 60)}, body length: ${body.length}`);
+
+    if (mode === 'proxy') {
+      try {
+        const promptText = extractPrompt(body);
+        if (promptText && promptText.length >= 10) {
+          const regexEntities = detectWithRegex(promptText);
+          const secrets = scanForSecrets(promptText);
+          const allEntities = [...regexEntities, ...secrets];
+
+          if (allEntities.length > 0) {
+            const level = quickScore(allEntities);
+            const pseudoResult = pseudonymizeLocal(promptText, allEntities);
+
+            currentReverseMap = {};
+            for (const m of pseudoResult.mappings) {
+              currentReverseMap[m.pseudonym] = m.original;
+            }
+
+            const modifiedBody = replacePrompt(body, promptText, pseudoResult.maskedText);
+            if (modifiedBody) {
+              console.log(`[Iron Gate MAIN] XHR PROXY: Pseudonymized ${allEntities.length} entities (${level})`);
+              console.log(`[Iron Gate MAIN] XHR Masked: "${pseudoResult.maskedText.substring(0, 100)}..."`);
+
+              window.postMessage({
+                type: 'IRON_GATE_INTERCEPTED',
+                originalPrompt: promptText,
+                maskedPrompt: pseudoResult.maskedText,
+                mappings: pseudoResult.mappings,
+                entityCount: allEntities.length,
+                level,
+              }, '*');
+
+              // Patch the response to de-pseudonymize
+              if (Object.keys(currentReverseMap).length > 0) {
+                const reverseMap = { ...currentReverseMap };
+                const originalGet = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'responseText');
+                Object.defineProperty(this, 'responseText', {
+                  get() {
+                    const text = originalGet?.get?.call(this) || '';
+                    let result = text;
+                    for (const [pseudonym, original] of Object.entries(reverseMap)) {
+                      result = result.split(pseudonym).join(original);
+                    }
+                    return result;
+                  },
+                  configurable: true,
+                });
+              }
+
+              return originalXHRSend.call(this, modifiedBody);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[Iron Gate MAIN] XHR proxy error:', err);
+      }
+    }
+
+    // Audit mode logging for XHR
+    if (mode === 'audit') {
+      try {
+        const promptText = extractPrompt(body);
+        if (promptText && promptText.length >= 10) {
+          const regexEntities = detectWithRegex(promptText);
+          const secrets = scanForSecrets(promptText);
+          const allEntities = [...regexEntities, ...secrets];
+          if (allEntities.length > 0) {
+            const level = quickScore(allEntities);
+            const pseudoResult = pseudonymizeLocal(promptText, allEntities);
+            console.log(`[Iron Gate MAIN] XHR AUDIT: ${allEntities.length} entities (${level})`);
+            window.postMessage({
+              type: 'IRON_GATE_AUDIT',
+              originalPrompt: promptText,
+              maskedPrompt: pseudoResult.maskedText,
+              mappings: pseudoResult.mappings,
+              entityCount: allEntities.length,
+              level,
+            }, '*');
+          }
+        }
+      } catch { /* don't break original */ }
+    }
+  }
+
+  return originalXHRSend.call(this, body);
+};
+
+console.log('[Iron Gate MAIN] XHR interceptor installed');
+
+// ─── Patch WebSocket ───────────────────────────────────────────────────────
+// Copilot (Sydney/Bing backend) may use WebSocket for chat.
+
+const OriginalWebSocket = window.WebSocket;
+
+const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?: string | string[]) {
+  const urlStr = String(url);
+  const ws = protocols
+    ? new OriginalWebSocket(url, protocols)
+    : new OriginalWebSocket(url);
+
+  const isLLM = /sydney\.bing\.com|copilot\.microsoft\.com|chatgpt\.com|claude\.ai/.test(urlStr);
+
+  if (isLLM) {
+    console.log(`[Iron Gate MAIN] WebSocket opened to LLM: ${urlStr.substring(0, 80)}`);
+
+    const originalSend = ws.send.bind(ws);
+    ws.send = function(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
+      if (typeof data === 'string' && mode === 'proxy') {
+        try {
+          const promptText = extractPrompt(data);
+          if (promptText && promptText.length >= 10) {
+            const regexEntities = detectWithRegex(promptText);
+            const secrets = scanForSecrets(promptText);
+            const allEntities = [...regexEntities, ...secrets];
+
+            if (allEntities.length > 0) {
+              const level = quickScore(allEntities);
+              const pseudoResult = pseudonymizeLocal(promptText, allEntities);
+
+              currentReverseMap = {};
+              for (const m of pseudoResult.mappings) {
+                currentReverseMap[m.pseudonym] = m.original;
+              }
+
+              const modifiedData = replacePrompt(data, promptText, pseudoResult.maskedText);
+              if (modifiedData) {
+                console.log(`[Iron Gate MAIN] WS PROXY: Pseudonymized ${allEntities.length} entities (${level})`);
+
+                window.postMessage({
+                  type: 'IRON_GATE_INTERCEPTED',
+                  originalPrompt: promptText,
+                  maskedPrompt: pseudoResult.maskedText,
+                  mappings: pseudoResult.mappings,
+                  entityCount: allEntities.length,
+                  level,
+                }, '*');
+
+                return originalSend(modifiedData);
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('[Iron Gate MAIN] WS proxy error:', err);
+        }
+      }
+
+      // Audit mode or no entities
+      if (typeof data === 'string' && mode === 'audit') {
+        try {
+          const promptText = extractPrompt(data);
+          if (promptText && promptText.length >= 10) {
+            const regexEntities = detectWithRegex(promptText);
+            const secrets = scanForSecrets(promptText);
+            const allEntities = [...regexEntities, ...secrets];
+            if (allEntities.length > 0) {
+              const level = quickScore(allEntities);
+              const pseudoResult = pseudonymizeLocal(promptText, allEntities);
+              window.postMessage({
+                type: 'IRON_GATE_AUDIT',
+                originalPrompt: promptText,
+                maskedPrompt: pseudoResult.maskedText,
+                mappings: pseudoResult.mappings,
+                entityCount: allEntities.length,
+                level,
+              }, '*');
+            }
+          }
+        } catch { /* don't break */ }
+      }
+
+      return originalSend(data);
+    };
+
+    // De-pseudonymize incoming messages
+    const originalAddEventListener = ws.addEventListener.bind(ws);
+    ws.addEventListener = function(type: string, listener: any, options?: any) {
+      if (type === 'message') {
+        const wrappedListener = function(event: MessageEvent) {
+          if (typeof event.data === 'string' && Object.keys(currentReverseMap).length > 0) {
+            let text = event.data;
+            for (const [pseudonym, original] of Object.entries(currentReverseMap)) {
+              text = text.split(pseudonym).join(original);
+            }
+            if (text !== event.data) {
+              const newEvent = new MessageEvent('message', {
+                data: text,
+                origin: event.origin,
+                lastEventId: event.lastEventId,
+                source: event.source,
+                ports: [...event.ports],
+              });
+              listener.call(ws, newEvent);
+              return;
+            }
+          }
+          listener.call(ws, event);
+        };
+        return originalAddEventListener(type, wrappedListener, options);
+      }
+      return originalAddEventListener(type, listener, options);
+    };
+  }
+
+  return ws;
+} as unknown as typeof WebSocket;
+
+Object.defineProperty(patchedWebSocket, 'prototype', { value: OriginalWebSocket.prototype, writable: false });
+Object.defineProperty(patchedWebSocket, 'CONNECTING', { value: 0, writable: false });
+Object.defineProperty(patchedWebSocket, 'OPEN', { value: 1, writable: false });
+Object.defineProperty(patchedWebSocket, 'CLOSING', { value: 2, writable: false });
+Object.defineProperty(patchedWebSocket, 'CLOSED', { value: 3, writable: false });
+(window as any).WebSocket = patchedWebSocket;
+
+console.log('[Iron Gate MAIN] WebSocket interceptor installed');
