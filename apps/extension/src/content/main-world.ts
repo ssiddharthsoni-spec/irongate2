@@ -690,6 +690,14 @@ function quickScore(entities: Array<{ type: string; confidence: number }>): 'low
 
 // ─── Response De-pseudonymization ──────────────────────────────────────────
 
+function replacePseudonyms(text: string, reverseMap: Record<string, string>): string {
+  let result = text;
+  for (const [pseudonym, original] of Object.entries(reverseMap)) {
+    result = result.split(pseudonym).join(original);
+  }
+  return result;
+}
+
 function depseudonymizeResponse(response: Response, reverseMap: Record<string, string>): Response {
   if (!response.body) return response;
 
@@ -697,24 +705,32 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
 
+  // Find the longest pseudonym token to size our overlap buffer
+  const maxTokenLen = Math.max(...Object.keys(reverseMap).map(k => k.length), 0);
+  let buffer = '';
+
   const stream = new ReadableStream({
-    async start(controller) {
+    async pull(controller) {
       try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) {
-            controller.close();
-            break;
+        const { done, value } = await reader.read();
+
+        if (done) {
+          // Flush remaining buffer
+          if (buffer.length > 0) {
+            controller.enqueue(encoder.encode(replacePseudonyms(buffer, reverseMap)));
           }
+          controller.close();
+          return;
+        }
 
-          let text = decoder.decode(value, { stream: true });
+        buffer += decoder.decode(value, { stream: true });
 
-          // Replace all pseudonyms with original values
-          for (const [pseudonym, original] of Object.entries(reverseMap)) {
-            text = text.split(pseudonym).join(original);
-          }
-
-          controller.enqueue(encoder.encode(text));
+        // Output all text except the last maxTokenLen chars (which might contain a split token)
+        const safeLen = Math.max(0, buffer.length - maxTokenLen);
+        if (safeLen > 0) {
+          const safeText = replacePseudonyms(buffer.substring(0, safeLen), reverseMap);
+          controller.enqueue(encoder.encode(safeText));
+          buffer = buffer.substring(safeLen);
         }
       } catch (err) {
         controller.error(err);
@@ -728,6 +744,82 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
     headers: response.headers,
   });
 }
+
+// ─── DOM De-pseudonymization (safety net) ───────────────────────────────────
+// Catches pseudonym tokens that make it to the DOM via WebSocket, EventSource,
+// or any other channel that bypasses our fetch/XHR interception.
+
+let _domObserverActive = false;
+
+function startDomDepseudonymizer(): void {
+  if (_domObserverActive) return;
+  _domObserverActive = true;
+
+  function replaceInTextNode(node: Text): void {
+    if (!node.textContent || Object.keys(currentReverseMap).length === 0) return;
+    // Quick check: does the text contain any bracket (our pseudonym format is [TYPE-N])
+    if (!node.textContent.includes('[')) return;
+
+    const replaced = replacePseudonyms(node.textContent, currentReverseMap);
+    if (replaced !== node.textContent) {
+      node.textContent = replaced;
+    }
+  }
+
+  function scanElement(el: Node): void {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let textNode: Text | null;
+    while ((textNode = walker.nextNode() as Text | null)) {
+      replaceInTextNode(textNode);
+    }
+  }
+
+  // Watch for new DOM nodes and replace pseudonyms immediately
+  const observer = new MutationObserver((mutations) => {
+    if (Object.keys(currentReverseMap).length === 0) return;
+
+    for (const mutation of mutations) {
+      // Handle added nodes
+      for (const node of mutation.addedNodes) {
+        if (node.nodeType === Node.TEXT_NODE) {
+          replaceInTextNode(node as Text);
+        } else if (node.nodeType === Node.ELEMENT_NODE) {
+          scanElement(node);
+        }
+      }
+      // Handle direct text changes (characterData)
+      if (mutation.type === 'characterData' && mutation.target.nodeType === Node.TEXT_NODE) {
+        replaceInTextNode(mutation.target as Text);
+      }
+    }
+  });
+
+  // Start observing once body is available
+  const startObserving = () => {
+    if (document.body) {
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+      console.log('[Iron Gate MAIN] DOM de-pseudonymizer active');
+    } else {
+      setTimeout(startObserving, 100);
+    }
+  };
+  startObserving();
+
+  // Also do a periodic full scan every 2 seconds as a backstop
+  setInterval(() => {
+    if (Object.keys(currentReverseMap).length === 0) return;
+    if (document.body) {
+      scanElement(document.body);
+    }
+  }, 2000);
+}
+
+// Start the DOM de-pseudonymizer immediately
+startDomDepseudonymizer();
 
 // ─── Extract body string from any fetch input ─────────────────────────────
 // AI tools may call fetch(url, {body}) OR fetch(new Request(url, {body})).
@@ -817,11 +909,13 @@ const patchedFetch = async function patchedFetch(
           const level = quickScore(allEntities);
           const pseudoResult = pseudonymizeLocal(promptText, allEntities);
 
-          // Build reverse map for de-pseudonymization
-          currentReverseMap = {};
+          // Build reverse map for de-pseudonymization (ACCUMULATE, don't replace)
+          // This ensures multi-turn conversations can de-pseudonymize across requests
           for (const m of pseudoResult.mappings) {
             currentReverseMap[m.pseudonym] = m.original;
           }
+          // Save a snapshot for this request's response de-pseudonymization
+          const requestReverseMap = { ...currentReverseMap };
 
           // Replace prompt in request body
           const modifiedBody = replacePrompt(bodyString, promptText, pseudoResult.maskedText);
@@ -855,9 +949,10 @@ const patchedFetch = async function patchedFetch(
 
             const response = await originalFetch.call(window, url, modifiedInit);
 
-            // De-pseudonymize the response stream
-            if (Object.keys(currentReverseMap).length > 0) {
-              return depseudonymizeResponse(response, currentReverseMap);
+            // De-pseudonymize the response stream (use snapshot, not mutable global)
+            if (Object.keys(requestReverseMap).length > 0) {
+              console.log(`[Iron Gate MAIN] De-pseudonymizing response with ${Object.keys(requestReverseMap).length} mappings`);
+              return depseudonymizeResponse(response, requestReverseMap);
             }
 
             return response;
@@ -980,10 +1075,11 @@ XMLHttpRequest.prototype.send = function(body?: any) {
             const level = quickScore(allEntities);
             const pseudoResult = pseudonymizeLocal(promptText, allEntities);
 
-            currentReverseMap = {};
+            // Accumulate mappings (don't overwrite)
             for (const m of pseudoResult.mappings) {
               currentReverseMap[m.pseudonym] = m.original;
             }
+            const xhrReverseMap = { ...currentReverseMap };
 
             const modifiedBody = replacePrompt(body, promptText, pseudoResult.maskedText);
             if (modifiedBody) {
@@ -1000,8 +1096,8 @@ XMLHttpRequest.prototype.send = function(body?: any) {
               }, '*');
 
               // Patch the response to de-pseudonymize
-              if (Object.keys(currentReverseMap).length > 0) {
-                const reverseMap = { ...currentReverseMap };
+              if (Object.keys(xhrReverseMap).length > 0) {
+                const reverseMap = xhrReverseMap;
                 const originalGet = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'responseText');
                 Object.defineProperty(this, 'responseText', {
                   get() {
@@ -1086,7 +1182,7 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
               const level = quickScore(allEntities);
               const pseudoResult = pseudonymizeLocal(promptText, allEntities);
 
-              currentReverseMap = {};
+              // Accumulate mappings (don't overwrite)
               for (const m of pseudoResult.mappings) {
                 currentReverseMap[m.pseudonym] = m.original;
               }
@@ -1140,34 +1236,64 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
       return originalSend(data);
     };
 
-    // De-pseudonymize incoming messages
+    // Helper: de-pseudonymize a WebSocket MessageEvent
+    function depseudWsEvent(event: MessageEvent, handler: Function, context: any): boolean {
+      if (typeof event.data === 'string' && Object.keys(currentReverseMap).length > 0) {
+        const replaced = replacePseudonyms(event.data, currentReverseMap);
+        if (replaced !== event.data) {
+          const newEvent = new MessageEvent('message', {
+            data: replaced,
+            origin: event.origin,
+            lastEventId: event.lastEventId,
+            source: event.source,
+            ports: [...event.ports],
+          });
+          handler.call(context, newEvent);
+          return true;
+        }
+      }
+      return false;
+    }
+
+    // De-pseudonymize incoming messages via addEventListener
     const originalAddEventListener = ws.addEventListener.bind(ws);
     ws.addEventListener = function(type: string, listener: any, options?: any) {
       if (type === 'message') {
         const wrappedListener = function(event: MessageEvent) {
-          if (typeof event.data === 'string' && Object.keys(currentReverseMap).length > 0) {
-            let text = event.data;
-            for (const [pseudonym, original] of Object.entries(currentReverseMap)) {
-              text = text.split(pseudonym).join(original);
-            }
-            if (text !== event.data) {
-              const newEvent = new MessageEvent('message', {
-                data: text,
-                origin: event.origin,
-                lastEventId: event.lastEventId,
-                source: event.source,
-                ports: [...event.ports],
-              });
-              listener.call(ws, newEvent);
-              return;
-            }
+          if (!depseudWsEvent(event, listener, ws)) {
+            listener.call(ws, event);
           }
-          listener.call(ws, event);
         };
         return originalAddEventListener(type, wrappedListener, options);
       }
       return originalAddEventListener(type, listener, options);
     };
+
+    // De-pseudonymize incoming messages via onmessage property
+    let _userOnMessage: ((ev: MessageEvent) => any) | null = null;
+    Object.defineProperty(ws, 'onmessage', {
+      get() { return _userOnMessage; },
+      set(handler: ((ev: MessageEvent) => any) | null) {
+        _userOnMessage = handler;
+        if (handler) {
+          (ws as any).__ironGateOnMessage = function(event: MessageEvent) {
+            if (!depseudWsEvent(event, handler, ws)) {
+              handler.call(ws, event);
+            }
+          };
+        } else {
+          (ws as any).__ironGateOnMessage = null;
+        }
+      },
+      configurable: true,
+    });
+    // Intercept the native onmessage dispatch by wrapping via addEventListener
+    originalAddEventListener('message', function(event: MessageEvent) {
+      if (_userOnMessage && (ws as any).__ironGateOnMessage) {
+        // The wrapped handler will be called by the property setter's dispatch
+        // No need to double-call
+      }
+    });
   }
 
   return ws;
