@@ -36,6 +36,62 @@ export interface CaptureEngine {
   updateConfig(config: Partial<CaptureEngineConfig>): void;
 }
 
+/**
+ * Replace text in an input element using React-compatible methods.
+ * Uses execCommand for contenteditable (updates React's internal state).
+ * Uses native value setter for textarea/input (bypasses React wrapper).
+ */
+function replaceInputText(input: HTMLElement, newText: string): void {
+  if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
+    // For textarea/input: use native setter to bypass React's synthetic handler
+    const nativeSetter = Object.getOwnPropertyDescriptor(
+      input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
+      'value'
+    )?.set;
+    if (nativeSetter) {
+      nativeSetter.call(input, newText);
+    } else {
+      input.value = newText;
+    }
+    // Dispatch events that React listens to
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  } else {
+    // ContentEditable div (ChatGPT, Gemini, Copilot, Claude)
+    // Focus the element first
+    input.focus();
+
+    // Select all text in the contenteditable
+    const selection = window.getSelection();
+    if (selection) {
+      const range = document.createRange();
+      range.selectNodeContents(input);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+
+    // Use execCommand('insertText') — this updates React/framework internal state
+    // because it fires the same events as real user typing
+    const success = document.execCommand('insertText', false, newText);
+
+    if (!success) {
+      // Fallback: direct DOM manipulation + events
+      console.log('[Iron Gate] execCommand failed, using direct DOM manipulation');
+      input.textContent = newText;
+      input.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'insertText',
+        data: newText,
+      }));
+    }
+
+    // Fire additional events to ensure framework state updates
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+}
+
 export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
   let domObserver: DOMObserverHandle | null = null;
   let fetchCleanup: (() => void) | null = null;
@@ -87,8 +143,8 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
       return 'allow';
     }
 
-    // In proxy mode, run LOCAL detection + pseudonymization
-    // This works entirely client-side — no backend auth required
+    // In proxy mode, ALWAYS pseudonymize detected entities before sending.
+    // The user explicitly chose proxy mode — they want ALL sensitive data protected.
     try {
       // 1. Detect entities locally
       const regexEntities = detectWithRegex(promptText);
@@ -107,46 +163,41 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
 
       // 2. Score sensitivity
       const scoreResult = computeScore(promptText, allEntities);
-      console.log(`[Iron Gate] Proxy mode — local score: ${scoreResult.score} (${scoreResult.level}), entities: ${allEntities.length}`);
+      console.log(`[Iron Gate] Proxy mode — score: ${scoreResult.score} (${scoreResult.level}), entities: ${allEntities.length}`);
 
-      // 3. High/Critical sensitivity — block and show overlay
-      if (scoreResult.level === 'critical' || scoreResult.level === 'high') {
-        const entityCounts = new Map<string, number>();
-        for (const e of allEntities) {
-          entityCounts.set(e.type, (entityCounts.get(e.type) || 0) + 1);
-        }
-        const overlayResult = await showBlockOverlay({
-          score: scoreResult.score,
-          level: scoreResult.level,
-          entities: Array.from(entityCounts.entries()).map(([type, count]) => ({ type, count })),
-          explanation: scoreResult.explanation || 'High sensitivity content detected.',
-        });
-        if (overlayResult.action === 'allow' && overlayResult.overrideReason) {
-          sendToWorker('BLOCK_OVERRIDE', {
-            eventId: crypto.randomUUID(),
-            reason: overlayResult.overrideReason,
-          });
-          return 'allow';
-        }
-        return 'intercept';
-      }
-
-      // 4. Medium sensitivity — pseudonymize and let through
-      if (scoreResult.level === 'medium' && allEntities.length > 0) {
+      // 3. If entities found, pseudonymize the input before submission
+      if (allEntities.length > 0) {
         const pseudoResult = pseudonymizeLocal(promptText, allEntities);
-        console.log(`[Iron Gate] Pseudonymized ${allEntities.length} entities in prompt`);
+        console.log(`[Iron Gate] PROXY: Pseudonymizing ${allEntities.length} entities (${scoreResult.level})`);
+        console.log(`[Iron Gate] Original: "${promptText.substring(0, 80)}..."`);
+        console.log(`[Iron Gate] Masked: "${pseudoResult.maskedText.substring(0, 80)}..."`);
 
-        // Replace the prompt text in the input field with pseudonymized version
+        // Replace the prompt text in the input field with pseudonymized version.
+        // Uses React-compatible methods to ensure the AI tool's internal state updates.
         const input = detector.getPromptInput();
         if (input) {
-          if (input instanceof HTMLTextAreaElement) {
-            input.value = pseudoResult.maskedText;
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-          } else {
-            input.innerText = pseudoResult.maskedText;
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-          }
+          replaceInputText(input, pseudoResult.maskedText);
+          console.log(`[Iron Gate] Input field replaced with pseudonymized text`);
+        } else {
+          console.warn('[Iron Gate] Could not find input field to replace text');
         }
+
+        // Broadcast to sidepanel via content script → service worker
+        try {
+          chrome.runtime.sendMessage({
+            type: 'SENSITIVITY_SCORE',
+            payload: {
+              score: scoreResult.score,
+              level: scoreResult.level,
+              explanation: `Pseudonymized ${allEntities.length} entities before sending to AI tool.`,
+              entities: [],
+              aiToolId: detector.id,
+              originalPrompt: promptText,
+              maskedPrompt: pseudoResult.maskedText,
+              pseudonymMappings: pseudoResult.mappings,
+            },
+          }).catch(() => {});
+        } catch { /* extension context may be invalidated */ }
 
         // Notify worker about the pseudonymized submit
         sendToWorker('PROMPT_SUBMITTED', {
@@ -154,14 +205,15 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
           aiToolId: detector.id,
           captureMethod: 'submit',
           action: 'pseudonymized',
+          sensitivityScore: scoreResult.score,
           entitiesReplaced: allEntities.length,
         });
 
-        // Allow the submit to proceed with the pseudonymized text
+        // Allow the submit to proceed with the pseudonymized text now in the input
         return 'allow';
       }
 
-      // 5. Low sensitivity — allow passthrough unchanged
+      // No entities detected — allow passthrough unchanged
       sendToWorker('PROMPT_SUBMITTED', {
         text: promptText,
         aiToolId: detector.id,

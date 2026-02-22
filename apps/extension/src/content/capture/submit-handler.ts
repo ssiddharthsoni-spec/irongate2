@@ -1,7 +1,7 @@
 /**
  * Detects when the user submits a prompt.
  * In Audit Mode: captures the prompt and lets it through.
- * In Proxy Mode (Phase 2): intercepts and redirects to our backend.
+ * In Proxy Mode: intercepts, pseudonymizes input, then re-submits.
  */
 
 interface AIToolDetector {
@@ -31,49 +31,106 @@ export function installSubmitHandler(
   const abortController = new AbortController();
   const { signal } = abortController;
 
-  // Track if we're currently processing a submit
+  // Track if we're currently processing a submit (to avoid re-entry on re-trigger)
   let isProcessing = false;
+  // Flag: set to true when WE trigger the submit after pseudonymization
+  let isOurSubmit = false;
 
-  async function handleSubmit(event: Event, promptText: string) {
+  function handleSubmitSync(event: Event, promptText: string) {
     if (!promptText.trim() || isProcessing) return;
 
+    // If this is OUR re-triggered submit after pseudonymization, let it through
+    if (isOurSubmit) {
+      isOurSubmit = false;
+      console.log('[Iron Gate] Allowing our re-triggered submit through');
+      return;
+    }
+
+    if (currentMode === 'audit') {
+      // Audit mode: just capture asynchronously and let through immediately
+      config.onSubmit(promptText).catch(() => {});
+      return;
+    }
+
+    // ── PROXY MODE: Intercept synchronously ──────────────────────────
+    // MUST prevent the event synchronously before any async work
     isProcessing = true;
 
-    try {
-      if (currentMode === 'audit') {
-        // Audit mode: just capture and let through
-        await config.onSubmit(promptText);
-        // Don't interfere — event proceeds naturally
-      } else {
-        // Proxy mode (Phase 2): potentially intercept
+    // Prevent the original submit from firing
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    console.log('[Iron Gate] Submit intercepted in proxy mode — will pseudonymize and re-submit');
+
+    // Do the pseudonymization and re-submit asynchronously
+    (async () => {
+      try {
         const action = await config.onSubmit(promptText);
 
         if (action === 'intercept') {
-          // Stop the original submission
-          event.preventDefault();
-          event.stopPropagation();
-          event.stopImmediatePropagation();
-
-          // Clear the prompt input
+          // Full block — clear the input and don't re-submit
           const input = detector.getPromptInput();
           if (input) {
-            if (input instanceof HTMLTextAreaElement) {
-              input.value = '';
-            } else {
-              input.textContent = '';
-            }
+            clearInput(input);
           }
-
-          // Phase 2: proxy logic will be implemented here
-          console.log('[Iron Gate] Prompt intercepted for proxying');
+          console.log('[Iron Gate] Prompt blocked');
+          return;
         }
-        // If 'allow', let it through
+
+        // action === 'allow' — the onSubmit handler already replaced the input text
+        // Now re-trigger the submit
+        await retriggerSubmit(detector);
+
+      } catch (error) {
+        console.error('[Iron Gate] Submit handler error:', error);
+        // On error, try to re-submit with original text
+        await retriggerSubmit(detector);
+      } finally {
+        isProcessing = false;
       }
-    } catch (error) {
-      console.error('[Iron Gate] Submit handler error:', error);
-      // On error, always let the submission through
-    } finally {
-      isProcessing = false;
+    })();
+  }
+
+  // Re-trigger the submit after pseudonymization
+  async function retriggerSubmit(det: AIToolDetector) {
+    // Small delay to let React process the input change
+    await new Promise((r) => setTimeout(r, 50));
+
+    isOurSubmit = true;
+
+    const submitButton = det.getSubmitTrigger();
+    if (submitButton) {
+      console.log('[Iron Gate] Re-triggering submit via button click');
+      submitButton.click();
+    } else {
+      // Fallback: simulate Enter key on the input
+      const input = det.getPromptInput();
+      if (input) {
+        console.log('[Iron Gate] Re-triggering submit via Enter key');
+        input.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'Enter',
+          code: 'Enter',
+          keyCode: 13,
+          which: 13,
+          bubbles: true,
+          cancelable: true,
+        }));
+      }
+    }
+
+    // Reset the flag after a short timeout in case the click didn't trigger our handler
+    setTimeout(() => { isOurSubmit = false; }, 200);
+  }
+
+  // Clear an input element
+  function clearInput(input: HTMLElement) {
+    if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
+      input.value = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    } else {
+      input.textContent = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
     }
   }
 
@@ -83,7 +140,9 @@ export function installSubmitHandler(
       const input = detector.getPromptInput();
       if (input && (input === event.target || input.contains(event.target as Node))) {
         const text = detector.extractPromptText(input);
-        handleSubmit(event, text);
+        if (text.trim()) {
+          handleSubmitSync(event, text);
+        }
       }
     }
   }
@@ -95,7 +154,9 @@ export function installSubmitHandler(
       const input = detector.getPromptInput();
       if (input) {
         const text = detector.extractPromptText(input);
-        handleSubmit(event, text);
+        if (text.trim()) {
+          handleSubmitSync(event, text);
+        }
       }
     }
   }
