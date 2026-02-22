@@ -96,21 +96,24 @@ function isLLMEndpoint(url: string): boolean {
   // Check specific API patterns first
   if (LLM_API_PATTERNS.some((p) => p.test(url))) return true;
 
-  // Broader: since this script only runs on AI tool pages (via manifest matches),
-  // any request to the SAME HOST is very likely an AI backend API call.
-  // This catches endpoint changes that break specific pattern matching.
   try {
-    const reqHost = new URL(url, window.location.href).hostname;
-    if (reqHost === window.location.hostname) return true;
+    const parsed = new URL(url, window.location.href);
 
-    // Also match known cross-domain API hosts used by AI tools
+    // Same-host requests — only match actual API paths, NOT telemetry/assets.
+    // Without this filter, every POST on chatgpt.com (telemetry, analytics, etc.)
+    // would be treated as an LLM conversation request.
+    if (parsed.hostname === window.location.hostname) {
+      return /\/api/i.test(parsed.pathname);
+    }
+
+    // Cross-domain API hosts used by AI tools
     const CROSS_DOMAIN = [
       'api.openai.com', 'api.anthropic.com',
       'generativelanguage.googleapis.com',
       'sydney.bing.com', 'substrate.office.com',
       'api.perplexity.ai', 'api.groq.com',
     ];
-    if (CROSS_DOMAIN.includes(reqHost)) return true;
+    if (CROSS_DOMAIN.includes(parsed.hostname)) return true;
   } catch {}
 
   return false;
@@ -827,8 +830,9 @@ startDomDepseudonymizer();
 
 async function getBodyString(input: RequestInfo | URL, init?: RequestInit): Promise<string | null> {
   // Case 1: body is in the init options (most common)
-  if (init?.body) {
+  if (init?.body !== undefined && init?.body !== null) {
     if (typeof init.body === 'string') return init.body;
+
     // ArrayBuffer / Uint8Array
     if (init.body instanceof ArrayBuffer) {
       return new TextDecoder().decode(init.body);
@@ -838,18 +842,79 @@ async function getBodyString(input: RequestInfo | URL, init?: RequestInit): Prom
     }
     // Blob
     if (init.body instanceof Blob) {
-      return await init.body.text();
+      try { return await init.body.text(); } catch { return null; }
     }
+
+    // ReadableStream — tee() so we can read one copy and keep the other for original fetch
+    if (init.body instanceof ReadableStream) {
+      try {
+        const [s1, s2] = init.body.tee();
+        init.body = s1; // Swap in the un-consumed copy so originalFetch can still use init
+        const reader = s2.getReader();
+        const chunks: Uint8Array[] = [];
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) chunks.push(value);
+        }
+        if (chunks.length === 0) return null;
+        const totalLen = chunks.reduce((sum, c) => sum + c.length, 0);
+        const merged = new Uint8Array(totalLen);
+        let off = 0;
+        for (const c of chunks) { merged.set(c, off); off += c.length; }
+        return new TextDecoder().decode(merged);
+      } catch (err) {
+        console.warn('[Iron Gate MAIN] ReadableStream body read failed:', err);
+        return null;
+      }
+    }
+
+    // FormData — concatenate text values
+    if (typeof FormData !== 'undefined' && init.body instanceof FormData) {
+      try {
+        const parts: string[] = [];
+        for (const [, value] of (init.body as FormData).entries()) {
+          if (typeof value === 'string') parts.push(value);
+        }
+        return parts.length > 0 ? parts.join('\n') : null;
+      } catch { return null; }
+    }
+
+    // URLSearchParams
+    if (typeof URLSearchParams !== 'undefined' && init.body instanceof URLSearchParams) {
+      return init.body.toString();
+    }
+
+    // Unknown body type — log and attempt toString
+    console.log('[Iron Gate MAIN] Unknown body type:', typeof init.body, Object.prototype.toString.call(init.body));
+    try {
+      const str = String(init.body);
+      if (str && str !== '[object Object]' && str !== '[object ReadableStream]') return str;
+    } catch {}
   }
 
   // Case 2: input is a Request object with a body (fetch(new Request(url, opts)))
-  if (input instanceof Request && input.body) {
-    try {
-      const cloned = input.clone();
-      return await cloned.text();
-    } catch {
+  if (input instanceof Request) {
+    if (input.bodyUsed) {
+      console.warn('[Iron Gate MAIN] Request body already consumed (bodyUsed=true)');
       return null;
     }
+    if (input.body) {
+      try {
+        const cloned = input.clone();
+        return await cloned.text();
+      } catch (err) {
+        console.warn('[Iron Gate MAIN] Request.clone().text() failed:', err);
+        return null;
+      }
+    }
+    // Request might have a body set via constructor but body stream is null
+    // Try the text() method directly on a clone
+    try {
+      const cloned = input.clone();
+      const text = await cloned.text();
+      if (text && text.length > 0) return text;
+    } catch {}
   }
 
   return null;
@@ -867,10 +932,10 @@ const patchedFetch = async function patchedFetch(
   const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
   const method = (init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
 
-  // Debug: log first 10 fetch calls to verify interceptor is alive
+  // Debug: log first 30 fetch calls to verify interceptor is alive
   _fetchCallCount++;
-  if (_fetchCallCount <= 10) {
-    console.log(`[Iron Gate MAIN] fetch #${_fetchCallCount}: ${method} ${url.substring(0, 100)}`);
+  if (_fetchCallCount <= 30) {
+    console.log(`[Iron Gate MAIN] fetch #${_fetchCallCount}: ${method} ${url.substring(0, 120)}`);
   }
 
   // Only intercept POST/PUT/PATCH (which carry prompt data in body)
@@ -882,12 +947,29 @@ const patchedFetch = async function patchedFetch(
     return originalFetch.call(window, input, init);
   }
 
+  // Diagnostic: log body type info for every LLM POST
+  const _bodyType = init?.body
+    ? Object.prototype.toString.call(init.body)
+    : (input instanceof Request ? `Request(bodyUsed=${(input as Request).bodyUsed})` : 'none');
+  console.log(`[Iron Gate MAIN] 📡 LLM POST: ${url.substring(0, 100)} | bodyType: ${_bodyType} | input: ${input instanceof Request ? 'Request' : typeof input}`);
+
   // This is an LLM endpoint — extract the body
   const bodyString = await getBodyString(input, init);
 
   if (!bodyString) {
-    console.log(`[Iron Gate MAIN] LLM request to ${url.substring(0, 60)} — no body found, passing through`);
+    console.log(`[Iron Gate MAIN] ⚠️ No body string from ${url.substring(0, 80)} | bodyType was: ${_bodyType}`);
     return originalFetch.call(window, input, init);
+  }
+
+  // Skip very short bodies (telemetry pings, health checks, etc.)
+  if (bodyString.length < 50) {
+    return originalFetch.call(window, input, init);
+  }
+
+  // ChatGPT-specific diagnostic: log detailed info for conversation requests
+  if (url.includes('/backend-api/conversation') || url.includes('/chat/completions')) {
+    console.log(`[Iron Gate MAIN] 🎯 ChatGPT conversation detected! Body length: ${bodyString.length}`);
+    console.log(`[Iron Gate MAIN] 🎯 Body preview: ${bodyString.substring(0, 300)}`);
   }
 
   console.log(`[Iron Gate MAIN] LLM request intercepted — mode: ${mode}, url: ${url.substring(0, 60)}, body length: ${bodyString.length}`);
