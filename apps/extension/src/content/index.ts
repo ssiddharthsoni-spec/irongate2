@@ -48,10 +48,13 @@ window.addEventListener('message', (event) => {
   }
 });
 
-// ── Aggressive MAIN world injection ─────────────────────────────────────────
-// Don't wait for manifest injection — inject via <script> tag IMMEDIATELY.
-// The MAIN world script has a __IRON_GATE_MAIN_WORLD guard to prevent double execution.
-function injectMainWorldScript(): void {
+// ── MAIN world injection fallback ────────────────────────────────────────────
+// The manifest's content_scripts with world:"MAIN" is the primary injection method
+// and bypasses CSP. The <script> tag fallback only runs if the manifest injection
+// fails (no heartbeat after 500ms). It will fail on sites with strict CSP (ChatGPT,
+// Gemini) but that's OK — the manifest injection handles those.
+
+function tryScriptTagInjection(): void {
   try {
     const manifest = chrome.runtime.getManifest();
     const mainWorldCS = (manifest.content_scripts as any[])?.find(
@@ -63,30 +66,36 @@ function injectMainWorldScript(): void {
       const script = document.createElement('script');
       script.src = scriptUrl;
       script.onload = () => {
-        console.log('[Iron Gate] <script> tag injection succeeded');
+        console.log('[Iron Gate] Fallback <script> tag injection succeeded');
         script.remove();
-        // Sync mode to the newly injected MAIN world
         chrome.storage.local.get('firmMode', (result) => {
           const savedMode = result.firmMode === 'proxy' ? 'proxy' : 'audit';
           syncModeToMainWorld(savedMode);
         });
       };
       script.onerror = () => {
-        console.error('[Iron Gate] <script> tag injection FAILED');
+        // Silent — CSP blocks this on most AI tool sites, which is expected.
+        // The manifest injection (which bypasses CSP) should have already worked.
+        console.debug('[Iron Gate] <script> tag blocked by CSP (expected on most AI sites)');
         script.remove();
       };
       (document.head || document.documentElement).appendChild(script);
-    } else {
-      console.error('[Iron Gate] Could not find MAIN world script file in manifest');
     }
-  } catch (err) {
-    console.error('[Iron Gate] Script injection error:', err);
+  } catch {
+    // Silent failure
   }
 }
 
-// Inject IMMEDIATELY — don't wait for manifest/heartbeat
-console.log('[Iron Gate] Injecting MAIN world script via <script> tag...');
-injectMainWorldScript();
+// Wait 500ms for the manifest's MAIN world injection to send a heartbeat.
+// Only try the <script> tag fallback if no heartbeat was received.
+setTimeout(() => {
+  if (!mainWorldAlive) {
+    console.log('[Iron Gate] No heartbeat after 500ms — trying <script> tag fallback...');
+    tryScriptTagInjection();
+  } else {
+    console.log('[Iron Gate] MAIN world alive via manifest injection — no fallback needed');
+  }
+}, 500);
 
 // Listen for messages from MAIN world (fetch interception results)
 window.addEventListener('message', (event) => {
