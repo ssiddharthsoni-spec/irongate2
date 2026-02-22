@@ -9,6 +9,7 @@ import { apiRequest, configureApiClient } from './api-client';
 import { initAuth, getFirmId, getUserId, getToken } from './auth';
 import { detectWithRegex } from '../detection/fallback-regex';
 import { computeScore } from '../detection/scorer';
+import { pseudonymizeLocal } from '../detection/pseudonymizer';
 import { scanForSecrets } from './detectors/secret-scanner';
 
 console.log('[Iron Gate] Service worker started');
@@ -51,20 +52,6 @@ async function handleMessage(
       const { text, aiToolId, captureMethod } = message.payload;
       console.log(`[Iron Gate] Prompt captured from ${aiToolId} via ${captureMethod}, length: ${text.length}`);
 
-      const eventId = crypto.randomUUID();
-      // Queue event for backend — fire-and-forget
-      eventQueue.enqueue({
-        eventId,
-        type: 'prompt_detected',
-        aiToolId,
-        captureMethod,
-        promptLength: text.length,
-        promptHash: await hashText(text),
-        firmId: getFirmId(),
-        userId: getUserId(),
-        timestamp: Date.now(),
-      }).catch((err) => console.warn('[Iron Gate] Failed to queue event:', err));
-
       // ── Local detection: regex PII + secret scanning ──
       const regexEntities = detectWithRegex(text);
       const secrets = scanForSecrets(text);
@@ -84,20 +71,104 @@ async function handleMessage(
 
       const sensitivityResult = computeScore(text, allEntities);
 
-      // Broadcast score to the originating content-script tab
+      // Generate pseudonymized version for transparency view
+      const pseudoResult = pseudonymizeLocal(text, allEntities);
+
+      // Queue event for API with CORRECT schema
+      const promptHash = await hashText(text);
+      const action = firmMode === 'proxy' ? 'proxy' : (sensitivityResult.level === 'critical' ? 'block' : 'pass');
+      queueEventToApi({
+        aiToolId,
+        promptHash,
+        promptLength: text.length,
+        sensitivityScore: sensitivityResult.score,
+        sensitivityLevel: sensitivityResult.level,
+        entities: allEntities.map((e) => ({
+          type: e.type,
+          text: e.text,
+          start: e.start,
+          end: e.end,
+          confidence: e.confidence,
+          source: e.source,
+        })),
+        action,
+        captureMethod,
+      });
+
+      const scorePayload = {
+        score: sensitivityResult.score,
+        level: sensitivityResult.level,
+        explanation: sensitivityResult.explanation,
+        entities: sensitivityResult.entities,
+        aiToolId: aiToolId,
+      };
+
+      // Broadcast score to the originating content-script tab (for badge)
       if (sender.tab?.id) {
         chrome.tabs.sendMessage(sender.tab.id, {
           type: 'SENSITIVITY_SCORE',
-          payload: {
-            score: sensitivityResult.score,
-            level: sensitivityResult.level,
-            explanation: sensitivityResult.explanation,
-            entities: sensitivityResult.entities,
-          },
+          payload: scorePayload,
         }).catch(() => {});
       }
 
-      return { received: true, eventId };
+      // Broadcast to sidepanel with full prompt inspector data
+      chrome.runtime.sendMessage({
+        type: 'SENSITIVITY_SCORE',
+        payload: {
+          ...scorePayload,
+          originalPrompt: text,
+          maskedPrompt: pseudoResult.maskedText,
+          pseudonymMappings: pseudoResult.mappings,
+        },
+      }).catch(() => {});
+
+      return { received: true };
+    }
+
+    // ── SENSITIVITY_SCORE from content script (relayed from MAIN world) ──
+    // This is the PRIMARY event source — fired when MAIN world intercepts
+    // a fetch to an LLM API and detects/pseudonymizes entities.
+    case 'SENSITIVITY_SCORE': {
+      const payload = message.payload;
+      const {
+        score, level, explanation, entities = [],
+        aiToolId, originalPrompt, maskedPrompt, pseudonymMappings,
+      } = payload;
+
+      // Only queue to API if this has prompt data (i.e., from content script, not a re-broadcast)
+      if (originalPrompt) {
+        console.log(`[Iron Gate] MAIN world event — ${aiToolId}, score: ${score}, level: ${level}, entities: ${pseudonymMappings?.length || 0}`);
+
+        // Queue event for API
+        const promptHash = await hashText(originalPrompt);
+        const action = firmMode === 'proxy'
+          ? (pseudonymMappings?.length > 0 ? 'proxy' : 'pass')
+          : 'pass';
+
+        // Reconstruct entity list from pseudonym mappings (since MAIN world doesn't send full entity data)
+        const entityList = (pseudonymMappings || []).map((m: any) => ({
+          type: m.type || 'UNKNOWN',
+          text: m.original || '',
+          start: 0,
+          end: (m.original || '').length,
+          confidence: 0.85,
+          source: 'regex',
+        }));
+
+        queueEventToApi({
+          aiToolId: aiToolId || 'unknown',
+          promptHash,
+          promptLength: originalPrompt.length,
+          sensitivityScore: score,
+          sensitivityLevel: level,
+          entities: entityList,
+          action,
+          captureMethod: 'fetch',
+        });
+      }
+
+      // Don't re-broadcast — sidepanel already receives chrome.runtime messages directly
+      return { ok: true };
     }
 
     case 'PROMPT_SUBMITTED': {
@@ -117,18 +188,17 @@ async function handleMessage(
       }
 
       // Audit mode: queue event for backend
-      eventQueue.enqueue({
-        eventId: crypto.randomUUID(),
-        type: 'prompt_submitted',
+      const promptHash = await hashText(text);
+      queueEventToApi({
         aiToolId,
-        sensitivityScore,
+        promptHash,
         promptLength: text.length,
-        promptHash: await hashText(text),
+        sensitivityScore: sensitivityScore || 0,
+        sensitivityLevel: sensitivityScore >= 86 ? 'critical' : sensitivityScore >= 61 ? 'high' : sensitivityScore >= 26 ? 'medium' : 'low',
+        entities: [],
         action: 'pass',
-        firmId: getFirmId(),
-        userId: getUserId(),
-        timestamp: Date.now(),
-      }).catch((err) => console.warn('[Iron Gate] Failed to queue event:', err));
+        captureMethod: 'submit',
+      });
 
       return { actionRequired: 'pass' };
     }
@@ -202,21 +272,48 @@ async function handleMessage(
       firmMode = mode;
       chrome.storage.local.set({ firmMode: mode });
       console.log(`[Iron Gate] Firm mode changed to: ${mode}`);
+
+      // Relay MODE_CHANGED to ALL content scripts on AI tool tabs
+      // so they can sync the mode to the MAIN world fetch interceptor
+      chrome.tabs.query({}, (tabs) => {
+        for (const tab of tabs) {
+          if (tab.id && tab.url) {
+            chrome.tabs.sendMessage(tab.id, {
+              type: 'MODE_CHANGED',
+              payload: { mode },
+            }).catch(() => {
+              // Tab doesn't have content script — ignore
+            });
+          }
+        }
+      });
+
       return { ok: true, mode };
+    }
+
+    case 'SET_API_KEY': {
+      const { apiKey } = message.payload;
+      console.log(`[Iron Gate] API key updated: ${apiKey ? apiKey.substring(0, 8) + '...' : '(cleared)'}`);
+      chrome.storage.local.set({ ironGateApiKey: apiKey });
+      configureApiClient({ apiKey });
+      return { ok: true };
     }
 
     case 'BLOCK_OVERRIDE': {
       const { eventId, reason } = message.payload;
       console.log(`[Iron Gate] Block override: ${eventId}, reason: ${reason}`);
 
-      eventQueue.enqueue({
-        eventId: eventId || crypto.randomUUID(),
-        type: 'block_override',
-        reason,
-        firmId: getFirmId(),
-        userId: getUserId(),
-        timestamp: Date.now(),
-      }).catch((err) => console.warn('[Iron Gate] Failed to queue override event:', err));
+      queueEventToApi({
+        aiToolId: 'override',
+        promptHash: eventId || crypto.randomUUID().replace(/-/g, '').padEnd(64, '0'),
+        promptLength: 0,
+        sensitivityScore: 0,
+        sensitivityLevel: 'low',
+        entities: [],
+        action: 'override',
+        overrideReason: reason,
+        captureMethod: 'manual',
+      });
 
       return { ok: true };
     }
@@ -259,6 +356,41 @@ async function handleMessage(
     default:
       return { error: 'Unknown message type' };
   }
+}
+
+// ─── Event Queue Helper ─────────────────────────────────────────────────────
+
+/**
+ * Queue an event to the API with the CORRECT schema expected by POST /v1/events/batch.
+ * This is the single point of event creation — all paths should use this.
+ */
+function queueEventToApi(event: {
+  aiToolId: string;
+  promptHash: string;
+  promptLength: number;
+  sensitivityScore: number;
+  sensitivityLevel: string;
+  entities: Array<{ type: string; text: string; start: number; end: number; confidence: number; source: string }>;
+  action: string;
+  overrideReason?: string;
+  captureMethod: string;
+  sessionId?: string;
+  metadata?: Record<string, unknown>;
+}): void {
+  eventQueue.enqueue({
+    aiToolId: event.aiToolId,
+    aiToolUrl: '',
+    promptHash: event.promptHash,
+    promptLength: event.promptLength,
+    sensitivityScore: event.sensitivityScore,
+    sensitivityLevel: event.sensitivityLevel,
+    entities: event.entities,
+    action: event.action,
+    overrideReason: event.overrideReason,
+    captureMethod: event.captureMethod,
+    sessionId: event.sessionId,
+    metadata: event.metadata || {},
+  }).catch((err) => console.warn('[Iron Gate] Failed to queue event:', err));
 }
 
 // Periodic alarm for flushing event queue

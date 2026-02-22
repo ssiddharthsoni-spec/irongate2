@@ -14,13 +14,20 @@ interface ApiClientConfig {
   baseUrl: string;
   firmId: string;
   getToken: () => Promise<string>;
+  apiKey: string; // API key for X-API-Key auth (alternative to JWT)
 }
 
 let config: ApiClientConfig = {
   baseUrl: API_BASE_URL,
   firmId: '',
   getToken: async () => '',
+  apiKey: '',
 };
+
+// Load API key from storage
+chrome.storage.local.get('ironGateApiKey', (result) => {
+  if (result.ironGateApiKey) config.apiKey = result.ironGateApiKey;
+});
 
 export function configureApiClient(newConfig: Partial<ApiClientConfig>) {
   config = { ...config, ...newConfig };
@@ -44,15 +51,21 @@ export async function apiRequest<T>(options: RequestOptions): Promise<T> {
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const token = await config.getToken();
+      // Build auth headers: prefer API key, fall back to JWT
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-Firm-ID': config.firmId,
+      };
+      if (config.apiKey) {
+        headers['X-API-Key'] = config.apiKey;
+      } else {
+        const token = await config.getToken();
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+      }
 
       const response = await fetch(url, {
         method,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-          'X-Firm-ID': config.firmId,
-        },
+        headers,
         body: body ? JSON.stringify(body) : undefined,
       });
 
@@ -103,7 +116,6 @@ export async function apiUploadFile<T>(
   fileType: string
 ): Promise<T> {
   const url = `${config.baseUrl}${path}`;
-  const token = await config.getToken();
 
   // Convert base64 to Blob
   const binaryString = atob(fileBase64);
@@ -122,12 +134,18 @@ export async function apiUploadFile<T>(
   const formData = new FormData();
   formData.append('file', blob, fileName);
 
+  // Build auth headers: prefer API key, fall back to JWT
+  const headers: Record<string, string> = { 'X-Firm-ID': config.firmId };
+  if (config.apiKey) {
+    headers['X-API-Key'] = config.apiKey;
+  } else {
+    const token = await config.getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+  }
+
   const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'X-Firm-ID': config.firmId,
-    },
+    headers,
     body: formData,
   });
 

@@ -88,9 +88,16 @@ function extractPromptFromPayload(body: any): string | null {
 /** Timeout for file scanning before defaulting to allow (15 seconds) */
 const FILE_SCAN_TIMEOUT_MS = 15_000;
 
+/**
+ * Optional callback to transform the request body before sending.
+ * Return null to send the original body, or return a new body string to replace it.
+ */
+export type BodyTransformer = (url: string, body: any) => { transformed: string; originalPrompt: string; maskedPrompt: string } | null;
+
 export function installFetchInterceptor(
   onRequest: (request: InterceptedRequest) => void,
-  onFileInFormData?: (file: File) => Promise<'allow' | 'block'>
+  onFileInFormData?: (file: File) => Promise<'allow' | 'block'>,
+  bodyTransformer?: BodyTransformer
 ): () => void {
   // Save original implementations
   const originalFetch = window.fetch;
@@ -162,6 +169,19 @@ export function installFetchInterceptor(
       }
     }
 
+    // In proxy mode, transform the body before sending
+    if (isLLMEndpoint(url) && bodyTransformer && init?.body && typeof init.body === 'string') {
+      try {
+        const result = bodyTransformer(url, init.body);
+        if (result) {
+          console.log(`[Iron Gate] Fetch interceptor: pseudonymized prompt before sending to ${url}`);
+          return originalFetch.apply(this, [input, { ...init, body: result.transformed }]);
+        }
+      } catch (err) {
+        console.warn('[Iron Gate] Body transform error, sending original:', err);
+      }
+    }
+
     // Pass through to original
     return originalFetch.apply(this, [input, init]);
   };
@@ -205,4 +225,46 @@ export function installFetchInterceptor(
   };
 }
 
-export { extractPromptFromPayload };
+/**
+ * Replace the prompt text inside a request payload with pseudonymized text.
+ * Supports ChatGPT backend format, OpenAI format, and generic formats.
+ */
+function replacePromptInPayload(body: any, replacement: string): any {
+  try {
+    const parsed = typeof body === 'string' ? JSON.parse(body) : body;
+
+    // ChatGPT backend format: { action, messages: [{ content: { parts: [...] } }] }
+    if (parsed?.messages?.[0]?.content?.parts) {
+      const lastIdx = parsed.messages.length - 1;
+      parsed.messages[lastIdx].content.parts = [replacement];
+      return parsed;
+    }
+
+    // OpenAI format: { messages: [{ role, content }] }
+    if (parsed?.messages && Array.isArray(parsed.messages)) {
+      const lastUserIdx = parsed.messages.map((m: any) => m.role).lastIndexOf('user');
+      if (lastUserIdx >= 0) {
+        if (typeof parsed.messages[lastUserIdx].content === 'string') {
+          parsed.messages[lastUserIdx].content = replacement;
+        } else if (Array.isArray(parsed.messages[lastUserIdx].content)) {
+          const textParts = parsed.messages[lastUserIdx].content.filter((c: any) => c.type === 'text');
+          if (textParts.length > 0) {
+            textParts[0].text = replacement;
+          }
+        }
+      }
+      return parsed;
+    }
+
+    // Generic formats
+    if (parsed?.prompt) { parsed.prompt = replacement; return parsed; }
+    if (parsed?.query) { parsed.query = replacement; return parsed; }
+    if (typeof parsed?.input === 'string') { parsed.input = replacement; return parsed; }
+
+    return null; // Unknown format — don't transform
+  } catch {
+    return null;
+  }
+}
+
+export { extractPromptFromPayload, replacePromptInPayload };

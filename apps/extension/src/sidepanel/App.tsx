@@ -32,6 +32,12 @@ const ENTITY_TYPES = [
 
 const DEFAULT_API_URL = 'https://irongate-api.onrender.com/v1';
 
+interface PromptInspectorData {
+  originalPrompt: string;
+  maskedPrompt: string;
+  pseudonymMappings: Array<{ original: string; pseudonym: string; type: string }>;
+}
+
 export function App() {
   const [status, setStatus] = useState<'idle' | 'monitoring' | 'error'>('idle');
   const [currentTool, setCurrentTool] = useState<string | null>(null);
@@ -39,6 +45,34 @@ export function App() {
   const [lastScore, setLastScore] = useState<SensitivityScore | null>(null);
   const [feedbackOpen, setFeedbackOpen] = useState<number | null>(null);
   const [feedbackSent, setFeedbackSent] = useState<Set<number>>(new Set());
+
+  // Prompt Inspector state
+  const [inspectorData, setInspectorData] = useState<PromptInspectorData | null>(null);
+  const [inspectorView, setInspectorView] = useState<'original' | 'masked' | 'mappings'>('original');
+  const [inspectorOpen, setInspectorOpen] = useState(true);
+
+  const [copiedSafe, setCopiedSafe] = useState(false);
+
+  const handleCopySafe = useCallback(async () => {
+    if (!inspectorData?.maskedPrompt) return;
+    try {
+      await navigator.clipboard.writeText(inspectorData.maskedPrompt);
+      setCopiedSafe(true);
+      setTimeout(() => setCopiedSafe(false), 2000);
+    } catch {
+      // Fallback for older browsers
+      const textarea = document.createElement('textarea');
+      textarea.value = inspectorData.maskedPrompt;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      setCopiedSafe(true);
+      setTimeout(() => setCopiedSafe(false), 2000);
+    }
+  }, [inspectorData?.maskedPrompt]);
 
   // Connection / settings state
   const [apiUrl, setApiUrl] = useState(DEFAULT_API_URL);
@@ -52,10 +86,16 @@ export function App() {
   const [connectError, setConnectError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mode, setMode] = useState<'audit' | 'proxy'>('audit');
+  const [apiKeyDraft, setApiKeyDraft] = useState('');
+  const [apiKeySaved, setApiKeySaved] = useState(false);
 
-  // Load saved API URL and connection state on mount
+  // Load saved state on mount (API URL, connection, mode, recent activity, API key)
   useEffect(() => {
-    chrome.storage.local.get(['apiBaseUrl', 'connectionState', 'firmMode'], (result) => {
+    chrome.storage.local.get(['apiBaseUrl', 'connectionState', 'firmMode', 'recentActivity', 'lastScore', 'ironGateApiKey'], (result) => {
+      if (result.ironGateApiKey) {
+        setApiKeyDraft(result.ironGateApiKey);
+        setApiKeySaved(true);
+      }
       if (result.apiBaseUrl) {
         setApiUrl(result.apiBaseUrl);
         setApiUrlDraft(result.apiBaseUrl);
@@ -65,6 +105,12 @@ export function App() {
       }
       if (result.firmMode) {
         setMode(result.firmMode);
+      }
+      if (result.recentActivity && Array.isArray(result.recentActivity)) {
+        setRecentActivity(result.recentActivity);
+      }
+      if (result.lastScore) {
+        setLastScore(result.lastScore);
       }
     });
   }, []);
@@ -207,43 +253,68 @@ export function App() {
     };
     chrome.tabs.onActivated.addListener(activatedListener);
 
-    // Listen for detection results from service worker
-    chrome.runtime.onMessage.addListener((message) => {
+    // Listen for detection results from service worker AND content scripts
+    const messageListener = (message: any) => {
       if (message.type === 'SENSITIVITY_SCORE') {
-        setLastScore(message.payload);
-        setRecentActivity((prev) => [
-          {
-            id: crypto.randomUUID(),
-            aiTool: message.payload.aiToolId || 'generic',
-            score: message.payload.score,
-            level: message.payload.level,
-            entityCount: message.payload.entities?.length || 0,
-            timestamp: new Date().toISOString(),
-          },
-          ...prev.slice(0, 49),
-        ]);
+        const newScore = message.payload;
+        setLastScore(newScore);
+
+        const newItem = {
+          id: crypto.randomUUID(),
+          aiTool: newScore.aiToolId || 'generic',
+          score: newScore.score,
+          level: newScore.level,
+          entityCount: newScore.entities?.length || newScore.pseudonymMappings?.length || 0,
+          timestamp: new Date().toISOString(),
+        };
+
+        setRecentActivity((prev) => {
+          const updated = [newItem, ...prev.slice(0, 49)];
+          // Persist to storage so it survives sidepanel reopens
+          chrome.storage.local.set({
+            recentActivity: updated.slice(0, 20),
+            lastScore: newScore,
+          });
+          return updated;
+        });
+
+        // Update Prompt Inspector data if available
+        if (newScore.originalPrompt) {
+          setInspectorData({
+            originalPrompt: newScore.originalPrompt,
+            maskedPrompt: newScore.maskedPrompt,
+            pseudonymMappings: newScore.pseudonymMappings || [],
+          });
+          setInspectorOpen(true);
+        }
       }
 
       if (message.type === 'FILE_SCAN_RESULT') {
         const p = message.payload;
-        setRecentActivity((prev) => [
-          {
-            id: crypto.randomUUID(),
-            aiTool: p.aiToolId || 'document',
-            score: p.score,
-            level: p.level,
-            entityCount: p.entitiesFound || 0,
-            timestamp: new Date().toISOString(),
-            isDocument: true,
-            fileName: p.fileName,
-          },
-          ...prev.slice(0, 49),
-        ]);
+        setRecentActivity((prev) => {
+          const updated = [
+            {
+              id: crypto.randomUUID(),
+              aiTool: p.aiToolId || 'document',
+              score: p.score,
+              level: p.level,
+              entityCount: p.entitiesFound || 0,
+              timestamp: new Date().toISOString(),
+              isDocument: true,
+              fileName: p.fileName,
+            },
+            ...prev.slice(0, 49),
+          ];
+          chrome.storage.local.set({ recentActivity: updated.slice(0, 20) });
+          return updated;
+        });
       }
-    });
+    };
+    chrome.runtime.onMessage.addListener(messageListener);
 
     return () => {
       retryTimers.forEach(clearTimeout);
+      chrome.runtime.onMessage.removeListener(messageListener);
       chrome.tabs.onUpdated.removeListener(tabListener);
       chrome.tabs.onActivated.removeListener(activatedListener);
     };
@@ -367,6 +438,40 @@ export function App() {
             </div>
           )}
 
+          {/* API Key */}
+          <label className="block text-xs font-medium text-gray-500 mb-1">
+            API Key
+          </label>
+          <div className="flex gap-2 mb-3">
+            <input
+              type="password"
+              value={apiKeyDraft}
+              onChange={(e) => { setApiKeyDraft(e.target.value); setApiKeySaved(false); }}
+              placeholder="ig_xxxxxxxxxxxx..."
+              className="flex-1 px-2 py-1.5 text-xs border rounded-md bg-gray-50 focus:outline-none focus:ring-1 focus:ring-iron-500 font-mono"
+            />
+            <button
+              onClick={() => {
+                chrome.runtime.sendMessage({
+                  type: 'SET_API_KEY',
+                  payload: { apiKey: apiKeyDraft },
+                }).catch(() => {});
+                setApiKeySaved(true);
+                setTimeout(() => setApiKeySaved(false), 2000);
+              }}
+              className={`px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                apiKeySaved
+                  ? 'text-green-700 bg-green-50 border border-green-200'
+                  : 'text-iron-700 bg-iron-50 border border-iron-200 hover:bg-iron-100'
+              }`}
+            >
+              {apiKeySaved ? 'Saved' : 'Save'}
+            </button>
+          </div>
+          <p className="text-[10px] text-gray-400 mb-3">
+            Get your API key from the <a href="https://irongate-dashboard.vercel.app/admin" target="_blank" rel="noopener" className="text-iron-600 underline">admin dashboard</a>.
+          </p>
+
           {/* Mode toggle */}
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-medium text-gray-500">Mode</span>
@@ -416,11 +521,17 @@ export function App() {
               ? 'Error'
               : 'Not on an AI tool page'}
           </span>
-          <span className={`ml-auto inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${
-            mode === 'audit' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'
-          }`}>
+          <button
+            onClick={handleModeToggle}
+            className={`ml-auto inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-colors ${
+              mode === 'audit'
+                ? 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+            }`}
+            title={`Click to switch to ${mode === 'audit' ? 'PROXY' : 'AUDIT'} mode`}
+          >
             {mode.toUpperCase()}
-          </span>
+          </button>
         </div>
       </div>
 
@@ -517,6 +628,160 @@ export function App() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Prompt Inspector */}
+      {inspectorData && (
+        <div className="bg-white rounded-lg mb-4 shadow-sm border">
+          <button
+            onClick={() => setInspectorOpen(!inspectorOpen)}
+            className="w-full px-4 py-3 flex items-center justify-between border-b hover:bg-gray-50 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-iron-600" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
+                <path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd" />
+              </svg>
+              <h2 className="text-sm font-medium text-gray-700">Prompt Inspector</h2>
+            </div>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className={`h-4 w-4 text-gray-400 transition-transform ${inspectorOpen ? 'rotate-180' : ''}`}
+              viewBox="0 0 20 20"
+              fill="currentColor"
+            >
+              <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+            </svg>
+          </button>
+
+          {/* Copy Safe Version — prominent button */}
+          {inspectorData?.maskedPrompt && (
+            <div className="px-3 py-2 border-t bg-green-50">
+              <button
+                onClick={handleCopySafe}
+                className={`w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all ${
+                  copiedSafe
+                    ? 'bg-green-600 text-white'
+                    : 'bg-green-700 text-white hover:bg-green-800 active:scale-[0.98]'
+                }`}
+              >
+                {copiedSafe ? (
+                  <>
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                    </svg>
+                    Copied to Clipboard!
+                  </>
+                ) : (
+                  <>
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                      <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
+                      <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
+                    </svg>
+                    Copy Safe Version to Share
+                  </>
+                )}
+              </button>
+              <p className="text-[10px] text-green-600 text-center mt-1">
+                All sensitive data replaced with pseudonyms — safe for external sharing
+              </p>
+            </div>
+          )}
+
+          {inspectorOpen && (
+            <div>
+              {/* Tab bar */}
+              <div className="flex border-b">
+                <button
+                  onClick={() => setInspectorView('original')}
+                  className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
+                    inspectorView === 'original'
+                      ? 'text-iron-700 border-b-2 border-iron-600 bg-iron-50'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  What You Sent
+                </button>
+                <button
+                  onClick={() => setInspectorView('masked')}
+                  className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
+                    inspectorView === 'masked'
+                      ? 'text-iron-700 border-b-2 border-iron-600 bg-iron-50'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  What LLM Receives
+                </button>
+                <button
+                  onClick={() => setInspectorView('mappings')}
+                  className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
+                    inspectorView === 'mappings'
+                      ? 'text-iron-700 border-b-2 border-iron-600 bg-iron-50'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Mappings
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="p-3 max-h-64 overflow-y-auto">
+                {inspectorView === 'original' && (
+                  <div>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1.5">Original prompt (with sensitive data)</p>
+                    <pre className="text-xs text-gray-700 whitespace-pre-wrap break-words bg-red-50 border border-red-100 rounded-md p-2.5 leading-relaxed font-mono">
+                      {inspectorData.originalPrompt}
+                    </pre>
+                  </div>
+                )}
+
+                {inspectorView === 'masked' && (
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <p className="text-[10px] text-gray-400 uppercase tracking-wide">Pseudonymized version (safe for LLM)</p>
+                      <button
+                        onClick={handleCopySafe}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                          copiedSafe
+                            ? 'bg-green-600 text-white'
+                            : 'bg-green-100 text-green-700 hover:bg-green-200'
+                        }`}
+                        title="Copy safe version to clipboard"
+                      >
+                        {copiedSafe ? 'Copied!' : 'Copy'}
+                      </button>
+                    </div>
+                    <pre className="text-xs text-gray-700 whitespace-pre-wrap break-words bg-green-50 border border-green-100 rounded-md p-2.5 leading-relaxed font-mono">
+                      {inspectorData.maskedPrompt}
+                    </pre>
+                  </div>
+                )}
+
+                {inspectorView === 'mappings' && (
+                  <div>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1.5">Entity pseudonym mappings</p>
+                    {inspectorData.pseudonymMappings.length === 0 ? (
+                      <p className="text-xs text-gray-400 italic">No entities detected to pseudonymize.</p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {inspectorData.pseudonymMappings.map((m, i) => (
+                          <div key={i} className="flex items-center gap-2 text-xs bg-gray-50 rounded-md px-2.5 py-1.5 border">
+                            <span className="font-mono text-red-600 line-through">{m.original}</span>
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 text-gray-400 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                              <path fillRule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clipRule="evenodd" />
+                            </svg>
+                            <span className="font-mono text-green-700 font-medium">{m.pseudonym}</span>
+                            <span className="ml-auto text-[10px] text-gray-400 bg-gray-100 rounded px-1.5 py-0.5">{m.type}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

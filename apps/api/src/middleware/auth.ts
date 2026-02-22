@@ -1,11 +1,13 @@
 import { createMiddleware } from 'hono/factory';
 import { db } from '../db/client';
-import { users, firms } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { users, firms, apiKeys } from '../db/schema';
+import { eq, and, isNull } from 'drizzle-orm';
 import crypto from 'crypto';
 
 // Cache user lookups to avoid querying on every request
 const userCache = new Map<string, { userId: string; firmId: string } | null>();
+// Cache API key lookups (hash → { firmId, userId })
+const apiKeyCache = new Map<string, { firmId: string; userId: string }>();
 
 /** Invalidate a cached user so the next request re-fetches from DB. */
 export function invalidateUserCache(clerkId: string) {
@@ -14,12 +16,54 @@ export function invalidateUserCache(clerkId: string) {
 
 /**
  * Authentication middleware.
- * In production, validates JWT via Clerk and resolves the internal user.
- * New Clerk users are auto-provisioned on first request.
- * In development, looks up the dev user from the database.
+ * Supports three auth methods (checked in order):
+ * 1. API Key (X-API-Key header) — for Chrome extension and programmatic access
+ * 2. JWT Bearer token (Clerk) — for dashboard
+ * 3. Dev mode fallback — auto-resolves to dev user
  */
 export const authMiddleware = createMiddleware(async (c, next) => {
-  // Dev mode: look up real dev user from database
+  // ── API Key Authentication ──────────────────────────────────────────────
+  const apiKeyHeader = c.req.header('X-API-Key');
+  if (apiKeyHeader) {
+    const keyHash = crypto.createHash('sha256').update(apiKeyHeader).digest('hex');
+
+    // Check cache first
+    const cached = apiKeyCache.get(keyHash);
+    if (cached) {
+      c.set('userId', cached.userId);
+      c.set('clerkId', 'api-key');
+      c.set('firmId', cached.firmId);
+      db.update(apiKeys).set({ lastUsedAt: new Date() }).where(eq(apiKeys.keyHash, keyHash)).catch(() => {});
+      await next();
+      return;
+    }
+
+    // Look up API key in database
+    const [keyRecord] = await db
+      .select({
+        id: apiKeys.id,
+        firmId: apiKeys.firmId,
+        createdBy: apiKeys.createdBy,
+        revokedAt: apiKeys.revokedAt,
+      })
+      .from(apiKeys)
+      .where(and(eq(apiKeys.keyHash, keyHash), isNull(apiKeys.revokedAt)))
+      .limit(1);
+
+    if (keyRecord) {
+      apiKeyCache.set(keyHash, { firmId: keyRecord.firmId, userId: keyRecord.createdBy });
+      c.set('userId', keyRecord.createdBy);
+      c.set('clerkId', 'api-key');
+      c.set('firmId', keyRecord.firmId);
+      db.update(apiKeys).set({ lastUsedAt: new Date() }).where(eq(apiKeys.id, keyRecord.id)).catch(() => {});
+      await next();
+      return;
+    }
+
+    return c.json({ error: 'Unauthorized: Invalid API key' }, 401);
+  }
+
+  // ── Dev Mode ────────────────────────────────────────────────────────────
   if (process.env.NODE_ENV === 'development') {
     const cached = userCache.get('dev-clerk-id');
     if (cached) {
@@ -50,10 +94,10 @@ export const authMiddleware = createMiddleware(async (c, next) => {
     return;
   }
 
-  // Production: require and validate JWT
+  // ── JWT Bearer Token (Clerk) ────────────────────────────────────────────
   const authHeader = c.req.header('Authorization');
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return c.json({ error: 'Unauthorized: Missing or invalid token' }, 401);
+    return c.json({ error: 'Unauthorized: Provide Authorization: Bearer <jwt> or X-API-Key: <key>' }, 401);
   }
 
   const token = authHeader.replace('Bearer ', '');

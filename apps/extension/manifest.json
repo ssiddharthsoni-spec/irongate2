@@ -42,6 +42,24 @@
         "https://huggingface.co/chat/*",
         "https://groq.com/*"
       ],
+      "js": ["src/content/main-world.ts"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*",
+        "https://copilot.microsoft.com/*",
+        "https://chat.deepseek.com/*",
+        "https://poe.com/*",
+        "https://perplexity.ai/*",
+        "https://you.com/*",
+        "https://huggingface.co/chat/*",
+        "https://groq.com/*"
+      ],
       "js": ["src/content/index.ts"],
       "run_at": "document_idle"
     }
