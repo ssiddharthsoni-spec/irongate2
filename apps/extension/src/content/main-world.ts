@@ -19,6 +19,10 @@
 let mode: 'audit' | 'proxy' = 'audit';
 let currentReverseMap: Record<string, string> = {};
 
+// Execution flag — verifiable from DevTools: window.__IRON_GATE_MAIN_WORLD
+(window as any).__IRON_GATE_MAIN_WORLD = 'loading';
+console.log('[Iron Gate MAIN] 🚀 Script loaded at', new Date().toISOString(), '— patching fetch/XHR/WebSocket...');
+
 // ─── Communication with content script ──────────────────────────────────────
 
 window.addEventListener('message', (event) => {
@@ -747,7 +751,7 @@ async function getBodyString(input: RequestInfo | URL, init?: RequestInit): Prom
 const originalFetch = window.fetch;
 let _fetchCallCount = 0;
 
-window.fetch = async function patchedFetch(
+const patchedFetch = async function patchedFetch(
   input: RequestInfo | URL,
   init?: RequestInit
 ): Promise<Response> {
@@ -888,7 +892,43 @@ window.fetch = async function patchedFetch(
   return originalFetch.call(window, input, init);
 };
 
-console.log('[Iron Gate MAIN] Fetch interceptor installed — mode:', mode);
+// ── Install fetch patch via Object.defineProperty (resilient against non-writable) ──
+const _fetchDesc = Object.getOwnPropertyDescriptor(window, 'fetch');
+console.log('[Iron Gate MAIN] fetch descriptor before patch:', JSON.stringify({
+  writable: _fetchDesc?.writable,
+  configurable: _fetchDesc?.configurable,
+  hasValue: typeof _fetchDesc?.value === 'function',
+  hasGetter: typeof _fetchDesc?.get === 'function',
+}));
+
+try {
+  Object.defineProperty(window, 'fetch', {
+    value: patchedFetch,
+    writable: true,
+    configurable: true,
+    enumerable: true,
+  });
+  console.log('[Iron Gate MAIN] ✅ Fetch patched via Object.defineProperty');
+} catch (defineErr) {
+  console.warn('[Iron Gate MAIN] Object.defineProperty failed, trying direct assignment:', defineErr);
+  try {
+    (window as any).fetch = patchedFetch;
+    console.log('[Iron Gate MAIN] ✅ Fetch patched via direct assignment (fallback)');
+  } catch (assignErr) {
+    console.error('[Iron Gate MAIN] ❌ ALL FETCH PATCH METHODS FAILED:', assignErr);
+  }
+}
+
+// Verify the patch took effect
+if (window.fetch === patchedFetch) {
+  console.log('[Iron Gate MAIN] ✅ VERIFIED: window.fetch === patchedFetch');
+  (window as any).__IRON_GATE_FETCH_PATCHED = true;
+} else {
+  console.error('[Iron Gate MAIN] ❌ CRITICAL: window.fetch is NOT patchedFetch. Interception WILL NOT WORK.');
+  console.error('[Iron Gate MAIN] window.fetch toString:', String(window.fetch).substring(0, 200));
+}
+
+console.log('[Iron Gate MAIN] Fetch interceptor setup complete — mode:', mode);
 
 // ─── Patch XMLHttpRequest ──────────────────────────────────────────────────
 // Some AI tools (Copilot, Bing) use XHR instead of fetch.
@@ -1134,4 +1174,7 @@ window.postMessage({
   timestamp: Date.now(),
   mode,
 }, '*');
+(window as any).__IRON_GATE_MAIN_WORLD = 'active';
+(window as any).__IRON_GATE_MODE = mode;
 console.log('[Iron Gate MAIN] ✅ All interceptors installed. Heartbeat sent. Mode:', mode);
+console.log('[Iron Gate MAIN] 💡 Verify in DevTools console: window.__IRON_GATE_MAIN_WORLD →', (window as any).__IRON_GATE_MAIN_WORLD);

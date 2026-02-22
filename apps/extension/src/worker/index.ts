@@ -423,12 +423,271 @@ const AI_TOOL_URL_FILTERS: chrome.events.UrlFilter[] = [
   { hostContains: 'groq.com' },
 ];
 
+/**
+ * Self-contained inline fetch interceptor — injected via chrome.scripting.executeScript({ func })
+ * when the full main-world.ts file fails to load. This is the LAST RESORT fallback.
+ * Must be 100% self-contained with no external references.
+ */
+function inlineFetchInterceptor() {
+  // Skip if full main-world.ts already loaded
+  if ((window as any).__IRON_GATE_MAIN_WORLD === 'active') {
+    console.log('[Iron Gate INLINE] Full main-world.ts already active — skipping inline fallback');
+    return;
+  }
+
+  console.log('[Iron Gate INLINE] 🔧 Installing inline fetch interceptor (fallback)...');
+
+  let mode: 'audit' | 'proxy' = 'audit';
+
+  // Listen for mode changes
+  window.addEventListener('message', (e: MessageEvent) => {
+    if (e.source !== window) return;
+    if (e.data?.type === 'IRON_GATE_SET_MODE') {
+      mode = e.data.mode;
+      console.log('[Iron Gate INLINE] Mode set to:', mode);
+    }
+  });
+  window.postMessage({ type: 'IRON_GATE_REQUEST_MODE' }, '*');
+
+  // ── Entity Detection Patterns ──
+  const PATTERNS: Array<{ type: string; re: RegExp }> = [
+    { type: 'SSN', re: /\b\d{3}-\d{2}-\d{4}\b/g },
+    { type: 'EMAIL', re: /\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/g },
+    { type: 'PHONE_NUMBER', re: /\b(?:\+1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g },
+    { type: 'CREDIT_CARD', re: /\b(?:\d{4}[-\s]?){3}\d{4}\b/g },
+    { type: 'IP_ADDRESS', re: /\b(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g },
+    { type: 'DATE_OF_BIRTH', re: /\b(?:0[1-9]|1[0-2])\/(?:0[1-9]|[12]\d|3[01])\/(?:19|20)\d{2}\b/g },
+    { type: 'PERSON', re: /\b(?:Mr|Mrs|Ms|Dr|Prof)\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b/g },
+    { type: 'MONETARY_AMOUNT', re: /\$\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})?\b/g },
+    { type: 'API_KEY', re: /\b(?:sk|pk|api|key|token|secret)[-_][A-Za-z0-9]{20,}\b/gi },
+  ];
+
+  function detectEntities(text: string): Array<{type: string; text: string; start: number; end: number; confidence: number}> {
+    const entities: Array<{type: string; text: string; start: number; end: number; confidence: number}> = [];
+    for (const p of PATTERNS) {
+      const re = new RegExp(p.re.source, p.re.flags);
+      let match;
+      while ((match = re.exec(text)) !== null) {
+        entities.push({ type: p.type, text: match[0], start: match.index, end: match.index + match[0].length, confidence: 0.9 });
+      }
+    }
+    return entities;
+  }
+
+  let pseudonymCounter = 1;
+  function pseudonymize(text: string, entities: Array<{type: string; text: string; start: number; end: number}>) {
+    const sorted = [...entities].sort((a, b) => b.start - a.start);
+    const mappings: Array<{original: string; pseudonym: string; type: string}> = [];
+    let result = text;
+    const seen = new Map<string, string>();
+    for (const entity of sorted) {
+      let pseudonym = seen.get(entity.text);
+      if (!pseudonym) {
+        pseudonym = '[' + entity.type + '-' + String(pseudonymCounter++).padStart(4, '0') + ']';
+        seen.set(entity.text, pseudonym);
+      }
+      result = result.substring(0, entity.start) + pseudonym + result.substring(entity.end);
+      if (!mappings.find(m => m.original === entity.text)) {
+        mappings.push({ original: entity.text, pseudonym, type: entity.type });
+      }
+    }
+    return { maskedText: result, mappings };
+  }
+
+  function extractPrompt(bodyStr: string): string | null {
+    try {
+      const parsed = JSON.parse(bodyStr);
+      // ChatGPT backend: { messages: [{ content: { parts: [...] } }] }
+      if (parsed?.messages?.[0]?.content?.parts) {
+        const last = parsed.messages[parsed.messages.length - 1];
+        return last.content.parts.join('\n');
+      }
+      // OpenAI / Anthropic: { messages: [{ role, content }] }
+      if (parsed?.messages && Array.isArray(parsed.messages)) {
+        const msgs = parsed.messages;
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          const m = msgs[i];
+          if (m.role === 'user' || m.author === 'user' || m.author?.role === 'user') {
+            if (typeof m.content === 'string') return m.content;
+            if (typeof m.text === 'string') return m.text;
+            if (Array.isArray(m.content)) return m.content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n');
+          }
+        }
+      }
+      // Other formats
+      if (parsed?.message && typeof parsed.message === 'string') return parsed.message;
+      if (parsed?.message?.text) return parsed.message.text;
+      if (parsed?.message?.content) return parsed.message.content;
+      if (typeof parsed?.prompt === 'string') return parsed.prompt;
+      if (typeof parsed?.query === 'string') return parsed.query;
+      if (typeof parsed?.input === 'string') return parsed.input;
+      if (typeof parsed?.content === 'string' && parsed.content.length > 5) return parsed.content;
+      if (typeof parsed?.text === 'string' && parsed.text.length > 5) return parsed.text;
+      if (typeof parsed?.q === 'string') return parsed.q;
+    } catch { /* not JSON */ }
+    return null;
+  }
+
+  function replacePrompt(bodyStr: string, original: string, replacement: string): string | null {
+    try {
+      const parsed = JSON.parse(bodyStr);
+      // ChatGPT backend
+      if (parsed?.messages?.[0]?.content?.parts) {
+        const lastIdx = parsed.messages.length - 1;
+        parsed.messages[lastIdx].content.parts = [replacement];
+        return JSON.stringify(parsed);
+      }
+      // OpenAI / Anthropic messages
+      if (parsed?.messages && Array.isArray(parsed.messages)) {
+        for (let i = parsed.messages.length - 1; i >= 0; i--) {
+          const m = parsed.messages[i];
+          if (m.role === 'user' || m.author === 'user' || m.author?.role === 'user') {
+            if (typeof m.content === 'string') { m.content = replacement; return JSON.stringify(parsed); }
+            if (typeof m.text === 'string') { m.text = replacement; return JSON.stringify(parsed); }
+            if (Array.isArray(m.content)) { const tp = m.content.filter((c: any) => c.type === 'text'); if (tp.length > 0) tp[0].text = replacement; return JSON.stringify(parsed); }
+          }
+        }
+      }
+      // Other formats
+      if (parsed?.message && typeof parsed.message === 'string') { parsed.message = replacement; return JSON.stringify(parsed); }
+      if (parsed?.message?.text) { parsed.message.text = replacement; return JSON.stringify(parsed); }
+      if (typeof parsed?.prompt === 'string') { parsed.prompt = replacement; return JSON.stringify(parsed); }
+      if (typeof parsed?.query === 'string') { parsed.query = replacement; return JSON.stringify(parsed); }
+      if (typeof parsed?.input === 'string') { parsed.input = replacement; return JSON.stringify(parsed); }
+      if (typeof parsed?.content === 'string') { parsed.content = replacement; return JSON.stringify(parsed); }
+      if (typeof parsed?.text === 'string') { parsed.text = replacement; return JSON.stringify(parsed); }
+      // Fallback: raw string replacement
+      const escaped = JSON.stringify(original).slice(1, -1);
+      const escapedRepl = JSON.stringify(replacement).slice(1, -1);
+      if (bodyStr.includes(escaped)) return bodyStr.split(escaped).join(escapedRepl);
+    } catch { /* not JSON */ }
+    return null;
+  }
+
+  function quickScore(entities: Array<{type: string}>): string {
+    const HIGH = ['SSN', 'CREDIT_CARD', 'API_KEY', 'AWS_CREDENTIAL', 'PRIVATE_KEY'];
+    let score = 0;
+    for (const e of entities) {
+      score += HIGH.includes(e.type) ? 25 : 10;
+    }
+    if (score >= 86) return 'critical';
+    if (score >= 61) return 'high';
+    if (score >= 26) return 'medium';
+    return 'low';
+  }
+
+  // ── Patch fetch ──
+  const originalFetch = window.fetch;
+
+  const patchedFetch = async function(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const method = (init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
+
+    if (method !== 'POST' && method !== 'PUT' && method !== 'PATCH') {
+      return originalFetch.call(window, input, init);
+    }
+
+    // Only intercept same-host requests (we only run on AI tool pages)
+    try {
+      const reqHost = new URL(url, window.location.href).hostname;
+      if (reqHost !== window.location.hostname) {
+        return originalFetch.call(window, input, init);
+      }
+    } catch {
+      return originalFetch.call(window, input, init);
+    }
+
+    // Get body string
+    let bodyString: string | null = null;
+    if (init?.body && typeof init.body === 'string') {
+      bodyString = init.body;
+    } else if (input instanceof Request && input.body) {
+      try { bodyString = await input.clone().text(); } catch { /* skip */ }
+    }
+
+    if (!bodyString) return originalFetch.call(window, input, init);
+
+    const promptText = extractPrompt(bodyString);
+    if (!promptText || promptText.length < 10) {
+      return originalFetch.call(window, input, init);
+    }
+
+    const entities = detectEntities(promptText);
+    console.log('[Iron Gate INLINE] Intercepted fetch to', url.substring(0, 60), '— mode:', mode, ', entities:', entities.length);
+
+    if (mode === 'proxy' && entities.length > 0) {
+      const level = quickScore(entities);
+      const { maskedText, mappings } = pseudonymize(promptText, entities);
+      const modifiedBody = replacePrompt(bodyString, promptText, maskedText);
+
+      if (modifiedBody) {
+        console.log('[Iron Gate INLINE] ✅ PROXY: Pseudonymized', entities.length, 'entities (', level, ')');
+        console.log('[Iron Gate INLINE] Original:', promptText.substring(0, 80), '...');
+        console.log('[Iron Gate INLINE] Masked:', maskedText.substring(0, 80), '...');
+
+        window.postMessage({
+          type: 'IRON_GATE_INTERCEPTED',
+          originalPrompt: promptText,
+          maskedPrompt: maskedText,
+          mappings,
+          entityCount: entities.length,
+          level,
+        }, '*');
+
+        const modifiedInit: RequestInit = {
+          method: init?.method || (input instanceof Request ? input.method : 'POST'),
+          headers: init?.headers || (input instanceof Request ? Object.fromEntries(input.headers.entries()) : {}),
+          body: modifiedBody,
+          credentials: init?.credentials || (input instanceof Request ? input.credentials : 'same-origin'),
+          mode: init?.mode || (input instanceof Request ? input.mode : undefined),
+          signal: init?.signal || (input instanceof Request ? input.signal : undefined),
+        };
+
+        return originalFetch.call(window, url, modifiedInit);
+      }
+    }
+
+    if (mode === 'audit' && entities.length > 0) {
+      const level = quickScore(entities);
+      const { maskedText, mappings } = pseudonymize(promptText, entities);
+      window.postMessage({
+        type: 'IRON_GATE_AUDIT',
+        originalPrompt: promptText,
+        maskedPrompt: maskedText,
+        mappings,
+        entityCount: entities.length,
+        level,
+      }, '*');
+    }
+
+    return originalFetch.call(window, input, init);
+  };
+
+  // Install via Object.defineProperty
+  try {
+    Object.defineProperty(window, 'fetch', {
+      value: patchedFetch,
+      writable: true,
+      configurable: true,
+      enumerable: true,
+    });
+  } catch {
+    (window as any).fetch = patchedFetch;
+  }
+
+  const ok = window.fetch === patchedFetch;
+  (window as any).__IRON_GATE_MAIN_WORLD = ok ? 'active-inline' : 'failed';
+  (window as any).__IRON_GATE_FETCH_PATCHED = ok;
+  window.postMessage({ type: 'IRON_GATE_HEARTBEAT', version: 'inline-0.1', timestamp: Date.now(), mode }, '*');
+  console.log('[Iron Gate INLINE]', ok ? '✅ Inline fetch interceptor ACTIVE' : '❌ Fetch patch FAILED');
+}
+
 chrome.webNavigation.onCommitted.addListener(async (details) => {
   // Only inject into main frame (not iframes)
   if (details.frameId !== 0) return;
 
+  // Method 1: Inject the full main-world.ts via files
   try {
-    // Find the MAIN world script file from the manifest
     const manifest = chrome.runtime.getManifest();
     const mainWorldCS = (manifest.content_scripts as any[])?.find(
       (cs: any) => cs.world === 'MAIN'
@@ -445,9 +704,34 @@ chrome.webNavigation.onCommitted.addListener(async (details) => {
       console.log(`[Iron Gate] Programmatic MAIN world injection → tab ${details.tabId} (${details.url?.substring(0, 60)})`);
     }
   } catch (err) {
-    // Can fail if tab navigated away or extension lacks permission
-    console.warn(`[Iron Gate] Programmatic injection failed:`, err);
+    console.warn(`[Iron Gate] Programmatic file injection failed:`, err);
   }
+
+  // Method 2: After 1.5s, check if main-world loaded; if not, inject inline fallback
+  setTimeout(async () => {
+    try {
+      const [checkResult] = await chrome.scripting.executeScript({
+        target: { tabId: details.tabId },
+        world: 'MAIN' as any,
+        func: () => (window as any).__IRON_GATE_MAIN_WORLD,
+      });
+
+      if (checkResult?.result === 'active') {
+        console.log(`[Iron Gate] MAIN world confirmed active on tab ${details.tabId}`);
+        return;
+      }
+
+      console.warn(`[Iron Gate] MAIN world NOT active (state: ${checkResult?.result}) — injecting inline fallback`);
+      await chrome.scripting.executeScript({
+        target: { tabId: details.tabId },
+        world: 'MAIN' as any,
+        func: inlineFetchInterceptor,
+      });
+      console.log(`[Iron Gate] Inline fallback injected → tab ${details.tabId}`);
+    } catch (err) {
+      console.warn(`[Iron Gate] Fallback check/injection failed:`, err);
+    }
+  }, 1500);
 }, { url: AI_TOOL_URL_FILTERS });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
