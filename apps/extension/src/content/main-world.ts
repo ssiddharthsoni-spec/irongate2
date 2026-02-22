@@ -39,18 +39,36 @@ window.postMessage({ type: 'IRON_GATE_REQUEST_MODE' }, '*');
 // ─── LLM Endpoint Detection ────────────────────────────────────────────────
 
 const LLM_API_PATTERNS: RegExp[] = [
+  // ChatGPT
   /chatgpt\.com\/backend-api\/conversation/,
   /chat\.openai\.com\/backend-api\/conversation/,
   /api\.openai\.com\/v1\/chat\/completions/,
+  // Claude
   /claude\.ai\/api/,
   /api\.anthropic\.com\/v1\/messages/,
+  // Google Gemini
   /generativelanguage\.googleapis\.com/,
   /gemini\.google\.com\/app\/_\/api/,
+  // Microsoft Copilot — multiple endpoint patterns
   /copilot\.microsoft\.com\/c\/api/,
+  /copilot\.microsoft\.com\/sl\/api/,
+  /copilot\.microsoft\.com\/turing\/conversation/,
+  /sydney\.bing\.com\/sydney/,
+  /bing\.com\/.*\/api\/.*chat/i,
+  /copilot\.microsoft\.com\/api/,
+  // DeepSeek
   /chat\.deepseek\.com\/api/,
+  // Poe
   /poe\.com\/api/,
+  // Perplexity
   /perplexity\.ai\/api/,
+  /api\.perplexity\.ai/,
+  // Groq
   /api\.groq\.com/,
+  // HuggingFace
+  /huggingface\.co\/chat\/.*\/message/,
+  // You.com
+  /you\.com\/api/,
 ];
 
 function isLLMEndpoint(url: string): boolean {
@@ -398,6 +416,8 @@ function pseudonymizeLocal(text: string, entities: DetectedEntity[]): PseudonymR
 }
 
 // ─── Prompt Extraction / Replacement ───────────────────────────────────────
+// Handles all major AI tool request body formats.
+// Falls back to generic deep-search for unknown formats.
 
 function extractPrompt(body: any): string | null {
   try {
@@ -409,11 +429,14 @@ function extractPrompt(body: any): string | null {
       return last.content.parts.join('\n');
     }
 
-    // OpenAI / Anthropic: { messages: [{ role, content }] }
+    // OpenAI / Anthropic / generic: { messages: [{ role, content }] }
     if (parsed?.messages && Array.isArray(parsed.messages)) {
-      const lastUser = [...parsed.messages].reverse().find((m: any) => m.role === 'user');
+      const lastUser = [...parsed.messages].reverse().find(
+        (m: any) => m.role === 'user' || m.author === 'user' || m.author?.role === 'user'
+      );
       if (lastUser) {
         if (typeof lastUser.content === 'string') return lastUser.content;
+        if (typeof lastUser.text === 'string') return lastUser.text;
         if (Array.isArray(lastUser.content)) {
           return lastUser.content
             .filter((c: any) => c.type === 'text')
@@ -423,9 +446,41 @@ function extractPrompt(body: any): string | null {
       }
     }
 
-    if (parsed?.prompt) return parsed.prompt;
-    if (parsed?.query) return parsed.query;
+    // Microsoft Copilot: { message, conversationId } or { message: { text } }
+    if (parsed?.message) {
+      if (typeof parsed.message === 'string') return parsed.message;
+      if (typeof parsed.message?.text === 'string') return parsed.message.text;
+      if (typeof parsed.message?.content === 'string') return parsed.message.content;
+    }
+
+    // Copilot variant: { content, conversationStyle }
+    if (typeof parsed?.content === 'string' && parsed.content.length > 5) return parsed.content;
+
+    // Copilot Bing variant: { q, ... } or { question, ... }
+    if (typeof parsed?.q === 'string') return parsed.q;
+    if (typeof parsed?.question === 'string') return parsed.question;
+
+    // DeepSeek / Poe / Groq: { prompt } or { query }
+    if (typeof parsed?.prompt === 'string') return parsed.prompt;
+    if (typeof parsed?.query === 'string') return parsed.query;
     if (typeof parsed?.input === 'string') return parsed.input;
+
+    // Perplexity: { text } or { query_str }
+    if (typeof parsed?.text === 'string' && parsed.text.length > 5) return parsed.text;
+    if (typeof parsed?.query_str === 'string') return parsed.query_str;
+
+    // Google Gemini: nested arrays [ null, [ [ [ prompt ] ] ] ] or reqId format
+    if (Array.isArray(parsed) && parsed.length >= 2) {
+      const deep = findDeepestString(parsed);
+      if (deep && deep.length > 10) return deep;
+    }
+
+    // Generic fallback: find the longest string value in the JSON
+    const longest = findLongestStringValue(parsed);
+    if (longest && longest.length >= 20) {
+      console.log(`[Iron Gate MAIN] Using generic extraction — found string of ${longest.length} chars`);
+      return longest;
+    }
 
     return null;
   } catch {
@@ -433,7 +488,44 @@ function extractPrompt(body: any): string | null {
   }
 }
 
-function replacePrompt(body: string, replacement: string): string | null {
+/** Recursively find the longest string value in an object/array */
+function findLongestStringValue(obj: any, maxDepth = 5): string | null {
+  if (maxDepth <= 0) return null;
+  if (typeof obj === 'string') return obj;
+  if (Array.isArray(obj)) {
+    let best: string | null = null;
+    for (const item of obj) {
+      const found = findLongestStringValue(item, maxDepth - 1);
+      if (found && (!best || found.length > best.length)) best = found;
+    }
+    return best;
+  }
+  if (obj && typeof obj === 'object') {
+    let best: string | null = null;
+    for (const val of Object.values(obj)) {
+      const found = findLongestStringValue(val, maxDepth - 1);
+      if (found && (!best || found.length > best.length)) best = found;
+    }
+    return best;
+  }
+  return null;
+}
+
+/** Find longest string in deeply nested arrays (Gemini format) */
+function findDeepestString(arr: any[]): string | null {
+  let best: string | null = null;
+  for (const item of arr) {
+    if (typeof item === 'string' && (!best || item.length > best.length)) {
+      best = item;
+    } else if (Array.isArray(item)) {
+      const found = findDeepestString(item);
+      if (found && (!best || found.length > best.length)) best = found;
+    }
+  }
+  return best;
+}
+
+function replacePrompt(body: string, originalPrompt: string, replacement: string): string | null {
   try {
     const parsed = JSON.parse(body);
 
@@ -444,28 +536,91 @@ function replacePrompt(body: string, replacement: string): string | null {
       return JSON.stringify(parsed);
     }
 
-    // OpenAI / Anthropic format
+    // OpenAI / Anthropic / generic messages format
     if (parsed?.messages && Array.isArray(parsed.messages)) {
-      const lastUserIdx = parsed.messages.map((m: any) => m.role).lastIndexOf('user');
+      const lastUserIdx = findLastIndex(parsed.messages,
+        (m: any) => m.role === 'user' || m.author === 'user' || m.author?.role === 'user'
+      );
       if (lastUserIdx >= 0) {
-        if (typeof parsed.messages[lastUserIdx].content === 'string') {
-          parsed.messages[lastUserIdx].content = replacement;
-        } else if (Array.isArray(parsed.messages[lastUserIdx].content)) {
-          const textParts = parsed.messages[lastUserIdx].content.filter((c: any) => c.type === 'text');
+        const msg = parsed.messages[lastUserIdx];
+        if (typeof msg.content === 'string') {
+          msg.content = replacement;
+        } else if (typeof msg.text === 'string') {
+          msg.text = replacement;
+        } else if (Array.isArray(msg.content)) {
+          const textParts = msg.content.filter((c: any) => c.type === 'text');
           if (textParts.length > 0) textParts[0].text = replacement;
         }
       }
       return JSON.stringify(parsed);
     }
 
-    if (parsed?.prompt) { parsed.prompt = replacement; return JSON.stringify(parsed); }
-    if (parsed?.query) { parsed.query = replacement; return JSON.stringify(parsed); }
+    // Microsoft Copilot: { message, ... }
+    if (parsed?.message) {
+      if (typeof parsed.message === 'string') { parsed.message = replacement; return JSON.stringify(parsed); }
+      if (typeof parsed.message?.text === 'string') { parsed.message.text = replacement; return JSON.stringify(parsed); }
+      if (typeof parsed.message?.content === 'string') { parsed.message.content = replacement; return JSON.stringify(parsed); }
+    }
+
+    // Copilot variant: { content }
+    if (typeof parsed?.content === 'string' && parsed.content.length > 5) {
+      parsed.content = replacement; return JSON.stringify(parsed);
+    }
+
+    // Simple field formats
+    if (typeof parsed?.q === 'string') { parsed.q = replacement; return JSON.stringify(parsed); }
+    if (typeof parsed?.question === 'string') { parsed.question = replacement; return JSON.stringify(parsed); }
+    if (typeof parsed?.prompt === 'string') { parsed.prompt = replacement; return JSON.stringify(parsed); }
+    if (typeof parsed?.query === 'string') { parsed.query = replacement; return JSON.stringify(parsed); }
     if (typeof parsed?.input === 'string') { parsed.input = replacement; return JSON.stringify(parsed); }
+    if (typeof parsed?.text === 'string' && parsed.text.length > 5) { parsed.text = replacement; return JSON.stringify(parsed); }
+    if (typeof parsed?.query_str === 'string') { parsed.query_str = replacement; return JSON.stringify(parsed); }
+
+    // ── GENERIC FALLBACK: Direct string replacement in the raw JSON ──
+    // If we extracted a prompt but don't recognize the structure,
+    // do a targeted string replacement. This handles ANY format as long
+    // as the prompt text appears verbatim in the body.
+    if (originalPrompt && originalPrompt.length >= 20) {
+      // Escape the prompt for use in JSON (it will be inside a JSON string value)
+      const escapedOriginal = jsonStringEscape(originalPrompt);
+      const escapedReplacement = jsonStringEscape(replacement);
+
+      if (body.includes(escapedOriginal)) {
+        console.log(`[Iron Gate MAIN] Using generic string replacement fallback (${escapedOriginal.length} chars)`);
+        return body.replace(escapedOriginal, escapedReplacement);
+      }
+
+      // Try with partial match (first 100 chars) for very long prompts
+      // that might be split across fields
+      const shortOriginal = jsonStringEscape(originalPrompt.substring(0, 100));
+      if (shortOriginal.length > 20 && body.includes(shortOriginal)) {
+        console.log(`[Iron Gate MAIN] Using partial string replacement fallback`);
+        return body.split(escapedOriginal).join(escapedReplacement);
+      }
+    }
 
     return null;
   } catch {
     return null;
   }
+}
+
+/** Find last index matching a predicate */
+function findLastIndex<T>(arr: T[], predicate: (item: T) => boolean): number {
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (predicate(arr[i])) return i;
+  }
+  return -1;
+}
+
+/** Escape a string for safe embedding in JSON (matching how JSON.stringify would escape it) */
+function jsonStringEscape(str: string): string {
+  return str
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t');
 }
 
 // ─── Simplified Scoring ─────────────────────────────────────────────────────
@@ -615,7 +770,7 @@ window.fetch = async function patchedFetch(
           }
 
           // Replace prompt in request body
-          const modifiedBody = replacePrompt(bodyString, pseudoResult.maskedText);
+          const modifiedBody = replacePrompt(bodyString, promptText, pseudoResult.maskedText);
 
           if (modifiedBody) {
             console.log(
