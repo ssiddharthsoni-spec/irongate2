@@ -24,10 +24,17 @@ let currentReverseMap: Record<string, string> = {};
 window.addEventListener('message', (event) => {
   if (event.source !== window) return;
   if (event.data?.type === 'IRON_GATE_SET_MODE') {
+    const oldMode = mode;
     mode = event.data.mode;
-    console.log(`[Iron Gate MAIN] Mode set to: ${mode}`);
+    if (oldMode !== mode) {
+      console.log(`[Iron Gate MAIN] Mode changed: ${oldMode} → ${mode}`);
+    }
   }
 });
+
+// Request mode sync from content script immediately
+// (content script may not be loaded yet, but if it is, this gets us the mode faster)
+window.postMessage({ type: 'IRON_GATE_REQUEST_MODE' }, '*');
 
 // ─── LLM Endpoint Detection ────────────────────────────────────────────────
 
@@ -526,6 +533,40 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
   });
 }
 
+// ─── Extract body string from any fetch input ─────────────────────────────
+// AI tools may call fetch(url, {body}) OR fetch(new Request(url, {body})).
+// We need to handle both cases to reliably intercept.
+
+async function getBodyString(input: RequestInfo | URL, init?: RequestInit): Promise<string | null> {
+  // Case 1: body is in the init options (most common)
+  if (init?.body) {
+    if (typeof init.body === 'string') return init.body;
+    // ArrayBuffer / Uint8Array
+    if (init.body instanceof ArrayBuffer) {
+      return new TextDecoder().decode(init.body);
+    }
+    if (init.body instanceof Uint8Array) {
+      return new TextDecoder().decode(init.body);
+    }
+    // Blob
+    if (init.body instanceof Blob) {
+      return await init.body.text();
+    }
+  }
+
+  // Case 2: input is a Request object with a body (fetch(new Request(url, opts)))
+  if (input instanceof Request && input.body) {
+    try {
+      const cloned = input.clone();
+      return await cloned.text();
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
 // ─── Patch window.fetch ────────────────────────────────────────────────────
 
 const originalFetch = window.fetch;
@@ -536,10 +577,24 @@ window.fetch = async function patchedFetch(
 ): Promise<Response> {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
 
-  // Only intercept in proxy mode, for LLM endpoints, with a string body
-  if (mode === 'proxy' && isLLMEndpoint(url) && init?.body && typeof init.body === 'string') {
+  if (!isLLMEndpoint(url)) {
+    return originalFetch.call(window, input, init);
+  }
+
+  // This is an LLM endpoint — extract the body
+  const bodyString = await getBodyString(input, init);
+
+  if (!bodyString) {
+    console.log(`[Iron Gate MAIN] LLM request to ${url.substring(0, 60)} — no body found, passing through`);
+    return originalFetch.call(window, input, init);
+  }
+
+  console.log(`[Iron Gate MAIN] LLM request intercepted — mode: ${mode}, url: ${url.substring(0, 60)}, body length: ${bodyString.length}`);
+
+  // ── PROXY MODE: Pseudonymize before sending ──────────────────────────────
+  if (mode === 'proxy') {
     try {
-      const promptText = extractPrompt(init.body);
+      const promptText = extractPrompt(bodyString);
 
       if (promptText && promptText.length >= 10) {
         // Detect entities
@@ -547,11 +602,10 @@ window.fetch = async function patchedFetch(
         const secrets = scanForSecrets(promptText);
         const allEntities = [...regexEntities, ...secrets];
 
+        console.log(`[Iron Gate MAIN] Detected ${allEntities.length} entities in prompt (${promptText.length} chars)`);
+
         if (allEntities.length > 0) {
           const level = quickScore(allEntities);
-
-          // In PROXY mode, pseudonymize ALL detected entities regardless of score.
-          // The user explicitly chose proxy mode — they want protection.
           const pseudoResult = pseudonymizeLocal(promptText, allEntities);
 
           // Build reverse map for de-pseudonymization
@@ -561,12 +615,14 @@ window.fetch = async function patchedFetch(
           }
 
           // Replace prompt in request body
-          const modifiedBody = replacePrompt(init.body, pseudoResult.maskedText);
+          const modifiedBody = replacePrompt(bodyString, pseudoResult.maskedText);
 
           if (modifiedBody) {
             console.log(
-              `[Iron Gate MAIN] Pseudonymized ${allEntities.length} entities (${level}) before sending to ${url.substring(0, 60)}...`
+              `[Iron Gate MAIN] PROXY: Pseudonymized ${allEntities.length} entities (${level}). Entities: ${allEntities.map(e => `${e.type}:"${e.text.substring(0,20)}"`).join(', ')}`
             );
+            console.log(`[Iron Gate MAIN] Original prompt snippet: "${promptText.substring(0, 100)}..."`);
+            console.log(`[Iron Gate MAIN] Masked prompt snippet: "${pseudoResult.maskedText.substring(0, 100)}..."`);
 
             // Notify content script (for sidepanel display)
             window.postMessage({
@@ -578,11 +634,17 @@ window.fetch = async function patchedFetch(
               level,
             }, '*');
 
-            // Send modified request
-            const response = await originalFetch.call(window, input, {
-              ...init,
+            // Send modified request — always use (url, init) form so we control the body
+            const modifiedInit: RequestInit = {
+              method: init?.method || (input instanceof Request ? input.method : 'POST'),
+              headers: init?.headers || (input instanceof Request ? Object.fromEntries(input.headers.entries()) : {}),
               body: modifiedBody,
-            });
+              credentials: init?.credentials || (input instanceof Request ? input.credentials : 'same-origin'),
+              mode: init?.mode || (input instanceof Request ? input.mode : undefined),
+              signal: init?.signal || (input instanceof Request ? input.signal : undefined),
+            };
+
+            const response = await originalFetch.call(window, url, modifiedInit);
 
             // De-pseudonymize the response stream
             if (Object.keys(currentReverseMap).length > 0) {
@@ -590,18 +652,24 @@ window.fetch = async function patchedFetch(
             }
 
             return response;
+          } else {
+            console.warn('[Iron Gate MAIN] replacePrompt returned null — body format not recognized');
           }
+        } else {
+          console.log('[Iron Gate MAIN] No entities detected — passing through cleanly');
         }
+      } else {
+        console.log(`[Iron Gate MAIN] No prompt extracted (${promptText?.length || 0} chars) — passing through`);
       }
     } catch (err) {
-      console.warn('[Iron Gate MAIN] Intercept error, sending original:', err);
+      console.warn('[Iron Gate MAIN] Proxy intercept error, sending original:', err);
     }
   }
 
-  // Audit mode: still notify content script about the prompt for scoring
-  if (mode === 'audit' && isLLMEndpoint(url) && init?.body && typeof init.body === 'string') {
+  // ── AUDIT MODE: Detect and score but don't modify ────────────────────────
+  if (mode === 'audit') {
     try {
-      const promptText = extractPrompt(init.body);
+      const promptText = extractPrompt(bodyString);
       if (promptText && promptText.length >= 10) {
         const regexEntities = detectWithRegex(promptText);
         const secrets = scanForSecrets(promptText);
@@ -610,6 +678,8 @@ window.fetch = async function patchedFetch(
         if (allEntities.length > 0) {
           const level = quickScore(allEntities);
           const pseudoResult = pseudonymizeLocal(promptText, allEntities);
+
+          console.log(`[Iron Gate MAIN] AUDIT: Detected ${allEntities.length} entities (${level}): ${allEntities.map(e => `${e.type}:"${e.text.substring(0,20)}"`).join(', ')}`);
 
           window.postMessage({
             type: 'IRON_GATE_AUDIT',

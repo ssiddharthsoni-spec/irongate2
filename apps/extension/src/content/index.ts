@@ -41,6 +41,16 @@ chrome.storage.onChanged.addListener((changes, area) => {
 window.addEventListener('message', (event) => {
   if (event.source !== window) return;
 
+  // MAIN world is requesting the current mode (it loaded before us)
+  if (event.data?.type === 'IRON_GATE_REQUEST_MODE') {
+    chrome.storage.local.get('firmMode', (result) => {
+      const savedMode = result.firmMode === 'proxy' ? 'proxy' : 'audit';
+      syncModeToMainWorld(savedMode);
+      console.log(`[Iron Gate] Responded to MAIN world mode request: ${savedMode}`);
+    });
+    return;
+  }
+
   // PROXY mode: fetch was pseudonymized before sending to LLM
   if (event.data?.type === 'IRON_GATE_INTERCEPTED') {
     const { originalPrompt, maskedPrompt, mappings, entityCount, level } = event.data;
