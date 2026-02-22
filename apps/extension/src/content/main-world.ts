@@ -72,7 +72,27 @@ const LLM_API_PATTERNS: RegExp[] = [
 ];
 
 function isLLMEndpoint(url: string): boolean {
-  return LLM_API_PATTERNS.some((p) => p.test(url));
+  // Check specific API patterns first
+  if (LLM_API_PATTERNS.some((p) => p.test(url))) return true;
+
+  // Broader: since this script only runs on AI tool pages (via manifest matches),
+  // any request to the SAME HOST is very likely an AI backend API call.
+  // This catches endpoint changes that break specific pattern matching.
+  try {
+    const reqHost = new URL(url, window.location.href).hostname;
+    if (reqHost === window.location.hostname) return true;
+
+    // Also match known cross-domain API hosts used by AI tools
+    const CROSS_DOMAIN = [
+      'api.openai.com', 'api.anthropic.com',
+      'generativelanguage.googleapis.com',
+      'sydney.bing.com', 'substrate.office.com',
+      'api.perplexity.ai', 'api.groq.com',
+    ];
+    if (CROSS_DOMAIN.includes(reqHost)) return true;
+  } catch {}
+
+  return false;
 }
 
 // ─── Inlined Entity Detection (from fallback-regex.ts) ──────────────────────
@@ -725,12 +745,25 @@ async function getBodyString(input: RequestInfo | URL, init?: RequestInit): Prom
 // ─── Patch window.fetch ────────────────────────────────────────────────────
 
 const originalFetch = window.fetch;
+let _fetchCallCount = 0;
 
 window.fetch = async function patchedFetch(
   input: RequestInfo | URL,
   init?: RequestInit
 ): Promise<Response> {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+  const method = (init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
+
+  // Debug: log first 10 fetch calls to verify interceptor is alive
+  _fetchCallCount++;
+  if (_fetchCallCount <= 10) {
+    console.log(`[Iron Gate MAIN] fetch #${_fetchCallCount}: ${method} ${url.substring(0, 100)}`);
+  }
+
+  // Only intercept POST/PUT/PATCH (which carry prompt data in body)
+  if (method !== 'POST' && method !== 'PUT' && method !== 'PATCH') {
+    return originalFetch.call(window, input, init);
+  }
 
   if (!isLLMEndpoint(url)) {
     return originalFetch.call(window, input, init);
@@ -1091,3 +1124,14 @@ Object.defineProperty(patchedWebSocket, 'CLOSED', { value: 3, writable: false })
 (window as any).WebSocket = patchedWebSocket;
 
 console.log('[Iron Gate MAIN] WebSocket interceptor installed');
+
+// ─── Heartbeat ──────────────────────────────────────────────────────────────
+// Notify content script that MAIN world interceptor is active.
+// Content script uses this to confirm the script is executing properly.
+window.postMessage({
+  type: 'IRON_GATE_HEARTBEAT',
+  version: '0.2.3',
+  timestamp: Date.now(),
+  mode,
+}, '*');
+console.log('[Iron Gate MAIN] ✅ All interceptors installed. Heartbeat sent. Mode:', mode);

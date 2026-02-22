@@ -8,7 +8,9 @@
     "storage",
     "sidePanel",
     "webRequest",
-    "alarms"
+    "alarms",
+    "scripting",
+    "webNavigation"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",

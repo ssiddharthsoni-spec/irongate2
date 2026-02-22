@@ -404,6 +404,52 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
+// ─── Programmatic MAIN World Injection ───────────────────────────────────────
+// Backup injection method: if manifest content_scripts doesn't load the MAIN
+// world interceptor (known CRXJS issue), we inject it programmatically.
+// This ensures the fetch/XHR/WebSocket patches are installed on AI tool pages.
+
+const AI_TOOL_URL_FILTERS: chrome.events.UrlFilter[] = [
+  { hostContains: 'chatgpt.com' },
+  { hostContains: 'chat.openai.com' },
+  { hostContains: 'claude.ai' },
+  { hostContains: 'gemini.google.com' },
+  { hostContains: 'copilot.microsoft.com' },
+  { hostContains: 'chat.deepseek.com' },
+  { hostContains: 'poe.com' },
+  { hostContains: 'perplexity.ai' },
+  { hostContains: 'you.com' },
+  { hostContains: 'huggingface.co' },
+  { hostContains: 'groq.com' },
+];
+
+chrome.webNavigation.onCommitted.addListener(async (details) => {
+  // Only inject into main frame (not iframes)
+  if (details.frameId !== 0) return;
+
+  try {
+    // Find the MAIN world script file from the manifest
+    const manifest = chrome.runtime.getManifest();
+    const mainWorldCS = (manifest.content_scripts as any[])?.find(
+      (cs: any) => cs.world === 'MAIN'
+    );
+    const files = mainWorldCS?.js as string[] | undefined;
+
+    if (files && files.length > 0) {
+      await chrome.scripting.executeScript({
+        target: { tabId: details.tabId },
+        world: 'MAIN' as any,
+        files,
+        injectImmediately: true,
+      });
+      console.log(`[Iron Gate] Programmatic MAIN world injection → tab ${details.tabId} (${details.url?.substring(0, 60)})`);
+    }
+  } catch (err) {
+    // Can fail if tab navigated away or extension lacks permission
+    console.warn(`[Iron Gate] Programmatic injection failed:`, err);
+  }
+}, { url: AI_TOOL_URL_FILTERS });
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /** SHA-256 hash of prompt text — we never store or transmit plaintext prompts */
