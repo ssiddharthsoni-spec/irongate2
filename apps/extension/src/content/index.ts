@@ -38,8 +38,6 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 // ── MAIN world heartbeat monitor ─────────────────────────────────────────
-// The MAIN world script sends a heartbeat postMessage when it loads.
-// If we don't receive it within 2 seconds, we try fallback injection.
 let mainWorldAlive = false;
 
 window.addEventListener('message', (event) => {
@@ -50,44 +48,45 @@ window.addEventListener('message', (event) => {
   }
 });
 
-// Fallback: if no heartbeat after 2 seconds, inject via <script> tag
-setTimeout(() => {
-  if (!mainWorldAlive) {
-    console.warn('[Iron Gate] No MAIN world heartbeat after 2s — attempting fallback <script> tag injection');
-    try {
-      const manifest = chrome.runtime.getManifest();
-      const mainWorldCS = (manifest.content_scripts as any[])?.find(
-        (cs: any) => cs.world === 'MAIN'
-      );
-      const scriptFile = mainWorldCS?.js?.[0];
-      if (scriptFile) {
-        const scriptUrl = chrome.runtime.getURL(scriptFile);
-        const script = document.createElement('script');
-        script.src = scriptUrl;
-        script.onload = () => {
-          console.log('[Iron Gate] Fallback <script> tag injection succeeded');
-          script.remove();
-          // Sync mode to the newly injected MAIN world
-          chrome.storage.local.get('firmMode', (result) => {
-            const savedMode = result.firmMode === 'proxy' ? 'proxy' : 'audit';
-            syncModeToMainWorld(savedMode);
-          });
-        };
-        script.onerror = () => {
-          console.error('[Iron Gate] Fallback <script> tag injection FAILED');
-          script.remove();
-        };
-        (document.head || document.documentElement).appendChild(script);
-      } else {
-        console.error('[Iron Gate] Could not find MAIN world script file in manifest');
-      }
-    } catch (err) {
-      console.error('[Iron Gate] Fallback injection error:', err);
+// ── Aggressive MAIN world injection ─────────────────────────────────────────
+// Don't wait for manifest injection — inject via <script> tag IMMEDIATELY.
+// The MAIN world script has a __IRON_GATE_MAIN_WORLD guard to prevent double execution.
+function injectMainWorldScript(): void {
+  try {
+    const manifest = chrome.runtime.getManifest();
+    const mainWorldCS = (manifest.content_scripts as any[])?.find(
+      (cs: any) => cs.world === 'MAIN'
+    );
+    const scriptFile = mainWorldCS?.js?.[0];
+    if (scriptFile) {
+      const scriptUrl = chrome.runtime.getURL(scriptFile);
+      const script = document.createElement('script');
+      script.src = scriptUrl;
+      script.onload = () => {
+        console.log('[Iron Gate] <script> tag injection succeeded');
+        script.remove();
+        // Sync mode to the newly injected MAIN world
+        chrome.storage.local.get('firmMode', (result) => {
+          const savedMode = result.firmMode === 'proxy' ? 'proxy' : 'audit';
+          syncModeToMainWorld(savedMode);
+        });
+      };
+      script.onerror = () => {
+        console.error('[Iron Gate] <script> tag injection FAILED');
+        script.remove();
+      };
+      (document.head || document.documentElement).appendChild(script);
+    } else {
+      console.error('[Iron Gate] Could not find MAIN world script file in manifest');
     }
-  } else {
-    console.log('[Iron Gate] MAIN world is alive — no fallback needed');
+  } catch (err) {
+    console.error('[Iron Gate] Script injection error:', err);
   }
-}, 2000);
+}
+
+// Inject IMMEDIATELY — don't wait for manifest/heartbeat
+console.log('[Iron Gate] Injecting MAIN world script via <script> tag...');
+injectMainWorldScript();
 
 // Listen for messages from MAIN world (fetch interception results)
 window.addEventListener('message', (event) => {

@@ -14,6 +14,23 @@
  * Communication with the content script happens via window.postMessage.
  */
 
+// ─── Duplicate Execution Guard ───────────────────────────────────────────
+// Multiple injection methods (manifest, programmatic, <script> tag) may all
+// try to run this script. Only the first execution should proceed.
+if ((window as any).__IRON_GATE_MAIN_WORLD === 'active' || (window as any).__IRON_GATE_MAIN_WORLD === 'loading') {
+  console.log('[Iron Gate MAIN] Already loaded — skipping duplicate injection');
+  // Re-send heartbeat so content script knows we're alive
+  window.postMessage({
+    type: 'IRON_GATE_HEARTBEAT',
+    version: '0.2.4-dup',
+    timestamp: Date.now(),
+    mode: (window as any).__IRON_GATE_MODE || 'audit',
+  }, '*');
+}
+
+// Use a flag to wrap all initialization — prevents duplicate setup
+if (!(window as any).__IRON_GATE_MAIN_WORLD) {
+
 // ─── State ──────────────────────────────────────────────────────────────────
 
 let mode: 'audit' | 'proxy' = 'audit';
@@ -1178,3 +1195,5 @@ window.postMessage({
 (window as any).__IRON_GATE_MODE = mode;
 console.log('[Iron Gate MAIN] ✅ All interceptors installed. Heartbeat sent. Mode:', mode);
 console.log('[Iron Gate MAIN] 💡 Verify in DevTools console: window.__IRON_GATE_MAIN_WORLD →', (window as any).__IRON_GATE_MAIN_WORLD);
+
+} // End of duplicate execution guard
