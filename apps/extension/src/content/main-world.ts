@@ -22,7 +22,7 @@ if ((window as any).__IRON_GATE_MAIN_WORLD === 'active' || (window as any).__IRO
   // Re-send heartbeat so content script knows we're alive
   window.postMessage({
     type: 'IRON_GATE_HEARTBEAT',
-    version: '0.2.4-dup',
+    version: '0.2.7-dup',
     timestamp: Date.now(),
     mode: (window as any).__IRON_GATE_MODE || 'audit',
   }, '*');
@@ -35,6 +35,8 @@ if (!(window as any).__IRON_GATE_MAIN_WORLD) {
 
 let mode: 'audit' | 'proxy' = 'audit';
 let currentReverseMap: Record<string, string> = {};
+// Forward map declared near pseudonymizer — referenced here for docs.
+// See currentForwardMap near generateFake().
 
 // Execution flag — verifiable from DevTools: window.__IRON_GATE_MAIN_WORLD
 (window as any).__IRON_GATE_MAIN_WORLD = 'loading';
@@ -226,7 +228,7 @@ const REGEX_PATTERNS: RegexPattern[] = [
   // Monetary Amounts
   {
     type: 'MONETARY_AMOUNT',
-    pattern: /\$\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})?\s?(?:million|billion|M|B|k|K)?\b/g,
+    pattern: /\$\s?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?\s?(?:million|billion|M|B|k|K)?\b/g,
     confidence: 0.85,
   },
   {
@@ -264,6 +266,102 @@ const REGEX_PATTERNS: RegexPattern[] = [
     pattern: /\b(?:matter|case|docket)\s*(?:#|no\.?|number)?\s*\d{2,4}[-./]\d{3,6}\b/gi,
     confidence: 0.75,
   },
+
+  // ─── Business Context Detection (prevents MNPI leakage) ─────────────────
+
+  // Stock tickers with exchange prefix (NYSE: NVTK, NASDAQ: AAPL)
+  {
+    type: 'TICKER',
+    pattern: /\b(?:NYSE|NASDAQ|AMEX|LSE|TSX|NIKKEI|FTSE|DAX|CAC)\s*:\s*[A-Z]{1,5}\b/g,
+    confidence: 0.95,
+  },
+  // Cashtag tickers ($AAPL, $NVTK)
+  {
+    type: 'TICKER',
+    pattern: /\$[A-Z]{2,5}\b/g,
+    confidence: 0.8,
+  },
+
+  // Percentages — critical for financial MNPI (18%, 14.2%, etc.)
+  {
+    type: 'PERCENTAGE',
+    pattern: /\b\d{1,3}(?:\.\d{1,2})?%/g,
+    confidence: 0.8,
+  },
+
+  // Written dates (March 5th, January 2024, December 15, 2025)
+  {
+    type: 'DATE',
+    pattern: /\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+\d{4})?\b/gi,
+    confidence: 0.75,
+  },
+
+  // Fiscal quarters and periods (Q1, Q4 2024, FY2024, H1)
+  {
+    type: 'FISCAL_PERIOD',
+    pattern: /\b(?:[QH][1-4]|FY)\s*(?:'?\d{2,4})?\b/g,
+    confidence: 0.75,
+  },
+
+  // Project / Operation code names (Project Horizon, Operation Nighthawk)
+  {
+    type: 'PROJECT_NAME',
+    pattern: /\b(?:Project|Operation|Initiative|Program|Codename)\s+[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?\b/g,
+    confidence: 0.9,
+  },
+
+  // Organization names — broader suffixes (Elliot Management, Meridian Capital Partners)
+  {
+    type: 'ORGANIZATION',
+    pattern: /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Management|Capital|Partners|Holdings|Securities|Advisors|Consulting|Analytics|Investments|Solutions|Technologies|Financial|Ventures|Research|Services|Labs|Systems|Industries|Dynamics|Media|Health|Pharma|Energy|Realty|Properties)\b/g,
+    confidence: 0.8,
+  },
+
+  // CamelCase company names (NovaTech, DeepSeek, OpenAI, DataDog)
+  {
+    type: 'ORGANIZATION',
+    pattern: /\b[A-Z][a-z]{1,10}[A-Z][a-zA-Z]{1,10}\b/g,
+    confidence: 0.7,
+  },
+
+  // Contextual organization (at/firm/company/investor + Proper Noun, 1-3 words)
+  // No 'i' flag — trigger words must be lowercase, proper nouns must be capitalized
+  {
+    type: 'ORGANIZATION',
+    pattern: /\b(?:at|firm|company|investor|partner|vendor|supplier|competitor|acquirer|subsidiary|conglomerate|startup|unicorn|acquired|acquiring|target)\s*[,:]?\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b/g,
+    confidence: 0.7,
+    contextual: true,
+  },
+
+  // Contextual organization — business activity (discussions with X, deal with X)
+  // No 'i' flag — prevents matching lowercase words as proper nouns
+  {
+    type: 'ORGANIZATION',
+    pattern: /\b(?:discussions?\s+with|partnership\s+with|deal\s+with|investment\s+(?:in|from|by)|acquired\s+by|merger\s+with|contract\s+with|agreement\s+with|lawsuit\s+(?:against|from)|counsel\s+at)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b/g,
+    confidence: 0.75,
+    contextual: true,
+  },
+
+  // Headcount / workforce numbers (340 headcount, 500 employees, 200 layoffs)
+  {
+    type: 'HEADCOUNT',
+    pattern: /\b\d{2,5}\s*(?:headcount|employees?|people|workers|staff|positions|roles|FTEs?|hires?|cuts?|layoffs?|terminations?)\b/gi,
+    confidence: 0.8,
+  },
+
+  // Legal section references (Section 13D, Rule 10b-5, Regulation S-K)
+  {
+    type: 'LEGAL_REFERENCE',
+    pattern: /\b(?:Section|Rule|Regulation|Article|Clause)\s+\d+[A-Za-z]?(?:[-]\d+)?\b/g,
+    confidence: 0.75,
+  },
+
+  // Valuation / market cap amounts without $ sign (3.1B market cap, 1.67B valuation)
+  {
+    type: 'MONETARY_AMOUNT',
+    pattern: /\b\d{1,4}(?:\.\d{1,2})?\s*[BMK]\s*(?:valuation|market\s*cap|revenue|ARR|MRR|EBITDA|profit|loss|deal|round)\b/gi,
+    confidence: 0.8,
+  },
 ];
 
 function detectWithRegex(text: string): DetectedEntity[] {
@@ -279,12 +377,16 @@ function detectWithRegex(text: string): DetectedEntity[] {
       let matchEnd = match.index + match[0].length;
 
       if (contextual) {
-        const nameMatch = match[0].match(/[A-Z][a-z]+\s+[A-Z][a-z]+$/);
+        // Extract the proper noun portion (1-3 capitalized words at end of match)
+        const nameMatch = match[0].match(/[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}$/);
         if (nameMatch) {
           const nameStart = match[0].lastIndexOf(nameMatch[0]);
           matchText = nameMatch[0];
           matchStart = match.index + nameStart;
           matchEnd = matchStart + matchText.length;
+        } else {
+          // No proper noun found — likely a false positive (e.g., "for the emergency")
+          continue;
         }
       }
 
@@ -414,7 +516,232 @@ function scanForSecrets(text: string): DetectedEntity[] {
   return secrets;
 }
 
-// ─── Inlined Pseudonymizer (from pseudonymizer.ts) ──────────────────────────
+// ─── Realistic Fake Data Generation ─────────────────────────────────────────
+// Instead of [PERSON-1] tokens which make LLMs respond robotically,
+// we generate realistic-looking fake data. The LLM treats it as real
+// content, responds naturally, and we swap the fakes back in the response.
+
+const FAKE_NAMES_F = [
+  'Emily Rogers', 'Anna Peterson', 'Lisa Chang', 'Maria Santos', 'Rachel Kim',
+  'Diana Walsh', 'Nicole Foster', 'Amanda Brooks', 'Jennifer Liu', 'Stephanie Barnes',
+  'Katherine Hayes', 'Laura Bennett', 'Olivia Porter', 'Samantha Reed', 'Victoria Lane',
+];
+const FAKE_NAMES_M = [
+  'James Mitchell', 'David Kumar', 'Robert Chen', 'William Taylor', 'Thomas Garcia',
+  'Andrew Watson', 'Daniel Price', 'Christopher Lee', 'Michael Brown', 'Steven Park',
+  'Jonathan Reed', 'Matthew Cole', 'Benjamin Hart', 'Patrick Quinn', 'Marcus Webb',
+];
+const FEMALE_FIRST = new Set([
+  'sarah','jennifer','lisa','maria','anna','rachel','diana','nicole','amanda','jessica',
+  'emily','laura','stephanie','katherine','olivia','samantha','victoria','helen','jane','margaret',
+  'susan','karen','nancy','betty','sandra','ashley','dorothy','kimberly','elizabeth','donna',
+]);
+const FAKE_ORGS = [
+  'Northwind Technologies', 'Contoso Holdings', 'Adatum Corp', 'Fabrikam Industries',
+  'Proseware Solutions', 'Woodgrove Financial', 'Tailspin Partners', 'Lucerne Media',
+  'Alpine Securities', 'Meridian Dynamics', 'Coastal Ventures', 'Summit Analytics',
+  'Vertex Research', 'Pinnacle Systems', 'Horizon Labs',
+];
+const FAKE_TICKERS = [
+  'NWND', 'CTSO', 'ADTM', 'FBRK', 'PRWL', 'WDGV', 'TLSP', 'LCNE', 'ALPS', 'MRDX',
+  'CSVT', 'SMTA', 'VTXR', 'PNCL', 'HRZL',
+];
+const FAKE_PROJECTS = [
+  'Project Aurora', 'Project Meridian', 'Project Catalyst', 'Project Zenith',
+  'Project Atlas', 'Project Nexus', 'Project Titan', 'Project Vanguard',
+  'Project Ember', 'Project Falcon',
+];
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+// Track used fakes to avoid collisions within a session
+const _usedFakes: Record<string, number> = {};
+
+function _pickUnused(pool: string[], type: string): string {
+  if (!_usedFakes[type]) _usedFakes[type] = 0;
+  const idx = _usedFakes[type] % pool.length;
+  _usedFakes[type]++;
+  return pool[idx];
+}
+
+function _isFemaleFirst(name: string): boolean {
+  const first = name.split(/\s+/)[0].toLowerCase();
+  return FEMALE_FIRST.has(first);
+}
+
+function _randBetween(min: number, max: number): number {
+  return min + Math.random() * (max - min);
+}
+
+function generateFake(type: string, original: string): string {
+  switch (type) {
+    case 'PERSON': {
+      const pool = _isFemaleFirst(original) ? FAKE_NAMES_F : FAKE_NAMES_M;
+      return _pickUnused(pool, type + (_isFemaleFirst(original) ? '_F' : '_M'));
+    }
+
+    case 'ORGANIZATION':
+      return _pickUnused(FAKE_ORGS, type);
+
+    case 'TICKER': {
+      // "NYSE: NVTK" → "NYSE: NWND"
+      const m = original.match(/^([A-Z]+\s*:\s*)/);
+      if (m) return m[1] + _pickUnused(FAKE_TICKERS, type);
+      return _pickUnused(FAKE_TICKERS, type);
+    }
+
+    case 'PROJECT_NAME':
+      return _pickUnused(FAKE_PROJECTS, type);
+
+    case 'MONETARY_AMOUNT': {
+      // Preserve magnitude, shift by 0.7-1.4x
+      // Parse: "$47M", "$3.1B", "$150,000", "$28M"
+      const cleaned = original.replace(/[,$\s]/g, '');
+      const numMatch = cleaned.match(/^(\d+(?:\.\d+)?)\s*(million|billion|M|B|k|K|dollars?|USD|EUR|GBP)?/i);
+      if (numMatch) {
+        const num = parseFloat(numMatch[1]);
+        const suffix = numMatch[2] || '';
+        const shifted = num * _randBetween(0.7, 1.35);
+        // Preserve format
+        const hasDecimal = numMatch[1].includes('.');
+        const decPlaces = hasDecimal ? (numMatch[1].split('.')[1]?.length || 1) : 0;
+        const formatted = hasDecimal ? shifted.toFixed(decPlaces) : Math.round(shifted).toString();
+        // Reconstruct with original prefix style
+        const prefix = original.startsWith('$') ? '$' : '';
+        return prefix + formatted + suffix;
+      }
+      return original; // Can't parse, return original
+    }
+
+    case 'PERCENTAGE': {
+      // Offset by ±3-8 percentage points
+      const numMatch = original.match(/(\d+(?:\.\d+)?)/);
+      if (numMatch) {
+        const num = parseFloat(numMatch[1]);
+        const offset = _randBetween(3, 8) * (Math.random() > 0.5 ? 1 : -1);
+        const shifted = Math.max(0.1, Math.min(99.9, num + offset));
+        const hasDecimal = numMatch[1].includes('.');
+        return (hasDecimal ? shifted.toFixed(1) : Math.round(shifted).toString()) + '%';
+      }
+      return original;
+    }
+
+    case 'DATE': {
+      // Written dates: "March 5th" → shift month and day
+      const dateMatch = original.match(/^(\w+)\s+(\d{1,2})(?:st|nd|rd|th)?(.*)$/i);
+      if (dateMatch) {
+        const monthIdx = MONTHS.findIndex(m => m.toLowerCase() === dateMatch[1].toLowerCase());
+        if (monthIdx >= 0) {
+          const newMonthIdx = (monthIdx + Math.floor(_randBetween(1, 4))) % 12;
+          const newDay = Math.max(1, Math.min(28, parseInt(dateMatch[2]) + Math.floor(_randBetween(-10, 10))));
+          const suffix = newDay === 1 || newDay === 21 || newDay === 31 ? 'st' : newDay === 2 || newDay === 22 ? 'nd' : newDay === 3 || newDay === 23 ? 'rd' : 'th';
+          return MONTHS[newMonthIdx] + ' ' + newDay + suffix + (dateMatch[3] || '');
+        }
+      }
+      // Numeric dates: shift
+      const numDate = original.match(/^(\d{1,2})([\/\-])(\d{1,2})\2(\d{2,4})$/);
+      if (numDate) {
+        const m = Math.max(1, Math.min(12, parseInt(numDate[1]) + Math.floor(_randBetween(-2, 3))));
+        const d = Math.max(1, Math.min(28, parseInt(numDate[3]) + Math.floor(_randBetween(-5, 5))));
+        return m + numDate[2] + d + numDate[2] + numDate[4];
+      }
+      return original;
+    }
+
+    case 'FISCAL_PERIOD': {
+      // Q4 → Q2, Q1 → Q3 (shift by 1-2)
+      const qMatch = original.match(/^([QH])(\d)/);
+      if (qMatch) {
+        const shifted = ((parseInt(qMatch[2]) + Math.floor(_randBetween(1, 3)) - 1) % 4) + 1;
+        return qMatch[1] + shifted + original.substring(2);
+      }
+      return original;
+    }
+
+    case 'EMAIL': {
+      // Generate from fake name pool
+      const fakeName = _pickUnused(FAKE_NAMES_F.concat(FAKE_NAMES_M), 'EMAIL_NAME');
+      const parts = fakeName.toLowerCase().split(' ');
+      const domains = ['northwind.com', 'contoso.com', 'fabrikam.net', 'adatum.org', 'proseware.io'];
+      const domain = domains[Math.floor(Math.random() * domains.length)];
+      return parts[0] + '.' + parts[1] + '@' + domain;
+    }
+
+    case 'SSN': {
+      // Format-preserving random: 123-45-6789 → 456-78-9012
+      const a = Math.floor(_randBetween(100, 899));
+      const b = Math.floor(_randBetween(10, 99));
+      const c = Math.floor(_randBetween(1000, 9999));
+      return a + '-' + b + '-' + c;
+    }
+
+    case 'PHONE_NUMBER': {
+      const a = Math.floor(_randBetween(200, 899));
+      const b = Math.floor(_randBetween(200, 899));
+      const c = Math.floor(_randBetween(1000, 9999));
+      // Try to preserve format
+      if (original.includes('(')) return '(' + a + ') ' + b + '-' + c;
+      if (original.includes('-')) return a + '-' + b + '-' + c;
+      return a + ' ' + b + ' ' + c;
+    }
+
+    case 'CREDIT_CARD': {
+      // Format-preserving
+      const groups = [
+        Math.floor(_randBetween(4000, 4999)),
+        Math.floor(_randBetween(1000, 9999)),
+        Math.floor(_randBetween(1000, 9999)),
+        Math.floor(_randBetween(1000, 9999)),
+      ];
+      if (original.includes('-')) return groups.join('-');
+      if (original.includes(' ')) return groups.join(' ');
+      return groups.join('');
+    }
+
+    case 'HEADCOUNT': {
+      // "340 headcount" → shift number by ±20%
+      const hcMatch = original.match(/^(\d+)\s*(.*)/);
+      if (hcMatch) {
+        const num = parseInt(hcMatch[1]);
+        const shifted = Math.round(num * _randBetween(0.7, 1.35));
+        return shifted + (hcMatch[2] ? ' ' + hcMatch[2] : '');
+      }
+      return original;
+    }
+
+    case 'LEGAL_REFERENCE': {
+      // "Section 13D" → shift number
+      const lrMatch = original.match(/^(\w+)\s+(\d+)(.*)/);
+      if (lrMatch) {
+        const shifted = parseInt(lrMatch[2]) + Math.floor(_randBetween(2, 8));
+        return lrMatch[1] + ' ' + shifted + (lrMatch[3] || '');
+      }
+      return original;
+    }
+
+    case 'IP_ADDRESS': {
+      const octets = Array.from({ length: 4 }, () => Math.floor(_randBetween(1, 254)));
+      return octets.join('.');
+    }
+
+    case 'EMPLOYEE_ID':
+    case 'RECORD_ID': {
+      // Preserve prefix, randomize digits
+      const idMatch = original.match(/^([A-Z#-]+)(\d+)$/);
+      if (idMatch) {
+        const len = idMatch[2].length;
+        const newNum = Math.floor(_randBetween(10 ** (len - 1), 10 ** len - 1));
+        return idMatch[1] + newNum;
+      }
+      return original;
+    }
+
+    default:
+      // Fallback to token style for unknown types
+      return `[${type}]`;
+  }
+}
+
+// ─── Pseudonymizer ──────────────────────────────────────────────────────────
 
 interface PseudonymMapping {
   original: string;
@@ -427,12 +754,14 @@ interface PseudonymResult {
   mappings: PseudonymMapping[];
 }
 
+// Global forward map: original → fake (persists across messages in a conversation)
+let currentForwardMap: Record<string, string> = {};
+
 function pseudonymizeLocal(text: string, entities: DetectedEntity[]): PseudonymResult {
   if (entities.length === 0) {
     return { maskedText: text, mappings: [] };
   }
 
-  const counters: Record<string, number> = {};
   const mappings: PseudonymMapping[] = [];
   const seen = new Map<string, string>();
 
@@ -441,16 +770,26 @@ function pseudonymizeLocal(text: string, entities: DetectedEntity[]): PseudonymR
 
   for (const entity of sorted) {
     const normalizedText = entity.text.trim();
+    // Check local seen map first (within this call)
     let pseudonym = seen.get(normalizedText);
     if (!pseudonym) {
-      counters[entity.type] = (counters[entity.type] || 0) + 1;
-      pseudonym = `[${entity.type}-${counters[entity.type]}]`;
+      // Check global forward map (from previous messages in conversation)
+      pseudonym = currentForwardMap[normalizedText];
+    }
+    if (!pseudonym) {
+      // Generate a new realistic fake
+      pseudonym = generateFake(entity.type, normalizedText);
       seen.set(normalizedText, pseudonym);
+      currentForwardMap[normalizedText] = pseudonym;
       mappings.push({
         original: normalizedText,
         pseudonym,
         type: entity.type,
       });
+    } else if (!mappings.some(m => m.original === normalizedText)) {
+      // Already mapped — still record for this call's mappings
+      if (!seen.has(normalizedText)) seen.set(normalizedText, pseudonym);
+      mappings.push({ original: normalizedText, pseudonym, type: entity.type });
     }
     maskedText = maskedText.substring(0, entity.start) + pseudonym + maskedText.substring(entity.end);
   }
@@ -464,6 +803,38 @@ function pseudonymizeLocal(text: string, entities: DetectedEntity[]): PseudonymR
 // Falls back to generic deep-search for unknown formats.
 
 function extractPrompt(body: any): string | null {
+  // ── Google Gemini: URL-encoded form body with f.req= containing nested JSON ──
+  // Must be checked BEFORE JSON.parse since URL-encoded strings aren't valid JSON.
+  // Gemini sends: f.req=[[[\"MfsCee\",\"[\\\"prompt text\\\",...]\",null,\"generic\"]]]&at=...
+  if (typeof body === 'string' && (body.includes('f.req=') || body.includes('f.req%3D'))) {
+    try {
+      const params = new URLSearchParams(body);
+      const fReq = params.get('f.req');
+      if (fReq) {
+        const outer = JSON.parse(fReq);
+        // Walk the nested arrays to find the deepest string
+        const deep = findDeepestString(Array.isArray(outer) ? outer : [outer]);
+        if (deep) {
+          // Gemini nests JSON-in-JSON: the string might itself be a JSON array
+          try {
+            const inner = JSON.parse(deep);
+            const innerDeep = findDeepestString(Array.isArray(inner) ? inner : [inner]);
+            if (innerDeep && innerDeep.length > 10) {
+              console.log(`[Iron Gate MAIN] Gemini prompt extracted from f.req (${innerDeep.length} chars)`);
+              return innerDeep;
+            }
+          } catch { /* not JSON-in-JSON, use the string directly */ }
+          if (deep.length > 10) {
+            console.log(`[Iron Gate MAIN] Gemini prompt extracted from f.req outer (${deep.length} chars)`);
+            return deep;
+          }
+        }
+      }
+    } catch (e) {
+      console.log('[Iron Gate MAIN] Gemini f.req parse failed:', e);
+    }
+  }
+
   try {
     const parsed = typeof body === 'string' ? JSON.parse(body) : body;
 
@@ -570,6 +941,46 @@ function findDeepestString(arr: any[]): string | null {
 }
 
 function replacePrompt(body: string, originalPrompt: string, replacement: string): string | null {
+  // ── Google Gemini: URL-encoded form body with f.req= ──
+  // The prompt appears JSON-escaped (possibly double-escaped) inside the f.req value.
+  // We parse f.req, find the prompt text with appropriate escaping, replace it, and re-encode.
+  if (body.includes('f.req=') || body.includes('f.req%3D')) {
+    try {
+      const params = new URLSearchParams(body);
+      const fReq = params.get('f.req');
+      if (fReq && originalPrompt.length >= 10) {
+        // Try single JSON-escaped match (prompt inside a JSON string)
+        const escapedOrig = jsonStringEscape(originalPrompt);
+        const escapedRepl = jsonStringEscape(replacement);
+        if (fReq.includes(escapedOrig)) {
+          const modifiedFReq = fReq.replace(escapedOrig, escapedRepl);
+          params.set('f.req', modifiedFReq);
+          console.log(`[Iron Gate MAIN] Gemini replacePrompt: single-escaped match`);
+          return params.toString();
+        }
+        // Try double-escaped match (JSON-in-JSON: prompt is escaped twice)
+        const doubleEscapedOrig = jsonStringEscape(escapedOrig);
+        const doubleEscapedRepl = jsonStringEscape(escapedRepl);
+        if (fReq.includes(doubleEscapedOrig)) {
+          const modifiedFReq = fReq.replace(doubleEscapedOrig, doubleEscapedRepl);
+          params.set('f.req', modifiedFReq);
+          console.log(`[Iron Gate MAIN] Gemini replacePrompt: double-escaped match`);
+          return params.toString();
+        }
+        // Try raw text match (prompt appears unescaped)
+        if (fReq.includes(originalPrompt)) {
+          const modifiedFReq = fReq.replace(originalPrompt, replacement);
+          params.set('f.req', modifiedFReq);
+          console.log(`[Iron Gate MAIN] Gemini replacePrompt: raw text match`);
+          return params.toString();
+        }
+        console.log(`[Iron Gate MAIN] Gemini replacePrompt: no match found in f.req (${fReq.length} chars)`);
+      }
+    } catch (e) {
+      console.log('[Iron Gate MAIN] Gemini replacePrompt error:', e);
+    }
+  }
+
   try {
     const parsed = JSON.parse(body);
 
@@ -672,8 +1083,8 @@ function jsonStringEscape(str: string): string {
 function quickScore(entities: Array<{ type: string; confidence: number }>): { level: 'low' | 'medium' | 'high' | 'critical'; score: number } {
   if (entities.length === 0) return { level: 'low', score: 0 };
 
-  const HIGH_RISK_TYPES = new Set(['SSN', 'CREDIT_CARD', 'API_KEY', 'AWS_CREDENTIAL', 'PRIVATE_KEY', 'DATABASE_URI', 'AUTH_TOKEN', 'MEDICAL_RECORD']);
-  const MED_RISK_TYPES = new Set(['PERSON', 'PHONE_NUMBER', 'EMAIL', 'MONETARY_AMOUNT', 'ACCOUNT_NUMBER', 'EMPLOYEE_ID', 'PASSPORT_NUMBER', 'DRIVERS_LICENSE']);
+  const HIGH_RISK_TYPES = new Set(['SSN', 'CREDIT_CARD', 'API_KEY', 'AWS_CREDENTIAL', 'PRIVATE_KEY', 'DATABASE_URI', 'AUTH_TOKEN', 'MEDICAL_RECORD', 'TICKER']);
+  const MED_RISK_TYPES = new Set(['PERSON', 'PHONE_NUMBER', 'EMAIL', 'MONETARY_AMOUNT', 'ACCOUNT_NUMBER', 'EMPLOYEE_ID', 'PASSPORT_NUMBER', 'DRIVERS_LICENSE', 'ORGANIZATION', 'PROJECT_NAME', 'PERCENTAGE', 'HEADCOUNT', 'LEGAL_REFERENCE', 'FISCAL_PERIOD']);
 
   let score = 0;
   for (const e of entities) {
@@ -766,8 +1177,12 @@ function startDomDepseudonymizer(): void {
 
   function replaceInTextNode(node: Text): void {
     if (!node.textContent || Object.keys(currentReverseMap).length === 0) return;
-    // Quick check: does the text contain any bracket (our pseudonym format is [TYPE-N])
-    if (!node.textContent.includes('[')) return;
+
+    // Quick check: does the text contain any of the pseudonym strings?
+    // (Realistic fakes don't use brackets, so we check against actual keys)
+    const keys = Object.keys(currentReverseMap);
+    const hasMatch = keys.some(key => node.textContent!.includes(key));
+    if (!hasMatch) return;
 
     const replaced = replacePseudonyms(node.textContent, currentReverseMap);
     if (replaced !== node.textContent) {
@@ -843,7 +1258,25 @@ async function getBodyString(input: RequestInfo | URL, init?: RequestInit): Prom
     if (init.body instanceof Blob) {
       try { return await init.body.text(); } catch { return null; }
     }
-    // ReadableStream, FormData, etc. — skip to avoid consuming/mutating the body
+    // URLSearchParams — safe to call .toString() (doesn't consume).
+    // Gemini sends body as URLSearchParams with f.req= parameter.
+    if (typeof URLSearchParams !== 'undefined' && init.body instanceof URLSearchParams) {
+      return init.body.toString();
+    }
+    // FormData — safe to iterate (doesn't consume). Convert to URL-encoded string.
+    // Needed for Gemini which may send f.req via FormData.
+    if (typeof FormData !== 'undefined' && init.body instanceof FormData) {
+      try {
+        const params = new URLSearchParams();
+        for (const [key, value] of init.body.entries()) {
+          if (typeof value === 'string') params.append(key, value);
+        }
+        const result = params.toString();
+        return result.length > 0 ? result : null;
+      } catch { return null; }
+    }
+    // ReadableStream or unknown body type — log type for debugging and skip
+    console.log(`[Iron Gate MAIN] getBodyString: unhandled body type: ${Object.prototype.toString.call(init.body)}, constructor: ${init.body?.constructor?.name}`);
     return null;
   }
 
@@ -902,12 +1335,24 @@ const patchedFetch = async function patchedFetch(
     console.log(`[Iron Gate MAIN] 🎯 ChatGPT conversation request — body: ${bodyString.length} chars`);
   }
 
-  console.log(`[Iron Gate MAIN] LLM request intercepted — mode: ${mode}, url: ${url.substring(0, 60)}, body: ${bodyString.length} chars`);
+  console.log(`[Iron Gate MAIN] LLM request intercepted — mode: ${mode}, url: ${url.substring(0, 80)}, body: ${bodyString.length} chars`);
+  // Diagnostic: log body snippet for debugging
+  if (url.includes('gemini') || url.includes('googleapis')) {
+    console.log(`[Iron Gate MAIN] Gemini body preview: "${bodyString.substring(0, 300)}"`);
+  }
+  if (url.includes('copilot') || url.includes('bing') || url.includes('sydney')) {
+    console.log(`[Iron Gate MAIN] Copilot body preview: "${bodyString.substring(0, 300)}"`);
+    console.log(`[Iron Gate MAIN] Copilot fetch args — input: ${input instanceof Request ? 'Request' : typeof input}, init: ${init ? 'yes' : 'no'}`);
+  }
 
   // ── PROXY MODE: Pseudonymize before sending ──────────────────────────────
   if (mode === 'proxy') {
     try {
       const promptText = extractPrompt(bodyString);
+
+      if (!promptText || promptText.length < 10) {
+        console.log(`[Iron Gate MAIN] extractPrompt returned ${promptText === null ? 'null' : `"${promptText?.substring(0, 50)}..." (${promptText?.length} chars)`} — body starts with: "${bodyString.substring(0, 150)}"`);
+      }
 
       if (promptText && promptText.length >= 10) {
         // Detect entities
@@ -929,8 +1374,22 @@ const patchedFetch = async function patchedFetch(
           // Save a snapshot for this request's response de-pseudonymization
           const requestReverseMap = { ...currentReverseMap };
 
-          // Replace prompt in request body
-          const modifiedBody = replacePrompt(bodyString, promptText, pseudoResult.maskedText);
+          // Replace prompt in request body — prefer direct string replacement
+          // to preserve exact JSON format (avoids re-serialization issues with
+          // Copilot, Bing, and other tools that validate body format).
+          let modifiedBody: string | null = null;
+          const _escapedOrig = jsonStringEscape(promptText);
+          const _escapedRepl = jsonStringEscape(pseudoResult.maskedText);
+          if (bodyString.includes(_escapedOrig)) {
+            modifiedBody = bodyString.replace(_escapedOrig, _escapedRepl);
+            console.log('[Iron Gate MAIN] Used direct string replacement (preserves exact body format)');
+          } else if (bodyString.includes(promptText)) {
+            modifiedBody = bodyString.replace(promptText, pseudoResult.maskedText);
+            console.log('[Iron Gate MAIN] Used raw string replacement');
+          } else {
+            modifiedBody = replacePrompt(bodyString, promptText, pseudoResult.maskedText);
+            console.log('[Iron Gate MAIN] Used format-specific replacePrompt fallback');
+          }
 
           if (modifiedBody) {
             console.log(
@@ -951,25 +1410,53 @@ const patchedFetch = async function patchedFetch(
               entities: allEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
             }, '*');
 
-            // Send modified request — always use (url, init) form so we control the body
-            const modifiedInit: RequestInit = {
-              method: init?.method || (input instanceof Request ? input.method : 'POST'),
-              headers: init?.headers || (input instanceof Request ? Object.fromEntries(input.headers.entries()) : {}),
-              body: modifiedBody,
-              credentials: init?.credentials || (input instanceof Request ? input.credentials : 'same-origin'),
-              mode: init?.mode || (input instanceof Request ? input.mode : undefined),
-              signal: init?.signal || (input instanceof Request ? input.signal : undefined),
-            };
-
-            const response = await originalFetch.call(window, url, modifiedInit);
-
-            // De-pseudonymize the response stream (use snapshot, not mutable global)
-            if (Object.keys(requestReverseMap).length > 0) {
-              console.log(`[Iron Gate MAIN] De-pseudonymizing response with ${Object.keys(requestReverseMap).length} mappings`);
-              return depseudonymizeResponse(response, requestReverseMap);
+            // Send modified request — preserve ALL original fetch arguments.
+            // Only override the body to prevent breaking tool-specific properties
+            // (CSRF tokens, credentials, referrer policy, etc.).
+            let modifiedResponse: Response;
+            try {
+              if (init) {
+                // fetch(url_or_request, init) — spread init, override only body
+                let finalInit: RequestInit = { ...init, body: modifiedBody };
+                // If original body was FormData but we replaced with URL-encoded string,
+                // update Content-Type accordingly
+                if (typeof FormData !== 'undefined' && init.body instanceof FormData && typeof modifiedBody === 'string') {
+                  const h = new Headers(init.headers);
+                  h.set('Content-Type', 'application/x-www-form-urlencoded');
+                  finalInit = { ...finalInit, headers: h };
+                }
+                modifiedResponse = await originalFetch.call(window, input, finalInit);
+              } else if (input instanceof Request) {
+                // fetch(request) — no init; pass request + body override
+                modifiedResponse = await originalFetch.call(window, input, { body: modifiedBody });
+              } else {
+                // fetch(url) — no init, just URL string
+                modifiedResponse = await originalFetch.call(window, input, { method: 'POST', body: modifiedBody });
+              }
+            } catch (fetchErr) {
+              console.warn('[Iron Gate MAIN] Modified request failed, sending original:', fetchErr);
+              return originalFetch.call(window, input, init);
             }
 
-            return response;
+            // Log response status for debugging
+            console.log(`[Iron Gate MAIN] Modified request response: ${modifiedResponse.status} ${modifiedResponse.statusText} (url: ${url.substring(0, 60)})`);
+            if (!modifiedResponse.ok) {
+              console.warn(`[Iron Gate MAIN] ⚠️ Modified request got ${modifiedResponse.status} — tool backend may have rejected the modified body`);
+            }
+
+            // De-pseudonymize the response stream (use snapshot, not mutable global)
+            // Skip for tools with non-standard streaming (SSE, protobuf, nested JSON).
+            // DOM MutationObserver handles de-pseudonymization for these tools instead.
+            const skipStreamWrap = /copilot\.microsoft\.com|sydney\.bing\.com|bing\.com|gemini\.google\.com|generativelanguage\.googleapis\.com/i.test(url);
+            if (Object.keys(requestReverseMap).length > 0 && !skipStreamWrap) {
+              console.log(`[Iron Gate MAIN] De-pseudonymizing response with ${Object.keys(requestReverseMap).length} mappings`);
+              return depseudonymizeResponse(modifiedResponse, requestReverseMap);
+            }
+            if (skipStreamWrap && Object.keys(requestReverseMap).length > 0) {
+              console.log(`[Iron Gate MAIN] Non-standard streaming tool — skipping response stream wrap, DOM observer will de-pseudonymize`);
+            }
+
+            return modifiedResponse;
           } else {
             console.warn('[Iron Gate MAIN] replacePrompt returned null — body format not recognized');
           }
@@ -1075,13 +1562,43 @@ XMLHttpRequest.prototype.open = function(method: string, url: string | URL, ...a
 XMLHttpRequest.prototype.send = function(body?: any) {
   const meta = xhrMetadata.get(this);
   const url = meta?.url || '';
+  const xhrMethod = meta?.method || 'GET';
 
-  if (isLLMEndpoint(url) && body && typeof body === 'string') {
-    console.log(`[Iron Gate MAIN] XHR intercepted — mode: ${mode}, url: ${url.substring(0, 60)}, body length: ${body.length}`);
+  // Diagnostic: log ALL XHR POST requests on Gemini to find the chat endpoint
+  if (xhrMethod === 'POST' && (url.includes('gemini') || url.includes('google') || url.includes('googleapis'))) {
+    const bodyType = body === null ? 'null' : body === undefined ? 'undefined' : typeof body === 'string' ? `string(${body.length})` : `${body?.constructor?.name || typeof body}`;
+    console.log(`[Iron Gate MAIN] XHR POST: ${url.substring(0, 120)} | body: ${bodyType}`);
+  }
+
+  // Convert non-string bodies to string for processing
+  let bodyStr: string | null = null;
+  if (body && typeof body === 'string') {
+    bodyStr = body;
+  } else if (body instanceof URLSearchParams) {
+    bodyStr = body.toString();
+  } else if (body instanceof FormData) {
+    try {
+      const params = new URLSearchParams();
+      for (const [key, value] of body.entries()) {
+        if (typeof value === 'string') params.append(key, value);
+      }
+      bodyStr = params.toString();
+    } catch { /* ignore */ }
+  } else if (body instanceof ArrayBuffer) {
+    try { bodyStr = new TextDecoder().decode(body); } catch { /* binary/protobuf — can't parse */ }
+  } else if (body instanceof Uint8Array) {
+    try { bodyStr = new TextDecoder().decode(body); } catch { /* binary — can't parse */ }
+  }
+
+  if (isLLMEndpoint(url) && bodyStr && bodyStr.length >= 50) {
+    console.log(`[Iron Gate MAIN] XHR intercepted — mode: ${mode}, url: ${url.substring(0, 80)}, body length: ${bodyStr.length}, originalType: ${body?.constructor?.name}`);
+    if (url.includes('gemini') || url.includes('googleapis')) {
+      console.log(`[Iron Gate MAIN] XHR Gemini body preview: "${bodyStr.substring(0, 300)}"`);
+    }
 
     if (mode === 'proxy') {
       try {
-        const promptText = extractPrompt(body);
+        const promptText = extractPrompt(bodyStr);
         if (promptText && promptText.length >= 10) {
           const regexEntities = detectWithRegex(promptText);
           const secrets = scanForSecrets(promptText);
@@ -1097,7 +1614,7 @@ XMLHttpRequest.prototype.send = function(body?: any) {
             }
             const xhrReverseMap = { ...currentReverseMap };
 
-            const modifiedBody = replacePrompt(body, promptText, pseudoResult.maskedText);
+            const modifiedBody = replacePrompt(bodyStr, promptText, pseudoResult.maskedText);
             if (modifiedBody) {
               console.log(`[Iron Gate MAIN] XHR PROXY: Pseudonymized ${allEntities.length} entities (${level}, score=${score})`);
               console.log(`[Iron Gate MAIN] XHR Masked: "${pseudoResult.maskedText.substring(0, 100)}..."`);
@@ -1114,7 +1631,9 @@ XMLHttpRequest.prototype.send = function(body?: any) {
               }, '*');
 
               // Patch the response to de-pseudonymize
-              if (Object.keys(xhrReverseMap).length > 0) {
+              // SKIP for Copilot/Bing — DOM observer handles it instead
+              const xhrIsCopilot = /copilot\.microsoft\.com|sydney\.bing\.com|bing\.com/i.test(url);
+              if (Object.keys(xhrReverseMap).length > 0 && !xhrIsCopilot) {
                 const reverseMap = xhrReverseMap;
                 const originalGet = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'responseText');
                 Object.defineProperty(this, 'responseText', {
@@ -1128,6 +1647,8 @@ XMLHttpRequest.prototype.send = function(body?: any) {
                   },
                   configurable: true,
                 });
+              } else if (xhrIsCopilot) {
+                console.log('[Iron Gate MAIN] XHR Copilot — skipping responseText patch, DOM observer will handle');
               }
 
               return originalXHRSend.call(this, modifiedBody);
@@ -1142,7 +1663,7 @@ XMLHttpRequest.prototype.send = function(body?: any) {
     // Audit mode logging for XHR
     if (mode === 'audit') {
       try {
-        const promptText = extractPrompt(body);
+        const promptText = extractPrompt(bodyStr);
         if (promptText && promptText.length >= 10) {
           const regexEntities = detectWithRegex(promptText);
           const secrets = scanForSecrets(promptText);
@@ -1173,9 +1694,40 @@ XMLHttpRequest.prototype.send = function(body?: any) {
 console.log('[Iron Gate MAIN] XHR interceptor installed');
 
 // ─── Patch WebSocket ───────────────────────────────────────────────────────
-// Copilot (Sydney/Bing backend) may use WebSocket for chat.
+// Copilot (Sydney/Bing backend) uses SignalR over WebSocket for chat.
+// SignalR messages are separated by \u001e (record separator).
+// Message types: 1=Invocation (chat), 3=Completion, 6=Ping, 7=Close.
+// We ONLY modify type 1 invocations that contain chat text — all other
+// frames (handshake, ping, completion) pass through untouched.
 
 const OriginalWebSocket = window.WebSocket;
+
+/**
+ * Check if a SignalR frame is a chat invocation (type 1) with extractable prompt text.
+ * Returns the prompt text if found, null otherwise.
+ */
+function isSignalRChatFrame(frame: string): boolean {
+  try {
+    const parsed = JSON.parse(frame);
+    // SignalR invocation frames have type: 1
+    if (parsed?.type !== 1) return false;
+    // Must have a target method (e.g., "chat", "Chat", "send")
+    if (!parsed?.target) return false;
+    // Must have arguments
+    if (!Array.isArray(parsed?.arguments) || parsed.arguments.length === 0) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Re-encode string back to binary format if it was originally binary
+function _reEncodeBinary(text: string, wasBinary: boolean, format: 'arraybuffer' | 'view' | null): string | ArrayBuffer | Uint8Array {
+  if (!wasBinary) return text;
+  const encoded = new TextEncoder().encode(text);
+  if (format === 'arraybuffer') return encoded.buffer;
+  return encoded;
+}
 
 const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?: string | string[]) {
   const urlStr = String(url);
@@ -1184,15 +1736,151 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
     : new OriginalWebSocket(url);
 
   const isLLM = /sydney\.bing\.com|copilot\.microsoft\.com|chatgpt\.com|claude\.ai/.test(urlStr);
+  // Copilot/Bing use SignalR — we need SignalR-aware proxy that only modifies
+  // chat invocation frames (type 1) and passes everything else through.
+  const isSignalR = /copilot\.microsoft\.com|sydney\.bing\.com|bing\.com/.test(urlStr);
 
   if (isLLM) {
-    console.log(`[Iron Gate MAIN] WebSocket opened to LLM: ${urlStr.substring(0, 80)}`);
+    console.log(`[Iron Gate MAIN] WebSocket opened to LLM: ${urlStr.substring(0, 80)}${isSignalR ? ' (SignalR-aware proxy)' : ''}`);
 
     const originalSend = ws.send.bind(ws);
     ws.send = function(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
-      if (typeof data === 'string' && mode === 'proxy') {
+      // ── Decode binary WebSocket data (ChatGPT 5.2 uses binary frames) ──
+      let wasBinary = false;
+      let originalBinaryFormat: 'arraybuffer' | 'view' | null = null;
+      if (typeof data !== 'string') {
         try {
-          const promptText = extractPrompt(data);
+          if (data instanceof ArrayBuffer) {
+            data = new TextDecoder().decode(data) as any;
+            wasBinary = true;
+            originalBinaryFormat = 'arraybuffer';
+          } else if (ArrayBuffer.isView(data)) {
+            data = new TextDecoder().decode(data as ArrayBufferView) as any;
+            wasBinary = true;
+            originalBinaryFormat = 'view';
+          } else {
+            // Blob — can't decode synchronously
+            return originalSend(data);
+          }
+        } catch {
+          return originalSend(data);
+        }
+
+        const textLen = (data as unknown as string).length;
+        if (textLen < 20) {
+          // Too short to contain a prompt — re-encode and send
+          return originalSend(_reEncodeBinary(data as unknown as string, wasBinary, originalBinaryFormat));
+        }
+        console.log(`[Iron Gate MAIN] WS binary decoded → ${textLen} chars (first 150: "${(data as unknown as string).substring(0, 150)}")`);
+      }
+
+      // At this point, `data` is always a string (either originally or decoded)
+      const strData = data as unknown as string;
+
+      // Helper: re-encode string back to binary if it came in as binary
+      function _sendResult(text: string) {
+        return originalSend(_reEncodeBinary(text, wasBinary, originalBinaryFormat));
+      }
+
+      // ── SignalR-aware proxy for Copilot/Bing ──────────────────────────
+      if (isSignalR && mode === 'proxy') {
+        try {
+          // SignalR messages are separated by \u001e (record separator).
+          // A single ws.send may contain multiple frames.
+          const RECORD_SEP = '\u001e';
+          const frames = strData.split(RECORD_SEP).filter(f => f.length > 0);
+          let modified = false;
+          const newFrames: string[] = [];
+
+          for (const frame of frames) {
+            // Only modify type 1 invocation frames that contain chat text
+            if (isSignalRChatFrame(frame)) {
+              // Try to extract prompt from the frame
+              const promptText = extractPrompt(frame);
+              if (promptText && promptText.length >= 10) {
+                const regexEntities = detectWithRegex(promptText);
+                const secrets = scanForSecrets(promptText);
+                const allEntities = [...regexEntities, ...secrets];
+
+                if (allEntities.length > 0) {
+                  const { level, score } = quickScore(allEntities);
+                  const pseudoResult = pseudonymizeLocal(promptText, allEntities);
+
+                  // Accumulate reverse mappings for de-pseudonymization
+                  for (const m of pseudoResult.mappings) {
+                    currentReverseMap[m.pseudonym] = m.original;
+                  }
+
+                  // Direct string replacement on THIS frame only (preserves SignalR structure)
+                  let modifiedFrame: string | null = null;
+                  const wsEscOrig = jsonStringEscape(promptText);
+                  const wsEscRepl = jsonStringEscape(pseudoResult.maskedText);
+                  if (frame.includes(wsEscOrig)) {
+                    modifiedFrame = frame.replace(wsEscOrig, wsEscRepl);
+                  } else if (frame.includes(promptText)) {
+                    modifiedFrame = frame.replace(promptText, pseudoResult.maskedText);
+                  }
+
+                  if (modifiedFrame) {
+                    console.log(`[Iron Gate MAIN] WS SignalR PROXY: Pseudonymized ${allEntities.length} entities in chat frame (${level}, score=${score})`);
+                    newFrames.push(modifiedFrame);
+                    modified = true;
+
+                    window.postMessage({
+                      type: 'IRON_GATE_INTERCEPTED',
+                      originalPrompt: promptText,
+                      maskedPrompt: pseudoResult.maskedText,
+                      mappings: pseudoResult.mappings,
+                      entityCount: allEntities.length,
+                      level,
+                      score,
+                      entities: allEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
+                    }, '*');
+                    continue;
+                  }
+                }
+              }
+            }
+            // Non-chat frames or frames without entities: pass through unchanged
+            newFrames.push(frame);
+          }
+
+          if (modified) {
+            // Reconstruct the SignalR message with record separators
+            const reconstructed = newFrames.join(RECORD_SEP) + RECORD_SEP;
+            return _sendResult(reconstructed);
+          }
+        } catch (err) {
+          console.warn('[Iron Gate MAIN] WS SignalR proxy error, sending original:', err);
+        }
+      }
+
+      // ── Standard proxy for non-SignalR WebSocket tools (incl. ChatGPT 5.2) ──
+      if (!isSignalR && mode === 'proxy') {
+        try {
+          // ChatGPT 5.2 sends binary WebSocket frames — try multiple extraction strategies
+          let promptText = extractPrompt(strData);
+
+          // If standard extraction fails, try to find prompt text within the binary payload
+          // ChatGPT WS may embed the prompt in a larger structure with non-JSON framing
+          if (!promptText && strData.length >= 50) {
+            // Look for JSON objects within the data (skip binary header bytes)
+            const jsonStart = strData.indexOf('{');
+            const jsonArrayStart = strData.indexOf('[');
+            const start = jsonStart >= 0 && jsonArrayStart >= 0
+              ? Math.min(jsonStart, jsonArrayStart)
+              : jsonStart >= 0 ? jsonStart : jsonArrayStart;
+
+            if (start > 0 && start < 100) {
+              // There's a binary prefix before JSON — try extracting from the JSON part
+              const jsonPart = strData.substring(start);
+              promptText = extractPrompt(jsonPart);
+              if (promptText) {
+                console.log(`[Iron Gate MAIN] WS: Found prompt in JSON at offset ${start} (${promptText.length} chars)`);
+              }
+            }
+          }
+
           if (promptText && promptText.length >= 10) {
             const regexEntities = detectWithRegex(promptText);
             const secrets = scanForSecrets(promptText);
@@ -1202,12 +1890,21 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
               const { level, score } = quickScore(allEntities);
               const pseudoResult = pseudonymizeLocal(promptText, allEntities);
 
-              // Accumulate mappings (don't overwrite)
               for (const m of pseudoResult.mappings) {
                 currentReverseMap[m.pseudonym] = m.original;
               }
 
-              const modifiedData = replacePrompt(data, promptText, pseudoResult.maskedText);
+              let modifiedData: string | null = null;
+              const wsEscOrig = jsonStringEscape(promptText);
+              const wsEscRepl = jsonStringEscape(pseudoResult.maskedText);
+              if (strData.includes(wsEscOrig)) {
+                modifiedData = strData.replace(wsEscOrig, wsEscRepl);
+              } else if (strData.includes(promptText)) {
+                modifiedData = strData.replace(promptText, pseudoResult.maskedText);
+              } else {
+                modifiedData = replacePrompt(strData, promptText, pseudoResult.maskedText);
+              }
+
               if (modifiedData) {
                 console.log(`[Iron Gate MAIN] WS PROXY: Pseudonymized ${allEntities.length} entities (${level}, score=${score})`);
 
@@ -1222,7 +1919,7 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
                   entities: allEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
                 }, '*');
 
-                return originalSend(modifiedData);
+                return _sendResult(modifiedData);
               }
             }
           }
@@ -1231,93 +1928,193 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
         }
       }
 
-      // Audit mode or no entities
-      if (typeof data === 'string' && mode === 'audit') {
+      // ── Audit mode: detect and report WITHOUT modifying ──────────────────
+      if (mode === 'audit') {
         try {
-          const promptText = extractPrompt(data);
-          if (promptText && promptText.length >= 10) {
-            const regexEntities = detectWithRegex(promptText);
-            const secrets = scanForSecrets(promptText);
-            const allEntities = [...regexEntities, ...secrets];
-            if (allEntities.length > 0) {
-              const { level, score } = quickScore(allEntities);
-              const pseudoResult = pseudonymizeLocal(promptText, allEntities);
-              window.postMessage({
-                type: 'IRON_GATE_AUDIT',
-                originalPrompt: promptText,
-                maskedPrompt: pseudoResult.maskedText,
-                mappings: pseudoResult.mappings,
-                entityCount: allEntities.length,
-                level,
-                score,
-                entities: allEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
-              }, '*');
+          // For SignalR, only audit chat frames
+          if (isSignalR) {
+            const RECORD_SEP = '\u001e';
+            const frames = strData.split(RECORD_SEP).filter(f => f.length > 0);
+            for (const frame of frames) {
+              if (!isSignalRChatFrame(frame)) continue;
+              const promptText = extractPrompt(frame);
+              if (promptText && promptText.length >= 10) {
+                const regexEntities = detectWithRegex(promptText);
+                const secrets = scanForSecrets(promptText);
+                const allEntities = [...regexEntities, ...secrets];
+                if (allEntities.length > 0) {
+                  const { level, score } = quickScore(allEntities);
+                  const pseudoResult = pseudonymizeLocal(promptText, allEntities);
+                  console.log(`[Iron Gate MAIN] WS SignalR AUDIT: ${allEntities.length} entities (${level}, score=${score})`);
+                  window.postMessage({
+                    type: 'IRON_GATE_AUDIT',
+                    originalPrompt: promptText,
+                    maskedPrompt: pseudoResult.maskedText,
+                    mappings: pseudoResult.mappings,
+                    entityCount: allEntities.length,
+                    level,
+                    score,
+                    entities: allEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
+                  }, '*');
+                }
+              }
+            }
+          } else {
+            // Standard audit (ChatGPT WS, etc.)
+            let promptText = extractPrompt(strData);
+            // Try JSON-offset extraction for binary-framed WebSocket data
+            if (!promptText && strData.length >= 50) {
+              const jsonStart = strData.indexOf('{');
+              if (jsonStart > 0 && jsonStart < 100) {
+                promptText = extractPrompt(strData.substring(jsonStart));
+              }
+            }
+            if (promptText && promptText.length >= 10) {
+              const regexEntities = detectWithRegex(promptText);
+              const secrets = scanForSecrets(promptText);
+              const allEntities = [...regexEntities, ...secrets];
+              if (allEntities.length > 0) {
+                const { level, score } = quickScore(allEntities);
+                const pseudoResult = pseudonymizeLocal(promptText, allEntities);
+                console.log(`[Iron Gate MAIN] WS AUDIT: ${allEntities.length} entities (${level}, score=${score})`);
+                window.postMessage({
+                  type: 'IRON_GATE_AUDIT',
+                  originalPrompt: promptText,
+                  maskedPrompt: pseudoResult.maskedText,
+                  mappings: pseudoResult.mappings,
+                  entityCount: allEntities.length,
+                  level,
+                  score,
+                  entities: allEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
+                }, '*');
+              }
             }
           }
         } catch { /* don't break */ }
       }
 
-      return originalSend(data);
+      return _sendResult(strData);
     };
 
-    // Helper: de-pseudonymize a WebSocket MessageEvent
-    function depseudWsEvent(event: MessageEvent, handler: Function, context: any): boolean {
-      if (typeof event.data === 'string' && Object.keys(currentReverseMap).length > 0) {
-        const replaced = replacePseudonyms(event.data, currentReverseMap);
-        if (replaced !== event.data) {
-          const newEvent = new MessageEvent('message', {
-            data: replaced,
-            origin: event.origin,
-            lastEventId: event.lastEventId,
-            source: event.source,
-            ports: [...event.ports],
-          });
-          handler.call(context, newEvent);
-          return true;
-        }
-      }
-      return false;
-    }
-
-    // De-pseudonymize incoming messages via addEventListener
+    // Response de-pseudonymization via addEventListener
+    // For SignalR: only replace pseudonyms in type 1 completion frames
     const originalAddEventListener = ws.addEventListener.bind(ws);
     ws.addEventListener = function(type: string, listener: any, options?: any) {
       if (type === 'message') {
         const wrappedListener = function(event: MessageEvent) {
-          if (!depseudWsEvent(event, listener, ws)) {
+          if (Object.keys(currentReverseMap).length === 0) {
             listener.call(ws, event);
+            return;
           }
+
+          // Decode response data to string (handles both string and binary WS responses)
+          let textData: string | null = null;
+          let responseBinary = false;
+          if (typeof event.data === 'string') {
+            textData = event.data;
+          } else if (event.data instanceof ArrayBuffer) {
+            try { textData = new TextDecoder().decode(event.data); responseBinary = true; } catch { /* ignore */ }
+          } else if (ArrayBuffer.isView(event.data)) {
+            try { textData = new TextDecoder().decode(event.data as ArrayBufferView); responseBinary = true; } catch { /* ignore */ }
+          }
+
+          if (textData) {
+            let resultData = textData;
+
+            if (isSignalR) {
+              // De-pseudonymize only within SignalR response frames
+              const RECORD_SEP = '\u001e';
+              const frames = textData.split(RECORD_SEP).filter((f: string) => f.length > 0);
+              let anyReplaced = false;
+              const newFrames = frames.map((frame: string) => {
+                const replaced = replacePseudonyms(frame, currentReverseMap);
+                if (replaced !== frame) anyReplaced = true;
+                return replaced;
+              });
+              if (anyReplaced) {
+                resultData = newFrames.join(RECORD_SEP) + RECORD_SEP;
+              }
+            } else {
+              resultData = replacePseudonyms(textData, currentReverseMap);
+            }
+
+            if (resultData !== textData) {
+              // Re-encode as binary if the original was binary
+              const newData = responseBinary ? new TextEncoder().encode(resultData).buffer : resultData;
+              const newEvent = new MessageEvent('message', {
+                data: newData,
+                origin: event.origin,
+                lastEventId: event.lastEventId,
+                source: event.source,
+                ports: [...event.ports],
+              });
+              listener.call(ws, newEvent);
+              return;
+            }
+          }
+          listener.call(ws, event);
         };
         return originalAddEventListener(type, wrappedListener, options);
       }
       return originalAddEventListener(type, listener, options);
     };
 
-    // De-pseudonymize incoming messages via onmessage property
-    let _userOnMessage: ((ev: MessageEvent) => any) | null = null;
-    Object.defineProperty(ws, 'onmessage', {
-      get() { return _userOnMessage; },
-      set(handler: ((ev: MessageEvent) => any) | null) {
-        _userOnMessage = handler;
-        if (handler) {
-          (ws as any).__ironGateOnMessage = function(event: MessageEvent) {
-            if (!depseudWsEvent(event, handler, ws)) {
+    // Also patch onmessage for de-pseudonymization (some tools use ws.onmessage instead of addEventListener)
+    if (Object.keys(currentReverseMap).length > 0 || mode === 'proxy') {
+      let _onmessageHandler: ((ev: MessageEvent) => any) | null = null;
+      Object.defineProperty(ws, 'onmessage', {
+        get() { return _onmessageHandler; },
+        set(handler: ((ev: MessageEvent) => any) | null) {
+          if (!handler) { _onmessageHandler = null; return; }
+          _onmessageHandler = function(event: MessageEvent) {
+            if (Object.keys(currentReverseMap).length === 0) {
               handler.call(ws, event);
+              return;
             }
+            // Decode response data (handles string and binary)
+            let textData: string | null = null;
+            let respBinary = false;
+            if (typeof event.data === 'string') {
+              textData = event.data;
+            } else if (event.data instanceof ArrayBuffer) {
+              try { textData = new TextDecoder().decode(event.data); respBinary = true; } catch { /* ignore */ }
+            } else if (ArrayBuffer.isView(event.data)) {
+              try { textData = new TextDecoder().decode(event.data as ArrayBufferView); respBinary = true; } catch { /* ignore */ }
+            }
+            if (textData) {
+              let resultData = textData;
+              if (isSignalR) {
+                const RECORD_SEP = '\u001e';
+                const frames = textData.split(RECORD_SEP).filter((f: string) => f.length > 0);
+                let anyReplaced = false;
+                const newFrames = frames.map((frame: string) => {
+                  const replaced = replacePseudonyms(frame, currentReverseMap);
+                  if (replaced !== frame) anyReplaced = true;
+                  return replaced;
+                });
+                if (anyReplaced) resultData = newFrames.join(RECORD_SEP) + RECORD_SEP;
+              } else {
+                resultData = replacePseudonyms(textData, currentReverseMap);
+              }
+              if (resultData !== textData) {
+                const newData = respBinary ? new TextEncoder().encode(resultData).buffer : resultData;
+                const newEvent = new MessageEvent('message', {
+                  data: newData,
+                  origin: event.origin,
+                  lastEventId: event.lastEventId,
+                  source: event.source,
+                  ports: [...event.ports],
+                });
+                handler.call(ws, newEvent);
+                return;
+              }
+            }
+            handler.call(ws, event);
           };
-        } else {
-          (ws as any).__ironGateOnMessage = null;
-        }
-      },
-      configurable: true,
-    });
-    // Intercept the native onmessage dispatch by wrapping via addEventListener
-    originalAddEventListener('message', function(event: MessageEvent) {
-      if (_userOnMessage && (ws as any).__ironGateOnMessage) {
-        // The wrapped handler will be called by the property setter's dispatch
-        // No need to double-call
-      }
-    });
+        },
+        configurable: true,
+      });
+    }
   }
 
   return ws;
@@ -1337,7 +2134,7 @@ console.log('[Iron Gate MAIN] WebSocket interceptor installed');
 // Content script uses this to confirm the script is executing properly.
 window.postMessage({
   type: 'IRON_GATE_HEARTBEAT',
-  version: '0.2.3',
+  version: '0.2.7',
   timestamp: Date.now(),
   mode,
 }, '*');

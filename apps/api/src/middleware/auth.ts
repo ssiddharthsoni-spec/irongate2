@@ -162,7 +162,7 @@ export const authMiddleware = createMiddleware(async (c, next) => {
         firmId: defaultFirmId,
         email,
         displayName: email.split('@')[0],
-        role: 'admin',
+        role: 'user',
       })
       .returning({ id: users.id, firmId: users.firmId });
 

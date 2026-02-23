@@ -180,7 +180,13 @@ async function handleMessage(
         });
       }
 
-      // Don't re-broadcast — sidepanel already receives chrome.runtime messages directly
+      // Re-broadcast to sidepanel (sidepanel only receives messages from the worker,
+      // NOT from content scripts — chrome.runtime.sendMessage is directional)
+      chrome.runtime.sendMessage({
+        type: 'SENSITIVITY_SCORE',
+        payload,
+      }).catch(() => {});
+
       return { ok: true };
     }
 

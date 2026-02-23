@@ -128,6 +128,7 @@ export function App() {
       const res = await fetch(`${baseUrl}/health`, {
         method: 'GET',
         headers: { 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(10000),
       });
 
       if (!res.ok) {
@@ -225,7 +226,10 @@ export function App() {
             if (chrome.runtime.lastError) return;
             if (response?.active) {
               setStatus('monitoring');
-              setCurrentTool(response.aiToolName);
+              setCurrentTool(response.aiToolName || response.aiTool || 'AI Tool');
+            } else {
+              setStatus('idle');
+              setCurrentTool(null);
             }
           });
         }
@@ -258,6 +262,8 @@ export function App() {
       if (message.type === 'SENSITIVITY_SCORE') {
         const newScore = message.payload;
         setLastScore(newScore);
+        setFeedbackSent(new Set());
+        setFeedbackOpen(null);
 
         const newItem = {
           id: crypto.randomUUID(),
@@ -347,7 +353,7 @@ export function App() {
             type="url"
             value={apiUrlDraft}
             onChange={(e) => setApiUrlDraft(e.target.value)}
-            placeholder="http://localhost:3001"
+            placeholder="https://irongate-api.onrender.com/v1"
             className="w-full px-3 py-2 text-sm border rounded-md bg-gray-50 focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 mb-3"
           />
           {connectError && (

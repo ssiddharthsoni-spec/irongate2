@@ -75,7 +75,7 @@ const eventSchema = z.object({
   action: z.enum(['pass', 'warn', 'block', 'proxy', 'override']),
   overrideReason: z.string().optional(),
   captureMethod: z.string(),
-  sessionId: z.string().optional(),
+  sessionId: z.string().uuid().optional(),
   metadata: z.record(z.unknown()).optional(),
 });
 
@@ -221,6 +221,9 @@ eventsRoutes.post('/batch', async (c) => {
         timestamp: new Date().toISOString(),
       }).catch(() => {});
     }
+
+    // Trigger inference engine for batch events (same as single-event path)
+    triggerInferenceIfNeeded(firmId);
 
     return c.json({
       batchId: parsed.batchId,
