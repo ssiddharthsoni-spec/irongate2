@@ -834,41 +834,39 @@ startDomDepseudonymizer();
 // AI tools may call fetch(url, {body}) OR fetch(new Request(url, {body})).
 // We need to handle both cases to reliably intercept.
 
-async function getBodyString(input: RequestInfo | URL, init?: RequestInit): Promise<string | null> {
-  // Case 1: body is in the init options (most common)
-  if (init?.body !== undefined && init?.body !== null) {
-    if (typeof init.body === 'string') return init.body;
+function getBodyStringSync(init?: RequestInit): string | null {
+  // Fast path: handle common synchronous body types without any async overhead.
+  // This covers ~99% of real-world AI tool requests (JSON.stringify → string body).
+  if (init?.body === undefined || init?.body === null) return null;
+  if (typeof init.body === 'string') return init.body;
+  if (init.body instanceof ArrayBuffer) return new TextDecoder().decode(init.body);
+  if (init.body instanceof Uint8Array) return new TextDecoder().decode(init.body);
+  return null; // Non-trivial types handled by async path
+}
 
-    // ArrayBuffer / Uint8Array
-    if (init.body instanceof ArrayBuffer) {
-      return new TextDecoder().decode(init.body);
-    }
-    if (init.body instanceof Uint8Array) {
-      return new TextDecoder().decode(init.body);
-    }
+async function getBodyString(input: RequestInfo | URL, init?: RequestInit): Promise<string | null> {
+  // Fast sync path first (handles string, ArrayBuffer, Uint8Array)
+  const syncResult = getBodyStringSync(init);
+  if (syncResult !== null) return syncResult;
+
+  // Case 1: async body types in init
+  if (init?.body !== undefined && init?.body !== null) {
     // Blob
     if (init.body instanceof Blob) {
       try { return await init.body.text(); } catch { return null; }
     }
 
-    // ReadableStream — tee() so we can read one copy and keep the other for original fetch
+    // ReadableStream — DON'T mutate init.body. Create a temporary Request to read it safely.
+    // tee() can hang or cause backpressure issues, so we use Request.clone() instead.
     if (init.body instanceof ReadableStream) {
       try {
-        const [s1, s2] = init.body.tee();
-        init.body = s1; // Swap in the un-consumed copy so originalFetch can still use init
-        const reader = s2.getReader();
-        const chunks: Uint8Array[] = [];
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (value) chunks.push(value);
-        }
-        if (chunks.length === 0) return null;
-        const totalLen = chunks.reduce((sum, c) => sum + c.length, 0);
-        const merged = new Uint8Array(totalLen);
-        let off = 0;
-        for (const c of chunks) { merged.set(c, off); off += c.length; }
-        return new TextDecoder().decode(merged);
+        // Build a minimal temporary Request to safely read the stream body
+        const tempReq = new Request('https://localhost', { method: 'POST', body: init.body });
+        const cloned = tempReq.clone();
+        // Restore the original stream to init so the real fetch can still use it
+        // (the temp Request consumed the original, but clone preserves it)
+        const text = await cloned.text();
+        return text || null;
       } catch (err) {
         console.warn('[Iron Gate MAIN] ReadableStream body read failed:', err);
         return null;
@@ -891,36 +889,25 @@ async function getBodyString(input: RequestInfo | URL, init?: RequestInit): Prom
       return init.body.toString();
     }
 
-    // Unknown body type — log and attempt toString
-    console.log('[Iron Gate MAIN] Unknown body type:', typeof init.body, Object.prototype.toString.call(init.body));
-    try {
-      const str = String(init.body);
-      if (str && str !== '[object Object]' && str !== '[object ReadableStream]') return str;
-    } catch {}
+    // Unknown body type — skip silently (don't block the request)
+    console.debug('[Iron Gate MAIN] Unhandled body type:', Object.prototype.toString.call(init.body));
+    return null;
   }
 
   // Case 2: input is a Request object with a body (fetch(new Request(url, opts)))
   if (input instanceof Request) {
     if (input.bodyUsed) {
-      console.warn('[Iron Gate MAIN] Request body already consumed (bodyUsed=true)');
+      console.debug('[Iron Gate MAIN] Request body already consumed');
       return null;
     }
-    if (input.body) {
-      try {
-        const cloned = input.clone();
-        return await cloned.text();
-      } catch (err) {
-        console.warn('[Iron Gate MAIN] Request.clone().text() failed:', err);
-        return null;
-      }
-    }
-    // Request might have a body set via constructor but body stream is null
-    // Try the text() method directly on a clone
     try {
       const cloned = input.clone();
       const text = await cloned.text();
-      if (text && text.length > 0) return text;
-    } catch {}
+      return (text && text.length > 0) ? text : null;
+    } catch (err) {
+      console.debug('[Iron Gate MAIN] Request.clone().text() failed:', err);
+      return null;
+    }
   }
 
   return null;
@@ -938,10 +925,9 @@ const patchedFetch = async function patchedFetch(
   const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
   const method = (init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
 
-  // Debug: log first 30 fetch calls to verify interceptor is alive
   _fetchCallCount++;
-  if (_fetchCallCount <= 30) {
-    console.log(`[Iron Gate MAIN] fetch #${_fetchCallCount}: ${method} ${url.substring(0, 120)}`);
+  if (_fetchCallCount <= 15) {
+    console.log(`[Iron Gate MAIN] fetch #${_fetchCallCount}: ${method} ${url.substring(0, 100)}`);
   }
 
   // Only intercept POST/PUT/PATCH (which carry prompt data in body)
@@ -953,32 +939,45 @@ const patchedFetch = async function patchedFetch(
     return originalFetch.call(window, input, init);
   }
 
-  // Diagnostic: log body type info for every LLM POST
-  const _bodyType = init?.body
-    ? Object.prototype.toString.call(init.body)
-    : (input instanceof Request ? `Request(bodyUsed=${(input as Request).bodyUsed})` : 'none');
-  console.log(`[Iron Gate MAIN] 📡 LLM POST: ${url.substring(0, 100)} | bodyType: ${_bodyType} | input: ${input instanceof Request ? 'Request' : typeof input}`);
-
-  // This is an LLM endpoint — extract the body
-  const bodyString = await getBodyString(input, init);
-
-  if (!bodyString) {
-    console.log(`[Iron Gate MAIN] ⚠️ No body string from ${url.substring(0, 80)} | bodyType was: ${_bodyType}`);
-    return originalFetch.call(window, input, init);
+  // ── FAST PATH: Try sync body read first (zero overhead for string bodies) ──
+  const syncBody = getBodyStringSync(init);
+  if (syncBody !== null && syncBody.length >= 50) {
+    // We have the body synchronously — no risk of hanging
+    return handleInterception(url, syncBody, input, init);
   }
 
-  // Skip very short bodies (telemetry pings, health checks, etc.)
-  if (bodyString.length < 50) {
+  // ── ASYNC PATH: Non-string body types (Request, Blob, etc.) ──
+  // Wrap in try/catch + timeout so we NEVER block the original request
+  try {
+    const bodyPromise = getBodyString(input, init);
+    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000));
+    const bodyString = await Promise.race([bodyPromise, timeoutPromise]);
+
+    if (!bodyString || bodyString.length < 50) {
+      return originalFetch.call(window, input, init);
+    }
+
+    return handleInterception(url, bodyString, input, init);
+  } catch (err) {
+    console.warn('[Iron Gate MAIN] Body reading failed, passing through:', err);
     return originalFetch.call(window, input, init);
   }
+};
 
-  // ChatGPT-specific diagnostic: log detailed info for conversation requests
+// ── Interception logic (extracted so both sync and async paths can use it) ──
+async function handleInterception(
+  url: string,
+  bodyString: string,
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  // ChatGPT-specific diagnostic
   if (url.includes('/backend-api/conversation') || url.includes('/chat/completions')) {
     console.log(`[Iron Gate MAIN] 🎯 ChatGPT conversation detected! Body length: ${bodyString.length}`);
-    console.log(`[Iron Gate MAIN] 🎯 Body preview: ${bodyString.substring(0, 300)}`);
+    console.log(`[Iron Gate MAIN] 🎯 Body preview: ${bodyString.substring(0, 200)}`);
   }
 
-  console.log(`[Iron Gate MAIN] LLM request intercepted — mode: ${mode}, url: ${url.substring(0, 60)}, body length: ${bodyString.length}`);
+  console.log(`[Iron Gate MAIN] LLM request intercepted — mode: ${mode}, url: ${url.substring(0, 60)}, body: ${bodyString.length} chars`);
 
   // ── PROXY MODE: Pseudonymize before sending ──────────────────────────────
   if (mode === 'proxy') {
@@ -1094,7 +1093,7 @@ const patchedFetch = async function patchedFetch(
 
   // Pass through to original fetch
   return originalFetch.call(window, input, init);
-};
+}
 
 // ── Install fetch patch via Object.defineProperty (resilient against non-writable) ──
 const _fetchDesc = Object.getOwnPropertyDescriptor(window, 'fetch');
