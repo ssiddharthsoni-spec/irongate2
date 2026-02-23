@@ -23,7 +23,8 @@
     "https://perplexity.ai/*",
     "https://you.com/*",
     "https://huggingface.co/chat/*",
-    "https://groq.com/*"
+    "https://groq.com/*",
+    "https://irongate-api.onrender.com/*"
   ],
   "background": {
     "service_worker": "src/worker/index.ts",
