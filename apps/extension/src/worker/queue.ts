@@ -89,7 +89,8 @@ class EventQueue {
         const batchId = crypto.randomUUID();
 
         try {
-          await apiRequest({
+          console.log(`[Iron Gate Queue] Sending batch of ${batch.length} events (batchId: ${batchId})`);
+          const result = await apiRequest({
             method: 'POST',
             path: '/events/batch',
             body: {
@@ -102,9 +103,9 @@ class EventQueue {
           this.pendingEvents = this.pendingEvents.slice(batch.length);
           await this.persistToStorage();
 
-          console.log(`[Iron Gate Queue] Sent batch of ${batch.length} events`);
+          console.log(`[Iron Gate Queue] ✅ Batch sent successfully — ${batch.length} events, IDs:`, (result as any)?.eventIds);
         } catch (error) {
-          console.error('[Iron Gate Queue] Batch send failed:', error);
+          console.error('[Iron Gate Queue] ❌ Batch send failed:', error, '— batch data:', JSON.stringify(batch[0]?.data).substring(0, 200));
 
           // Increment retry counts
           for (const event of batch) {

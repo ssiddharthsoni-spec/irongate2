@@ -17,20 +17,29 @@ interface ApiClientConfig {
   apiKey: string; // API key for X-API-Key auth (alternative to JWT)
 }
 
+// Default API key for development — overridden by user-configured key in storage
+const DEFAULT_API_KEY = 'ig_4ba4d382a65b1ff6acbfb7658fdde1b129917cfa1dbd6458d5c0077cd9b98788';
+const DEFAULT_FIRM_ID = '6a3de5b8-2ad3-4d94-9171-c02951e09e4e';
+
 let config: ApiClientConfig = {
   baseUrl: API_BASE_URL,
-  firmId: '',
+  firmId: DEFAULT_FIRM_ID,
   getToken: async () => '',
-  apiKey: '',
+  apiKey: DEFAULT_API_KEY,
 };
 
-// Load API key from storage
+// Load user-configured API key from storage (overrides default)
 chrome.storage.local.get('ironGateApiKey', (result) => {
   if (result.ironGateApiKey) config.apiKey = result.ironGateApiKey;
 });
 
 export function configureApiClient(newConfig: Partial<ApiClientConfig>) {
-  config = { ...config, ...newConfig };
+  // Only override non-empty values — preserve defaults for unset fields
+  for (const [key, value] of Object.entries(newConfig)) {
+    if (value !== undefined && value !== null && value !== '') {
+      (config as any)[key] = value;
+    }
+  }
 }
 
 interface RequestOptions {
