@@ -834,80 +834,26 @@ startDomDepseudonymizer();
 // AI tools may call fetch(url, {body}) OR fetch(new Request(url, {body})).
 // We need to handle both cases to reliably intercept.
 
-function getBodyStringSync(init?: RequestInit): string | null {
-  // Fast path: handle common synchronous body types without any async overhead.
-  // This covers ~99% of real-world AI tool requests (JSON.stringify → string body).
-  if (init?.body === undefined || init?.body === null) return null;
-  if (typeof init.body === 'string') return init.body;
-  if (init.body instanceof ArrayBuffer) return new TextDecoder().decode(init.body);
-  if (init.body instanceof Uint8Array) return new TextDecoder().decode(init.body);
-  return null; // Non-trivial types handled by async path
-}
-
 async function getBodyString(input: RequestInfo | URL, init?: RequestInit): Promise<string | null> {
-  // Fast sync path first (handles string, ArrayBuffer, Uint8Array)
-  const syncResult = getBodyStringSync(init);
-  if (syncResult !== null) return syncResult;
-
-  // Case 1: async body types in init
+  // Case 1: body is in the init options (most common — covers ~99% of AI tool requests)
   if (init?.body !== undefined && init?.body !== null) {
-    // Blob
+    if (typeof init.body === 'string') return init.body;
+    if (init.body instanceof ArrayBuffer) return new TextDecoder().decode(init.body);
+    if (init.body instanceof Uint8Array) return new TextDecoder().decode(init.body);
     if (init.body instanceof Blob) {
       try { return await init.body.text(); } catch { return null; }
     }
-
-    // ReadableStream — DON'T mutate init.body. Create a temporary Request to read it safely.
-    // tee() can hang or cause backpressure issues, so we use Request.clone() instead.
-    if (init.body instanceof ReadableStream) {
-      try {
-        // Build a minimal temporary Request to safely read the stream body
-        const tempReq = new Request('https://localhost', { method: 'POST', body: init.body });
-        const cloned = tempReq.clone();
-        // Restore the original stream to init so the real fetch can still use it
-        // (the temp Request consumed the original, but clone preserves it)
-        const text = await cloned.text();
-        return text || null;
-      } catch (err) {
-        console.warn('[Iron Gate MAIN] ReadableStream body read failed:', err);
-        return null;
-      }
-    }
-
-    // FormData — concatenate text values
-    if (typeof FormData !== 'undefined' && init.body instanceof FormData) {
-      try {
-        const parts: string[] = [];
-        for (const [, value] of (init.body as FormData).entries()) {
-          if (typeof value === 'string') parts.push(value);
-        }
-        return parts.length > 0 ? parts.join('\n') : null;
-      } catch { return null; }
-    }
-
-    // URLSearchParams
-    if (typeof URLSearchParams !== 'undefined' && init.body instanceof URLSearchParams) {
-      return init.body.toString();
-    }
-
-    // Unknown body type — skip silently (don't block the request)
-    console.debug('[Iron Gate MAIN] Unhandled body type:', Object.prototype.toString.call(init.body));
+    // ReadableStream, FormData, etc. — skip to avoid consuming/mutating the body
     return null;
   }
 
-  // Case 2: input is a Request object with a body (fetch(new Request(url, opts)))
-  if (input instanceof Request) {
-    if (input.bodyUsed) {
-      console.debug('[Iron Gate MAIN] Request body already consumed');
-      return null;
-    }
+  // Case 2: input is a Request object with a body
+  if (input instanceof Request && !input.bodyUsed) {
     try {
       const cloned = input.clone();
       const text = await cloned.text();
       return (text && text.length > 0) ? text : null;
-    } catch (err) {
-      console.debug('[Iron Gate MAIN] Request.clone().text() failed:', err);
-      return null;
-    }
+    } catch { return null; }
   }
 
   return null;
@@ -939,42 +885,21 @@ const patchedFetch = async function patchedFetch(
     return originalFetch.call(window, input, init);
   }
 
-  // ── FAST PATH: Try sync body read first (zero overhead for string bodies) ──
-  const syncBody = getBodyStringSync(init);
-  if (syncBody !== null && syncBody.length >= 50) {
-    // We have the body synchronously — no risk of hanging
-    return handleInterception(url, syncBody, input, init);
+  // Extract the body — NEVER mutates input or init
+  let bodyString: string | null = null;
+  try {
+    bodyString = await getBodyString(input, init);
+  } catch {
+    // Body read failed — pass through unmodified
   }
 
-  // ── ASYNC PATH: Non-string body types (Request, Blob, etc.) ──
-  // Wrap in try/catch + timeout so we NEVER block the original request
-  try {
-    const bodyPromise = getBodyString(input, init);
-    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000));
-    const bodyString = await Promise.race([bodyPromise, timeoutPromise]);
-
-    if (!bodyString || bodyString.length < 50) {
-      return originalFetch.call(window, input, init);
-    }
-
-    return handleInterception(url, bodyString, input, init);
-  } catch (err) {
-    console.warn('[Iron Gate MAIN] Body reading failed, passing through:', err);
+  if (!bodyString || bodyString.length < 50) {
     return originalFetch.call(window, input, init);
   }
-};
 
-// ── Interception logic (extracted so both sync and async paths can use it) ──
-async function handleInterception(
-  url: string,
-  bodyString: string,
-  input: RequestInfo | URL,
-  init?: RequestInit,
-): Promise<Response> {
   // ChatGPT-specific diagnostic
   if (url.includes('/backend-api/conversation') || url.includes('/chat/completions')) {
-    console.log(`[Iron Gate MAIN] 🎯 ChatGPT conversation detected! Body length: ${bodyString.length}`);
-    console.log(`[Iron Gate MAIN] 🎯 Body preview: ${bodyString.substring(0, 200)}`);
+    console.log(`[Iron Gate MAIN] 🎯 ChatGPT conversation request — body: ${bodyString.length} chars`);
   }
 
   console.log(`[Iron Gate MAIN] LLM request intercepted — mode: ${mode}, url: ${url.substring(0, 60)}, body: ${bodyString.length} chars`);
