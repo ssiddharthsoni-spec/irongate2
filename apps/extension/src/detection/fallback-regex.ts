@@ -162,12 +162,15 @@ export function detectWithRegex(text: string): DetectedEntity[] {
 
       // For contextual patterns, extract just the name part (last two capitalized words)
       if (contextual) {
-        const nameMatch = match[0].match(/[A-Z][a-z]+\s+[A-Z][a-z]+$/);
+        const nameMatch = match[0].match(/[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}$/);
         if (nameMatch) {
           const nameStart = match[0].lastIndexOf(nameMatch[0]);
           matchText = nameMatch[0];
           matchStart = match.index + nameStart;
           matchEnd = matchStart + matchText.length;
+        } else {
+          // No proper noun found — false positive (e.g., "for the emergency")
+          continue;
         }
       }
 
