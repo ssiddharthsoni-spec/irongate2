@@ -42,6 +42,27 @@ let currentReverseMap: Record<string, string> = {};
 (window as any).__IRON_GATE_MAIN_WORLD = 'loading';
 console.log('[Iron Gate MAIN] 🚀 Script loaded at', new Date().toISOString(), '— patching fetch/XHR/WebSocket...');
 
+// ─── On-page diagnostic overlay (visible without DevTools) ──────────────────
+// Shows a small floating indicator in the top-left corner with interception status.
+// Only shown on ChatGPT for debugging — will be removed after proxy is confirmed working.
+let _diagEl: HTMLElement | null = null;
+const _diagLines: string[] = [];
+function igDiag(msg: string): void {
+  _diagLines.push(`${new Date().toLocaleTimeString()}: ${msg}`);
+  if (_diagLines.length > 8) _diagLines.shift();
+  if (!_diagEl && document.body) {
+    _diagEl = document.createElement('div');
+    _diagEl.id = 'iron-gate-diag';
+    _diagEl.style.cssText = 'position:fixed;top:8px;left:8px;z-index:999999;background:rgba(0,0,0,0.85);color:#0f0;font:11px/1.4 monospace;padding:6px 10px;border-radius:6px;max-width:420px;pointer-events:none;white-space:pre-wrap;';
+    document.body.appendChild(_diagEl);
+  }
+  if (_diagEl) _diagEl.textContent = '[Iron Gate MAIN]\n' + _diagLines.join('\n');
+}
+// Show initial status on ChatGPT
+if (window.location.hostname.includes('chatgpt.com')) {
+  setTimeout(() => igDiag(`loaded, mode=${mode}`), 1000);
+}
+
 // ─── Communication with content script ──────────────────────────────────────
 
 window.addEventListener('message', (event) => {
@@ -62,9 +83,10 @@ window.postMessage({ type: 'IRON_GATE_REQUEST_MODE' }, '*');
 // ─── LLM Endpoint Detection ────────────────────────────────────────────────
 
 const LLM_API_PATTERNS: RegExp[] = [
-  // ChatGPT
+  // ChatGPT — match both absolute and relative URLs
   /chatgpt\.com\/backend-api\/conversation/,
   /chat\.openai\.com\/backend-api\/conversation/,
+  /\/backend-api\/conversation/,   // ← relative URL used by ChatGPT on-page
   /api\.openai\.com\/v1\/chat\/completions/,
   // Claude
   /claude\.ai\/api/,
@@ -105,7 +127,7 @@ function isLLMEndpoint(url: string): boolean {
     // Without this filter, every POST on chatgpt.com (telemetry, analytics, etc.)
     // would be treated as an LLM conversation request.
     if (parsed.hostname === window.location.hostname) {
-      return /\/api/i.test(parsed.pathname);
+      return /\/api|backend-api\/|\/conversation/i.test(parsed.pathname);
     }
 
     // Cross-domain API hosts used by AI tools
@@ -1275,7 +1297,30 @@ async function getBodyString(input: RequestInfo | URL, init?: RequestInit): Prom
         return result.length > 0 ? result : null;
       } catch { return null; }
     }
-    // ReadableStream or unknown body type — log type for debugging and skip
+    // ReadableStream — consume the stream to read the body (ChatGPT may use this)
+    if (typeof ReadableStream !== 'undefined' && init.body instanceof ReadableStream) {
+      try {
+        const reader = init.body.getReader();
+        const chunks: Uint8Array[] = [];
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) chunks.push(value);
+        }
+        const combined = new Uint8Array(chunks.reduce((a, c) => a + c.length, 0));
+        let offset = 0;
+        for (const chunk of chunks) { combined.set(chunk, offset); offset += chunk.length; }
+        const text = new TextDecoder().decode(combined);
+        console.log(`[Iron Gate MAIN] getBodyString: consumed ReadableStream body (${text.length} chars)`);
+        // Store the consumed text so the caller can use it as the new body
+        (init as any).__ironGateConsumedBody = text;
+        return text;
+      } catch (streamErr) {
+        console.log('[Iron Gate MAIN] getBodyString: ReadableStream read failed:', streamErr);
+        return null;
+      }
+    }
+    // Unknown body type — log for debugging
     console.log(`[Iron Gate MAIN] getBodyString: unhandled body type: ${Object.prototype.toString.call(init.body)}, constructor: ${init.body?.constructor?.name}`);
     return null;
   }
@@ -1326,13 +1371,23 @@ const patchedFetch = async function patchedFetch(
     // Body read failed — pass through unmodified
   }
 
+  // If we consumed a ReadableStream, we must now use the consumed text as body
+  // (the original stream is exhausted)
+  const consumedBody = init && (init as any).__ironGateConsumedBody;
+  if (consumedBody && init) {
+    init = { ...init, body: consumedBody };
+    delete (init as any).__ironGateConsumedBody;
+  }
+
   if (!bodyString || bodyString.length < 50) {
     return originalFetch.call(window, input, init);
   }
 
-  // ChatGPT-specific diagnostic
-  if (url.includes('/backend-api/conversation') || url.includes('/chat/completions')) {
-    console.log(`[Iron Gate MAIN] 🎯 ChatGPT conversation request — body: ${bodyString.length} chars`);
+  // ChatGPT-specific diagnostic — ALWAYS log (not limited to first 15 calls)
+  if (url.includes('chatgpt.com') || url.includes('chat.openai.com') || url.includes('/backend-api/') || url.includes('/conversation')) {
+    console.log(`[Iron Gate MAIN] 🎯 ChatGPT fetch: ${method} ${url.substring(0, 80)} — body: ${bodyString.length} chars, bodyType: ${init?.body?.constructor?.name || 'unknown'}`);
+    console.log(`[Iron Gate MAIN] 🎯 ChatGPT body preview: "${bodyString.substring(0, 200).replace(/[\x00-\x1f]/g, '?')}"`);
+    igDiag(`fetch: ${method} ${url.substring(url.lastIndexOf('/'))}, ${bodyString.length} chars`);
   }
 
   console.log(`[Iron Gate MAIN] LLM request intercepted — mode: ${mode}, url: ${url.substring(0, 80)}, body: ${bodyString.length} chars`);
@@ -1397,6 +1452,7 @@ const patchedFetch = async function patchedFetch(
             );
             console.log(`[Iron Gate MAIN] Original prompt snippet: "${promptText.substring(0, 100)}..."`);
             console.log(`[Iron Gate MAIN] Masked prompt snippet: "${pseudoResult.maskedText.substring(0, 100)}..."`);
+            igDiag(`FETCH PROXY SUCCESS: ${allEntities.length} entities pseudonymized`);
 
             // Notify content script (for sidepanel display AND backend event)
             window.postMessage({
@@ -1856,14 +1912,14 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
       }
 
       // ── Standard proxy for non-SignalR WebSocket tools (incl. ChatGPT 5.2) ──
-      // For ChatGPT: DOM pre-submit interceptor handles proxy mode, so the WS
-      // frame already contains pseudonymized text. Skip WS-level replacement to
-      // avoid double-pseudonymization. Still allow audit-mode logging below.
-      const isChatGPTWS = /chatgpt\.com|ws\.chatgpt\.com/.test(urlStr);
-      if (!isSignalR && mode === 'proxy' && !isChatGPTWS) {
+      // ChatGPT uses binary WS frames — try all extraction/replacement strategies.
+      // The DOM pre-submit interceptor runs first; if it already pseudonymized the
+      // text, this proxy won't find entities and passes through harmlessly.
+      if (!isSignalR && mode === 'proxy') {
         try {
           console.log(`[Iron Gate MAIN] WS PROXY: processing frame (${strData.length} chars, binary=${wasBinary}, url=${urlStr.substring(0,60)})`);
           console.log(`[Iron Gate MAIN] WS PROXY: frame starts with: "${strData.substring(0, 200).replace(/[\x00-\x1f]/g, '?')}"`);
+          igDiag(`WS send: ${strData.length}ch, binary=${wasBinary}`);
 
           // ChatGPT 5.2 sends binary WebSocket frames — try multiple extraction strategies
           let promptText = extractPrompt(strData);
@@ -1960,13 +2016,55 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
                   modifiedData = replacePrompt(strData, promptText, pseudoResult.maskedText);
                   replacementMethod = modifiedData ? 'replacePrompt-fallback' : 'FAILED';
                 }
+
+                // Strategy 5: Same-byte-length entity-by-entity replacement for binary frames.
+                // When the data is binary (protobuf), string replacement changes byte count
+                // and corrupts length prefixes. This strategy replaces each entity with a
+                // fake of the EXACT same byte length, preserving binary frame structure.
+                if ((!modifiedData || modifiedData === strData) && wasBinary) {
+                  let binaryModified = strData;
+                  let anyBinaryReplaced = false;
+                  for (const entity of allEntities) {
+                    const orig = entity.text;
+                    if (!binaryModified.includes(orig)) continue;
+                    const origByteLen = new TextEncoder().encode(orig).length;
+                    // Get existing fake or generate new one
+                    let fake = '';
+                    for (const m of pseudoResult.mappings) {
+                      if (m.original === orig) { fake = m.pseudonym; break; }
+                    }
+                    if (!fake) continue;
+                    // Pad or truncate fake to exact same byte length
+                    let fakeBytes = new TextEncoder().encode(fake);
+                    if (fakeBytes.length < origByteLen) {
+                      fake = fake + ' '.repeat(origByteLen - fakeBytes.length);
+                    } else if (fakeBytes.length > origByteLen) {
+                      while (new TextEncoder().encode(fake).length > origByteLen && fake.length > 0) {
+                        fake = fake.substring(0, fake.length - 1);
+                      }
+                      // Pad if we overshot
+                      while (new TextEncoder().encode(fake).length < origByteLen) {
+                        fake = fake + ' ';
+                      }
+                    }
+                    binaryModified = binaryModified.split(orig).join(fake);
+                    currentReverseMap[fake.trim()] = orig;
+                    anyBinaryReplaced = true;
+                  }
+                  if (anyBinaryReplaced) {
+                    modifiedData = binaryModified;
+                    replacementMethod = 'same-byte-length';
+                  }
+                }
               }
 
-              console.log(`[Iron Gate MAIN] WS PROXY: replacement=${replacementMethod}, modified=${!!modifiedData}, origLen=${strData.length}, newLen=${modifiedData?.length || 0}`);
+              console.log(`[Iron Gate MAIN] WS PROXY: replacement=${replacementMethod}, modified=${!!modifiedData && modifiedData !== strData}, origLen=${strData.length}, newLen=${modifiedData?.length || 0}`);
+              igDiag(`WS proxy: extract=${extractionMethod}, entities=${allEntities.length}, repl=${replacementMethod}`);
 
               if (modifiedData && modifiedData !== strData) {
                 console.log(`[Iron Gate MAIN] WS PROXY: Pseudonymized ${allEntities.length} entities (${level}, score=${score})`);
                 console.log(`[Iron Gate MAIN] WS PROXY: masked snippet: "${pseudoResult.maskedText.substring(0, 120)}..."`);
+                igDiag(`WS PROXY SUCCESS: ${allEntities.length} entities replaced via ${replacementMethod}`);
 
                 window.postMessage({
                   type: 'IRON_GATE_INTERCEPTED',
@@ -1982,6 +2080,7 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
                 return _sendResult(modifiedData);
               } else {
                 console.warn(`[Iron Gate MAIN] WS PROXY: replacement FAILED — sending original. method=${replacementMethod}`);
+                igDiag(`WS PROXY FAILED: ${replacementMethod}`);
                 // Still report the detection even though replacement failed
                 window.postMessage({
                   type: 'IRON_GATE_AUDIT',
@@ -2207,18 +2306,28 @@ console.log('[Iron Gate MAIN] WebSocket interceptor installed');
 // ─── ChatGPT DOM Pre-Submit Interceptor ─────────────────────────────────────
 // ChatGPT 5.2 uses binary WebSocket frames (likely protobuf) whose length
 // prefixes break when we do string replacement on the decoded data.
-// Instead, we modify the text in ChatGPT's contenteditable input BEFORE
-// ChatGPT serializes and sends it — the pseudonymized text goes over the wire
-// natively, and the existing MutationObserver handles response de-pseudonymization.
+// This DOM interceptor modifies the text BEFORE ChatGPT reads it.
+// The WS proxy (above) is still active as a fallback / diagnostic layer.
 
 if (window.location.hostname.includes('chatgpt.com') || window.location.hostname.includes('chat.openai.com')) {
   console.log('[Iron Gate MAIN] ChatGPT DOM pre-submit interceptor initializing');
 
-  let domInterceptBusy = false; // prevents re-entry during synthetic re-dispatch
+  let domInterceptBusy = false;
 
   function getChatGPTTextarea(): HTMLElement | null {
-    return document.querySelector('#prompt-textarea') as HTMLElement
-      || document.querySelector('div[contenteditable="true"][data-placeholder]') as HTMLElement;
+    // Try multiple selectors — ChatGPT's DOM may vary across versions
+    const selectors = [
+      '#prompt-textarea',
+      'div[contenteditable="true"][id*="prompt"]',
+      'div[contenteditable="true"][data-placeholder]',
+      'div[contenteditable="true"].ProseMirror',
+      'textarea[data-id="root"]',
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel) as HTMLElement;
+      if (el) return el;
+    }
+    return null;
   }
 
   function readTextarea(el: HTMLElement): string {
@@ -2226,7 +2335,10 @@ if (window.location.hostname.includes('chatgpt.com') || window.location.hostname
     return (el.innerText || el.textContent || '').trim();
   }
 
-  /** Replace text in a contenteditable div via execCommand (fires ProseMirror-compatible events). */
+  /**
+   * Replace contenteditable text using multiple strategies.
+   * Returns true if the text was successfully replaced.
+   */
   function writeTextarea(el: HTMLElement, text: string): boolean {
     if (el instanceof HTMLTextAreaElement) {
       const desc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
@@ -2235,33 +2347,91 @@ if (window.location.hostname.includes('chatgpt.com') || window.location.hostname
       el.dispatchEvent(new Event('input', { bubbles: true }));
       return true;
     }
-    // Contenteditable: select all → execCommand replaces selection
+
+    // Strategy 1: execCommand (fires beforeinput → ProseMirror-compatible)
     el.focus();
     const sel = window.getSelection();
-    if (!sel) return false;
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    sel.removeAllRanges();
-    sel.addRange(range);
-    const ok = document.execCommand('insertText', false, text);
-    if (!ok) {
-      // Fallback: direct DOM manipulation + synthetic input event
-      el.textContent = text;
-      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+    if (sel) {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      const ok = document.execCommand('insertText', false, text);
+      if (ok) {
+        const after = readTextarea(el);
+        if (after.includes(text.substring(0, 50))) {
+          console.log('[Iron Gate MAIN] ChatGPT DOM: execCommand succeeded');
+          return true;
+        }
+      }
+      console.log('[Iron Gate MAIN] ChatGPT DOM: execCommand did not take effect, trying DataTransfer');
     }
+
+    // Strategy 2: DataTransfer + paste event (triggers paste handling in editors)
+    try {
+      el.focus();
+      const s = window.getSelection();
+      if (s) {
+        const r = document.createRange();
+        r.selectNodeContents(el);
+        s.removeAllRanges();
+        s.addRange(r);
+      }
+      const dt = new DataTransfer();
+      dt.setData('text/plain', text);
+      const pasteEvent = new ClipboardEvent('paste', {
+        bubbles: true, cancelable: true, clipboardData: dt,
+      } as any);
+      el.dispatchEvent(pasteEvent);
+      const after2 = readTextarea(el);
+      if (after2.includes(text.substring(0, 50))) {
+        console.log('[Iron Gate MAIN] ChatGPT DOM: paste event succeeded');
+        return true;
+      }
+      console.log('[Iron Gate MAIN] ChatGPT DOM: paste event did not take effect, trying direct DOM');
+    } catch (pasteErr) {
+      console.log('[Iron Gate MAIN] ChatGPT DOM: paste failed:', pasteErr);
+    }
+
+    // Strategy 3: Direct DOM manipulation + synthetic InputEvent
+    // This is the most aggressive approach — may break ProseMirror state
+    // but at least puts the right text in the DOM
+    while (el.firstChild) el.removeChild(el.firstChild);
+    const p = document.createElement('p');
+    p.textContent = text;
+    el.appendChild(p);
+    el.dispatchEvent(new InputEvent('input', {
+      bubbles: true, inputType: 'insertText', data: text,
+    }));
+    console.log('[Iron Gate MAIN] ChatGPT DOM: direct DOM manipulation applied');
     return true;
   }
 
   function getChatGPTSendButton(): HTMLElement | null {
-    return document.querySelector('button[data-testid="send-button"]') as HTMLElement
-      || document.querySelector('button[aria-label="Send message"]') as HTMLElement
-      || document.querySelector('button[aria-label="Send prompt"]') as HTMLElement;
+    // Try multiple selectors — ChatGPT changes these
+    const selectors = [
+      'button[data-testid="send-button"]',
+      'button[aria-label="Send message"]',
+      'button[aria-label="Send prompt"]',
+      'button[data-testid="composer-send-button"]',
+      // Fallback: find the button closest to the textarea
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel) as HTMLElement;
+      if (el) return el;
+    }
+    // Last resort: find a button near the prompt textarea with an SVG arrow
+    const textarea = getChatGPTTextarea();
+    if (textarea) {
+      const form = textarea.closest('form');
+      if (form) {
+        const btn = form.querySelector('button[type="submit"], button:last-of-type') as HTMLElement;
+        if (btn) return btn;
+      }
+    }
+    return null;
   }
 
-  /**
-   * Core pseudonymization logic for DOM interception.
-   * Returns the pseudonymized result or null if nothing to do.
-   */
   function domPseudonymize(text: string, source: string) {
     if (mode !== 'proxy') return null;
     if (!text || text.length < 10) return null;
@@ -2274,7 +2444,6 @@ if (window.location.hostname.includes('chatgpt.com') || window.location.hostname
     const { level, score } = quickScore(allEntities);
     const pseudoResult = pseudonymizeLocal(text, allEntities);
 
-    // Accumulate reverse mappings for de-pseudonymization
     for (const m of pseudoResult.mappings) {
       currentReverseMap[m.pseudonym] = m.original;
     }
@@ -2282,7 +2451,6 @@ if (window.location.hostname.includes('chatgpt.com') || window.location.hostname
     console.log(`[Iron Gate MAIN] ChatGPT DOM PROXY (${source}): Pseudonymized ${allEntities.length} entities (${level}, score=${score})`);
     console.log(`[Iron Gate MAIN] ChatGPT DOM PROXY: masked="${pseudoResult.maskedText.substring(0, 120)}..."`);
 
-    // Report to sidepanel
     window.postMessage({
       type: 'IRON_GATE_INTERCEPTED',
       originalPrompt: text,
@@ -2299,50 +2467,54 @@ if (window.location.hostname.includes('chatgpt.com') || window.location.hostname
 
   // ── Enter key interception (capture phase — runs before ChatGPT's handlers) ──
   document.addEventListener('keydown', function (e: KeyboardEvent) {
-    if (domInterceptBusy) return; // let synthetic re-dispatch through
+    if (domInterceptBusy) return;
     if (mode !== 'proxy') return;
     if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
 
     const textarea = getChatGPTTextarea();
-    if (!textarea) return;
+    if (!textarea) {
+      console.log('[Iron Gate MAIN] ChatGPT DOM: no textarea found for Enter intercept');
+      return;
+    }
     if (!textarea.contains(e.target as Node) && e.target !== textarea) return;
 
     const text = readTextarea(textarea);
-    const result = domPseudonymize(text, 'Enter');
-    if (!result) return; // no entities — let original Enter through
+    console.log(`[Iron Gate MAIN] ChatGPT DOM: Enter pressed, text=${text.length} chars, target=${(e.target as HTMLElement)?.id || (e.target as HTMLElement)?.tagName}`);
 
-    // Block the original Enter event
+    const result = domPseudonymize(text, 'Enter');
+    if (!result) return;
+
     e.preventDefault();
     e.stopImmediatePropagation();
 
-    // Replace textarea content with pseudonymized text
-    writeTextarea(textarea, result.maskedText);
+    const writeOk = writeTextarea(textarea, result.maskedText);
+    console.log(`[Iron Gate MAIN] ChatGPT DOM: writeTextarea result=${writeOk}, textarea now="${readTextarea(textarea).substring(0, 80)}..."`);
 
-    // After ProseMirror processes the text change, submit via send button
-    requestAnimationFrame(() => {
+    // Give the editor time to process, then submit
+    setTimeout(() => {
       domInterceptBusy = true;
       const sendBtn = getChatGPTSendButton();
+      console.log(`[Iron Gate MAIN] ChatGPT DOM: submitting via ${sendBtn ? 'button click' : 'Enter re-dispatch'}`);
       if (sendBtn) {
         sendBtn.click();
       } else {
-        // No send button found — re-dispatch Enter event
         textarea.dispatchEvent(new KeyboardEvent('keydown', {
           key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
           bubbles: true, cancelable: true,
         }));
       }
-      setTimeout(() => { domInterceptBusy = false; }, 200);
-    });
+      setTimeout(() => { domInterceptBusy = false; }, 300);
+    }, 100); // 100ms delay for editor state sync
   }, true);
 
   // ── Send button click interception (capture phase) ──
   document.addEventListener('click', function (e: MouseEvent) {
-    if (domInterceptBusy) return; // let synthetic click through
+    if (domInterceptBusy) return;
     if (mode !== 'proxy') return;
 
     const target = e.target as HTMLElement;
     const btn = target.closest(
-      'button[data-testid="send-button"], button[aria-label="Send message"], button[aria-label="Send prompt"]'
+      'button[data-testid="send-button"], button[data-testid="composer-send-button"], button[aria-label="Send message"], button[aria-label="Send prompt"]'
     ) as HTMLElement;
     if (!btn) return;
 
@@ -2350,23 +2522,29 @@ if (window.location.hostname.includes('chatgpt.com') || window.location.hostname
     if (!textarea) return;
 
     const text = readTextarea(textarea);
-    const result = domPseudonymize(text, 'click');
-    if (!result) return; // no entities — let original click through
+    console.log(`[Iron Gate MAIN] ChatGPT DOM: Send button clicked, text=${text.length} chars`);
 
-    // Block the original click event
+    const result = domPseudonymize(text, 'click');
+    if (!result) return;
+
     e.preventDefault();
     e.stopImmediatePropagation();
 
-    // Replace textarea content with pseudonymized text
     writeTextarea(textarea, result.maskedText);
 
-    // After ProseMirror processes the text change, re-click send button
-    requestAnimationFrame(() => {
+    setTimeout(() => {
       domInterceptBusy = true;
       btn.click();
-      setTimeout(() => { domInterceptBusy = false; }, 200);
-    });
+      setTimeout(() => { domInterceptBusy = false; }, 300);
+    }, 100);
   }, true);
+
+  // ── Diagnostic: log the textarea selector that was found ──
+  setTimeout(() => {
+    const ta = getChatGPTTextarea();
+    const sb = getChatGPTSendButton();
+    console.log(`[Iron Gate MAIN] ChatGPT DOM: textarea=${ta?.id || ta?.tagName || 'NOT FOUND'}, sendBtn=${sb?.getAttribute('data-testid') || sb?.getAttribute('aria-label') || sb?.tagName || 'NOT FOUND'}`);
+  }, 3000);
 
   console.log('[Iron Gate MAIN] ChatGPT DOM pre-submit interceptor installed');
 }
