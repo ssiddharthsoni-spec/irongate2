@@ -113,23 +113,25 @@ window.addEventListener('message', (event) => {
 
   // PROXY mode: fetch was pseudonymized before sending to LLM
   if (event.data?.type === 'IRON_GATE_INTERCEPTED') {
-    const { originalPrompt, maskedPrompt, mappings, entityCount, level } = event.data;
-    console.log(`[Iron Gate] MAIN world intercepted fetch — ${entityCount} entities pseudonymized (${level})`);
+    const { originalPrompt, maskedPrompt, mappings, entityCount, level, score, entities } = event.data;
+    console.log(`[Iron Gate] MAIN world intercepted fetch — ${entityCount} entities pseudonymized (${level}, score=${score})`);
 
     try {
       chrome.runtime.sendMessage({
         type: 'SENSITIVITY_SCORE',
         payload: {
-          score: level === 'critical' ? 95 : level === 'high' ? 75 : level === 'medium' ? 45 : 15,
+          score: score ?? (level === 'critical' ? 95 : level === 'high' ? 75 : level === 'medium' ? 45 : 15),
           level,
           explanation: `Pseudonymized ${entityCount} entities before sending to AI tool.`,
-          entities: [],
+          entities: entities || [],
           aiToolId: detector?.id || 'unknown',
           originalPrompt,
           maskedPrompt,
           pseudonymMappings: mappings,
         },
-      }).catch(() => {});
+      }).catch((err) => {
+        console.warn('[Iron Gate] Failed to relay INTERCEPTED to service worker:', err);
+      });
     } catch {
       // Extension context may be invalidated
     }
@@ -137,23 +139,25 @@ window.addEventListener('message', (event) => {
 
   // AUDIT mode: entities detected but NOT pseudonymized (just scored)
   if (event.data?.type === 'IRON_GATE_AUDIT') {
-    const { originalPrompt, maskedPrompt, mappings, entityCount, level } = event.data;
-    console.log(`[Iron Gate] MAIN world audit — ${entityCount} entities detected (${level})`);
+    const { originalPrompt, maskedPrompt, mappings, entityCount, level, score, entities } = event.data;
+    console.log(`[Iron Gate] MAIN world audit — ${entityCount} entities detected (${level}, score=${score})`);
 
     try {
       chrome.runtime.sendMessage({
         type: 'SENSITIVITY_SCORE',
         payload: {
-          score: level === 'critical' ? 95 : level === 'high' ? 75 : level === 'medium' ? 45 : 15,
+          score: score ?? (level === 'critical' ? 95 : level === 'high' ? 75 : level === 'medium' ? 45 : 15),
           level,
           explanation: `Detected ${entityCount} sensitive entities in prompt (audit mode — not pseudonymized).`,
-          entities: [],
+          entities: entities || [],
           aiToolId: detector?.id || 'unknown',
           originalPrompt,
           maskedPrompt,
           pseudonymMappings: mappings,
         },
-      }).catch(() => {});
+      }).catch((err) => {
+        console.warn('[Iron Gate] Failed to relay AUDIT to service worker:', err);
+      });
     } catch {
       // Extension context may be invalidated
     }

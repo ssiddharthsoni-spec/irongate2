@@ -137,7 +137,7 @@ async function handleMessage(
 
       // Only queue to API if this has prompt data (i.e., from content script, not a re-broadcast)
       if (originalPrompt) {
-        console.log(`[Iron Gate] MAIN world event — ${aiToolId}, score: ${score}, level: ${level}, entities: ${pseudonymMappings?.length || 0}`);
+        console.log(`[Iron Gate] MAIN world event — ${aiToolId}, score: ${score}, level: ${level}, entities: ${entities?.length || 0}, mappings: ${pseudonymMappings?.length || 0}`);
 
         // Queue event for API
         const promptHash = await hashText(originalPrompt);
@@ -145,15 +145,28 @@ async function handleMessage(
           ? (pseudonymMappings?.length > 0 ? 'proxy' : 'pass')
           : 'pass';
 
-        // Reconstruct entity list from pseudonym mappings (since MAIN world doesn't send full entity data)
-        const entityList = (pseudonymMappings || []).map((m: any) => ({
-          type: m.type || 'UNKNOWN',
-          text: m.original || '',
-          start: 0,
-          end: (m.original || '').length,
-          confidence: 0.85,
-          source: 'regex',
-        }));
+        // Use real entity data from MAIN world if available, otherwise reconstruct from mappings
+        let entityList: any[];
+        if (entities && entities.length > 0) {
+          entityList = entities.map((e: any) => ({
+            type: e.type || 'UNKNOWN',
+            text: e.text || '',
+            start: e.start || 0,
+            end: e.end || 0,
+            confidence: e.confidence || 0.85,
+            source: e.source || 'regex',
+          }));
+        } else {
+          // Fallback: reconstruct from pseudonym mappings
+          entityList = (pseudonymMappings || []).map((m: any) => ({
+            type: m.type || 'UNKNOWN',
+            text: m.original || '',
+            start: 0,
+            end: (m.original || '').length,
+            confidence: 0.85,
+            source: 'regex',
+          }));
+        }
 
         queueEventToApi({
           aiToolId: aiToolId || 'unknown',

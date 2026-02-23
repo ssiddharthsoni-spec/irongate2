@@ -669,8 +669,8 @@ function jsonStringEscape(str: string): string {
 
 // ─── Simplified Scoring ─────────────────────────────────────────────────────
 
-function quickScore(entities: Array<{ type: string; confidence: number }>): 'low' | 'medium' | 'high' | 'critical' {
-  if (entities.length === 0) return 'low';
+function quickScore(entities: Array<{ type: string; confidence: number }>): { level: 'low' | 'medium' | 'high' | 'critical'; score: number } {
+  if (entities.length === 0) return { level: 'low', score: 0 };
 
   const HIGH_RISK_TYPES = new Set(['SSN', 'CREDIT_CARD', 'API_KEY', 'AWS_CREDENTIAL', 'PRIVATE_KEY', 'DATABASE_URI', 'AUTH_TOKEN', 'MEDICAL_RECORD']);
   const MED_RISK_TYPES = new Set(['PERSON', 'PHONE_NUMBER', 'EMAIL', 'MONETARY_AMOUNT', 'ACCOUNT_NUMBER', 'EMPLOYEE_ID', 'PASSPORT_NUMBER', 'DRIVERS_LICENSE']);
@@ -685,10 +685,16 @@ function quickScore(entities: Array<{ type: string; confidence: number }>): 'low
   const uniqueTypes = new Set(entities.map((e) => e.type)).size;
   if (uniqueTypes >= 3) score += 15;
 
-  if (score >= 86) return 'critical';
-  if (score >= 61) return 'high';
-  if (score >= 26) return 'medium';
-  return 'low';
+  // Cap at 100 for display purposes
+  score = Math.min(score, 100);
+
+  let level: 'low' | 'medium' | 'high' | 'critical';
+  if (score >= 86) level = 'critical';
+  else if (score >= 61) level = 'high';
+  else if (score >= 26) level = 'medium';
+  else level = 'low';
+
+  return { level, score };
 }
 
 // ─── Response De-pseudonymization ──────────────────────────────────────────
@@ -988,7 +994,7 @@ const patchedFetch = async function patchedFetch(
         console.log(`[Iron Gate MAIN] Detected ${allEntities.length} entities in prompt (${promptText.length} chars)`);
 
         if (allEntities.length > 0) {
-          const level = quickScore(allEntities);
+          const { level, score } = quickScore(allEntities);
           const pseudoResult = pseudonymizeLocal(promptText, allEntities);
 
           // Build reverse map for de-pseudonymization (ACCUMULATE, don't replace)
@@ -1004,12 +1010,12 @@ const patchedFetch = async function patchedFetch(
 
           if (modifiedBody) {
             console.log(
-              `[Iron Gate MAIN] PROXY: Pseudonymized ${allEntities.length} entities (${level}). Entities: ${allEntities.map(e => `${e.type}:"${e.text.substring(0,20)}"`).join(', ')}`
+              `[Iron Gate MAIN] PROXY: Pseudonymized ${allEntities.length} entities (${level}, score=${score}). Entities: ${allEntities.map(e => `${e.type}:"${e.text.substring(0,20)}"`).join(', ')}`
             );
             console.log(`[Iron Gate MAIN] Original prompt snippet: "${promptText.substring(0, 100)}..."`);
             console.log(`[Iron Gate MAIN] Masked prompt snippet: "${pseudoResult.maskedText.substring(0, 100)}..."`);
 
-            // Notify content script (for sidepanel display)
+            // Notify content script (for sidepanel display AND backend event)
             window.postMessage({
               type: 'IRON_GATE_INTERCEPTED',
               originalPrompt: promptText,
@@ -1017,6 +1023,8 @@ const patchedFetch = async function patchedFetch(
               mappings: pseudoResult.mappings,
               entityCount: allEntities.length,
               level,
+              score,
+              entities: allEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
             }, '*');
 
             // Send modified request — always use (url, init) form so we control the body
@@ -1062,10 +1070,10 @@ const patchedFetch = async function patchedFetch(
         const allEntities = [...regexEntities, ...secrets];
 
         if (allEntities.length > 0) {
-          const level = quickScore(allEntities);
+          const { level, score } = quickScore(allEntities);
           const pseudoResult = pseudonymizeLocal(promptText, allEntities);
 
-          console.log(`[Iron Gate MAIN] AUDIT: Detected ${allEntities.length} entities (${level}): ${allEntities.map(e => `${e.type}:"${e.text.substring(0,20)}"`).join(', ')}`);
+          console.log(`[Iron Gate MAIN] AUDIT: Detected ${allEntities.length} entities (${level}, score=${score}): ${allEntities.map(e => `${e.type}:"${e.text.substring(0,20)}"`).join(', ')}`);
 
           window.postMessage({
             type: 'IRON_GATE_AUDIT',
@@ -1074,6 +1082,8 @@ const patchedFetch = async function patchedFetch(
             mappings: pseudoResult.mappings,
             entityCount: allEntities.length,
             level,
+            score,
+            entities: allEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
           }, '*');
         }
       }
@@ -1154,7 +1164,7 @@ XMLHttpRequest.prototype.send = function(body?: any) {
           const allEntities = [...regexEntities, ...secrets];
 
           if (allEntities.length > 0) {
-            const level = quickScore(allEntities);
+            const { level, score } = quickScore(allEntities);
             const pseudoResult = pseudonymizeLocal(promptText, allEntities);
 
             // Accumulate mappings (don't overwrite)
@@ -1165,7 +1175,7 @@ XMLHttpRequest.prototype.send = function(body?: any) {
 
             const modifiedBody = replacePrompt(body, promptText, pseudoResult.maskedText);
             if (modifiedBody) {
-              console.log(`[Iron Gate MAIN] XHR PROXY: Pseudonymized ${allEntities.length} entities (${level})`);
+              console.log(`[Iron Gate MAIN] XHR PROXY: Pseudonymized ${allEntities.length} entities (${level}, score=${score})`);
               console.log(`[Iron Gate MAIN] XHR Masked: "${pseudoResult.maskedText.substring(0, 100)}..."`);
 
               window.postMessage({
@@ -1175,6 +1185,8 @@ XMLHttpRequest.prototype.send = function(body?: any) {
                 mappings: pseudoResult.mappings,
                 entityCount: allEntities.length,
                 level,
+                score,
+                entities: allEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
               }, '*');
 
               // Patch the response to de-pseudonymize
@@ -1212,9 +1224,9 @@ XMLHttpRequest.prototype.send = function(body?: any) {
           const secrets = scanForSecrets(promptText);
           const allEntities = [...regexEntities, ...secrets];
           if (allEntities.length > 0) {
-            const level = quickScore(allEntities);
+            const { level, score } = quickScore(allEntities);
             const pseudoResult = pseudonymizeLocal(promptText, allEntities);
-            console.log(`[Iron Gate MAIN] XHR AUDIT: ${allEntities.length} entities (${level})`);
+            console.log(`[Iron Gate MAIN] XHR AUDIT: ${allEntities.length} entities (${level}, score=${score})`);
             window.postMessage({
               type: 'IRON_GATE_AUDIT',
               originalPrompt: promptText,
@@ -1222,6 +1234,8 @@ XMLHttpRequest.prototype.send = function(body?: any) {
               mappings: pseudoResult.mappings,
               entityCount: allEntities.length,
               level,
+              score,
+              entities: allEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
             }, '*');
           }
         }
@@ -1261,7 +1275,7 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
             const allEntities = [...regexEntities, ...secrets];
 
             if (allEntities.length > 0) {
-              const level = quickScore(allEntities);
+              const { level, score } = quickScore(allEntities);
               const pseudoResult = pseudonymizeLocal(promptText, allEntities);
 
               // Accumulate mappings (don't overwrite)
@@ -1271,7 +1285,7 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
 
               const modifiedData = replacePrompt(data, promptText, pseudoResult.maskedText);
               if (modifiedData) {
-                console.log(`[Iron Gate MAIN] WS PROXY: Pseudonymized ${allEntities.length} entities (${level})`);
+                console.log(`[Iron Gate MAIN] WS PROXY: Pseudonymized ${allEntities.length} entities (${level}, score=${score})`);
 
                 window.postMessage({
                   type: 'IRON_GATE_INTERCEPTED',
@@ -1280,6 +1294,8 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
                   mappings: pseudoResult.mappings,
                   entityCount: allEntities.length,
                   level,
+                  score,
+                  entities: allEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
                 }, '*');
 
                 return originalSend(modifiedData);
@@ -1300,7 +1316,7 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
             const secrets = scanForSecrets(promptText);
             const allEntities = [...regexEntities, ...secrets];
             if (allEntities.length > 0) {
-              const level = quickScore(allEntities);
+              const { level, score } = quickScore(allEntities);
               const pseudoResult = pseudonymizeLocal(promptText, allEntities);
               window.postMessage({
                 type: 'IRON_GATE_AUDIT',
@@ -1309,6 +1325,8 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
                 mappings: pseudoResult.mappings,
                 entityCount: allEntities.length,
                 level,
+                score,
+                entities: allEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
               }, '*');
             }
           }
