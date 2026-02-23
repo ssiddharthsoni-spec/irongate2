@@ -1856,35 +1856,68 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
       }
 
       // ── Standard proxy for non-SignalR WebSocket tools (incl. ChatGPT 5.2) ──
-      if (!isSignalR && mode === 'proxy') {
+      // For ChatGPT: DOM pre-submit interceptor handles proxy mode, so the WS
+      // frame already contains pseudonymized text. Skip WS-level replacement to
+      // avoid double-pseudonymization. Still allow audit-mode logging below.
+      const isChatGPTWS = /chatgpt\.com|ws\.chatgpt\.com/.test(urlStr);
+      if (!isSignalR && mode === 'proxy' && !isChatGPTWS) {
         try {
+          console.log(`[Iron Gate MAIN] WS PROXY: processing frame (${strData.length} chars, binary=${wasBinary}, url=${urlStr.substring(0,60)})`);
+          console.log(`[Iron Gate MAIN] WS PROXY: frame starts with: "${strData.substring(0, 200).replace(/[\x00-\x1f]/g, '?')}"`);
+
           // ChatGPT 5.2 sends binary WebSocket frames — try multiple extraction strategies
           let promptText = extractPrompt(strData);
+          let extractionMethod = promptText ? 'direct-json' : 'none';
 
-          // If standard extraction fails, try to find prompt text within the binary payload
-          // ChatGPT WS may embed the prompt in a larger structure with non-JSON framing
+          // Strategy 2: JSON at offset (binary header before JSON body)
           if (!promptText && strData.length >= 50) {
-            // Look for JSON objects within the data (skip binary header bytes)
             const jsonStart = strData.indexOf('{');
             const jsonArrayStart = strData.indexOf('[');
             const start = jsonStart >= 0 && jsonArrayStart >= 0
               ? Math.min(jsonStart, jsonArrayStart)
               : jsonStart >= 0 ? jsonStart : jsonArrayStart;
 
-            if (start > 0 && start < 100) {
-              // There's a binary prefix before JSON — try extracting from the JSON part
+            if (start > 0 && start < 200) {
               const jsonPart = strData.substring(start);
               promptText = extractPrompt(jsonPart);
               if (promptText) {
+                extractionMethod = `json-at-offset-${start}`;
                 console.log(`[Iron Gate MAIN] WS: Found prompt in JSON at offset ${start} (${promptText.length} chars)`);
               }
             }
           }
 
+          // Strategy 3: Look for prompt text in binary data using longest contiguous text runs
+          // ChatGPT may use protobuf-like encoding where text fields are embedded in binary
+          if (!promptText && strData.length >= 100) {
+            // Find the longest run of printable ASCII characters (possible prompt text)
+            const textRunRegex = /[\x20-\x7e\u00a0-\uffff]{50,}/g;
+            let bestRun = '';
+            let m: RegExpExecArray | null;
+            while ((m = textRunRegex.exec(strData)) !== null) {
+              if (m[0].length > bestRun.length) bestRun = m[0];
+            }
+            if (bestRun.length >= 50) {
+              // Try to extract a prompt from this text run
+              promptText = extractPrompt(bestRun);
+              if (!promptText && bestRun.length >= 100) {
+                // The text run itself might BE the prompt (no JSON wrapping)
+                promptText = bestRun;
+              }
+              if (promptText) {
+                extractionMethod = 'text-run';
+                console.log(`[Iron Gate MAIN] WS: Found prompt via text-run extraction (${promptText.length} chars)`);
+              }
+            }
+          }
+
+          console.log(`[Iron Gate MAIN] WS PROXY: extraction=${extractionMethod}, promptLength=${promptText?.length || 0}`);
+
           if (promptText && promptText.length >= 10) {
             const regexEntities = detectWithRegex(promptText);
             const secrets = scanForSecrets(promptText);
             const allEntities = [...regexEntities, ...secrets];
+            console.log(`[Iron Gate MAIN] WS PROXY: detected ${allEntities.length} entities in ${promptText.length}-char prompt`);
 
             if (allEntities.length > 0) {
               const { level, score } = quickScore(allEntities);
@@ -1895,18 +1928,45 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
               }
 
               let modifiedData: string | null = null;
+              let replacementMethod = 'none';
               const wsEscOrig = jsonStringEscape(promptText);
               const wsEscRepl = jsonStringEscape(pseudoResult.maskedText);
+
               if (strData.includes(wsEscOrig)) {
                 modifiedData = strData.replace(wsEscOrig, wsEscRepl);
+                replacementMethod = 'json-escaped';
               } else if (strData.includes(promptText)) {
                 modifiedData = strData.replace(promptText, pseudoResult.maskedText);
+                replacementMethod = 'raw-text';
               } else {
-                modifiedData = replacePrompt(strData, promptText, pseudoResult.maskedText);
+                // Try partial matching: find a substantial substring of the prompt in the data
+                const partialLen = Math.min(100, Math.floor(promptText.length / 2));
+                const partial = promptText.substring(0, partialLen);
+                const partialEsc = jsonStringEscape(partial);
+                if (strData.includes(partialEsc)) {
+                  // Found partial match — do a full escaped replacement using all individual entity replacements
+                  modifiedData = strData;
+                  for (const mapping of pseudoResult.mappings) {
+                    const origEsc = jsonStringEscape(mapping.original);
+                    const replEsc = jsonStringEscape(mapping.pseudonym);
+                    if (modifiedData.includes(origEsc)) {
+                      modifiedData = modifiedData.split(origEsc).join(replEsc);
+                    } else if (modifiedData.includes(mapping.original)) {
+                      modifiedData = modifiedData.split(mapping.original).join(mapping.pseudonym);
+                    }
+                  }
+                  replacementMethod = 'entity-by-entity';
+                } else {
+                  modifiedData = replacePrompt(strData, promptText, pseudoResult.maskedText);
+                  replacementMethod = modifiedData ? 'replacePrompt-fallback' : 'FAILED';
+                }
               }
 
-              if (modifiedData) {
+              console.log(`[Iron Gate MAIN] WS PROXY: replacement=${replacementMethod}, modified=${!!modifiedData}, origLen=${strData.length}, newLen=${modifiedData?.length || 0}`);
+
+              if (modifiedData && modifiedData !== strData) {
                 console.log(`[Iron Gate MAIN] WS PROXY: Pseudonymized ${allEntities.length} entities (${level}, score=${score})`);
+                console.log(`[Iron Gate MAIN] WS PROXY: masked snippet: "${pseudoResult.maskedText.substring(0, 120)}..."`);
 
                 window.postMessage({
                   type: 'IRON_GATE_INTERCEPTED',
@@ -1920,8 +1980,23 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
                 }, '*');
 
                 return _sendResult(modifiedData);
+              } else {
+                console.warn(`[Iron Gate MAIN] WS PROXY: replacement FAILED — sending original. method=${replacementMethod}`);
+                // Still report the detection even though replacement failed
+                window.postMessage({
+                  type: 'IRON_GATE_AUDIT',
+                  originalPrompt: promptText,
+                  maskedPrompt: pseudoResult.maskedText,
+                  mappings: pseudoResult.mappings,
+                  entityCount: allEntities.length,
+                  level,
+                  score,
+                  entities: allEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
+                }, '*');
               }
             }
+          } else if (strData.length >= 100) {
+            console.log(`[Iron Gate MAIN] WS PROXY: no prompt extracted from ${strData.length}-char frame`);
           }
         } catch (err) {
           console.warn('[Iron Gate MAIN] WS proxy error:', err);
@@ -2128,6 +2203,173 @@ Object.defineProperty(patchedWebSocket, 'CLOSED', { value: 3, writable: false })
 (window as any).WebSocket = patchedWebSocket;
 
 console.log('[Iron Gate MAIN] WebSocket interceptor installed');
+
+// ─── ChatGPT DOM Pre-Submit Interceptor ─────────────────────────────────────
+// ChatGPT 5.2 uses binary WebSocket frames (likely protobuf) whose length
+// prefixes break when we do string replacement on the decoded data.
+// Instead, we modify the text in ChatGPT's contenteditable input BEFORE
+// ChatGPT serializes and sends it — the pseudonymized text goes over the wire
+// natively, and the existing MutationObserver handles response de-pseudonymization.
+
+if (window.location.hostname.includes('chatgpt.com') || window.location.hostname.includes('chat.openai.com')) {
+  console.log('[Iron Gate MAIN] ChatGPT DOM pre-submit interceptor initializing');
+
+  let domInterceptBusy = false; // prevents re-entry during synthetic re-dispatch
+
+  function getChatGPTTextarea(): HTMLElement | null {
+    return document.querySelector('#prompt-textarea') as HTMLElement
+      || document.querySelector('div[contenteditable="true"][data-placeholder]') as HTMLElement;
+  }
+
+  function readTextarea(el: HTMLElement): string {
+    if (el instanceof HTMLTextAreaElement) return el.value.trim();
+    return (el.innerText || el.textContent || '').trim();
+  }
+
+  /** Replace text in a contenteditable div via execCommand (fires ProseMirror-compatible events). */
+  function writeTextarea(el: HTMLElement, text: string): boolean {
+    if (el instanceof HTMLTextAreaElement) {
+      const desc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+      if (desc?.set) desc.set.call(el, text);
+      else el.value = text;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    }
+    // Contenteditable: select all → execCommand replaces selection
+    el.focus();
+    const sel = window.getSelection();
+    if (!sel) return false;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    const ok = document.execCommand('insertText', false, text);
+    if (!ok) {
+      // Fallback: direct DOM manipulation + synthetic input event
+      el.textContent = text;
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+    }
+    return true;
+  }
+
+  function getChatGPTSendButton(): HTMLElement | null {
+    return document.querySelector('button[data-testid="send-button"]') as HTMLElement
+      || document.querySelector('button[aria-label="Send message"]') as HTMLElement
+      || document.querySelector('button[aria-label="Send prompt"]') as HTMLElement;
+  }
+
+  /**
+   * Core pseudonymization logic for DOM interception.
+   * Returns the pseudonymized result or null if nothing to do.
+   */
+  function domPseudonymize(text: string, source: string) {
+    if (mode !== 'proxy') return null;
+    if (!text || text.length < 10) return null;
+
+    const regexEntities = detectWithRegex(text);
+    const secrets = scanForSecrets(text);
+    const allEntities = [...regexEntities, ...secrets];
+    if (allEntities.length === 0) return null;
+
+    const { level, score } = quickScore(allEntities);
+    const pseudoResult = pseudonymizeLocal(text, allEntities);
+
+    // Accumulate reverse mappings for de-pseudonymization
+    for (const m of pseudoResult.mappings) {
+      currentReverseMap[m.pseudonym] = m.original;
+    }
+
+    console.log(`[Iron Gate MAIN] ChatGPT DOM PROXY (${source}): Pseudonymized ${allEntities.length} entities (${level}, score=${score})`);
+    console.log(`[Iron Gate MAIN] ChatGPT DOM PROXY: masked="${pseudoResult.maskedText.substring(0, 120)}..."`);
+
+    // Report to sidepanel
+    window.postMessage({
+      type: 'IRON_GATE_INTERCEPTED',
+      originalPrompt: text,
+      maskedPrompt: pseudoResult.maskedText,
+      mappings: pseudoResult.mappings,
+      entityCount: allEntities.length,
+      level,
+      score,
+      entities: allEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
+    }, '*');
+
+    return pseudoResult;
+  }
+
+  // ── Enter key interception (capture phase — runs before ChatGPT's handlers) ──
+  document.addEventListener('keydown', function (e: KeyboardEvent) {
+    if (domInterceptBusy) return; // let synthetic re-dispatch through
+    if (mode !== 'proxy') return;
+    if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+
+    const textarea = getChatGPTTextarea();
+    if (!textarea) return;
+    if (!textarea.contains(e.target as Node) && e.target !== textarea) return;
+
+    const text = readTextarea(textarea);
+    const result = domPseudonymize(text, 'Enter');
+    if (!result) return; // no entities — let original Enter through
+
+    // Block the original Enter event
+    e.preventDefault();
+    e.stopImmediatePropagation();
+
+    // Replace textarea content with pseudonymized text
+    writeTextarea(textarea, result.maskedText);
+
+    // After ProseMirror processes the text change, submit via send button
+    requestAnimationFrame(() => {
+      domInterceptBusy = true;
+      const sendBtn = getChatGPTSendButton();
+      if (sendBtn) {
+        sendBtn.click();
+      } else {
+        // No send button found — re-dispatch Enter event
+        textarea.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
+          bubbles: true, cancelable: true,
+        }));
+      }
+      setTimeout(() => { domInterceptBusy = false; }, 200);
+    });
+  }, true);
+
+  // ── Send button click interception (capture phase) ──
+  document.addEventListener('click', function (e: MouseEvent) {
+    if (domInterceptBusy) return; // let synthetic click through
+    if (mode !== 'proxy') return;
+
+    const target = e.target as HTMLElement;
+    const btn = target.closest(
+      'button[data-testid="send-button"], button[aria-label="Send message"], button[aria-label="Send prompt"]'
+    ) as HTMLElement;
+    if (!btn) return;
+
+    const textarea = getChatGPTTextarea();
+    if (!textarea) return;
+
+    const text = readTextarea(textarea);
+    const result = domPseudonymize(text, 'click');
+    if (!result) return; // no entities — let original click through
+
+    // Block the original click event
+    e.preventDefault();
+    e.stopImmediatePropagation();
+
+    // Replace textarea content with pseudonymized text
+    writeTextarea(textarea, result.maskedText);
+
+    // After ProseMirror processes the text change, re-click send button
+    requestAnimationFrame(() => {
+      domInterceptBusy = true;
+      btn.click();
+      setTimeout(() => { domInterceptBusy = false; }, 200);
+    });
+  }, true);
+
+  console.log('[Iron Gate MAIN] ChatGPT DOM pre-submit interceptor installed');
+}
 
 // ─── Heartbeat ──────────────────────────────────────────────────────────────
 // Notify content script that MAIN world interceptor is active.
