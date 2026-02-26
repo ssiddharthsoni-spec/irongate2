@@ -11,6 +11,7 @@ import { OpenAIProvider } from './providers/openai';
 import { AnthropicProvider } from './providers/anthropic';
 import { OllamaProvider } from './providers/ollama';
 import { AzureOpenAIProvider } from './providers/azure';
+import { logger } from '../lib/logger';
 
 // ---------------------------------------------------------------------------
 // Public interfaces (consumed by provider adapters and route handlers)
@@ -88,9 +89,11 @@ export class LLMRouter {
   async send(request: LLMRequest): Promise<LLMResponse> {
     const { provider, providerConfig } = this.resolveProvider(request.route, request.model);
 
-    console.log(
-      `[LLMRouter] Routing to provider="${provider.name}" model="${request.model || providerConfig.model}" route="${request.route}"`,
-    );
+    logger.info('Routing to provider', {
+      provider: provider.name,
+      model: request.model || providerConfig.model,
+      route: request.route,
+    });
 
     return provider.send(request, providerConfig);
   }

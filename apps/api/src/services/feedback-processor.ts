@@ -8,6 +8,7 @@
 import { db } from '../db/client';
 import { feedback, weightOverrides, events } from '../db/schema';
 import { eq, sql, and, gte } from 'drizzle-orm';
+import { logger } from '../lib/logger';
 
 interface FeedbackStats {
   entityType: string;
@@ -78,7 +79,7 @@ export async function processFeedback(firmId: string): Promise<FeedbackStats[]> 
             },
           });
       } catch (error) {
-        console.warn(`[Feedback Processor] Failed to update weight for ${stat.entityType}:`, error);
+        logger.warn('Failed to update weight override', { entityType: stat.entityType, error: error instanceof Error ? error.message : String(error) });
       }
     }
   }

@@ -218,11 +218,25 @@ export async function handleProxyFlow(
 
 export interface FileAnalysisResult {
   fileName: string;
+  fileType: string;
+  fileSize: number;
+  textLength: number;
   score: number;
   level: string;
   entitiesFound: number;
   explanation: string;
-  entities: Array<{ type: string; text: string; confidence: number }>;
+  entities: Array<{
+    type: string;
+    start: number;
+    end: number;
+    confidence: number;
+    source: string;
+    length: number;
+  }>;
+  breakdown: Record<string, number>;
+  redactedText: string;
+  entitiesRedacted: number;
+  eventId: string;
 }
 
 /**
@@ -243,14 +257,24 @@ export async function analyzeFile(
 
   return {
     fileName: result.fileName,
+    fileType: result.fileType || fileType,
+    fileSize: result.fileSize || 0,
+    textLength: result.textLength || 0,
     score: result.score,
     level: result.level,
     entitiesFound: result.entitiesFound,
     explanation: result.explanation,
-    entities: result.entities?.map((e: any) => ({
+    entities: (result.entities || []).map((e: any) => ({
       type: e.type,
-      text: e.text,
+      start: e.start,
+      end: e.end,
       confidence: e.confidence,
-    })) || [],
+      source: e.source,
+      length: e.length,
+    })),
+    breakdown: result.breakdown || {},
+    redactedText: result.redactedText || '',
+    entitiesRedacted: result.entitiesRedacted || 0,
+    eventId: result.eventId || '',
   };
 }

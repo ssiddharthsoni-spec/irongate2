@@ -6,6 +6,8 @@
 // anomaly pattern that may indicate a data breach in progress.
 // ============================================================================
 
+import { logger } from '../lib/logger';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -313,8 +315,8 @@ export function escalateBreachSignal(signal: BreachSignal, details: string): voi
     escalatedAt: new Date().toISOString(),
   };
 
-  // Log to stderr for SIEM / log aggregation pickup
-  console.error(JSON.stringify(incident));
+  // Log for SIEM / log aggregation pickup
+  logger.error('Breach signal escalated', incident);
 
   // In production, this would also:
   // - Dispatch to webhook subscribers listening for 'anomaly_detected'
@@ -322,9 +324,10 @@ export function escalateBreachSignal(signal: BreachSignal, details: string): voi
   // - Create a formal incident ticket in the firm's ticketing system
   // - Forward to the configured SIEM endpoint
   if (signal.severity === 'critical') {
-    console.error(
-      `[BREACH DETECTION] CRITICAL: ${signal.signal} — immediate action required. ${details}`
-    );
+    logger.error('CRITICAL breach signal — immediate action required', {
+      signal: signal.signal,
+      details,
+    });
   }
 }
 

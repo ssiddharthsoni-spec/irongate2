@@ -52,44 +52,12 @@ export function installSubmitHandler(
       return;
     }
 
-    // ── PROXY MODE: Intercept synchronously ──────────────────────────
-    // MUST prevent the event synchronously before any async work
-    isProcessing = true;
-
-    // Prevent the original submit from firing
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation();
-
-    console.log('[Iron Gate] Submit intercepted in proxy mode — will pseudonymize and re-submit');
-
-    // Do the pseudonymization and re-submit asynchronously
-    (async () => {
-      try {
-        const action = await config.onSubmit(promptText);
-
-        if (action === 'intercept') {
-          // Full block — clear the input and don't re-submit
-          const input = detector.getPromptInput();
-          if (input) {
-            clearInput(input);
-          }
-          console.log('[Iron Gate] Prompt blocked');
-          return;
-        }
-
-        // action === 'allow' — the onSubmit handler already replaced the input text
-        // Now re-trigger the submit
-        await retriggerSubmit(detector);
-
-      } catch (error) {
-        console.error('[Iron Gate] Submit handler error:', error);
-        // On error, try to re-submit with original text
-        await retriggerSubmit(detector);
-      } finally {
-        isProcessing = false;
-      }
-    })();
+    // ── PROXY MODE ─────────────────────────────────────────────────
+    // The MAIN world DOM pre-submit handler handles pseudonymization.
+    // Do NOT call preventDefault/stopImmediatePropagation here — that
+    // blocks the MAIN world's capture-phase listener from seeing the event.
+    // Just log the submit and let the event propagate to the MAIN world.
+    config.onSubmit(promptText).catch(() => {});
   }
 
   // Re-trigger the submit after pseudonymization

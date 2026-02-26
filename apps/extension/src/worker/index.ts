@@ -12,7 +12,12 @@ import { computeScore } from '../detection/scorer';
 import { pseudonymizeLocal } from '../detection/pseudonymizer';
 import { scanForSecrets } from './detectors/secret-scanner';
 
-console.log('[Iron Gate] Service worker started');
+// Debug logging — silent in production, enable via: chrome.storage.local.get('ironGateDebug')
+let _IG_DEBUG = false;
+try { chrome.storage.local.get('ironGateDebug', (r) => { _IG_DEBUG = !!r.ironGateDebug; }); } catch {}
+function igLog(...args: any[]) { if (_IG_DEBUG) console.log('[Iron Gate]', ...args); }
+
+igLog('Service worker started');
 
 // ─── Startup: restore auth & wire API client ────────────────────────────────
 initAuth().then(() => {
@@ -20,7 +25,7 @@ initAuth().then(() => {
     firmId: getFirmId() || '',
     getToken,
   });
-  console.log('[Iron Gate] Auth initialized & API client configured');
+  igLog('Auth initialized & API client configured');
 }).catch((err) => console.warn('[Iron Gate] Startup init failed:', err));
 
 // Open side panel on extension icon click
@@ -33,9 +38,84 @@ let firmMode: 'audit' | 'proxy' = 'audit';
 chrome.storage.local.get('firmMode', (result) => {
   if (result.firmMode === 'audit' || result.firmMode === 'proxy') {
     firmMode = result.firmMode;
-    console.log(`[Iron Gate] Loaded firm mode: ${firmMode}`);
+    igLog('Loaded firm mode:', firmMode);
   }
 });
+
+// ─── Per-Tab State Tracking ──────────────────────────────────────────────────
+// Track detection data per tab so the side panel can display tab-specific info.
+// Uses chrome.storage.session (survives service worker idle, clears on browser close).
+
+interface TabState {
+  tabId: number;
+  aiToolId: string;
+  aiToolName: string;
+  lastScore: number | null;
+  lastLevel: string | null;
+  lastExplanation: string | null;
+  lastEntities: any[];
+  lastOriginalPrompt?: string;
+  lastMaskedPrompt?: string;
+  lastPseudonymMappings?: any[];
+  detectionCount: number;
+  lastDetectionTime: number;
+}
+
+const TAB_STATE_KEY = 'iron_gate_tab_states';
+const MAX_PROMPT_STORAGE = 2000; // Truncate prompts to avoid quota issues
+
+async function loadTabStates(): Promise<Record<number, TabState>> {
+  try {
+    const result = await chrome.storage.session.get(TAB_STATE_KEY);
+    return result[TAB_STATE_KEY] || {};
+  } catch {
+    return {};
+  }
+}
+
+async function saveTabStates(states: Record<number, TabState>): Promise<void> {
+  try {
+    await chrome.storage.session.set({ [TAB_STATE_KEY]: states });
+  } catch (err) {
+    igLog('Failed to save tab states:', err);
+  }
+}
+
+async function getTabState(tabId: number): Promise<TabState | null> {
+  const states = await loadTabStates();
+  return states[tabId] || null;
+}
+
+async function updateTabState(tabId: number, update: Partial<TabState>): Promise<TabState> {
+  const states = await loadTabStates();
+  const existing = states[tabId] || {
+    tabId,
+    aiToolId: '',
+    aiToolName: '',
+    lastScore: null,
+    lastLevel: null,
+    lastExplanation: null,
+    lastEntities: [],
+    detectionCount: 0,
+    lastDetectionTime: 0,
+  };
+  // Truncate prompts to stay within storage quota
+  if (update.lastOriginalPrompt && update.lastOriginalPrompt.length > MAX_PROMPT_STORAGE) {
+    update.lastOriginalPrompt = update.lastOriginalPrompt.substring(0, MAX_PROMPT_STORAGE);
+  }
+  if (update.lastMaskedPrompt && update.lastMaskedPrompt.length > MAX_PROMPT_STORAGE) {
+    update.lastMaskedPrompt = update.lastMaskedPrompt.substring(0, MAX_PROMPT_STORAGE);
+  }
+  states[tabId] = { ...existing, ...update };
+  await saveTabStates(states);
+  return states[tabId];
+}
+
+async function removeTabState(tabId: number): Promise<void> {
+  const states = await loadTabStates();
+  delete states[tabId];
+  await saveTabStates(states);
+}
 
 // Listen for messages from content scripts
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -50,7 +130,7 @@ async function handleMessage(
   switch (message.type) {
     case 'PROMPT_DETECTED': {
       const { text, aiToolId, captureMethod } = message.payload;
-      console.log(`[Iron Gate] Prompt captured from ${aiToolId} via ${captureMethod}, length: ${text.length}`);
+      igLog('Prompt captured from', aiToolId, 'via', captureMethod, 'length:', text.length);
 
       // ── Local detection: regex PII + secret scanning ──
       const regexEntities = detectWithRegex(text);
@@ -95,33 +175,18 @@ async function handleMessage(
         captureMethod,
       });
 
-      const scorePayload = {
-        score: sensitivityResult.score,
-        level: sensitivityResult.level,
-        explanation: sensitivityResult.explanation,
-        entities: sensitivityResult.entities,
-        aiToolId: aiToolId,
-      };
-
-      // Broadcast score to the originating content-script tab (for badge)
-      if (sender.tab?.id) {
-        chrome.tabs.sendMessage(sender.tab.id, {
-          type: 'SENSITIVITY_SCORE',
-          payload: scorePayload,
-        }).catch(() => {});
-      }
-
-      // Broadcast to sidepanel with full prompt inspector data
-      chrome.runtime.sendMessage({
-        type: 'SENSITIVITY_SCORE',
-        payload: {
-          ...scorePayload,
-          originalPrompt: text,
-          maskedPrompt: pseudoResult.maskedText,
-          pseudonymMappings: pseudoResult.mappings,
-        },
-      }).catch(() => {});
-
+      // ── DO NOT broadcast to badge or side panel from PROMPT_DETECTED ──
+      // The MAIN world fetch interceptor (IRON_GATE_INTERCEPTED / IRON_GATE_AUDIT)
+      // is the AUTHORITATIVE source for UI updates. It sees the complete API request
+      // body and detects ALL entities accurately.
+      //
+      // PROMPT_DETECTED comes from the capture engine's DOM observer which fires
+      // on every keystroke and may detect only a SUBSET of entities (partial typing),
+      // producing a lower score that overwrites the real score on the badge.
+      // Example: MAIN world detects 5 entities → score 65, but DOM observer later
+      // fires with partial text → 2 entities → score 25, badge drops to 25.
+      //
+      // PROMPT_DETECTED is still valuable for API analytics (queued above).
       return { received: true };
     }
 
@@ -137,7 +202,7 @@ async function handleMessage(
 
       // Only queue to API if this has prompt data (i.e., from content script, not a re-broadcast)
       if (originalPrompt) {
-        console.log(`[Iron Gate] MAIN world event — ${aiToolId}, score: ${score}, level: ${level}, entities: ${entities?.length || 0}, mappings: ${pseudonymMappings?.length || 0}`);
+        igLog('MAIN world event —', aiToolId, 'score:', score, 'level:', level, 'entities:', entities?.length || 0, 'mappings:', pseudonymMappings?.length || 0);
 
         // Queue event for API
         const promptHash = await hashText(originalPrompt);
@@ -180,11 +245,28 @@ async function handleMessage(
         });
       }
 
-      // Re-broadcast to sidepanel (sidepanel only receives messages from the worker,
-      // NOT from content scripts — chrome.runtime.sendMessage is directional)
+      // Store per-tab state for this detection
+      const ssTabId = sender.tab?.id || null;
+      if (ssTabId && originalPrompt) {
+        updateTabState(ssTabId, {
+          aiToolId: aiToolId || 'unknown',
+          lastScore: score,
+          lastLevel: level,
+          lastExplanation: explanation,
+          lastEntities: entities || [],
+          lastOriginalPrompt: originalPrompt,
+          lastMaskedPrompt: maskedPrompt,
+          lastPseudonymMappings: pseudonymMappings,
+          detectionCount: ((await getTabState(ssTabId))?.detectionCount || 0) + 1,
+          lastDetectionTime: Date.now(),
+        }).catch(() => {});
+      }
+
+      // Re-broadcast to sidepanel WITH tab context (sidepanel only receives
+      // messages from the worker, NOT from content scripts)
       chrome.runtime.sendMessage({
         type: 'SENSITIVITY_SCORE',
-        payload,
+        payload: { ...payload, tabId: ssTabId },
       }).catch(() => {});
 
       return { ok: true };
@@ -192,7 +274,7 @@ async function handleMessage(
 
     case 'PROMPT_SUBMITTED': {
       const { text, aiToolId, sensitivityScore } = message.payload;
-      console.log(`[Iron Gate] Prompt submitted on ${aiToolId}, score: ${sensitivityScore}`);
+      igLog('Prompt submitted on', aiToolId, 'score:', sensitivityScore);
 
       // In proxy mode, run the full proxy flow instead of just passing through
       if (firmMode === 'proxy') {
@@ -224,7 +306,7 @@ async function handleMessage(
 
     case 'PROXY_ANALYZE': {
       const { text, aiToolId, sessionId } = message.payload;
-      console.log(`[Iron Gate] Proxy analyze request for ${aiToolId}, length: ${text.length}`);
+      igLog('Proxy analyze request for', aiToolId, 'length:', text.length);
 
       try {
         const result = await analyzePrompt(text, aiToolId, sessionId);
@@ -246,7 +328,7 @@ async function handleMessage(
 
     case 'PROXY_SEND': {
       const { maskedPrompt, route, sessionId, ...options } = message.payload;
-      console.log(`[Iron Gate] Proxy send request, route: ${route}`);
+      igLog('Proxy send request, route:', route);
 
       try {
         const result = await sendProxiedPrompt(maskedPrompt, route, sessionId, options);
@@ -268,7 +350,7 @@ async function handleMessage(
 
     case 'FILE_UPLOAD_DETECTED': {
       const { fileName, fileBase64, fileType, aiToolId } = message.payload;
-      console.log(`[Iron Gate] File upload detected: ${fileName} on ${aiToolId}`);
+      igLog('File upload detected:', fileName, 'on', aiToolId);
 
       try {
         const result = await analyzeFile(fileName, fileBase64, fileType);
@@ -290,7 +372,7 @@ async function handleMessage(
       const { mode } = message.payload;
       firmMode = mode;
       chrome.storage.local.set({ firmMode: mode });
-      console.log(`[Iron Gate] Firm mode changed to: ${mode}`);
+      igLog('Firm mode changed to:', mode);
 
       // Relay MODE_CHANGED to ALL content scripts on AI tool tabs
       // so they can sync the mode to the MAIN world fetch interceptor
@@ -312,7 +394,7 @@ async function handleMessage(
 
     case 'SET_API_KEY': {
       const { apiKey } = message.payload;
-      console.log(`[Iron Gate] API key updated: ${apiKey ? apiKey.substring(0, 8) + '...' : '(cleared)'}`);
+      igLog('API key updated:', apiKey ? apiKey.substring(0, 8) + '...' : '(cleared)');
       chrome.storage.local.set({ ironGateApiKey: apiKey });
       configureApiClient({ apiKey });
       return { ok: true };
@@ -320,7 +402,7 @@ async function handleMessage(
 
     case 'BLOCK_OVERRIDE': {
       const { eventId, reason } = message.payload;
-      console.log(`[Iron Gate] Block override: ${eventId}, reason: ${reason}`);
+      igLog('Block override:', eventId, 'reason:', reason);
 
       queueEventToApi({
         aiToolId: 'override',
@@ -349,7 +431,7 @@ async function handleMessage(
 
     case 'ENTITY_FEEDBACK': {
       const { entityType, entityText, isCorrect, feedbackType, correctedType } = message.payload;
-      console.log(`[Iron Gate] Entity feedback: ${entityType} — ${feedbackType}`);
+      igLog('Entity feedback:', entityType, '—', feedbackType);
 
       try {
         await apiRequest({
@@ -370,6 +452,30 @@ async function handleMessage(
         console.warn('[Iron Gate] Failed to send feedback:', err);
         return { ok: false, error: 'Failed to send feedback' };
       }
+    }
+
+    case 'PROTECTION_STATUS': {
+      // Relay health status from content script to sidepanel
+      chrome.runtime.sendMessage({
+        type: 'PROTECTION_STATUS',
+        payload: message.payload,
+      }).catch(() => {});
+
+      // Update badge to indicate protection failure
+      if (message.payload?.healthy === false && sender.tab?.id) {
+        chrome.action.setBadgeText({ text: '!', tabId: sender.tab.id });
+        chrome.action.setBadgeBackgroundColor({ color: '#EF4444', tabId: sender.tab.id });
+      }
+      return { ok: true };
+    }
+
+    case 'GET_TAB_STATE': {
+      const requestedTabId = message.payload?.tabId;
+      if (requestedTabId) {
+        const state = await getTabState(requestedTabId);
+        return { ok: true, state };
+      }
+      return { ok: false, error: 'No tabId provided' };
     }
 
     default:
@@ -416,7 +522,7 @@ function queueEventToApi(event: {
 chrome.alarms.create('flush-events', { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'flush-events') {
-    console.log('[Iron Gate] Flushing event queue...');
+    igLog('Flushing event queue...');
     eventQueue.flush().catch((err) =>
       console.warn('[Iron Gate] Queue flush failed:', err)
     );
@@ -442,19 +548,106 @@ const AI_TOOL_URL_FILTERS: chrome.events.UrlFilter[] = [
   { hostContains: 'groq.com' },
 ];
 
+/** Regex matching all supported AI tool hostnames */
+const AI_HOST_REGEX = /chatgpt\.com|chat\.openai\.com|claude\.ai|gemini\.google\.com|copilot\.microsoft\.com|chat\.deepseek\.com|poe\.com|perplexity\.ai|you\.com|huggingface\.co|groq\.com/;
+
+// ─── Auto Re-inject on Extension Reload / Update ─────────────────────────────
+// When the extension is reloaded or updated, existing AI tool tabs keep stale
+// content scripts with broken chrome.runtime references. This function
+// re-injects fresh content scripts into all matching tabs automatically.
+
+let _reinjectInProgress = false;
+
+async function reinjectAllTabs(): Promise<void> {
+  if (_reinjectInProgress) return;
+  _reinjectInProgress = true;
+
+  try {
+    const tabs = await chrome.tabs.query({});
+    const manifest = chrome.runtime.getManifest();
+    const mainWorldCS = (manifest.content_scripts as any[])?.find(
+      (cs: any) => cs.world === 'MAIN'
+    );
+    const isolatedCS = (manifest.content_scripts as any[])?.find(
+      (cs: any) => !cs.world || cs.world === 'ISOLATED'
+    );
+
+    let injectedCount = 0;
+    for (const tab of tabs) {
+      if (!tab.id || !tab.url || !AI_HOST_REGEX.test(tab.url)) continue;
+
+      const tabId = tab.id;
+      try {
+        // A: Reset MAIN world flag so duplicate guard allows re-init
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          world: 'MAIN' as any,
+          func: () => {
+            (window as any).__IRON_GATE_MAIN_WORLD = undefined;
+            (window as any).__IRON_GATE_LOADING_SINCE = undefined;
+          },
+        });
+
+        // B: Re-inject ISOLATED content script (sets up message bridge)
+        if (isolatedCS?.js?.length) {
+          await chrome.scripting.executeScript({
+            target: { tabId },
+            files: isolatedCS.js,
+          });
+        }
+
+        // C: Re-inject MAIN world script (patches fetch)
+        if (mainWorldCS?.js?.length) {
+          await chrome.scripting.executeScript({
+            target: { tabId },
+            world: 'MAIN' as any,
+            files: mainWorldCS.js,
+            injectImmediately: true,
+          });
+        }
+
+        injectedCount++;
+        igLog('Re-injected into tab', tabId, tab.url?.substring(0, 60));
+      } catch {
+        // Tab may not be accessible (chrome://, about:, restricted) — skip
+      }
+    }
+
+    if (injectedCount > 0) {
+      console.log(`[Iron Gate] Re-injected content scripts into ${injectedCount} AI tool tab(s)`);
+    }
+  } finally {
+    _reinjectInProgress = false;
+  }
+}
+
+// Re-inject on extension install or Chrome update
+chrome.runtime.onInstalled.addListener((details) => {
+  igLog('onInstalled:', details.reason);
+  if (details.reason === 'install' || details.reason === 'update') {
+    reinjectAllTabs();
+  }
+});
+
+// Also re-inject on every service worker startup — covers developer reload
+// (which may not always fire onInstalled with reason='update')
+reinjectAllTabs();
+
 /**
  * Self-contained inline fetch interceptor — injected via chrome.scripting.executeScript({ func })
  * when the full main-world.ts file fails to load. This is the LAST RESORT fallback.
  * Must be 100% self-contained with no external references.
  */
 function inlineFetchInterceptor() {
+  const _debug = !!(window as any).__IRON_GATE_DEBUG;
+
   // Skip if full main-world.ts already loaded
   if ((window as any).__IRON_GATE_MAIN_WORLD === 'active') {
-    console.log('[Iron Gate INLINE] Full main-world.ts already active — skipping inline fallback');
+    if (_debug) console.log('[Iron Gate INLINE] Full main-world.ts already active — skipping inline fallback');
     return;
   }
 
-  console.log('[Iron Gate INLINE] 🔧 Installing inline fetch interceptor (fallback)...');
+  if (_debug) console.log('[Iron Gate INLINE] 🔧 Installing inline fetch interceptor (fallback)...');
 
   let mode: 'audit' | 'proxy' = 'audit';
 
@@ -463,7 +656,7 @@ function inlineFetchInterceptor() {
     if (e.source !== window) return;
     if (e.data?.type === 'IRON_GATE_SET_MODE') {
       mode = e.data.mode;
-      console.log('[Iron Gate INLINE] Mode set to:', mode);
+      if (_debug) console.log('[Iron Gate INLINE] Mode set to:', mode);
     }
   });
   window.postMessage({ type: 'IRON_GATE_REQUEST_MODE' }, '*');
@@ -632,7 +825,7 @@ function inlineFetchInterceptor() {
     }
 
     const entities = detectEntities(promptText);
-    console.log('[Iron Gate INLINE] Intercepted fetch to', url.substring(0, 60), '— mode:', mode, ', entities:', entities.length);
+    if (_debug) console.log('[Iron Gate INLINE] Intercepted fetch to', url.substring(0, 60), '— mode:', mode, ', entities:', entities.length);
 
     if (mode === 'proxy' && entities.length > 0) {
       const level = quickScore(entities);
@@ -640,9 +833,9 @@ function inlineFetchInterceptor() {
       const modifiedBody = replacePrompt(bodyString, promptText, maskedText);
 
       if (modifiedBody) {
-        console.log('[Iron Gate INLINE] ✅ PROXY: Pseudonymized', entities.length, 'entities (', level, ')');
-        console.log('[Iron Gate INLINE] Original:', promptText.substring(0, 80), '...');
-        console.log('[Iron Gate INLINE] Masked:', maskedText.substring(0, 80), '...');
+        if (_debug) console.log('[Iron Gate INLINE] ✅ PROXY: Pseudonymized', entities.length, 'entities (', level, ')');
+        if (_debug) console.log('[Iron Gate INLINE] Original:', promptText.substring(0, 80), '...');
+        if (_debug) console.log('[Iron Gate INLINE] Masked:', maskedText.substring(0, 80), '...');
 
         window.postMessage({
           type: 'IRON_GATE_INTERCEPTED',
@@ -698,7 +891,7 @@ function inlineFetchInterceptor() {
   (window as any).__IRON_GATE_MAIN_WORLD = ok ? 'active-inline' : 'failed';
   (window as any).__IRON_GATE_FETCH_PATCHED = ok;
   window.postMessage({ type: 'IRON_GATE_HEARTBEAT', version: 'inline-0.1', timestamp: Date.now(), mode }, '*');
-  console.log('[Iron Gate INLINE]', ok ? '✅ Inline fetch interceptor ACTIVE' : '❌ Fetch patch FAILED');
+  if (_debug) console.log('[Iron Gate INLINE]', ok ? '✅ Inline fetch interceptor ACTIVE' : '❌ Fetch patch FAILED');
 }
 
 chrome.webNavigation.onCommitted.addListener(async (details) => {
@@ -720,8 +913,9 @@ chrome.webNavigation.onCommitted.addListener(async (details) => {
         files,
         injectImmediately: true,
       });
-      console.log(`[Iron Gate] Programmatic MAIN world injection → tab ${details.tabId} (${details.url?.substring(0, 60)})`);
+      igLog('Programmatic MAIN world injection → tab', details.tabId, `(${details.url?.substring(0, 60)})`);
     }
+
   } catch (err) {
     console.warn(`[Iron Gate] Programmatic file injection failed:`, err);
   }
@@ -735,8 +929,8 @@ chrome.webNavigation.onCommitted.addListener(async (details) => {
         func: () => (window as any).__IRON_GATE_MAIN_WORLD,
       });
 
-      if (checkResult?.result === 'active') {
-        console.log(`[Iron Gate] MAIN world confirmed active on tab ${details.tabId}`);
+      if (checkResult?.result === 'active' || checkResult?.result === 'loading') {
+        igLog('MAIN world', checkResult?.result, 'on tab', details.tabId);
         return;
       }
 
@@ -746,12 +940,57 @@ chrome.webNavigation.onCommitted.addListener(async (details) => {
         world: 'MAIN' as any,
         func: inlineFetchInterceptor,
       });
-      console.log(`[Iron Gate] Inline fallback injected → tab ${details.tabId}`);
+      igLog('Inline fallback injected → tab', details.tabId);
     } catch (err) {
       console.warn(`[Iron Gate] Fallback check/injection failed:`, err);
     }
   }, 1500);
 }, { url: AI_TOOL_URL_FILTERS });
+
+// Fallback: tabs.onUpdated catches pages that webNavigation.onCommitted misses
+// (e.g., SPA navigations, tabs opened before extension was reloaded).
+
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (changeInfo.status !== 'complete') return;
+  if (!tab.url || !AI_HOST_REGEX.test(tab.url)) return;
+
+  try {
+    const [checkResult] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN' as any,
+      func: () => (window as any).__IRON_GATE_MAIN_WORLD,
+    });
+
+    if (checkResult?.result === 'active') return; // Already injected
+    if (checkResult?.result === 'loading') return; // Init in progress — don't double-inject
+
+    igLog('tabs.onUpdated fallback: injecting into tab', tabId, `(state: ${checkResult?.result})`, `(${tab.url?.substring(0, 60)})`);
+
+    const manifest = chrome.runtime.getManifest();
+    const mainWorldCS = (manifest.content_scripts as any[])?.find(
+      (cs: any) => cs.world === 'MAIN'
+    );
+    const files = mainWorldCS?.js as string[] | undefined;
+
+    if (files && files.length > 0) {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'MAIN' as any,
+        files,
+        injectImmediately: true,
+      });
+      igLog('tabs.onUpdated: MAIN world injected → tab', tabId);
+    }
+  } catch (err) {
+    // Expected for non-matching tabs or tabs without permission
+  }
+});
+
+// ─── Tab Lifecycle: clean up per-tab state on close ──────────────────────────
+chrome.tabs.onRemoved.addListener((tabId) => {
+  igLog('Tab closed:', tabId);
+  removeTabState(tabId);
+});
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

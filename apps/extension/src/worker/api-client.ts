@@ -17,9 +17,9 @@ interface ApiClientConfig {
   apiKey: string; // API key for X-API-Key auth (alternative to JWT)
 }
 
-// Default API key for development — overridden by user-configured key in storage
-const DEFAULT_API_KEY = 'ig_4ba4d382a65b1ff6acbfb7658fdde1b129917cfa1dbd6458d5c0077cd9b98788';
-const DEFAULT_FIRM_ID = '6a3de5b8-2ad3-4d94-9171-c02951e09e4e';
+// No hardcoded credentials — user must configure API key in Iron Gate settings
+const DEFAULT_API_KEY = '';
+const DEFAULT_FIRM_ID = '';
 
 let config: ApiClientConfig = {
   baseUrl: API_BASE_URL,
@@ -63,13 +63,20 @@ export async function apiRequest<T>(options: RequestOptions): Promise<T> {
       // Build auth headers: prefer API key, fall back to JWT
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
-        'X-Firm-ID': config.firmId,
       };
+      if (config.firmId) {
+        headers['X-Firm-ID'] = config.firmId;
+      }
       if (config.apiKey) {
         headers['X-API-Key'] = config.apiKey;
       } else {
         const token = await config.getToken();
-        if (token) headers['Authorization'] = `Bearer ${token}`;
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        } else if (attempt === 0) {
+          // No API key and no JWT — fail fast with a helpful message
+          throw new ApiError(401, 'No API key configured. Open the Iron Gate side panel and enter your API key in Settings.');
+        }
       }
 
       const response = await fetch(url, {
@@ -144,12 +151,17 @@ export async function apiUploadFile<T>(
   formData.append('file', blob, fileName);
 
   // Build auth headers: prefer API key, fall back to JWT
-  const headers: Record<string, string> = { 'X-Firm-ID': config.firmId };
+  const headers: Record<string, string> = {};
+  if (config.firmId) headers['X-Firm-ID'] = config.firmId;
   if (config.apiKey) {
     headers['X-API-Key'] = config.apiKey;
   } else {
     const token = await config.getToken();
-    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    } else {
+      throw new ApiError(401, 'No API key configured. Open the Iron Gate side panel and enter your API key in Settings.');
+    }
   }
 
   const response = await fetch(url, {

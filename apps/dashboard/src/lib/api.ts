@@ -10,23 +10,34 @@ export function useApiClient() {
   async function resolveToken(): Promise<string> {
     try {
       const token = await getToken();
-      return token || '';
-    } catch {
-      return '';
+      if (!token) {
+        throw new Error('Session expired. Please sign in again.');
+      }
+      return token;
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('Session expired')) throw err;
+      throw new Error('Authentication failed. Please sign in again.');
     }
   }
 
   async function apiFetch(path: string, options?: RequestInit): Promise<Response> {
     const token = await resolveToken();
 
-    return fetch(`${API_BASE_URL}${path}`, {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
       ...options,
+      signal: options?.signal || AbortSignal.timeout(15000),
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        'Authorization': `Bearer ${token}`,
         ...options?.headers,
       },
     });
+
+    if (response.status === 401) {
+      throw new Error('Session expired. Please sign in again.');
+    }
+
+    return response;
   }
 
   /**
@@ -36,13 +47,20 @@ export function useApiClient() {
   async function apiFetchRaw(path: string, options?: RequestInit): Promise<Response> {
     const token = await resolveToken();
 
-    return fetch(`${API_BASE_URL}${path}`, {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
       ...options,
+      signal: options?.signal || AbortSignal.timeout(30000),
       headers: {
-        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        'Authorization': `Bearer ${token}`,
         ...options?.headers,
       },
     });
+
+    if (response.status === 401) {
+      throw new Error('Session expired. Please sign in again.');
+    }
+
+    return response;
   }
 
   return { apiFetch, apiFetchRaw };

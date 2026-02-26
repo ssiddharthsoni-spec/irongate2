@@ -7,6 +7,7 @@
 import { db } from '../db/client';
 import { firmPlugins } from '../db/schema';
 import { eq, and, sql } from 'drizzle-orm';
+import { logger } from '../lib/logger';
 
 interface PluginResult {
   type: string;
@@ -88,7 +89,7 @@ export async function runPlugins(firmId: string, text: string): Promise<PluginRe
         .where(eq(firmPlugins.id, plugin.id))
         .catch(() => {});
     } catch (error) {
-      console.warn(`[Plugin Loader] Plugin "${plugin.name}" failed:`, error);
+      logger.warn('Plugin execution failed', { pluginName: plugin.name, error: error instanceof Error ? error.message : String(error) });
     }
   }
 

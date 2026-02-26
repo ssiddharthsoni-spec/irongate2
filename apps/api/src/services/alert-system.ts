@@ -9,6 +9,7 @@ import { db } from '../db/client';
 import { firms, users, alerts } from '../db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { dispatch as dispatchWebhook } from './webhook-dispatcher';
+import { logger } from '../lib/logger';
 
 export type AlertSeverity = 'info' | 'warning' | 'critical';
 
@@ -80,7 +81,7 @@ export async function dispatchAlert(payload: AlertPayload): Promise<string> {
 
   // Fire-and-forget — don't block the caller
   Promise.allSettled(dispatches).catch((err) => {
-    console.error('[AlertSystem] Dispatch error:', err);
+    logger.error('Alert dispatch error', { error: err instanceof Error ? err.message : String(err) });
   });
 
   return alert.id;
@@ -148,10 +149,10 @@ async function sendAlertEmails(payload: AlertPayload, firmName: string): Promise
         );
       }
     } catch {
-      console.log(`[AlertSystem] Email service not configured. Alert: ${payload.title}`);
+      logger.info('Email service not configured, skipping alert email', { alertTitle: payload.title });
     }
   } catch (error) {
-    console.error('[AlertSystem] Failed to send email alerts:', error);
+    logger.error('Failed to send email alerts', { error: error instanceof Error ? error.message : String(error) });
   }
 }
 
@@ -210,7 +211,7 @@ async function sendSlackAlert(webhookUrl: string, payload: AlertPayload): Promis
       signal: AbortSignal.timeout(10000),
     });
   } catch (error) {
-    console.error('[AlertSystem] Slack delivery failed:', error);
+    logger.error('Slack alert delivery failed', { error: error instanceof Error ? error.message : String(error) });
   }
 }
 
@@ -233,6 +234,6 @@ async function sendCustomWebhook(webhookUrl: string, payload: AlertPayload): Pro
       signal: AbortSignal.timeout(10000),
     });
   } catch (error) {
-    console.error('[AlertSystem] Custom webhook delivery failed:', error);
+    logger.error('Custom webhook delivery failed', { error: error instanceof Error ? error.message : String(error) });
   }
 }

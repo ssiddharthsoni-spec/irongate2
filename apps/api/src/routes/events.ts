@@ -10,6 +10,7 @@ import { forward as siemForward } from '../services/siem-forwarder';
 import { analyzePatterns } from '../services/inference-engine';
 import { sha256 } from '@iron-gate/crypto';
 import type { AppEnv } from '../types';
+import { logger } from '../lib/logger';
 
 // ---------------------------------------------------------------------------
 // Data Minimization: strip raw PII text from entities before storage.
@@ -65,16 +66,16 @@ const eventSchema = z.object({
   sensitivityScore: z.number().min(0).max(100),
   sensitivityLevel: z.enum(['low', 'medium', 'high', 'critical']),
   entities: z.array(z.object({
-    type: z.string(),
-    text: z.string(),
-    start: z.number(),
-    end: z.number(),
-    confidence: z.number(),
-    source: z.string(),
+    type: z.string().min(1).max(50),
+    text: z.string().min(1),
+    start: z.number().int().min(0),
+    end: z.number().int().min(0),
+    confidence: z.number().min(0).max(1),
+    source: z.string().min(1).max(20),
   })).optional().default([]),
   action: z.enum(['pass', 'warn', 'block', 'proxy', 'override']),
   overrideReason: z.string().optional(),
-  captureMethod: z.string(),
+  captureMethod: z.string().min(1).max(20),
   sessionId: z.string().uuid().optional(),
   metadata: z.record(z.unknown()).optional(),
 });
@@ -278,7 +279,7 @@ eventsRoutes.get('/', async (c) => {
 
   return c.json({
     events: results,
-    total: countResult?.count || 0,
+    total: Number(countResult?.count || 0),
     limit,
     offset,
   });
@@ -313,7 +314,7 @@ function triggerInferenceIfNeeded(firmId: string): void {
   if (count >= INFERENCE_TRIGGER_THRESHOLD) {
     firmEventCounters.set(firmId, 0);
     analyzePatterns(firmId).catch((err) =>
-      console.warn('[Events] Inference engine auto-trigger failed:', err),
+      logger.warn('Inference engine auto-trigger failed', { error: err instanceof Error ? err.message : String(err) }),
     );
   }
 }

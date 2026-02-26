@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { SensitivityScore, DetectedEntity, AIToolId } from '@iron-gate/types';
 
 interface ActivityItem {
@@ -32,6 +32,28 @@ const ENTITY_TYPES = [
 
 const DEFAULT_API_URL = 'https://irongate-api.onrender.com/v1';
 
+interface DocumentScanData {
+  fileName: string;
+  fileType: string;
+  fileSize: number;
+  textLength: number;
+  score: number;
+  level: string;
+  entitiesFound: number;
+  explanation: string;
+  entities: Array<{
+    type: string;
+    start: number;
+    end: number;
+    confidence: number;
+    source: string;
+    length: number;
+  }>;
+  breakdown: Record<string, number>;
+  redactedText: string;
+  entitiesRedacted: number;
+}
+
 interface PromptInspectorData {
   originalPrompt: string;
   maskedPrompt: string;
@@ -50,6 +72,11 @@ export function App() {
   const [inspectorData, setInspectorData] = useState<PromptInspectorData | null>(null);
   const [inspectorView, setInspectorView] = useState<'original' | 'masked' | 'mappings'>('original');
   const [inspectorOpen, setInspectorOpen] = useState(true);
+
+  // Document Inspector state
+  const [docScanData, setDocScanData] = useState<DocumentScanData | null>(null);
+  const [docInspectorOpen, setDocInspectorOpen] = useState(true);
+  const [docInspectorView, setDocInspectorView] = useState<'overview' | 'entities' | 'redacted'>('overview');
 
   const [copiedSafe, setCopiedSafe] = useState(false);
 
@@ -88,6 +115,13 @@ export function App() {
   const [mode, setMode] = useState<'audit' | 'proxy'>('audit');
   const [apiKeyDraft, setApiKeyDraft] = useState('');
   const [apiKeySaved, setApiKeySaved] = useState(false);
+  const [protectionHealthy, setProtectionHealthy] = useState<boolean | null>(null);
+
+  // Active tab tracking for multi-tab awareness
+  const [activeTabId, setActiveTabId] = useState<number | null>(null);
+  const activeTabIdRef = useRef<number | null>(null);
+  // Keep ref in sync with state (ref is readable inside closures without re-rendering)
+  useEffect(() => { activeTabIdRef.current = activeTabId; }, [activeTabId]);
 
   // Load saved state on mount (API URL, connection, mode, recent activity, API key)
   useEffect(() => {
@@ -109,9 +143,10 @@ export function App() {
       if (result.recentActivity && Array.isArray(result.recentActivity)) {
         setRecentActivity(result.recentActivity);
       }
-      if (result.lastScore) {
-        setLastScore(result.lastScore);
-      }
+      // Don't restore lastScore on mount — it shows stale data from previous sessions.
+      // Last Detection panel should only show detections from the current browsing session.
+      // Clear any stale stored score.
+      chrome.storage.local.remove('lastScore');
     });
   }, []);
 
@@ -217,22 +252,102 @@ export function App() {
   }, [lastScore]);
 
   useEffect(() => {
+    // Track which tool was last active so we can clear stale detections on tool change
+    let previousToolId: string | null = null;
+
+    // Known AI tool hosts — used as URL-based fallback when content script hasn't responded yet
+    const AI_TOOL_HOSTS: Record<string, string> = {
+      'chatgpt.com': 'ChatGPT', 'chat.openai.com': 'ChatGPT',
+      'claude.ai': 'Claude', 'gemini.google.com': 'Gemini',
+      'copilot.microsoft.com': 'Copilot', 'chat.deepseek.com': 'DeepSeek',
+      'poe.com': 'Poe', 'perplexity.ai': 'Perplexity', 'www.perplexity.ai': 'Perplexity',
+      'you.com': 'You.com', 'huggingface.co': 'HuggingFace', 'groq.com': 'Groq',
+    };
+
+    function getToolNameFromUrl(url: string | undefined): string | null {
+      if (!url) return null;
+      try {
+        const host = new URL(url).hostname;
+        return AI_TOOL_HOSTS[host] || null;
+      } catch { return null; }
+    }
+
     // Check current tab for AI tool — with retry since content script may not be ready yet
     function checkCurrentTab() {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (tabs[0]?.id) {
-          chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_STATUS' }, (response) => {
-            // Suppress errors when content script isn't available
-            if (chrome.runtime.lastError) return;
-            if (response?.active) {
+        const tab = tabs[0];
+        if (!tab?.id) return;
+
+        const tabId = tab.id;
+        setActiveTabId(tabId);
+        activeTabIdRef.current = tabId;
+
+        // Query the content script for tool status
+        chrome.tabs.sendMessage(tabId, { type: 'GET_STATUS' }, (response) => {
+          // If content script didn't respond, use URL-based fallback
+          if (chrome.runtime.lastError) {
+            const urlTool = getToolNameFromUrl(tab.url);
+            if (urlTool) {
+              // We're on an AI tool page but content script isn't ready yet
               setStatus('monitoring');
-              setCurrentTool(response.aiToolName || response.aiTool || 'AI Tool');
-            } else {
-              setStatus('idle');
-              setCurrentTool(null);
+              setCurrentTool(urlTool);
+              if (!previousToolId || previousToolId === urlTool) {
+                previousToolId = urlTool;
+              }
             }
-          });
-        }
+            return;
+          }
+          if (response?.active) {
+            const toolId = response.aiTool || response.aiToolName || 'AI Tool';
+            setStatus('monitoring');
+            setCurrentTool(response.aiToolName || response.aiTool || 'AI Tool');
+
+            // Clear stale detection data when switching to a different AI tool
+            if (previousToolId && previousToolId !== toolId) {
+              setLastScore(null);
+              setInspectorData(null);
+              chrome.storage.local.remove('lastScore');
+            }
+            previousToolId = toolId;
+          } else {
+            setStatus('idle');
+            setCurrentTool(null);
+            // Clear stale detection when navigating away from AI tools
+            if (previousToolId) {
+              setLastScore(null);
+              setInspectorData(null);
+              chrome.storage.local.remove('lastScore');
+              previousToolId = null;
+            }
+          }
+        });
+
+        // Fetch per-tab detection state from service worker
+        chrome.runtime.sendMessage(
+          { type: 'GET_TAB_STATE', payload: { tabId } },
+          (response) => {
+            if (chrome.runtime.lastError) return;
+            if (response?.ok && response.state) {
+              const s = response.state;
+              if (s.lastScore !== null) {
+                setLastScore({
+                  score: s.lastScore,
+                  level: s.lastLevel || 'low',
+                  explanation: s.lastExplanation || '',
+                  entities: s.lastEntities || [],
+                  aiToolId: s.aiToolId,
+                } as any);
+              }
+              if (s.lastOriginalPrompt) {
+                setInspectorData({
+                  originalPrompt: s.lastOriginalPrompt,
+                  maskedPrompt: s.lastMaskedPrompt || '',
+                  pseudonymMappings: s.lastPseudonymMappings || [],
+                });
+              }
+            }
+          }
+        );
       });
     }
 
@@ -243,6 +358,10 @@ export function App() {
       setTimeout(checkCurrentTab, 3000),
       setTimeout(checkCurrentTab, 5000),
     ];
+
+    // Periodic re-check every 8s — catches cases where content script loads late
+    // (e.g., heavy SPAs like Perplexity) or after extension reload
+    const periodicCheck = setInterval(checkCurrentTab, 8000);
 
     // Also re-check when the active tab changes
     const tabListener = (_tabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
@@ -261,10 +380,9 @@ export function App() {
     const messageListener = (message: any) => {
       if (message.type === 'SENSITIVITY_SCORE') {
         const newScore = message.payload;
-        setLastScore(newScore);
-        setFeedbackSent(new Set());
-        setFeedbackOpen(null);
+        const scoreTabId = newScore.tabId;
 
+        // Always add to recent activity regardless of which tab
         const newItem = {
           id: crypto.randomUUID(),
           aiTool: newScore.aiToolId || 'generic',
@@ -276,23 +394,36 @@ export function App() {
 
         setRecentActivity((prev) => {
           const updated = [newItem, ...prev.slice(0, 49)];
-          // Persist to storage so it survives sidepanel reopens
-          chrome.storage.local.set({
-            recentActivity: updated.slice(0, 20),
-            lastScore: newScore,
-          });
+          chrome.storage.local.set({ recentActivity: updated.slice(0, 20) });
           return updated;
         });
 
-        // Update Prompt Inspector data if available
-        if (newScore.originalPrompt) {
-          setInspectorData({
-            originalPrompt: newScore.originalPrompt,
-            maskedPrompt: newScore.maskedPrompt,
-            pseudonymMappings: newScore.pseudonymMappings || [],
-          });
-          setInspectorOpen(true);
+        // Only update the main display if this score is for the ACTIVE tab.
+        // Accept the score if: no tab context on the score (legacy), OR
+        // we don't know the active tab yet (null), OR tab IDs match.
+        const currentActiveTab = activeTabIdRef.current;
+        if (scoreTabId == null || currentActiveTab == null || scoreTabId === currentActiveTab) {
+          setLastScore(newScore);
+          setFeedbackSent(new Set());
+          setFeedbackOpen(null);
+
+          // Persist lastScore for this tab
+          chrome.storage.local.set({ lastScore: newScore });
+
+          // Update Prompt Inspector data if available
+          if (newScore.originalPrompt) {
+            setInspectorData({
+              originalPrompt: newScore.originalPrompt,
+              maskedPrompt: newScore.maskedPrompt,
+              pseudonymMappings: newScore.pseudonymMappings || [],
+            });
+            setInspectorOpen(true);
+          }
         }
+      }
+
+      if (message.type === 'PROTECTION_STATUS') {
+        setProtectionHealthy(message.payload?.healthy ?? null);
       }
 
       if (message.type === 'FILE_SCAN_RESULT') {
@@ -314,12 +445,30 @@ export function App() {
           chrome.storage.local.set({ recentActivity: updated.slice(0, 20) });
           return updated;
         });
+
+        // Populate Document Inspector
+        setDocScanData({
+          fileName: p.fileName,
+          fileType: p.fileType || '',
+          fileSize: p.fileSize || 0,
+          textLength: p.textLength || 0,
+          score: p.score,
+          level: p.level,
+          entitiesFound: p.entitiesFound || 0,
+          explanation: p.explanation || '',
+          entities: p.entities || [],
+          breakdown: p.breakdown || {},
+          redactedText: p.redactedText || '',
+          entitiesRedacted: p.entitiesRedacted || 0,
+        });
+        setDocInspectorOpen(true);
       }
     };
     chrome.runtime.onMessage.addListener(messageListener);
 
     return () => {
       retryTimers.forEach(clearTimeout);
+      clearInterval(periodicCheck);
       chrome.runtime.onMessage.removeListener(messageListener);
       chrome.tabs.onUpdated.removeListener(tabListener);
       chrome.tabs.onActivated.removeListener(activatedListener);
@@ -513,7 +662,9 @@ export function App() {
         <div className="flex items-center gap-2">
           <div
             className={`w-2.5 h-2.5 rounded-full ${
-              status === 'monitoring'
+              protectionHealthy === false
+                ? 'bg-red-500'
+                : status === 'monitoring'
                 ? 'bg-green-500 animate-pulse'
                 : status === 'error'
                 ? 'bg-red-500'
@@ -521,7 +672,9 @@ export function App() {
             }`}
           />
           <span className="text-sm font-medium text-gray-700">
-            {status === 'monitoring'
+            {protectionHealthy === false
+              ? 'Protection Degraded'
+              : status === 'monitoring'
               ? `Monitoring ${currentTool}`
               : status === 'error'
               ? 'Error'
@@ -539,6 +692,11 @@ export function App() {
             {mode.toUpperCase()}
           </button>
         </div>
+        {protectionHealthy === false && (
+          <p className="text-xs text-red-600 mt-2">
+            Fetch interception failed on this page. Prompts may not be scanned or pseudonymized. Try refreshing the page.
+          </p>
+        )}
       </div>
 
       {/* Current Score */}
@@ -782,6 +940,227 @@ export function App() {
                           </div>
                         ))}
                       </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Document Inspector */}
+      {docScanData && (
+        <div className="bg-white rounded-lg mb-4 shadow-sm border">
+          <button
+            onClick={() => setDocInspectorOpen(!docInspectorOpen)}
+            className="w-full px-4 py-3 flex items-center justify-between border-b hover:bg-gray-50 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-iron-600" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
+              </svg>
+              <h2 className="text-sm font-medium text-gray-700">Document Inspector</h2>
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-700 uppercase">
+                {docScanData.fileType}
+              </span>
+            </div>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className={`h-4 w-4 text-gray-400 transition-transform ${docInspectorOpen ? 'rotate-180' : ''}`}
+              viewBox="0 0 20 20"
+              fill="currentColor"
+            >
+              <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+            </svg>
+          </button>
+
+          {docInspectorOpen && (
+            <div>
+              {/* Score header */}
+              <div className="px-4 py-3 border-b bg-gray-50">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`text-2xl font-bold ${
+                        docScanData.level === 'critical'
+                          ? 'text-risk-critical'
+                          : docScanData.level === 'high'
+                          ? 'text-risk-high'
+                          : docScanData.level === 'medium'
+                          ? 'text-risk-medium'
+                          : 'text-risk-low'
+                      }`}
+                    >
+                      {docScanData.score}
+                    </span>
+                    <div>
+                      <div className="text-xs font-medium capitalize">{docScanData.level} Risk</div>
+                      <div className="text-[10px] text-gray-500">{docScanData.entitiesFound} entities found</div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs text-gray-600 font-medium truncate max-w-[140px]" title={docScanData.fileName}>
+                      {docScanData.fileName}
+                    </div>
+                    <div className="text-[10px] text-gray-400">
+                      {docScanData.fileSize > 0 ? `${(docScanData.fileSize / 1024).toFixed(1)} KB` : ''}
+                      {docScanData.textLength > 0 ? ` / ${docScanData.textLength.toLocaleString()} chars` : ''}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Tab bar */}
+              <div className="flex border-b">
+                <button
+                  onClick={() => setDocInspectorView('overview')}
+                  className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
+                    docInspectorView === 'overview'
+                      ? 'text-iron-700 border-b-2 border-iron-600 bg-iron-50'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Overview
+                </button>
+                <button
+                  onClick={() => setDocInspectorView('entities')}
+                  className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
+                    docInspectorView === 'entities'
+                      ? 'text-iron-700 border-b-2 border-iron-600 bg-iron-50'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Entities ({docScanData.entitiesFound})
+                </button>
+                <button
+                  onClick={() => setDocInspectorView('redacted')}
+                  className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
+                    docInspectorView === 'redacted'
+                      ? 'text-iron-700 border-b-2 border-iron-600 bg-iron-50'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Redacted
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="p-3 max-h-64 overflow-y-auto">
+                {docInspectorView === 'overview' && (
+                  <div className="space-y-3">
+                    {/* Entity type breakdown */}
+                    {docScanData.entities.length > 0 && (
+                      <div>
+                        <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1.5">Sensitive Data Types Found</p>
+                        <div className="flex flex-wrap gap-1">
+                          {Object.entries(
+                            docScanData.entities.reduce<Record<string, number>>((acc, e) => {
+                              acc[e.type] = (acc[e.type] || 0) + 1;
+                              return acc;
+                            }, {})
+                          )
+                            .sort(([, a], [, b]) => b - a)
+                            .map(([type, count]) => (
+                              <span
+                                key={type}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-iron-100 text-iron-700"
+                              >
+                                {type}
+                                <span className="text-[10px] text-iron-500">x{count}</span>
+                              </span>
+                            ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Score breakdown */}
+                    {Object.keys(docScanData.breakdown).length > 0 && (
+                      <div>
+                        <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1.5">Score Breakdown</p>
+                        <div className="space-y-1">
+                          {Object.entries(docScanData.breakdown)
+                            .sort(([, a], [, b]) => b - a)
+                            .map(([key, value]) => (
+                              <div key={key} className="flex items-center justify-between text-xs">
+                                <span className="text-gray-600 capitalize">{key.replace(/_/g, ' ')}</span>
+                                <span className="font-mono text-gray-700 font-medium">+{value}</span>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Explanation */}
+                    {docScanData.explanation && (
+                      <div>
+                        <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">Analysis</p>
+                        <p className="text-xs text-gray-600">{docScanData.explanation}</p>
+                      </div>
+                    )}
+
+                    {/* Metadata */}
+                    <div>
+                      <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">Document Info</p>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                        <span className="text-gray-500">Type</span>
+                        <span className="text-gray-700 uppercase">{docScanData.fileType}</span>
+                        <span className="text-gray-500">Size</span>
+                        <span className="text-gray-700">{(docScanData.fileSize / 1024).toFixed(1)} KB</span>
+                        <span className="text-gray-500">Text Length</span>
+                        <span className="text-gray-700">{docScanData.textLength.toLocaleString()} chars</span>
+                        <span className="text-gray-500">Entities Redacted</span>
+                        <span className="text-gray-700">{docScanData.entitiesRedacted}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {docInspectorView === 'entities' && (
+                  <div>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1.5">
+                      Detected entities (positions only — no raw PII)
+                    </p>
+                    {docScanData.entities.length === 0 ? (
+                      <p className="text-xs text-gray-400 italic">No entities detected.</p>
+                    ) : (
+                      <div className="space-y-1">
+                        {docScanData.entities.map((entity, i) => (
+                          <div
+                            key={i}
+                            className="flex items-center gap-2 text-xs bg-gray-50 rounded-md px-2.5 py-1.5 border"
+                          >
+                            <span className="font-medium text-iron-700 min-w-[100px]">{entity.type}</span>
+                            <span className="text-gray-400 font-mono text-[10px]">
+                              {entity.start}-{entity.end}
+                            </span>
+                            <span className="text-gray-500 text-[10px]">
+                              {entity.length} chars
+                            </span>
+                            <span className="ml-auto text-[10px] text-gray-400">
+                              {(entity.confidence * 100).toFixed(0)}%
+                            </span>
+                            <span className="text-[10px] text-gray-300 bg-gray-100 rounded px-1 py-0.5">
+                              {entity.source}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {docInspectorView === 'redacted' && (
+                  <div>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1.5">
+                      Pseudonymized document text
+                    </p>
+                    {docScanData.redactedText ? (
+                      <pre className="text-xs text-gray-700 whitespace-pre-wrap break-words bg-green-50 border border-green-100 rounded-md p-2.5 leading-relaxed font-mono">
+                        {docScanData.redactedText}
+                      </pre>
+                    ) : (
+                      <p className="text-xs text-gray-400 italic">No redacted text available.</p>
                     )}
                   </div>
                 )}

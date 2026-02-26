@@ -1,13 +1,14 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { db } from '../db/client';
-import { firms, events } from '../db/schema';
+import { firms } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { Pseudonymizer } from '../proxy/pseudonymizer';
 import type { PseudonymMap } from '../proxy/pseudonymizer';
 import { PseudonymStore } from '../proxy/pseudonym-store';
 import { LLMRouter } from '../proxy/llm-router';
 import type { FirmLLMConfig } from '../proxy/llm-router';
+import { appendEvent } from '../services/audit-chain';
 import type { AppEnv } from '../types';
 import { detectFirmAware, scoreFirmAware } from '../detection';
 
@@ -208,7 +209,7 @@ proxyRoutes.post('/send', async (c) => {
 
     const latencyMs = Date.now() - startTime;
 
-    // 5. Log the proxy event to the events table
+    // 5. Log the proxy event via audit chain for cryptographic trail
     const promptHash = await sha256(parsed.maskedPrompt);
     const action: 'proxy' | 'pass' = parsed.route === 'passthrough' ? 'pass' : 'proxy';
     const sensitivityLevel: 'low' | 'medium' | 'high' | 'critical' =
@@ -216,7 +217,7 @@ proxyRoutes.post('/send', async (c) => {
       : parsed.route === 'cloud_masked' ? 'medium'
       : 'high';
 
-    await db.insert(events).values({
+    await appendEvent({
       firmId,
       userId,
       aiToolId: `proxy:${parsed.model}`,

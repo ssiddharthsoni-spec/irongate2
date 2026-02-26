@@ -1,4 +1,5 @@
 import { createMiddleware } from 'hono/factory';
+import { logger } from '../lib/logger';
 
 /**
  * Redis-backed sliding window rate limiter with in-memory fallback.
@@ -35,10 +36,10 @@ async function getRedis() {
     });
     await redis.connect();
     redisAvailable = true;
-    console.log('[Rate Limit] Redis connected');
+    logger.info('Redis connected');
     return redis;
   } catch {
-    console.warn('[Rate Limit] Redis unavailable, using in-memory fallback');
+    logger.warn('Redis unavailable, using in-memory fallback');
     redis = false;
     redisAvailable = false;
     return null;
@@ -50,6 +51,7 @@ async function getRedis() {
 // ---------------------------------------------------------------------------
 
 const requestCounts = new Map<string, { count: number; resetTime: number }>();
+const MAX_MAP_ENTRIES = 10_000;
 const CLEANUP_INTERVAL = 5 * 60_000;
 let lastCleanup = Date.now();
 
@@ -68,6 +70,16 @@ function evictExpiredEntries() {
 async function checkInMemory(key: string): Promise<{ count: number; remaining: number; resetTime: number }> {
   const now = Date.now();
   evictExpiredEntries();
+
+  // Hard cap: evict oldest entries if map grows too large
+  if (requestCounts.size > MAX_MAP_ENTRIES) {
+    const toDelete = requestCounts.size - MAX_MAP_ENTRIES + 1000;
+    const iter = requestCounts.keys();
+    for (let i = 0; i < toDelete; i++) {
+      const k = iter.next().value;
+      if (k) requestCounts.delete(k);
+    }
+  }
 
   let entry = requestCounts.get(key);
   if (!entry || now > entry.resetTime) {

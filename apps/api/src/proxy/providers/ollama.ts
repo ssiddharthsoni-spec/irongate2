@@ -5,6 +5,7 @@
 
 import type { LLMProviderConfig } from '@iron-gate/types';
 import type { LLMProvider, LLMRequest, LLMResponse } from '../llm-router';
+import { logger } from '../../lib/logger';
 
 const DEFAULT_BASE_URL = 'http://localhost:11434';
 const DEFAULT_MODEL = 'llama3';
@@ -120,9 +121,12 @@ export class OllamaProvider implements LLMProvider {
 
       if (response.status >= 500 && attempt < MAX_RETRIES) {
         const delayMs = RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
-        console.warn(
-          `[Ollama] Retrying request (attempt ${attempt}/${MAX_RETRIES}) after ${delayMs}ms — status ${response.status}`
-        );
+        logger.warn('Retrying request', {
+          attempt,
+          maxRetries: MAX_RETRIES,
+          delayMs,
+          status: response.status,
+        });
         await this.sleep(delayMs);
         return this.fetchWithRetry(url, init, attempt + 1);
       }
@@ -132,10 +136,12 @@ export class OllamaProvider implements LLMProvider {
       // Ollama is local — connection refused is common if the server is down
       if (attempt < MAX_RETRIES) {
         const delayMs = RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
-        console.warn(
-          `[Ollama] Connection error, retrying (attempt ${attempt}/${MAX_RETRIES}) after ${delayMs}ms:`,
-          error
-        );
+        logger.warn('Connection error, retrying', {
+          attempt,
+          maxRetries: MAX_RETRIES,
+          delayMs,
+          error: error instanceof Error ? error.message : String(error),
+        });
         await this.sleep(delayMs);
         return this.fetchWithRetry(url, init, attempt + 1);
       }

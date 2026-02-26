@@ -1,7 +1,27 @@
 // Iron Gate API Server
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { logger } from 'hono/logger';
+import { logger as honoLogger } from 'hono/logger';
+import { logger } from './lib/logger';
+import { z } from 'zod';
+
+// ── Sentry (initialize before anything else) ──────────────────────────────
+let SentryMod: any = null;
+if (process.env.SENTRY_DSN) {
+  try {
+    const mod = require('@sentry/node');
+    mod.init({
+      dsn: process.env.SENTRY_DSN,
+      environment: process.env.NODE_ENV || 'development',
+      tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
+    });
+    SentryMod = mod;
+    logger.info('Sentry initialized');
+  } catch {
+    logger.warn('Sentry SDK not available — error tracking disabled');
+  }
+}
+
 import { eventsRoutes } from './routes/events';
 import { dashboardRoutes } from './routes/dashboard';
 import { adminRoutes } from './routes/admin';
@@ -18,11 +38,16 @@ import { inviteRoutes } from './routes/invites';
 import { stripeWebhookRoutes } from './routes/stripe-webhook';
 import { alertRoutes } from './routes/alerts';
 import { apiKeyRoutes } from './routes/api-keys';
+import { complianceRoutes } from './routes/compliance';
+import { userDataRoutes } from './routes/user-data';
 import { authMiddleware } from './middleware/auth';
 import { rateLimitMiddleware } from './middleware/rate-limit';
 import { firmContextMiddleware } from './middleware/firm-context';
 import { securityHeadersMiddleware } from './middleware/security-headers';
 import { requestLoggerMiddleware } from './middleware/request-logger';
+import { requirePerm } from './middleware/rbac';
+import { metrics } from './lib/metrics';
+import { openApiSpec } from './docs/openapi';
 import type { AppEnv } from './types';
 
 const app = new Hono<AppEnv>();
@@ -42,7 +67,7 @@ if (process.env.CHROME_EXTENSION_ID) {
 }
 
 // Global middleware
-app.use('*', logger());
+app.use('*', honoLogger());
 app.use('*', securityHeadersMiddleware);
 app.use('*', requestLoggerMiddleware);
 app.use(
@@ -50,9 +75,13 @@ app.use(
   cors({
     origin: (origin) => {
       if (!origin) return allowedOrigins[0];
-      // Always allow Chrome extensions (each install has a unique ID)
+      // Only allow registered Iron Gate Chrome extension IDs
       if (origin.startsWith('chrome-extension://')) {
-        return origin;
+        const extId = origin.replace('chrome-extension://', '');
+        const allowedIds = (process.env.ALLOWED_EXTENSION_IDS || process.env.CHROME_EXTENSION_ID || '')
+          .split(',').map((id: string) => id.trim()).filter(Boolean);
+        if (allowedIds.length === 0) return null;
+        return allowedIds.includes(extId) ? origin : null;
       }
       return allowedOrigins.includes(origin) ? origin : null;
     },
@@ -65,7 +94,7 @@ app.use(
 app.get('/health', async (c) => {
   const health: Record<string, unknown> = {
     status: 'ok',
-    version: '0.2.0',
+    version: '0.3.0',
     timestamp: new Date().toISOString(),
   };
 
@@ -90,9 +119,27 @@ app.get('/health', async (c) => {
 app.get('/v1/health', async (c) => {
   return c.json({
     status: 'ok',
-    version: '0.2.0',
+    version: '0.3.0',
     timestamp: new Date().toISOString(),
   });
+});
+
+// Metrics endpoint (no auth) — operational metrics for monitoring
+app.get('/health/metrics', (c) => {
+  return c.json(metrics.snapshot());
+});
+
+// API Documentation (no auth)
+app.get('/openapi.json', (c) => c.json(openApiSpec));
+app.get('/docs', (c) => {
+  const html = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"/><title>Iron Gate API Docs</title>
+<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css"/>
+</head><body><div id="swagger-ui"></div>
+<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script>SwaggerUIBundle({ url: '/openapi.json', dom_id: '#swagger-ui' });</script>
+</body></html>`;
+  return c.html(html);
 });
 
 // Auth routes (self-authenticated — must be mounted before the global auth middleware)
@@ -105,6 +152,10 @@ app.route('/v1/webhooks/stripe', stripeWebhookRoutes);
 app.use('/v1/*', authMiddleware);
 app.use('/v1/*', rateLimitMiddleware);
 app.use('/v1/*', firmContextMiddleware);
+
+// RBAC enforcement on admin and privileged routes
+app.use('/v1/admin/*', requirePerm('viewDashboard'));
+app.use('/v1/invites/*', requirePerm('inviteUsers'));
 
 app.route('/v1/events', eventsRoutes);
 app.route('/v1/dashboard', dashboardRoutes);
@@ -120,20 +171,57 @@ app.route('/v1/notifications', notificationRoutes);
 app.route('/v1/invites', inviteRoutes);
 app.route('/v1/alerts', alertRoutes);
 app.route('/v1/api-keys', apiKeyRoutes);
+app.route('/v1/compliance', complianceRoutes);
+app.route('/v1/user', userDataRoutes);
 
 // 404 handler
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
 
-// Error handler
+// Error handler — returns 400 for Zod validation errors, 500 for everything else
 app.onError((err, c) => {
-  console.error('[Iron Gate API] Error:', err);
+  if (err instanceof z.ZodError) {
+    return c.json({ error: 'Validation error', details: err.errors }, 400);
+  }
+  // Report to Sentry if initialized
+  if (SentryMod) {
+    SentryMod.captureException(err, {
+      extra: {
+        method: c.req.method,
+        path: c.req.path,
+        firmId: c.get('firmId'),
+        userId: c.get('userId'),
+      },
+    });
+  }
+  logger.error('Unhandled error', { error: err instanceof Error ? err.message : String(err) });
   return c.json({ error: 'Internal server error' }, 500);
 });
+
+// ── Startup Validation ──────────────────────────────────────────────────────
+const isDevAuth = process.env.NODE_ENV === 'development' && process.env.IRON_GATE_DEV_AUTH === 'true';
+const hasDbUrl = !!(process.env.DATABASE_URL || process.env.SUPABASE_DB_URL);
+
+if (!hasDbUrl) {
+  logger.error('FATAL: Neither DATABASE_URL nor SUPABASE_DB_URL is set');
+  process.exit(1);
+}
+if (!process.env.CLERK_SECRET_KEY && !isDevAuth) {
+  logger.error('FATAL: CLERK_SECRET_KEY is not set (required for JWT auth in production)');
+  process.exit(1);
+}
+if (!process.env.REDIS_URL) {
+  logger.warn('REDIS_URL not set — rate limiting will use in-memory fallback');
+}
+if (!process.env.ALLOWED_EXTENSION_IDS && !process.env.CHROME_EXTENSION_ID) {
+  logger.warn('No ALLOWED_EXTENSION_IDS configured — Chrome extension CORS will be rejected');
+}
 
 const port = parseInt(process.env.PORT || '3000');
 
 import('@hono/node-server').then(({ serve }) => {
   serve({ fetch: app.fetch, port }, () => {
-    console.log(`[Iron Gate API] Running on http://localhost:${port}`);
+    logger.info('Server started', { port, url: `http://localhost:${port}` });
+    // Start scheduled jobs
+    import('./jobs/scheduler').then(({ startScheduler }) => startScheduler()).catch(() => {});
   });
 });

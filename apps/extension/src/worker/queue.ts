@@ -14,6 +14,11 @@
 
 import { apiRequest } from './api-client';
 
+// Debug logging — silent in production
+let _IG_DEBUG = false;
+try { chrome.storage.local.get('ironGateDebug', (r) => { _IG_DEBUG = !!r.ironGateDebug; }); } catch {}
+function igLog(...args: any[]) { if (_IG_DEBUG) console.log('[Iron Gate Queue]', ...args); }
+
 interface QueuedEvent {
   id: string;
   data: any;
@@ -24,6 +29,7 @@ interface QueuedEvent {
 const BATCH_INTERVAL = 2000; // 2 seconds
 const MAX_BATCH_SIZE = 100;
 const MAX_QUEUE_SIZE = 1000;
+const MAX_RETRIES = 5;
 const STORAGE_KEY = 'iron_gate_event_queue';
 
 class EventQueue {
@@ -79,7 +85,7 @@ class EventQueue {
     try {
       // Check if we're online
       if (!this.isOnline) {
-        console.log('[Iron Gate Queue] Offline, events will be sent when connection is restored');
+        igLog('Offline, events will be sent when connection is restored');
         return;
       }
 
@@ -89,7 +95,7 @@ class EventQueue {
         const batchId = crypto.randomUUID();
 
         try {
-          console.log(`[Iron Gate Queue] Sending batch of ${batch.length} events (batchId: ${batchId})`);
+          igLog('Sending batch of', batch.length, 'events, batchId:', batchId);
           const result = await apiRequest({
             method: 'POST',
             path: '/events/batch',
@@ -103,7 +109,7 @@ class EventQueue {
           this.pendingEvents = this.pendingEvents.slice(batch.length);
           await this.persistToStorage();
 
-          console.log(`[Iron Gate Queue] ✅ Batch sent successfully — ${batch.length} events, IDs:`, (result as any)?.eventIds);
+          igLog('Batch sent successfully —', batch.length, 'events, IDs:', (result as any)?.eventIds);
         } catch (error) {
           console.error('[Iron Gate Queue] ❌ Batch send failed:', error, '— batch data:', JSON.stringify(batch[0]?.data).substring(0, 200));
 
@@ -112,7 +118,9 @@ class EventQueue {
             event.retryCount++;
           }
 
-          // If we've retried too many times, the events will be dropped on next overflow
+          // Drop events that have exceeded max retries
+          this.pendingEvents = this.pendingEvents.filter(e => e.retryCount <= MAX_RETRIES);
+
           break;
         }
       }
@@ -154,7 +162,7 @@ class EventQueue {
 
       if (stored.length > 0) {
         this.pendingEvents = stored;
-        console.log(`[Iron Gate Queue] Restored ${stored.length} events from storage`);
+        igLog('Restored', stored.length, 'events from storage');
         this.scheduleBatch();
       }
     } catch (error) {
@@ -164,7 +172,15 @@ class EventQueue {
 
   private async checkOnlineStatus(): Promise<void> {
     try {
-      const response = await fetch('https://irongate-api.onrender.com/health', {
+      // Load configured API URL, strip /v1 suffix, append /health
+      let healthUrl = 'https://irongate-api.onrender.com/health';
+      try {
+        const stored = await chrome.storage.local.get('ironGateApiUrl');
+        if (stored.ironGateApiUrl) {
+          healthUrl = stored.ironGateApiUrl.replace(/\/v1\/?$/, '') + '/health';
+        }
+      } catch {}
+      const response = await fetch(healthUrl, {
         method: 'GET',
         signal: AbortSignal.timeout(5000),
       });

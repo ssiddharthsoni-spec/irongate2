@@ -4,6 +4,7 @@
 
 import type { LLMProviderConfig } from '@iron-gate/types';
 import type { LLMProvider, LLMRequest, LLMResponse } from '../llm-router';
+import { logger } from '../../lib/logger';
 
 const DEFAULT_BASE_URL = 'https://api.anthropic.com';
 const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
@@ -127,9 +128,12 @@ export class AnthropicProvider implements LLMProvider {
           ? parseInt(retryAfter, 10) * 1000
           : RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
 
-        console.warn(
-          `[Anthropic] Retrying request (attempt ${attempt}/${MAX_RETRIES}) after ${delayMs}ms — status ${response.status}`
-        );
+        logger.warn('Retrying request', {
+          attempt,
+          maxRetries: MAX_RETRIES,
+          delayMs,
+          status: response.status,
+        });
         await this.sleep(delayMs);
         return this.fetchWithRetry(url, init, attempt + 1);
       }
@@ -138,10 +142,12 @@ export class AnthropicProvider implements LLMProvider {
     } catch (error) {
       if (attempt < MAX_RETRIES) {
         const delayMs = RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
-        console.warn(
-          `[Anthropic] Network error, retrying (attempt ${attempt}/${MAX_RETRIES}) after ${delayMs}ms:`,
-          error
-        );
+        logger.warn('Network error, retrying', {
+          attempt,
+          maxRetries: MAX_RETRIES,
+          delayMs,
+          error: error instanceof Error ? error.message : String(error),
+        });
         await this.sleep(delayMs);
         return this.fetchWithRetry(url, init, attempt + 1);
       }

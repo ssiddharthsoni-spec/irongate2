@@ -3,3 +3,16 @@ export { AI_TOOL_ENDPOINTS, AI_TOOL_API_PATTERNS } from './ai-tools';
 export { DEFAULT_FIRM_CONFIG, SENSITIVITY_THRESHOLDS } from './defaults';
 export { EXECUTIVE_LENS_RULES } from './executive-lens';
 export type { ExecutiveLensRule } from './executive-lens';
+export {
+  COMPLIANCE_PROFILES,
+  mergeEntityRules,
+  getEffectiveRiskMultiplier,
+  getEffectiveBlockThreshold,
+} from './compliance-profiles';
+export type {
+  ComplianceFrameworkId,
+  ComplianceProfile,
+  EntityHandlingRule,
+  EntityAction,
+  RetentionPolicy,
+} from './compliance-profiles';

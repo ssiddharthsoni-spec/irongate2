@@ -10,6 +10,7 @@ import { entityCoOccurrences, sensitivityPatterns } from '../db/schema';
 import { eq, sql, and, desc } from 'drizzle-orm';
 import { sha256 } from '@iron-gate/crypto';
 import type { DetectedEntity } from '@iron-gate/types';
+import { logger } from '../lib/logger';
 
 /**
  * Record entity co-occurrences from a detection event.
@@ -49,7 +50,7 @@ export async function recordCoOccurrences(
           },
         });
     } catch (error) {
-      console.warn('[Sensitivity Graph] Failed to upsert co-occurrence:', error);
+      logger.warn('Failed to upsert co-occurrence', { error: error instanceof Error ? error.message : String(error) });
     }
   }
 

@@ -419,6 +419,53 @@ export interface FirmPlugin {
   updatedAt: string;
 }
 
+// --- Compliance ---
+
+export type ComplianceFrameworkId =
+  | 'soc2'
+  | 'hipaa'
+  | 'gdpr'
+  | 'pci_dss'
+  | 'ccpa'
+  | 'glba'
+  | 'ferpa'
+  | 'custom';
+
+export interface ComplianceStatus {
+  frameworkId: ComplianceFrameworkId;
+  enabled: boolean;
+  lastAssessmentDate: string | null;
+  controlsMet: number;
+  controlsTotal: number;
+  score: number;
+}
+
+export interface ComplianceReport {
+  id: string;
+  firmId: string;
+  frameworks: ComplianceFrameworkId[];
+  generatedAt: string;
+  period: { start: string; end: string };
+  summary: {
+    totalEvents: number;
+    blockedEvents: number;
+    redactedEntities: number;
+    pseudonymizedEntities: number;
+    complianceScore: number;
+    violations: ComplianceViolation[];
+  };
+}
+
+export interface ComplianceViolation {
+  frameworkId: ComplianceFrameworkId;
+  control: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  description: string;
+  eventCount: number;
+  firstOccurrence: string;
+  lastOccurrence: string;
+}
+
 // --- Webhook Subscriptions ---
 
 export type WebhookEventType =

@@ -1,4 +1,5 @@
 import { createMiddleware } from 'hono/factory';
+import { metrics } from '../lib/metrics';
 
 /**
  * Security-focused request logger middleware.
@@ -154,6 +155,9 @@ export const requestLoggerMiddleware = createMiddleware(async (c, next) => {
     logEntry.suspicious = true;
     logEntry.flags = suspiciousFlags;
   }
+
+  // Record metrics for /health/metrics endpoint
+  metrics.record(path, statusCode, latencyMs);
 
   // Emit as single-line JSON for log aggregator consumption
   console.log(JSON.stringify(logEntry));

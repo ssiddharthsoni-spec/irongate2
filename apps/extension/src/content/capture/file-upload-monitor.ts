@@ -4,12 +4,15 @@
  * Monitors:
  * 1. <input type="file"> changes (when user selects a file)
  * 2. Drag-and-drop events on the chat area
+ * 3. Shadow DOM traversal for platforms like Gemini/Copilot
  *
- * When a supported file (PDF, DOCX, XLSX) is detected, reads it as base64
- * and sends to the service worker for analysis via the Iron Gate pipeline.
+ * When a supported file is detected, reads it as base64 and sends to the
+ * service worker for analysis via the Iron Gate pipeline.
  *
- * In proxy mode, if the file contains high-sensitivity content, the block
- * overlay is shown before the user can submit.
+ * The `change` event on <input type="file"> has `composed: false`, meaning
+ * it does NOT cross shadow DOM boundaries. To catch file inputs inside
+ * shadow roots (Gemini, Copilot), we recursively walk open shadow roots,
+ * attach listeners directly, and observe shadow roots for mutations.
  */
 
 export interface FileUploadEvent {
@@ -26,13 +29,28 @@ export interface FileUploadMonitorHandle {
 
 export interface FileAnalysisResult {
   fileName: string;
+  fileType: string;
+  fileSize: number;
+  textLength: number;
   score: number;
   level: string;
   entitiesFound: number;
   explanation: string;
+  entities: Array<{
+    type: string;
+    start: number;
+    end: number;
+    confidence: number;
+    source: string;
+    length: number;
+  }>;
+  breakdown: Record<string, number>;
+  redactedText: string;
+  entitiesRedacted: number;
+  eventId: string;
 }
 
-const SUPPORTED_EXTENSIONS = new Set(['pdf', 'docx', 'xlsx', 'txt', 'csv']);
+const SUPPORTED_EXTENSIONS = new Set(['pdf', 'docx', 'xlsx', 'txt', 'csv', 'pptx', 'rtf', 'html', 'md', 'json']);
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
 function getExtension(fileName: string): string {
@@ -62,6 +80,8 @@ export function createFileUploadMonitor(
   onFileDetected: (event: FileUploadEvent) => void
 ): FileUploadMonitorHandle {
   const processedFiles = new Set<string>(); // Prevent duplicate processing
+  const shadowObservers: MutationObserver[] = [];
+  const attachedInputs = new WeakSet<HTMLInputElement>();
 
   async function processFile(file: File) {
     if (!isSupportedFile(file)) return;
@@ -109,16 +129,105 @@ export function createFileUploadMonitor(
     }
   }
 
-  // --- Monitor dynamically added file inputs ---
+  // --- Attach change listener to a file input (with dedup) ---
+  function attachToInput(input: HTMLInputElement) {
+    if (attachedInputs.has(input)) return;
+    attachedInputs.add(input);
+    input.addEventListener('change', onInputChange);
+  }
+
+  // --- Recursively find file inputs in shadow DOM ---
+  function findFileInputsDeep(root: Document | ShadowRoot | HTMLElement): HTMLInputElement[] {
+    const inputs: HTMLInputElement[] = [];
+
+    // Find inputs in this root
+    try {
+      const found = root.querySelectorAll('input[type="file"]');
+      for (const input of Array.from(found)) {
+        inputs.push(input as HTMLInputElement);
+      }
+    } catch { /* ignore */ }
+
+    // Recursively walk into shadow roots
+    const elements = root instanceof HTMLElement ? [root] : [];
+    try {
+      const all = root.querySelectorAll('*');
+      for (const el of Array.from(all)) {
+        elements.push(el as HTMLElement);
+      }
+    } catch { /* ignore */ }
+
+    for (const el of elements) {
+      if (el.shadowRoot) {
+        inputs.push(...findFileInputsDeep(el.shadowRoot));
+      }
+    }
+
+    return inputs;
+  }
+
+  // --- Observe a shadow root for added file inputs ---
+  function observeShadowRoot(shadowRoot: ShadowRoot) {
+    const shadowObs = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const node of Array.from(mutation.addedNodes)) {
+          if (node instanceof HTMLInputElement && node.type === 'file') {
+            attachToInput(node);
+          }
+          if (node instanceof HTMLElement) {
+            // Check the node itself and its children
+            for (const input of Array.from(node.querySelectorAll('input[type="file"]'))) {
+              attachToInput(input as HTMLInputElement);
+            }
+            // If the added node has a shadow root, recursively observe it
+            if (node.shadowRoot) {
+              const deepInputs = findFileInputsDeep(node.shadowRoot);
+              for (const input of deepInputs) attachToInput(input);
+              observeShadowRoot(node.shadowRoot);
+            }
+          }
+        }
+      }
+    });
+    shadowObs.observe(shadowRoot, { childList: true, subtree: true });
+    shadowObservers.push(shadowObs);
+  }
+
+  // --- Walk entire DOM tree to find and observe shadow roots ---
+  function walkAndObserveShadowRoots(root: Document | ShadowRoot) {
+    try {
+      const allElements = root.querySelectorAll('*');
+      for (const el of Array.from(allElements)) {
+        if ((el as HTMLElement).shadowRoot) {
+          const sr = (el as HTMLElement).shadowRoot!;
+          // Find existing file inputs in this shadow root
+          const inputs = findFileInputsDeep(sr);
+          for (const input of inputs) attachToInput(input);
+          // Observe for new ones
+          observeShadowRoot(sr);
+          // Recurse into nested shadow roots
+          walkAndObserveShadowRoots(sr);
+        }
+      }
+    } catch { /* ignore traversal errors */ }
+  }
+
+  // --- Monitor dynamically added file inputs (light DOM) ---
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
       for (const node of Array.from(mutation.addedNodes)) {
         if (node instanceof HTMLInputElement && node.type === 'file') {
-          node.addEventListener('change', onInputChange);
+          attachToInput(node);
         }
         if (node instanceof HTMLElement) {
           for (const input of Array.from(node.querySelectorAll('input[type="file"]'))) {
-            input.addEventListener('change', onInputChange);
+            attachToInput(input as HTMLInputElement);
+          }
+          // Check if added element has a shadow root — observe it
+          if (node.shadowRoot) {
+            const deepInputs = findFileInputsDeep(node.shadowRoot);
+            for (const input of deepInputs) attachToInput(input);
+            observeShadowRoot(node.shadowRoot);
           }
         }
       }
@@ -130,10 +239,18 @@ export function createFileUploadMonitor(
   document.addEventListener('drop', onDrop, { capture: true });
   observer.observe(document.body, { childList: true, subtree: true });
 
-  // Attach to existing file inputs
+  // Attach to existing file inputs (light DOM)
   for (const input of Array.from(document.querySelectorAll('input[type="file"]'))) {
-    input.addEventListener('change', onInputChange);
+    attachToInput(input as HTMLInputElement);
   }
+
+  // Walk shadow roots on initialization
+  walkAndObserveShadowRoots(document);
+
+  // Re-scan shadow roots periodically (covers lazy-loaded web components)
+  const shadowScanInterval = setInterval(() => {
+    walkAndObserveShadowRoots(document);
+  }, 5000);
 
   console.log('[Iron Gate] File upload monitor started');
 
@@ -142,6 +259,9 @@ export function createFileUploadMonitor(
       document.removeEventListener('change', onInputChange, { capture: true });
       document.removeEventListener('drop', onDrop, { capture: true });
       observer.disconnect();
+      for (const obs of shadowObservers) obs.disconnect();
+      shadowObservers.length = 0;
+      clearInterval(shadowScanInterval);
       processedFiles.clear();
       console.log('[Iron Gate] File upload monitor stopped');
     },

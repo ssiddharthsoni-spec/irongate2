@@ -10,6 +10,7 @@
 
 import { db } from '../db/client';
 import { sql } from 'drizzle-orm';
+import { logger } from '../lib/logger';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -107,11 +108,11 @@ export async function runRetentionCleanup(): Promise<RetentionCleanupResult> {
     result.auditEntriesDeleted += extractRowCount(auditResult);
   }
 
-  console.log(
-    `[Data Retention] Cleanup complete: ${result.eventsDeleted} events, ` +
-    `${result.pseudonymMapsDeleted} pseudonym maps, ` +
-    `${result.auditEntriesDeleted} audit entries deleted`
-  );
+  logger.info('Retention cleanup complete', {
+    eventsDeleted: result.eventsDeleted,
+    pseudonymMapsDeleted: result.pseudonymMapsDeleted,
+    auditEntriesDeleted: result.auditEntriesDeleted,
+  });
 
   return result;
 }
@@ -211,14 +212,22 @@ export async function deleteAllFirmData(firmId: string): Promise<FirmDataDeletio
     await db.execute(sql`COMMIT`);
   } catch (error) {
     await db.execute(sql`ROLLBACK`);
-    console.error(`[Data Retention] GDPR erasure failed for firm ${firmId}:`, error);
+    logger.error('GDPR erasure failed', { firmId, error: error instanceof Error ? error.message : String(error) });
     throw error;
   }
 
-  console.log(
-    `[Data Retention] GDPR erasure complete for firm ${firmId}:`,
-    JSON.stringify(result)
-  );
+  logger.info('GDPR erasure complete', {
+    firmId,
+    auditTrailDeleted: result.auditTrailDeleted,
+    entityFeedbackDeleted: result.entityFeedbackDeleted,
+    pseudonymMapsDeleted: result.pseudonymMapsDeleted,
+    entityCoOccurrencesDeleted: result.entityCoOccurrencesDeleted,
+    inferredEntitiesDeleted: result.inferredEntitiesDeleted,
+    sensitivityPatternsDeleted: result.sensitivityPatternsDeleted,
+    weightOverridesDeleted: result.weightOverridesDeleted,
+    webhookSubscriptionsDeleted: result.webhookSubscriptionsDeleted,
+    eventsDeleted: result.eventsDeleted,
+  });
 
   return result;
 }

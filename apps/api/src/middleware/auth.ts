@@ -3,15 +3,51 @@ import { db } from '../db/client';
 import { users, firms, apiKeys } from '../db/schema';
 import { eq, and, isNull } from 'drizzle-orm';
 import crypto from 'crypto';
+import { logger } from '../lib/logger';
 
-// Cache user lookups to avoid querying on every request
-const userCache = new Map<string, { userId: string; firmId: string } | null>();
-// Cache API key lookups (hash → { firmId, userId })
-const apiKeyCache = new Map<string, { firmId: string; userId: string }>();
+// ---------------------------------------------------------------------------
+// TTL Cache — entries auto-expire to prevent stale auth data
+// ---------------------------------------------------------------------------
+
+class TTLMap<K, V> {
+  private map = new Map<K, { value: V; expiresAt: number }>();
+  constructor(private ttlMs: number) {}
+
+  get(key: K): V | undefined {
+    const entry = this.map.get(key);
+    if (!entry) return undefined;
+    if (Date.now() > entry.expiresAt) {
+      this.map.delete(key);
+      return undefined;
+    }
+    return entry.value;
+  }
+
+  set(key: K, value: V): void {
+    this.map.set(key, { value, expiresAt: Date.now() + this.ttlMs });
+  }
+
+  delete(key: K): boolean {
+    return this.map.delete(key);
+  }
+}
+
+const USER_CACHE_TTL = 5 * 60_000;  // 5 minutes
+const API_KEY_CACHE_TTL = 5 * 60_000;  // 5 minutes
+
+// Cache user lookups with TTL to avoid querying on every request
+const userCache = new TTLMap<string, { userId: string; firmId: string; role: string } | null>(USER_CACHE_TTL);
+// Cache API key lookups (hash → { firmId, userId, role }) with TTL
+const apiKeyCache = new TTLMap<string, { firmId: string; userId: string; role: string }>(API_KEY_CACHE_TTL);
 
 /** Invalidate a cached user so the next request re-fetches from DB. */
 export function invalidateUserCache(clerkId: string) {
   userCache.delete(clerkId);
+}
+
+/** Invalidate a cached API key so the next request re-fetches from DB. */
+export function invalidateApiKeyCache(keyHash: string) {
+  apiKeyCache.delete(keyHash);
 }
 
 /**
@@ -19,7 +55,7 @@ export function invalidateUserCache(clerkId: string) {
  * Supports three auth methods (checked in order):
  * 1. API Key (X-API-Key header) — for Chrome extension and programmatic access
  * 2. JWT Bearer token (Clerk) — for dashboard
- * 3. Dev mode fallback — auto-resolves to dev user
+ * 3. Dev mode fallback — auto-resolves to dev user (requires explicit IRON_GATE_DEV_AUTH=true)
  */
 export const authMiddleware = createMiddleware(async (c, next) => {
   // ── API Key Authentication ──────────────────────────────────────────────
@@ -33,6 +69,7 @@ export const authMiddleware = createMiddleware(async (c, next) => {
       c.set('userId', cached.userId);
       c.set('clerkId', 'api-key');
       c.set('firmId', cached.firmId);
+      c.set('userRole', (cached.role as 'admin' | 'user') || 'user');
       db.update(apiKeys).set({ lastUsedAt: new Date() }).where(eq(apiKeys.keyHash, keyHash)).catch(() => {});
       await next();
       return;
@@ -45,16 +82,31 @@ export const authMiddleware = createMiddleware(async (c, next) => {
         firmId: apiKeys.firmId,
         createdBy: apiKeys.createdBy,
         revokedAt: apiKeys.revokedAt,
+        expiresAt: apiKeys.expiresAt,
       })
       .from(apiKeys)
       .where(and(eq(apiKeys.keyHash, keyHash), isNull(apiKeys.revokedAt)))
       .limit(1);
 
     if (keyRecord) {
-      apiKeyCache.set(keyHash, { firmId: keyRecord.firmId, userId: keyRecord.createdBy });
+      // Check if key has expired
+      if (keyRecord.expiresAt && new Date(keyRecord.expiresAt) < new Date()) {
+        return c.json({ error: 'Unauthorized: API key has expired' }, 401);
+      }
+
+      // Look up the creating user's role
+      const [creator] = await db
+        .select({ role: users.role })
+        .from(users)
+        .where(eq(users.id, keyRecord.createdBy))
+        .limit(1);
+      const role = creator?.role || 'user';
+
+      apiKeyCache.set(keyHash, { firmId: keyRecord.firmId, userId: keyRecord.createdBy, role });
       c.set('userId', keyRecord.createdBy);
       c.set('clerkId', 'api-key');
       c.set('firmId', keyRecord.firmId);
+      c.set('userRole', (role as 'admin' | 'user') || 'user');
       db.update(apiKeys).set({ lastUsedAt: new Date() }).where(eq(apiKeys.id, keyRecord.id)).catch(() => {});
       await next();
       return;
@@ -63,32 +115,35 @@ export const authMiddleware = createMiddleware(async (c, next) => {
     return c.json({ error: 'Unauthorized: Invalid API key' }, 401);
   }
 
-  // ── Dev Mode ────────────────────────────────────────────────────────────
-  if (process.env.NODE_ENV === 'development') {
+  // ── Dev Mode (requires explicit opt-in via IRON_GATE_DEV_AUTH=true) ────
+  if (process.env.NODE_ENV === 'development' && process.env.IRON_GATE_DEV_AUTH === 'true') {
     const cached = userCache.get('dev-clerk-id');
     if (cached) {
       c.set('userId', cached.userId);
       c.set('clerkId', 'dev-clerk-id');
       c.set('firmId', cached.firmId);
+      c.set('userRole', (cached.role as 'admin' | 'user') || 'admin');
       await next();
       return;
     }
 
     const rows = await db
-      .select({ id: users.id, clerkId: users.clerkId, firmId: users.firmId })
+      .select({ id: users.id, clerkId: users.clerkId, firmId: users.firmId, role: users.role })
       .from(users)
       .where(eq(users.clerkId, 'dev-clerk-id'))
       .limit(1);
 
     if (rows.length > 0) {
-      userCache.set('dev-clerk-id', { userId: rows[0].id, firmId: rows[0].firmId });
+      userCache.set('dev-clerk-id', { userId: rows[0].id, firmId: rows[0].firmId, role: rows[0].role || 'admin' });
       c.set('userId', rows[0].id);
       c.set('clerkId', 'dev-clerk-id');
       c.set('firmId', rows[0].firmId);
+      c.set('userRole', (rows[0].role as 'admin' | 'user') || 'admin');
     } else {
       c.set('userId', 'dev-user-id');
       c.set('clerkId', 'dev-clerk-id');
       c.set('firmId', process.env.DEFAULT_FIRM_ID || 'dev-firm-id');
+      c.set('userRole', 'admin');
     }
     await next();
     return;
@@ -120,23 +175,25 @@ export const authMiddleware = createMiddleware(async (c, next) => {
       c.set('userId', cached.userId);
       c.set('clerkId', clerkId);
       c.set('firmId', cached.firmId);
+      c.set('userRole', (cached.role as 'admin' | 'user') || 'user');
       await next();
       return;
     }
 
     // Look up internal user by Clerk ID
     const rows = await db
-      .select({ id: users.id, firmId: users.firmId })
+      .select({ id: users.id, firmId: users.firmId, role: users.role })
       .from(users)
       .where(eq(users.clerkId, clerkId))
       .limit(1);
 
     if (rows.length > 0) {
       // Existing user — cache and proceed
-      userCache.set(clerkId, { userId: rows[0].id, firmId: rows[0].firmId });
+      userCache.set(clerkId, { userId: rows[0].id, firmId: rows[0].firmId, role: rows[0].role || 'user' });
       c.set('userId', rows[0].id);
       c.set('clerkId', clerkId);
       c.set('firmId', rows[0].firmId);
+      c.set('userRole', (rows[0].role as 'admin' | 'user') || 'user');
       await next();
       return;
     }
@@ -150,7 +207,7 @@ export const authMiddleware = createMiddleware(async (c, next) => {
     // Assign to default firm (user will create their own during onboarding)
     const defaultFirmId = process.env.DEFAULT_FIRM_ID;
     if (!defaultFirmId) {
-      console.error('[Iron Gate Auth] DEFAULT_FIRM_ID not set — cannot auto-provision user');
+      logger.error('DEFAULT_FIRM_ID not set — cannot auto-provision user');
       return c.json({ error: 'Server configuration error' }, 500);
     }
 
@@ -166,15 +223,16 @@ export const authMiddleware = createMiddleware(async (c, next) => {
       })
       .returning({ id: users.id, firmId: users.firmId });
 
-    console.log(`[Iron Gate Auth] Auto-provisioned user ${newUser.id} for Clerk ID ${clerkId}`);
+    logger.info('Auto-provisioned user', { userId: newUser.id, clerkId });
 
-    userCache.set(clerkId, { userId: newUser.id, firmId: newUser.firmId });
+    userCache.set(clerkId, { userId: newUser.id, firmId: newUser.firmId, role: 'user' });
     c.set('userId', newUser.id);
     c.set('clerkId', clerkId);
     c.set('firmId', newUser.firmId);
+    c.set('userRole', 'user');
     await next();
   } catch (error) {
-    console.error('[Iron Gate Auth] Token verification failed:', error);
+    logger.error('Token verification failed', { error: error instanceof Error ? error.message : String(error) });
     return c.json({ error: 'Unauthorized: Invalid token' }, 401);
   }
 });

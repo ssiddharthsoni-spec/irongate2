@@ -7,6 +7,7 @@
 // without changing the calling code.
 
 import type { DetectedEntity, SensitivityLevel } from '@iron-gate/types';
+import { logger } from '../lib/logger';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -123,7 +124,7 @@ export class DetectionClient {
         enginesUsed: data.engines_used,
       };
     } catch (error) {
-      console.error('[DetectionClient] detectEntities failed, returning empty results:', error);
+      logger.error('detectEntities failed, returning empty results', { error: error instanceof Error ? error.message : String(error) });
       return fallback;
     }
   }
@@ -178,7 +179,7 @@ export class DetectionClient {
         processingTimeMs: data.processing_time_ms,
       };
     } catch (error) {
-      console.error('[DetectionClient] scoreText failed, returning default score:', error);
+      logger.error('scoreText failed, returning default score', { error: error instanceof Error ? error.message : String(error) });
       return fallback;
     }
   }
@@ -265,7 +266,7 @@ export class DetectionClient {
         processingTimeMs: data.processing_time_ms,
       };
     } catch (error) {
-      console.error('[DetectionClient] pseudonymize failed, returning passthrough:', error);
+      logger.error('pseudonymize failed, returning passthrough', { error: error instanceof Error ? error.message : String(error) });
       return fallback;
     }
   }
@@ -313,9 +314,13 @@ export class DetectionClient {
         // Retry on 5xx server errors
         if (response.status >= 500 && attempt < MAX_RETRIES) {
           const delayMs = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
-          console.warn(
-            `[DetectionClient] ${path} returned ${response.status}, retrying in ${delayMs}ms (attempt ${attempt + 1}/${MAX_RETRIES})`,
-          );
+          logger.warn('Request returned server error, retrying', {
+            path,
+            status: response.status,
+            delayMs,
+            attempt: attempt + 1,
+            maxRetries: MAX_RETRIES,
+          });
           await this.sleep(delayMs);
           continue;
         }
@@ -340,10 +345,13 @@ export class DetectionClient {
         }
 
         const delayMs = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
-        console.warn(
-          `[DetectionClient] ${path} network error, retrying in ${delayMs}ms (attempt ${attempt + 1}/${MAX_RETRIES}):`,
-          lastError.message,
-        );
+        logger.warn('Network error, retrying', {
+          path,
+          delayMs,
+          attempt: attempt + 1,
+          maxRetries: MAX_RETRIES,
+          error: lastError.message,
+        });
         await this.sleep(delayMs);
       }
     }

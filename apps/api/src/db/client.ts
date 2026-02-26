@@ -13,8 +13,8 @@ const isPooler = connectionString.includes('pooler.supabase.com');
 
 // Create postgres client
 const client = postgres(connectionString, {
-  max: 20,
-  idle_timeout: 20,
+  max: parseInt(process.env.DB_POOL_SIZE || '20', 10),
+  idle_timeout: parseInt(process.env.DB_IDLE_TIMEOUT || '20', 10),
   connect_timeout: 10,
   ssl: isRemote ? 'require' : false,
   prepare: isPooler ? false : true,

@@ -7,6 +7,8 @@
 // outbound network anomalies, and audit trail integrity.
 // ============================================================================
 
+import { logger } from '../lib/logger';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -261,10 +263,10 @@ export function checkAlert(rule: SecurityAlertRule, metrics: SecurityMetrics): A
 // ---------------------------------------------------------------------------
 
 /**
- * Log a triggered security event as structured JSON to stderr.
+ * Log a triggered security event via the structured logger.
  *
- * Uses console.error so that it is captured by log aggregation systems
- * monitoring stderr (standard practice for security events).
+ * The logger outputs JSON, which is captured by log aggregation systems
+ * and SIEM (standard practice for security events).
  *
  * @param alert - The security alert rule that was triggered
  * @param details - Contextual details about the triggering event
@@ -276,7 +278,7 @@ export function logSecurityEvent(alert: SecurityAlertRule, details: string): voi
     timestamp: new Date().toISOString(),
   };
 
-  console.error(JSON.stringify({
+  logger.error('Security alert', {
     level: 'SECURITY_ALERT',
     severity: alert.severity,
     ruleName: alert.name,
@@ -284,7 +286,7 @@ export function logSecurityEvent(alert: SecurityAlertRule, details: string): voi
     action: alert.action,
     details,
     timestamp: event.timestamp,
-  }));
+  });
 }
 
 // ---------------------------------------------------------------------------

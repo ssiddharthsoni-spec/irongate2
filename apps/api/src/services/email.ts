@@ -6,6 +6,7 @@
 // ============================================================================
 
 import { Resend } from 'resend';
+import { logger } from '../lib/logger';
 
 const FROM_ADDRESS = 'Iron Gate <notifications@irongate.ai>';
 
@@ -91,10 +92,7 @@ async function sendEmail(to: string, subject: string, html: string): Promise<{ s
   const client = getResend();
 
   if (!client) {
-    console.log('[Email] Development fallback — RESEND_API_KEY not set');
-    console.log(`[Email] To: ${to}`);
-    console.log(`[Email] Subject: ${subject}`);
-    console.log(`[Email] Body length: ${html.length} chars`);
+    logger.info('Development fallback — RESEND_API_KEY not set', { to, subject, bodyLength: html.length });
     return { success: true, id: `dev-${Date.now()}` };
   }
 
@@ -107,14 +105,14 @@ async function sendEmail(to: string, subject: string, html: string): Promise<{ s
     });
 
     if (error) {
-      console.error('[Email] Resend error:', error);
+      logger.error('Resend API error', { error: error.message });
       return { success: false, error: error.message };
     }
 
     return { success: true, id: data?.id };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error('[Email] Failed to send:', message);
+    logger.error('Failed to send email', { error: message });
     return { success: false, error: message };
   }
 }

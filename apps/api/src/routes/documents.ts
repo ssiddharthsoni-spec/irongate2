@@ -1,15 +1,15 @@
 import { Hono } from 'hono';
 import { v4 as uuidv4 } from 'uuid';
-import { db } from '../db/client';
-import { events } from '../db/schema';
 import { detectFirmAware, scoreFirmAware } from '../detection';
 import { Pseudonymizer } from '../proxy/pseudonymizer';
 import { extractText } from '../extraction';
 import { sha256 as hashText } from '@iron-gate/crypto';
+import { appendEvent } from '../services/audit-chain';
 import type { AppEnv } from '../types';
+import { logger } from '../lib/logger';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
-const ALLOWED_EXTENSIONS = new Set(['pdf', 'docx', 'xlsx', 'txt', 'csv']);
+const ALLOWED_EXTENSIONS = new Set(['pdf', 'docx', 'xlsx', 'txt', 'csv', 'pptx', 'rtf', 'html', 'md', 'json']);
 
 export const documentRoutes = new Hono<AppEnv>();
 
@@ -29,7 +29,7 @@ documentRoutes.post('/scan', async (c) => {
     const extension = fileName.split('.').pop()?.toLowerCase() || '';
 
     if (!ALLOWED_EXTENSIONS.has(extension)) {
-      return c.json({ error: `Unsupported file type ".${extension}". Supported: PDF, DOCX, XLSX.` }, 400);
+      return c.json({ error: `Unsupported file type ".${extension}". Supported: PDF, DOCX, XLSX, PPTX, TXT, CSV, RTF, HTML, MD, JSON.` }, 400);
     }
 
     if (file.size > MAX_FILE_SIZE) {
@@ -62,7 +62,7 @@ documentRoutes.post('/scan', async (c) => {
     const pseudonymizer = new Pseudonymizer(sessionId, firmId);
     const pseudonymResult = pseudonymizer.pseudonymize(extractedText, detectedEntities);
 
-    // 7. Log to events table
+    // 7. Log to audit chain for cryptographic trail
     const promptHash = await hashText(extractedText);
 
     // Data minimization: strip raw entity text, store only hashes + lengths
@@ -78,7 +78,7 @@ documentRoutes.post('/scan', async (c) => {
       })),
     );
 
-    const [inserted] = await db.insert(events).values({
+    const inserted = await appendEvent({
       firmId,
       userId,
       aiToolId: 'document:scan',
@@ -97,7 +97,7 @@ documentRoutes.post('/scan', async (c) => {
         textLength: extractedText.length,
         entitiesFound: detectedEntities.length,
       },
-    }).returning({ id: events.id });
+    });
 
     // 8. Return results — entity types and positions only, not raw PII text
     return c.json({
@@ -123,7 +123,7 @@ documentRoutes.post('/scan', async (c) => {
       eventId: inserted.id,
     });
   } catch (error) {
-    console.error('[Documents] Scan error:', error);
+    logger.error('Document scan failed', { error: error instanceof Error ? error.message : String(error) });
     return c.json({ error: 'Failed to scan document.' }, 500);
   }
 });

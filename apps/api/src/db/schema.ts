@@ -348,6 +348,7 @@ export const apiKeys = pgTable('api_keys', {
   createdBy: uuid('created_by').notNull().references(() => users.id),
   lastUsedAt: timestamp('last_used_at'),
   revokedAt: timestamp('revoked_at'),
+  expiresAt: timestamp('expires_at'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (table) => [
   index('api_keys_firm_idx').on(table.firmId),

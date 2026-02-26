@@ -3,6 +3,7 @@ import { db } from '../db/client';
 import { users, firms } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import type { AppEnv } from '../types';
+import { logger } from '../lib/logger';
 
 export const authRoutes = new Hono<AppEnv>();
 
@@ -61,7 +62,7 @@ authRoutes.post('/register', async (c) => {
     if (process.env.NODE_ENV === 'development') {
       return c.json({ userId: 'dev-user-id', status: 'dev-mode' });
     }
-    console.error('[auth/register] Error:', error);
+    logger.error('Registration failed', { error: error instanceof Error ? error.message : String(error) });
     return c.json({ error: 'Registration failed' }, 500);
   }
 });

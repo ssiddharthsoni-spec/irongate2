@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { db } from '../db/client';
 import { apiKeys } from '../db/schema';
 import { eq, and, isNull } from 'drizzle-orm';
+import { invalidateApiKeyCache } from '../middleware/auth';
 import type { AppEnv } from '../types';
 
 export const apiKeyRoutes = new Hono<AppEnv>();
@@ -31,13 +32,17 @@ apiKeyRoutes.get('/', async (c) => {
       keyPrefix: apiKeys.keyPrefix,
       scope: apiKeys.scope,
       lastUsedAt: apiKeys.lastUsedAt,
+      expiresAt: apiKeys.expiresAt,
       createdAt: apiKeys.createdAt,
       revokedAt: apiKeys.revokedAt,
     })
     .from(apiKeys)
     .where(and(eq(apiKeys.firmId, firmId), isNull(apiKeys.revokedAt)));
 
-  return c.json(keys);
+  return c.json(keys.map((k) => ({
+    ...k,
+    expired: k.expiresAt ? new Date(k.expiresAt) < new Date() : false,
+  })));
 });
 
 // POST / — Create a new API key
@@ -49,10 +54,15 @@ apiKeyRoutes.post('/', async (c) => {
   const schema = z.object({
     name: z.string().min(1).max(100),
     scope: z.enum(['read', 'write', 'admin']).default('read'),
+    expiresInDays: z.number().int().min(1).max(365).optional(),
   });
 
   const parsed = schema.parse(body);
   const { key, hash, prefix } = generateApiKey();
+
+  const expiresAt = parsed.expiresInDays
+    ? new Date(Date.now() + parsed.expiresInDays * 24 * 60 * 60 * 1000)
+    : null;
 
   const [created] = await db
     .insert(apiKeys)
@@ -63,6 +73,7 @@ apiKeyRoutes.post('/', async (c) => {
       keyPrefix: prefix,
       scope: parsed.scope,
       createdBy: userId,
+      expiresAt,
     })
     .returning();
 
@@ -73,6 +84,7 @@ apiKeyRoutes.post('/', async (c) => {
     key, // Full key — shown once
     keyPrefix: prefix,
     scope: created.scope,
+    expiresAt: created.expiresAt,
     createdAt: created.createdAt,
   }, 201);
 });
@@ -82,6 +94,13 @@ apiKeyRoutes.delete('/:id', async (c) => {
   const firmId = c.get('firmId');
   const keyId = c.req.param('id');
 
+  // Get the key hash before revoking so we can invalidate the auth cache
+  const [existing] = await db
+    .select({ keyHash: apiKeys.keyHash })
+    .from(apiKeys)
+    .where(and(eq(apiKeys.id, keyId), eq(apiKeys.firmId, firmId)))
+    .limit(1);
+
   const [revoked] = await db
     .update(apiKeys)
     .set({ revokedAt: new Date() })
@@ -90,6 +109,11 @@ apiKeyRoutes.delete('/:id', async (c) => {
 
   if (!revoked) {
     return c.json({ error: 'API key not found' }, 404);
+  }
+
+  // Invalidate auth cache so the revoked key is rejected immediately
+  if (existing) {
+    invalidateApiKeyCache(existing.keyHash);
   }
 
   return c.json({ success: true });

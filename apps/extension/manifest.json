@@ -21,6 +21,8 @@
     "https://chat.deepseek.com/*",
     "https://poe.com/*",
     "https://perplexity.ai/*",
+    "https://www.perplexity.ai/*",
+    "https://*.perplexity.ai/*",
     "https://you.com/*",
     "https://huggingface.co/chat/*",
     "https://groq.com/*",
@@ -41,6 +43,8 @@
         "https://chat.deepseek.com/*",
         "https://poe.com/*",
         "https://perplexity.ai/*",
+        "https://www.perplexity.ai/*",
+        "https://*.perplexity.ai/*",
         "https://you.com/*",
         "https://huggingface.co/chat/*",
         "https://groq.com/*"
@@ -59,6 +63,8 @@
         "https://chat.deepseek.com/*",
         "https://poe.com/*",
         "https://perplexity.ai/*",
+        "https://www.perplexity.ai/*",
+        "https://*.perplexity.ai/*",
         "https://you.com/*",
         "https://huggingface.co/chat/*",
         "https://groq.com/*"

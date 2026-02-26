@@ -1,6 +1,7 @@
 import { createMiddleware } from 'hono/factory';
 import { db } from '../db/client';
 import { sql } from 'drizzle-orm';
+import { logger } from '../lib/logger';
 
 /**
  * PostgreSQL Row-Level Security context middleware.
@@ -19,7 +20,7 @@ export const rlsContextMiddleware = createMiddleware(async (c, next) => {
   const firmId = c.get('firmId');
 
   if (!firmId) {
-    console.error('[Iron Gate RLS] firmId not set on context — auth middleware may not have run');
+    logger.error('firmId not set on context — auth middleware may not have run');
     return c.json({ error: 'Internal server error: missing firm context' }, 500);
   }
 
@@ -31,7 +32,7 @@ export const rlsContextMiddleware = createMiddleware(async (c, next) => {
       sql`SELECT set_config('app.current_firm_id', ${firmId}, true)`
     );
   } catch (error) {
-    console.error('[Iron Gate RLS] Failed to set firm context on database session:', error);
+    logger.error('Failed to set firm context on database session', { error: error instanceof Error ? error.message : String(error) });
     return c.json({ error: 'Internal server error: database context failure' }, 500);
   }
 

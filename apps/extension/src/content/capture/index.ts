@@ -143,88 +143,18 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
       return 'allow';
     }
 
-    // In proxy mode, ALWAYS pseudonymize detected entities before sending.
-    // The user explicitly chose proxy mode — they want ALL sensitive data protected.
-    try {
-      // 1. Detect entities locally
-      const regexEntities = detectWithRegex(promptText);
-      const secrets = scanForSecrets(promptText);
-      const allEntities = [
-        ...regexEntities,
-        ...secrets.map((s) => ({
-          type: s.type,
-          text: s.text,
-          start: s.start,
-          end: s.end,
-          confidence: s.confidence,
-          source: s.source as 'regex',
-        })),
-      ];
-
-      // 2. Score sensitivity
-      const scoreResult = computeScore(promptText, allEntities);
-      console.log(`[Iron Gate] Proxy mode — score: ${scoreResult.score} (${scoreResult.level}), entities: ${allEntities.length}`);
-
-      // 3. If entities found, pseudonymize the input before submission
-      if (allEntities.length > 0) {
-        const pseudoResult = pseudonymizeLocal(promptText, allEntities);
-        console.log(`[Iron Gate] PROXY: Pseudonymizing ${allEntities.length} entities (${scoreResult.level})`);
-        console.log(`[Iron Gate] Original: "${promptText.substring(0, 80)}..."`);
-        console.log(`[Iron Gate] Masked: "${pseudoResult.maskedText.substring(0, 80)}..."`);
-
-        // Replace the prompt text in the input field with pseudonymized version.
-        // Uses React-compatible methods to ensure the AI tool's internal state updates.
-        const input = detector.getPromptInput();
-        if (input) {
-          replaceInputText(input, pseudoResult.maskedText);
-          console.log(`[Iron Gate] Input field replaced with pseudonymized text`);
-        } else {
-          console.warn('[Iron Gate] Could not find input field to replace text');
-        }
-
-        // Broadcast to sidepanel via content script → service worker
-        try {
-          chrome.runtime.sendMessage({
-            type: 'SENSITIVITY_SCORE',
-            payload: {
-              score: scoreResult.score,
-              level: scoreResult.level,
-              explanation: `Pseudonymized ${allEntities.length} entities before sending to AI tool.`,
-              entities: [],
-              aiToolId: detector.id,
-              originalPrompt: promptText,
-              maskedPrompt: pseudoResult.maskedText,
-              pseudonymMappings: pseudoResult.mappings,
-            },
-          }).catch(() => {});
-        } catch { /* extension context may be invalidated */ }
-
-        // Notify worker about the pseudonymized submit
-        sendToWorker('PROMPT_SUBMITTED', {
-          text: promptText,
-          aiToolId: detector.id,
-          captureMethod: 'submit',
-          action: 'pseudonymized',
-          sensitivityScore: scoreResult.score,
-          entitiesReplaced: allEntities.length,
-        });
-
-        // Allow the submit to proceed with the pseudonymized text now in the input
-        return 'allow';
-      }
-
-      // No entities detected — allow passthrough unchanged
-      sendToWorker('PROMPT_SUBMITTED', {
-        text: promptText,
-        aiToolId: detector.id,
-        captureMethod: 'submit',
-        action: 'pass',
-      });
-      return 'allow';
-    } catch (error) {
-      console.error('[Iron Gate] Proxy mode error, falling back to allow:', error);
-      return 'allow';
-    }
+    // In proxy mode, the MAIN world DOM interceptor handles pseudonymization
+    // with realistic fakes. Do NOT pseudonymize here (this uses bracket labels
+    // like [PERSON-1] which would conflict and show in the sidepanel).
+    // Just allow the submit — the main world intercepts the send button click
+    // in capture phase and replaces the input text before the app reads it.
+    sendToWorker('PROMPT_SUBMITTED', {
+      text: promptText,
+      aiToolId: detector.id,
+      captureMethod: 'submit',
+      action: 'proxy-deferred',
+    });
+    return 'allow';
   }
 
   // Handler: file upload detected
@@ -274,7 +204,7 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
   // Returns 'allow' or 'block' — the fetch interceptor holds until this resolves
   async function onFileInFormData(file: File): Promise<'allow' | 'block'> {
     const ext = (file.name.split('.').pop() || '').toLowerCase();
-    if (!['pdf', 'docx', 'xlsx', 'txt', 'csv'].includes(ext)) return 'allow';
+    if (!['pdf', 'docx', 'xlsx', 'txt', 'csv', 'pptx', 'rtf', 'html', 'md', 'json'].includes(ext)) return 'allow';
     if (file.size > 10 * 1024 * 1024) return 'allow';
 
     // Show scanning indicator

@@ -1,0 +1,2382 @@
+[
+  {
+    "platform": "chatgpt",
+    "platformName": "ChatGPT",
+    "url": "https://chatgpt.com",
+    "scenario": 1,
+    "scenarioName": "Basic PII (Names + Email)",
+    "prompt": "Can you write a professional email from John Smith (john.smith@acme.com) to Sarah Johnson (sarah.j@globex.net) about the Q4 budget review meeting?",
+    "expect": {
+      "minEntities": 3,
+      "minScore": 20,
+      "level": [
+        "medium",
+        "high"
+      ],
+      "sensitive": [
+        "john.smith@acme.com",
+        "sarah.j@globex.net"
+      ]
+    },
+    "inputSelector": "#prompt-textarea",
+    "submitSelector": "button[data-testid=\"send-button\"]",
+    "steps": [
+      "Navigate to https://chatgpt.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: #prompt-textarea",
+      "Click: button[data-testid=\"send-button\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 3",
+      "Check side panel: score >= 20",
+      "Check side panel: level in [medium, high]",
+      "Verify \"john.smith@acme.com\" is NOT in the network request",
+      "Verify \"sarah.j@globex.net\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "chatgpt",
+    "platformName": "ChatGPT",
+    "url": "https://chatgpt.com",
+    "scenario": 2,
+    "scenarioName": "Financial Data (Credit Card + SSN)",
+    "prompt": "I need help formatting this customer record: James Wilson, SSN 423-86-1957, Visa ending 4532-8921-0076-3344, phone (415) 555-0187.",
+    "expect": {
+      "minEntities": 3,
+      "minScore": 40,
+      "level": [
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "423-86-1957",
+        "4532-8921-0076-3344"
+      ]
+    },
+    "inputSelector": "#prompt-textarea",
+    "submitSelector": "button[data-testid=\"send-button\"]",
+    "steps": [
+      "Navigate to https://chatgpt.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: #prompt-textarea",
+      "Click: button[data-testid=\"send-button\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 3",
+      "Check side panel: score >= 40",
+      "Check side panel: level in [high, critical]",
+      "Verify \"423-86-1957\" is NOT in the network request",
+      "Verify \"4532-8921-0076-3344\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "chatgpt",
+    "platformName": "ChatGPT",
+    "url": "https://chatgpt.com",
+    "scenario": 3,
+    "scenarioName": "API Keys & Credentials",
+    "prompt": "My AWS access key is AKIAIOSFODNN7EXAMPLE and the secret is wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY. Can you help me debug why my S3 upload is failing?",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 15,
+      "level": [
+        "medium",
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "AKIAIOSFODNN7EXAMPLE"
+      ]
+    },
+    "inputSelector": "#prompt-textarea",
+    "submitSelector": "button[data-testid=\"send-button\"]",
+    "steps": [
+      "Navigate to https://chatgpt.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: #prompt-textarea",
+      "Click: button[data-testid=\"send-button\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 15",
+      "Check side panel: level in [medium, high, critical]",
+      "Verify \"AKIAIOSFODNN7EXAMPLE\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "chatgpt",
+    "platformName": "ChatGPT",
+    "url": "https://chatgpt.com",
+    "scenario": 4,
+    "scenarioName": "Mixed Sensitive Content",
+    "prompt": "Please review this employee record: Dr. Maria Garcia, Employee ID: EMP-29481, salary $185,000, DOB 03/15/1988, works at 742 Evergreen Terrace, Springfield IL 62704. Her manager is Robert Chen (robert.chen@internal.corp).",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 10,
+      "level": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "sensitive": [
+        "robert.chen@internal.corp"
+      ]
+    },
+    "inputSelector": "#prompt-textarea",
+    "submitSelector": "button[data-testid=\"send-button\"]",
+    "steps": [
+      "Navigate to https://chatgpt.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: #prompt-textarea",
+      "Click: button[data-testid=\"send-button\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 10",
+      "Check side panel: level in [low, medium, high]",
+      "Verify \"robert.chen@internal.corp\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "chatgpt",
+    "platformName": "ChatGPT",
+    "url": "https://chatgpt.com",
+    "scenario": 5,
+    "scenarioName": "Code with Embedded Secrets",
+    "prompt": "Here's my config file:\nDATABASE_URL=postgresql://admin:SuperSecret123@db.prod.mycompany.com:5432/maindb\nAPI_TOKEN=sk-proj-abc123def456ghi789\nSTRIPE_KEY=sk_live_4eC39HqLyjWDarjtT1zdp7dc\nCan you help me set up environment variables properly?",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 10,
+      "level": [
+        "medium",
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "sk_live_4eC39HqLyjWDarjtT1zdp7dc"
+      ]
+    },
+    "inputSelector": "#prompt-textarea",
+    "submitSelector": "button[data-testid=\"send-button\"]",
+    "steps": [
+      "Navigate to https://chatgpt.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: #prompt-textarea",
+      "Click: button[data-testid=\"send-button\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 10",
+      "Check side panel: level in [medium, high, critical]",
+      "Verify \"sk_live_4eC39HqLyjWDarjtT1zdp7dc\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "chatgpt",
+    "platformName": "ChatGPT",
+    "url": "https://chatgpt.com",
+    "scenario": 6,
+    "scenarioName": "False Positive Check",
+    "prompt": "Can you explain how photosynthesis works in simple terms?",
+    "expect": {
+      "maxEntities": 1,
+      "maxScore": 10,
+      "level": [
+        "low"
+      ],
+      "sensitive": []
+    },
+    "inputSelector": "#prompt-textarea",
+    "submitSelector": "button[data-testid=\"send-button\"]",
+    "steps": [
+      "Navigate to https://chatgpt.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: #prompt-textarea",
+      "Click: button[data-testid=\"send-button\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 0",
+      "Check side panel: score >= 0",
+      "Check side panel: level in [low]",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "chatgpt",
+    "platformName": "ChatGPT",
+    "url": "https://chatgpt.com",
+    "scenario": 7,
+    "scenarioName": "Brand Names Edge Case",
+    "prompt": "I'm reading about John Deere tractors and how the Ford Motor Company started. Can you compare their histories?",
+    "expect": {
+      "maxEntities": 2,
+      "maxScore": 25,
+      "level": [
+        "low",
+        "medium"
+      ],
+      "sensitive": []
+    },
+    "inputSelector": "#prompt-textarea",
+    "submitSelector": "button[data-testid=\"send-button\"]",
+    "steps": [
+      "Navigate to https://chatgpt.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: #prompt-textarea",
+      "Click: button[data-testid=\"send-button\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 0",
+      "Check side panel: score >= 0",
+      "Check side panel: level in [low, medium]",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "claude",
+    "platformName": "Claude",
+    "url": "https://claude.ai",
+    "scenario": 1,
+    "scenarioName": "Basic PII (Names + Email)",
+    "prompt": "Can you write a professional email from John Smith (john.smith@acme.com) to Sarah Johnson (sarah.j@globex.net) about the Q4 budget review meeting?",
+    "expect": {
+      "minEntities": 3,
+      "minScore": 20,
+      "level": [
+        "medium",
+        "high"
+      ],
+      "sensitive": [
+        "john.smith@acme.com",
+        "sarah.j@globex.net"
+      ]
+    },
+    "inputSelector": "[contenteditable=\"true\"].ProseMirror",
+    "submitSelector": "button[aria-label=\"Send Message\"]",
+    "steps": [
+      "Navigate to https://claude.ai",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: [contenteditable=\"true\"].ProseMirror",
+      "Click: button[aria-label=\"Send Message\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 3",
+      "Check side panel: score >= 20",
+      "Check side panel: level in [medium, high]",
+      "Verify \"john.smith@acme.com\" is NOT in the network request",
+      "Verify \"sarah.j@globex.net\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "claude",
+    "platformName": "Claude",
+    "url": "https://claude.ai",
+    "scenario": 2,
+    "scenarioName": "Financial Data (Credit Card + SSN)",
+    "prompt": "I need help formatting this customer record: James Wilson, SSN 423-86-1957, Visa ending 4532-8921-0076-3344, phone (415) 555-0187.",
+    "expect": {
+      "minEntities": 3,
+      "minScore": 40,
+      "level": [
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "423-86-1957",
+        "4532-8921-0076-3344"
+      ]
+    },
+    "inputSelector": "[contenteditable=\"true\"].ProseMirror",
+    "submitSelector": "button[aria-label=\"Send Message\"]",
+    "steps": [
+      "Navigate to https://claude.ai",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: [contenteditable=\"true\"].ProseMirror",
+      "Click: button[aria-label=\"Send Message\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 3",
+      "Check side panel: score >= 40",
+      "Check side panel: level in [high, critical]",
+      "Verify \"423-86-1957\" is NOT in the network request",
+      "Verify \"4532-8921-0076-3344\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "claude",
+    "platformName": "Claude",
+    "url": "https://claude.ai",
+    "scenario": 3,
+    "scenarioName": "API Keys & Credentials",
+    "prompt": "My AWS access key is AKIAIOSFODNN7EXAMPLE and the secret is wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY. Can you help me debug why my S3 upload is failing?",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 15,
+      "level": [
+        "medium",
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "AKIAIOSFODNN7EXAMPLE"
+      ]
+    },
+    "inputSelector": "[contenteditable=\"true\"].ProseMirror",
+    "submitSelector": "button[aria-label=\"Send Message\"]",
+    "steps": [
+      "Navigate to https://claude.ai",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: [contenteditable=\"true\"].ProseMirror",
+      "Click: button[aria-label=\"Send Message\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 15",
+      "Check side panel: level in [medium, high, critical]",
+      "Verify \"AKIAIOSFODNN7EXAMPLE\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "claude",
+    "platformName": "Claude",
+    "url": "https://claude.ai",
+    "scenario": 4,
+    "scenarioName": "Mixed Sensitive Content",
+    "prompt": "Please review this employee record: Dr. Maria Garcia, Employee ID: EMP-29481, salary $185,000, DOB 03/15/1988, works at 742 Evergreen Terrace, Springfield IL 62704. Her manager is Robert Chen (robert.chen@internal.corp).",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 10,
+      "level": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "sensitive": [
+        "robert.chen@internal.corp"
+      ]
+    },
+    "inputSelector": "[contenteditable=\"true\"].ProseMirror",
+    "submitSelector": "button[aria-label=\"Send Message\"]",
+    "steps": [
+      "Navigate to https://claude.ai",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: [contenteditable=\"true\"].ProseMirror",
+      "Click: button[aria-label=\"Send Message\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 10",
+      "Check side panel: level in [low, medium, high]",
+      "Verify \"robert.chen@internal.corp\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "claude",
+    "platformName": "Claude",
+    "url": "https://claude.ai",
+    "scenario": 5,
+    "scenarioName": "Code with Embedded Secrets",
+    "prompt": "Here's my config file:\nDATABASE_URL=postgresql://admin:SuperSecret123@db.prod.mycompany.com:5432/maindb\nAPI_TOKEN=sk-proj-abc123def456ghi789\nSTRIPE_KEY=sk_live_4eC39HqLyjWDarjtT1zdp7dc\nCan you help me set up environment variables properly?",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 10,
+      "level": [
+        "medium",
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "sk_live_4eC39HqLyjWDarjtT1zdp7dc"
+      ]
+    },
+    "inputSelector": "[contenteditable=\"true\"].ProseMirror",
+    "submitSelector": "button[aria-label=\"Send Message\"]",
+    "steps": [
+      "Navigate to https://claude.ai",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: [contenteditable=\"true\"].ProseMirror",
+      "Click: button[aria-label=\"Send Message\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 10",
+      "Check side panel: level in [medium, high, critical]",
+      "Verify \"sk_live_4eC39HqLyjWDarjtT1zdp7dc\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "claude",
+    "platformName": "Claude",
+    "url": "https://claude.ai",
+    "scenario": 6,
+    "scenarioName": "False Positive Check",
+    "prompt": "Can you explain how photosynthesis works in simple terms?",
+    "expect": {
+      "maxEntities": 1,
+      "maxScore": 10,
+      "level": [
+        "low"
+      ],
+      "sensitive": []
+    },
+    "inputSelector": "[contenteditable=\"true\"].ProseMirror",
+    "submitSelector": "button[aria-label=\"Send Message\"]",
+    "steps": [
+      "Navigate to https://claude.ai",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: [contenteditable=\"true\"].ProseMirror",
+      "Click: button[aria-label=\"Send Message\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 0",
+      "Check side panel: score >= 0",
+      "Check side panel: level in [low]",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "claude",
+    "platformName": "Claude",
+    "url": "https://claude.ai",
+    "scenario": 7,
+    "scenarioName": "Brand Names Edge Case",
+    "prompt": "I'm reading about John Deere tractors and how the Ford Motor Company started. Can you compare their histories?",
+    "expect": {
+      "maxEntities": 2,
+      "maxScore": 25,
+      "level": [
+        "low",
+        "medium"
+      ],
+      "sensitive": []
+    },
+    "inputSelector": "[contenteditable=\"true\"].ProseMirror",
+    "submitSelector": "button[aria-label=\"Send Message\"]",
+    "steps": [
+      "Navigate to https://claude.ai",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: [contenteditable=\"true\"].ProseMirror",
+      "Click: button[aria-label=\"Send Message\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 0",
+      "Check side panel: score >= 0",
+      "Check side panel: level in [low, medium]",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "gemini",
+    "platformName": "Google Gemini",
+    "url": "https://gemini.google.com",
+    "scenario": 1,
+    "scenarioName": "Basic PII (Names + Email)",
+    "prompt": "Can you write a professional email from John Smith (john.smith@acme.com) to Sarah Johnson (sarah.j@globex.net) about the Q4 budget review meeting?",
+    "expect": {
+      "minEntities": 3,
+      "minScore": 20,
+      "level": [
+        "medium",
+        "high"
+      ],
+      "sensitive": [
+        "john.smith@acme.com",
+        "sarah.j@globex.net"
+      ]
+    },
+    "inputSelector": ".ql-editor[contenteditable=\"true\"]",
+    "submitSelector": "button[aria-label=\"Send message\"]",
+    "steps": [
+      "Navigate to https://gemini.google.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: .ql-editor[contenteditable=\"true\"]",
+      "Click: button[aria-label=\"Send message\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 3",
+      "Check side panel: score >= 20",
+      "Check side panel: level in [medium, high]",
+      "Verify \"john.smith@acme.com\" is NOT in the network request",
+      "Verify \"sarah.j@globex.net\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "gemini",
+    "platformName": "Google Gemini",
+    "url": "https://gemini.google.com",
+    "scenario": 2,
+    "scenarioName": "Financial Data (Credit Card + SSN)",
+    "prompt": "I need help formatting this customer record: James Wilson, SSN 423-86-1957, Visa ending 4532-8921-0076-3344, phone (415) 555-0187.",
+    "expect": {
+      "minEntities": 3,
+      "minScore": 40,
+      "level": [
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "423-86-1957",
+        "4532-8921-0076-3344"
+      ]
+    },
+    "inputSelector": ".ql-editor[contenteditable=\"true\"]",
+    "submitSelector": "button[aria-label=\"Send message\"]",
+    "steps": [
+      "Navigate to https://gemini.google.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: .ql-editor[contenteditable=\"true\"]",
+      "Click: button[aria-label=\"Send message\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 3",
+      "Check side panel: score >= 40",
+      "Check side panel: level in [high, critical]",
+      "Verify \"423-86-1957\" is NOT in the network request",
+      "Verify \"4532-8921-0076-3344\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "gemini",
+    "platformName": "Google Gemini",
+    "url": "https://gemini.google.com",
+    "scenario": 3,
+    "scenarioName": "API Keys & Credentials",
+    "prompt": "My AWS access key is AKIAIOSFODNN7EXAMPLE and the secret is wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY. Can you help me debug why my S3 upload is failing?",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 15,
+      "level": [
+        "medium",
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "AKIAIOSFODNN7EXAMPLE"
+      ]
+    },
+    "inputSelector": ".ql-editor[contenteditable=\"true\"]",
+    "submitSelector": "button[aria-label=\"Send message\"]",
+    "steps": [
+      "Navigate to https://gemini.google.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: .ql-editor[contenteditable=\"true\"]",
+      "Click: button[aria-label=\"Send message\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 15",
+      "Check side panel: level in [medium, high, critical]",
+      "Verify \"AKIAIOSFODNN7EXAMPLE\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "gemini",
+    "platformName": "Google Gemini",
+    "url": "https://gemini.google.com",
+    "scenario": 4,
+    "scenarioName": "Mixed Sensitive Content",
+    "prompt": "Please review this employee record: Dr. Maria Garcia, Employee ID: EMP-29481, salary $185,000, DOB 03/15/1988, works at 742 Evergreen Terrace, Springfield IL 62704. Her manager is Robert Chen (robert.chen@internal.corp).",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 10,
+      "level": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "sensitive": [
+        "robert.chen@internal.corp"
+      ]
+    },
+    "inputSelector": ".ql-editor[contenteditable=\"true\"]",
+    "submitSelector": "button[aria-label=\"Send message\"]",
+    "steps": [
+      "Navigate to https://gemini.google.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: .ql-editor[contenteditable=\"true\"]",
+      "Click: button[aria-label=\"Send message\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 10",
+      "Check side panel: level in [low, medium, high]",
+      "Verify \"robert.chen@internal.corp\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "gemini",
+    "platformName": "Google Gemini",
+    "url": "https://gemini.google.com",
+    "scenario": 5,
+    "scenarioName": "Code with Embedded Secrets",
+    "prompt": "Here's my config file:\nDATABASE_URL=postgresql://admin:SuperSecret123@db.prod.mycompany.com:5432/maindb\nAPI_TOKEN=sk-proj-abc123def456ghi789\nSTRIPE_KEY=sk_live_4eC39HqLyjWDarjtT1zdp7dc\nCan you help me set up environment variables properly?",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 10,
+      "level": [
+        "medium",
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "sk_live_4eC39HqLyjWDarjtT1zdp7dc"
+      ]
+    },
+    "inputSelector": ".ql-editor[contenteditable=\"true\"]",
+    "submitSelector": "button[aria-label=\"Send message\"]",
+    "steps": [
+      "Navigate to https://gemini.google.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: .ql-editor[contenteditable=\"true\"]",
+      "Click: button[aria-label=\"Send message\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 10",
+      "Check side panel: level in [medium, high, critical]",
+      "Verify \"sk_live_4eC39HqLyjWDarjtT1zdp7dc\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "gemini",
+    "platformName": "Google Gemini",
+    "url": "https://gemini.google.com",
+    "scenario": 6,
+    "scenarioName": "False Positive Check",
+    "prompt": "Can you explain how photosynthesis works in simple terms?",
+    "expect": {
+      "maxEntities": 1,
+      "maxScore": 10,
+      "level": [
+        "low"
+      ],
+      "sensitive": []
+    },
+    "inputSelector": ".ql-editor[contenteditable=\"true\"]",
+    "submitSelector": "button[aria-label=\"Send message\"]",
+    "steps": [
+      "Navigate to https://gemini.google.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: .ql-editor[contenteditable=\"true\"]",
+      "Click: button[aria-label=\"Send message\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 0",
+      "Check side panel: score >= 0",
+      "Check side panel: level in [low]",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "gemini",
+    "platformName": "Google Gemini",
+    "url": "https://gemini.google.com",
+    "scenario": 7,
+    "scenarioName": "Brand Names Edge Case",
+    "prompt": "I'm reading about John Deere tractors and how the Ford Motor Company started. Can you compare their histories?",
+    "expect": {
+      "maxEntities": 2,
+      "maxScore": 25,
+      "level": [
+        "low",
+        "medium"
+      ],
+      "sensitive": []
+    },
+    "inputSelector": ".ql-editor[contenteditable=\"true\"]",
+    "submitSelector": "button[aria-label=\"Send message\"]",
+    "steps": [
+      "Navigate to https://gemini.google.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: .ql-editor[contenteditable=\"true\"]",
+      "Click: button[aria-label=\"Send message\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 0",
+      "Check side panel: score >= 0",
+      "Check side panel: level in [low, medium]",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "copilot",
+    "platformName": "Microsoft Copilot",
+    "url": "https://copilot.microsoft.com",
+    "scenario": 1,
+    "scenarioName": "Basic PII (Names + Email)",
+    "prompt": "Can you write a professional email from John Smith (john.smith@acme.com) to Sarah Johnson (sarah.j@globex.net) about the Q4 budget review meeting?",
+    "expect": {
+      "minEntities": 3,
+      "minScore": 20,
+      "level": [
+        "medium",
+        "high"
+      ],
+      "sensitive": [
+        "john.smith@acme.com",
+        "sarah.j@globex.net"
+      ]
+    },
+    "inputSelector": "#userInput",
+    "submitSelector": "button[aria-label=\"Submit\"]",
+    "steps": [
+      "Navigate to https://copilot.microsoft.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: #userInput",
+      "Click: button[aria-label=\"Submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 3",
+      "Check side panel: score >= 20",
+      "Check side panel: level in [medium, high]",
+      "Verify \"john.smith@acme.com\" is NOT in the network request",
+      "Verify \"sarah.j@globex.net\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "copilot",
+    "platformName": "Microsoft Copilot",
+    "url": "https://copilot.microsoft.com",
+    "scenario": 2,
+    "scenarioName": "Financial Data (Credit Card + SSN)",
+    "prompt": "I need help formatting this customer record: James Wilson, SSN 423-86-1957, Visa ending 4532-8921-0076-3344, phone (415) 555-0187.",
+    "expect": {
+      "minEntities": 3,
+      "minScore": 40,
+      "level": [
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "423-86-1957",
+        "4532-8921-0076-3344"
+      ]
+    },
+    "inputSelector": "#userInput",
+    "submitSelector": "button[aria-label=\"Submit\"]",
+    "steps": [
+      "Navigate to https://copilot.microsoft.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: #userInput",
+      "Click: button[aria-label=\"Submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 3",
+      "Check side panel: score >= 40",
+      "Check side panel: level in [high, critical]",
+      "Verify \"423-86-1957\" is NOT in the network request",
+      "Verify \"4532-8921-0076-3344\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "copilot",
+    "platformName": "Microsoft Copilot",
+    "url": "https://copilot.microsoft.com",
+    "scenario": 3,
+    "scenarioName": "API Keys & Credentials",
+    "prompt": "My AWS access key is AKIAIOSFODNN7EXAMPLE and the secret is wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY. Can you help me debug why my S3 upload is failing?",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 15,
+      "level": [
+        "medium",
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "AKIAIOSFODNN7EXAMPLE"
+      ]
+    },
+    "inputSelector": "#userInput",
+    "submitSelector": "button[aria-label=\"Submit\"]",
+    "steps": [
+      "Navigate to https://copilot.microsoft.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: #userInput",
+      "Click: button[aria-label=\"Submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 15",
+      "Check side panel: level in [medium, high, critical]",
+      "Verify \"AKIAIOSFODNN7EXAMPLE\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "copilot",
+    "platformName": "Microsoft Copilot",
+    "url": "https://copilot.microsoft.com",
+    "scenario": 4,
+    "scenarioName": "Mixed Sensitive Content",
+    "prompt": "Please review this employee record: Dr. Maria Garcia, Employee ID: EMP-29481, salary $185,000, DOB 03/15/1988, works at 742 Evergreen Terrace, Springfield IL 62704. Her manager is Robert Chen (robert.chen@internal.corp).",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 10,
+      "level": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "sensitive": [
+        "robert.chen@internal.corp"
+      ]
+    },
+    "inputSelector": "#userInput",
+    "submitSelector": "button[aria-label=\"Submit\"]",
+    "steps": [
+      "Navigate to https://copilot.microsoft.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: #userInput",
+      "Click: button[aria-label=\"Submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 10",
+      "Check side panel: level in [low, medium, high]",
+      "Verify \"robert.chen@internal.corp\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "copilot",
+    "platformName": "Microsoft Copilot",
+    "url": "https://copilot.microsoft.com",
+    "scenario": 5,
+    "scenarioName": "Code with Embedded Secrets",
+    "prompt": "Here's my config file:\nDATABASE_URL=postgresql://admin:SuperSecret123@db.prod.mycompany.com:5432/maindb\nAPI_TOKEN=sk-proj-abc123def456ghi789\nSTRIPE_KEY=sk_live_4eC39HqLyjWDarjtT1zdp7dc\nCan you help me set up environment variables properly?",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 10,
+      "level": [
+        "medium",
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "sk_live_4eC39HqLyjWDarjtT1zdp7dc"
+      ]
+    },
+    "inputSelector": "#userInput",
+    "submitSelector": "button[aria-label=\"Submit\"]",
+    "steps": [
+      "Navigate to https://copilot.microsoft.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: #userInput",
+      "Click: button[aria-label=\"Submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 10",
+      "Check side panel: level in [medium, high, critical]",
+      "Verify \"sk_live_4eC39HqLyjWDarjtT1zdp7dc\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "copilot",
+    "platformName": "Microsoft Copilot",
+    "url": "https://copilot.microsoft.com",
+    "scenario": 6,
+    "scenarioName": "False Positive Check",
+    "prompt": "Can you explain how photosynthesis works in simple terms?",
+    "expect": {
+      "maxEntities": 1,
+      "maxScore": 10,
+      "level": [
+        "low"
+      ],
+      "sensitive": []
+    },
+    "inputSelector": "#userInput",
+    "submitSelector": "button[aria-label=\"Submit\"]",
+    "steps": [
+      "Navigate to https://copilot.microsoft.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: #userInput",
+      "Click: button[aria-label=\"Submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 0",
+      "Check side panel: score >= 0",
+      "Check side panel: level in [low]",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "copilot",
+    "platformName": "Microsoft Copilot",
+    "url": "https://copilot.microsoft.com",
+    "scenario": 7,
+    "scenarioName": "Brand Names Edge Case",
+    "prompt": "I'm reading about John Deere tractors and how the Ford Motor Company started. Can you compare their histories?",
+    "expect": {
+      "maxEntities": 2,
+      "maxScore": 25,
+      "level": [
+        "low",
+        "medium"
+      ],
+      "sensitive": []
+    },
+    "inputSelector": "#userInput",
+    "submitSelector": "button[aria-label=\"Submit\"]",
+    "steps": [
+      "Navigate to https://copilot.microsoft.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: #userInput",
+      "Click: button[aria-label=\"Submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 0",
+      "Check side panel: score >= 0",
+      "Check side panel: level in [low, medium]",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "perplexity",
+    "platformName": "Perplexity",
+    "url": "https://perplexity.ai",
+    "scenario": 1,
+    "scenarioName": "Basic PII (Names + Email)",
+    "prompt": "Can you write a professional email from John Smith (john.smith@acme.com) to Sarah Johnson (sarah.j@globex.net) about the Q4 budget review meeting?",
+    "expect": {
+      "minEntities": 3,
+      "minScore": 20,
+      "level": [
+        "medium",
+        "high"
+      ],
+      "sensitive": [
+        "john.smith@acme.com",
+        "sarah.j@globex.net"
+      ]
+    },
+    "inputSelector": "textarea[placeholder*=\"Ask\"]",
+    "submitSelector": "button[aria-label=\"Submit\"]",
+    "steps": [
+      "Navigate to https://perplexity.ai",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea[placeholder*=\"Ask\"]",
+      "Click: button[aria-label=\"Submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 3",
+      "Check side panel: score >= 20",
+      "Check side panel: level in [medium, high]",
+      "Verify \"john.smith@acme.com\" is NOT in the network request",
+      "Verify \"sarah.j@globex.net\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "perplexity",
+    "platformName": "Perplexity",
+    "url": "https://perplexity.ai",
+    "scenario": 2,
+    "scenarioName": "Financial Data (Credit Card + SSN)",
+    "prompt": "I need help formatting this customer record: James Wilson, SSN 423-86-1957, Visa ending 4532-8921-0076-3344, phone (415) 555-0187.",
+    "expect": {
+      "minEntities": 3,
+      "minScore": 40,
+      "level": [
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "423-86-1957",
+        "4532-8921-0076-3344"
+      ]
+    },
+    "inputSelector": "textarea[placeholder*=\"Ask\"]",
+    "submitSelector": "button[aria-label=\"Submit\"]",
+    "steps": [
+      "Navigate to https://perplexity.ai",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea[placeholder*=\"Ask\"]",
+      "Click: button[aria-label=\"Submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 3",
+      "Check side panel: score >= 40",
+      "Check side panel: level in [high, critical]",
+      "Verify \"423-86-1957\" is NOT in the network request",
+      "Verify \"4532-8921-0076-3344\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "perplexity",
+    "platformName": "Perplexity",
+    "url": "https://perplexity.ai",
+    "scenario": 3,
+    "scenarioName": "API Keys & Credentials",
+    "prompt": "My AWS access key is AKIAIOSFODNN7EXAMPLE and the secret is wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY. Can you help me debug why my S3 upload is failing?",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 15,
+      "level": [
+        "medium",
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "AKIAIOSFODNN7EXAMPLE"
+      ]
+    },
+    "inputSelector": "textarea[placeholder*=\"Ask\"]",
+    "submitSelector": "button[aria-label=\"Submit\"]",
+    "steps": [
+      "Navigate to https://perplexity.ai",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea[placeholder*=\"Ask\"]",
+      "Click: button[aria-label=\"Submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 15",
+      "Check side panel: level in [medium, high, critical]",
+      "Verify \"AKIAIOSFODNN7EXAMPLE\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "perplexity",
+    "platformName": "Perplexity",
+    "url": "https://perplexity.ai",
+    "scenario": 4,
+    "scenarioName": "Mixed Sensitive Content",
+    "prompt": "Please review this employee record: Dr. Maria Garcia, Employee ID: EMP-29481, salary $185,000, DOB 03/15/1988, works at 742 Evergreen Terrace, Springfield IL 62704. Her manager is Robert Chen (robert.chen@internal.corp).",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 10,
+      "level": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "sensitive": [
+        "robert.chen@internal.corp"
+      ]
+    },
+    "inputSelector": "textarea[placeholder*=\"Ask\"]",
+    "submitSelector": "button[aria-label=\"Submit\"]",
+    "steps": [
+      "Navigate to https://perplexity.ai",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea[placeholder*=\"Ask\"]",
+      "Click: button[aria-label=\"Submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 10",
+      "Check side panel: level in [low, medium, high]",
+      "Verify \"robert.chen@internal.corp\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "perplexity",
+    "platformName": "Perplexity",
+    "url": "https://perplexity.ai",
+    "scenario": 5,
+    "scenarioName": "Code with Embedded Secrets",
+    "prompt": "Here's my config file:\nDATABASE_URL=postgresql://admin:SuperSecret123@db.prod.mycompany.com:5432/maindb\nAPI_TOKEN=sk-proj-abc123def456ghi789\nSTRIPE_KEY=sk_live_4eC39HqLyjWDarjtT1zdp7dc\nCan you help me set up environment variables properly?",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 10,
+      "level": [
+        "medium",
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "sk_live_4eC39HqLyjWDarjtT1zdp7dc"
+      ]
+    },
+    "inputSelector": "textarea[placeholder*=\"Ask\"]",
+    "submitSelector": "button[aria-label=\"Submit\"]",
+    "steps": [
+      "Navigate to https://perplexity.ai",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea[placeholder*=\"Ask\"]",
+      "Click: button[aria-label=\"Submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 10",
+      "Check side panel: level in [medium, high, critical]",
+      "Verify \"sk_live_4eC39HqLyjWDarjtT1zdp7dc\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "perplexity",
+    "platformName": "Perplexity",
+    "url": "https://perplexity.ai",
+    "scenario": 6,
+    "scenarioName": "False Positive Check",
+    "prompt": "Can you explain how photosynthesis works in simple terms?",
+    "expect": {
+      "maxEntities": 1,
+      "maxScore": 10,
+      "level": [
+        "low"
+      ],
+      "sensitive": []
+    },
+    "inputSelector": "textarea[placeholder*=\"Ask\"]",
+    "submitSelector": "button[aria-label=\"Submit\"]",
+    "steps": [
+      "Navigate to https://perplexity.ai",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea[placeholder*=\"Ask\"]",
+      "Click: button[aria-label=\"Submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 0",
+      "Check side panel: score >= 0",
+      "Check side panel: level in [low]",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "perplexity",
+    "platformName": "Perplexity",
+    "url": "https://perplexity.ai",
+    "scenario": 7,
+    "scenarioName": "Brand Names Edge Case",
+    "prompt": "I'm reading about John Deere tractors and how the Ford Motor Company started. Can you compare their histories?",
+    "expect": {
+      "maxEntities": 2,
+      "maxScore": 25,
+      "level": [
+        "low",
+        "medium"
+      ],
+      "sensitive": []
+    },
+    "inputSelector": "textarea[placeholder*=\"Ask\"]",
+    "submitSelector": "button[aria-label=\"Submit\"]",
+    "steps": [
+      "Navigate to https://perplexity.ai",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea[placeholder*=\"Ask\"]",
+      "Click: button[aria-label=\"Submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 0",
+      "Check side panel: score >= 0",
+      "Check side panel: level in [low, medium]",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "deepseek",
+    "platformName": "DeepSeek",
+    "url": "https://chat.deepseek.com",
+    "scenario": 1,
+    "scenarioName": "Basic PII (Names + Email)",
+    "prompt": "Can you write a professional email from John Smith (john.smith@acme.com) to Sarah Johnson (sarah.j@globex.net) about the Q4 budget review meeting?",
+    "expect": {
+      "minEntities": 3,
+      "minScore": 20,
+      "level": [
+        "medium",
+        "high"
+      ],
+      "sensitive": [
+        "john.smith@acme.com",
+        "sarah.j@globex.net"
+      ]
+    },
+    "inputSelector": "#chat-input",
+    "submitSelector": "#chat-input-send-btn",
+    "steps": [
+      "Navigate to https://chat.deepseek.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: #chat-input",
+      "Click: #chat-input-send-btn",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 3",
+      "Check side panel: score >= 20",
+      "Check side panel: level in [medium, high]",
+      "Verify \"john.smith@acme.com\" is NOT in the network request",
+      "Verify \"sarah.j@globex.net\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "deepseek",
+    "platformName": "DeepSeek",
+    "url": "https://chat.deepseek.com",
+    "scenario": 2,
+    "scenarioName": "Financial Data (Credit Card + SSN)",
+    "prompt": "I need help formatting this customer record: James Wilson, SSN 423-86-1957, Visa ending 4532-8921-0076-3344, phone (415) 555-0187.",
+    "expect": {
+      "minEntities": 3,
+      "minScore": 40,
+      "level": [
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "423-86-1957",
+        "4532-8921-0076-3344"
+      ]
+    },
+    "inputSelector": "#chat-input",
+    "submitSelector": "#chat-input-send-btn",
+    "steps": [
+      "Navigate to https://chat.deepseek.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: #chat-input",
+      "Click: #chat-input-send-btn",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 3",
+      "Check side panel: score >= 40",
+      "Check side panel: level in [high, critical]",
+      "Verify \"423-86-1957\" is NOT in the network request",
+      "Verify \"4532-8921-0076-3344\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "deepseek",
+    "platformName": "DeepSeek",
+    "url": "https://chat.deepseek.com",
+    "scenario": 3,
+    "scenarioName": "API Keys & Credentials",
+    "prompt": "My AWS access key is AKIAIOSFODNN7EXAMPLE and the secret is wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY. Can you help me debug why my S3 upload is failing?",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 15,
+      "level": [
+        "medium",
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "AKIAIOSFODNN7EXAMPLE"
+      ]
+    },
+    "inputSelector": "#chat-input",
+    "submitSelector": "#chat-input-send-btn",
+    "steps": [
+      "Navigate to https://chat.deepseek.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: #chat-input",
+      "Click: #chat-input-send-btn",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 15",
+      "Check side panel: level in [medium, high, critical]",
+      "Verify \"AKIAIOSFODNN7EXAMPLE\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "deepseek",
+    "platformName": "DeepSeek",
+    "url": "https://chat.deepseek.com",
+    "scenario": 4,
+    "scenarioName": "Mixed Sensitive Content",
+    "prompt": "Please review this employee record: Dr. Maria Garcia, Employee ID: EMP-29481, salary $185,000, DOB 03/15/1988, works at 742 Evergreen Terrace, Springfield IL 62704. Her manager is Robert Chen (robert.chen@internal.corp).",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 10,
+      "level": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "sensitive": [
+        "robert.chen@internal.corp"
+      ]
+    },
+    "inputSelector": "#chat-input",
+    "submitSelector": "#chat-input-send-btn",
+    "steps": [
+      "Navigate to https://chat.deepseek.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: #chat-input",
+      "Click: #chat-input-send-btn",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 10",
+      "Check side panel: level in [low, medium, high]",
+      "Verify \"robert.chen@internal.corp\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "deepseek",
+    "platformName": "DeepSeek",
+    "url": "https://chat.deepseek.com",
+    "scenario": 5,
+    "scenarioName": "Code with Embedded Secrets",
+    "prompt": "Here's my config file:\nDATABASE_URL=postgresql://admin:SuperSecret123@db.prod.mycompany.com:5432/maindb\nAPI_TOKEN=sk-proj-abc123def456ghi789\nSTRIPE_KEY=sk_live_4eC39HqLyjWDarjtT1zdp7dc\nCan you help me set up environment variables properly?",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 10,
+      "level": [
+        "medium",
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "sk_live_4eC39HqLyjWDarjtT1zdp7dc"
+      ]
+    },
+    "inputSelector": "#chat-input",
+    "submitSelector": "#chat-input-send-btn",
+    "steps": [
+      "Navigate to https://chat.deepseek.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: #chat-input",
+      "Click: #chat-input-send-btn",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 10",
+      "Check side panel: level in [medium, high, critical]",
+      "Verify \"sk_live_4eC39HqLyjWDarjtT1zdp7dc\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "deepseek",
+    "platformName": "DeepSeek",
+    "url": "https://chat.deepseek.com",
+    "scenario": 6,
+    "scenarioName": "False Positive Check",
+    "prompt": "Can you explain how photosynthesis works in simple terms?",
+    "expect": {
+      "maxEntities": 1,
+      "maxScore": 10,
+      "level": [
+        "low"
+      ],
+      "sensitive": []
+    },
+    "inputSelector": "#chat-input",
+    "submitSelector": "#chat-input-send-btn",
+    "steps": [
+      "Navigate to https://chat.deepseek.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: #chat-input",
+      "Click: #chat-input-send-btn",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 0",
+      "Check side panel: score >= 0",
+      "Check side panel: level in [low]",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "deepseek",
+    "platformName": "DeepSeek",
+    "url": "https://chat.deepseek.com",
+    "scenario": 7,
+    "scenarioName": "Brand Names Edge Case",
+    "prompt": "I'm reading about John Deere tractors and how the Ford Motor Company started. Can you compare their histories?",
+    "expect": {
+      "maxEntities": 2,
+      "maxScore": 25,
+      "level": [
+        "low",
+        "medium"
+      ],
+      "sensitive": []
+    },
+    "inputSelector": "#chat-input",
+    "submitSelector": "#chat-input-send-btn",
+    "steps": [
+      "Navigate to https://chat.deepseek.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: #chat-input",
+      "Click: #chat-input-send-btn",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 0",
+      "Check side panel: score >= 0",
+      "Check side panel: level in [low, medium]",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "poe",
+    "platformName": "Poe",
+    "url": "https://poe.com",
+    "scenario": 1,
+    "scenarioName": "Basic PII (Names + Email)",
+    "prompt": "Can you write a professional email from John Smith (john.smith@acme.com) to Sarah Johnson (sarah.j@globex.net) about the Q4 budget review meeting?",
+    "expect": {
+      "minEntities": 3,
+      "minScore": 20,
+      "level": [
+        "medium",
+        "high"
+      ],
+      "sensitive": [
+        "john.smith@acme.com",
+        "sarah.j@globex.net"
+      ]
+    },
+    "inputSelector": "textarea[class*=\"TextArea\"]",
+    "submitSelector": "button[class*=\"sendButton\"]",
+    "steps": [
+      "Navigate to https://poe.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea[class*=\"TextArea\"]",
+      "Click: button[class*=\"sendButton\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 3",
+      "Check side panel: score >= 20",
+      "Check side panel: level in [medium, high]",
+      "Verify \"john.smith@acme.com\" is NOT in the network request",
+      "Verify \"sarah.j@globex.net\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "poe",
+    "platformName": "Poe",
+    "url": "https://poe.com",
+    "scenario": 2,
+    "scenarioName": "Financial Data (Credit Card + SSN)",
+    "prompt": "I need help formatting this customer record: James Wilson, SSN 423-86-1957, Visa ending 4532-8921-0076-3344, phone (415) 555-0187.",
+    "expect": {
+      "minEntities": 3,
+      "minScore": 40,
+      "level": [
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "423-86-1957",
+        "4532-8921-0076-3344"
+      ]
+    },
+    "inputSelector": "textarea[class*=\"TextArea\"]",
+    "submitSelector": "button[class*=\"sendButton\"]",
+    "steps": [
+      "Navigate to https://poe.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea[class*=\"TextArea\"]",
+      "Click: button[class*=\"sendButton\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 3",
+      "Check side panel: score >= 40",
+      "Check side panel: level in [high, critical]",
+      "Verify \"423-86-1957\" is NOT in the network request",
+      "Verify \"4532-8921-0076-3344\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "poe",
+    "platformName": "Poe",
+    "url": "https://poe.com",
+    "scenario": 3,
+    "scenarioName": "API Keys & Credentials",
+    "prompt": "My AWS access key is AKIAIOSFODNN7EXAMPLE and the secret is wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY. Can you help me debug why my S3 upload is failing?",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 15,
+      "level": [
+        "medium",
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "AKIAIOSFODNN7EXAMPLE"
+      ]
+    },
+    "inputSelector": "textarea[class*=\"TextArea\"]",
+    "submitSelector": "button[class*=\"sendButton\"]",
+    "steps": [
+      "Navigate to https://poe.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea[class*=\"TextArea\"]",
+      "Click: button[class*=\"sendButton\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 15",
+      "Check side panel: level in [medium, high, critical]",
+      "Verify \"AKIAIOSFODNN7EXAMPLE\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "poe",
+    "platformName": "Poe",
+    "url": "https://poe.com",
+    "scenario": 4,
+    "scenarioName": "Mixed Sensitive Content",
+    "prompt": "Please review this employee record: Dr. Maria Garcia, Employee ID: EMP-29481, salary $185,000, DOB 03/15/1988, works at 742 Evergreen Terrace, Springfield IL 62704. Her manager is Robert Chen (robert.chen@internal.corp).",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 10,
+      "level": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "sensitive": [
+        "robert.chen@internal.corp"
+      ]
+    },
+    "inputSelector": "textarea[class*=\"TextArea\"]",
+    "submitSelector": "button[class*=\"sendButton\"]",
+    "steps": [
+      "Navigate to https://poe.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea[class*=\"TextArea\"]",
+      "Click: button[class*=\"sendButton\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 10",
+      "Check side panel: level in [low, medium, high]",
+      "Verify \"robert.chen@internal.corp\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "poe",
+    "platformName": "Poe",
+    "url": "https://poe.com",
+    "scenario": 5,
+    "scenarioName": "Code with Embedded Secrets",
+    "prompt": "Here's my config file:\nDATABASE_URL=postgresql://admin:SuperSecret123@db.prod.mycompany.com:5432/maindb\nAPI_TOKEN=sk-proj-abc123def456ghi789\nSTRIPE_KEY=sk_live_4eC39HqLyjWDarjtT1zdp7dc\nCan you help me set up environment variables properly?",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 10,
+      "level": [
+        "medium",
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "sk_live_4eC39HqLyjWDarjtT1zdp7dc"
+      ]
+    },
+    "inputSelector": "textarea[class*=\"TextArea\"]",
+    "submitSelector": "button[class*=\"sendButton\"]",
+    "steps": [
+      "Navigate to https://poe.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea[class*=\"TextArea\"]",
+      "Click: button[class*=\"sendButton\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 10",
+      "Check side panel: level in [medium, high, critical]",
+      "Verify \"sk_live_4eC39HqLyjWDarjtT1zdp7dc\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "poe",
+    "platformName": "Poe",
+    "url": "https://poe.com",
+    "scenario": 6,
+    "scenarioName": "False Positive Check",
+    "prompt": "Can you explain how photosynthesis works in simple terms?",
+    "expect": {
+      "maxEntities": 1,
+      "maxScore": 10,
+      "level": [
+        "low"
+      ],
+      "sensitive": []
+    },
+    "inputSelector": "textarea[class*=\"TextArea\"]",
+    "submitSelector": "button[class*=\"sendButton\"]",
+    "steps": [
+      "Navigate to https://poe.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea[class*=\"TextArea\"]",
+      "Click: button[class*=\"sendButton\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 0",
+      "Check side panel: score >= 0",
+      "Check side panel: level in [low]",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "poe",
+    "platformName": "Poe",
+    "url": "https://poe.com",
+    "scenario": 7,
+    "scenarioName": "Brand Names Edge Case",
+    "prompt": "I'm reading about John Deere tractors and how the Ford Motor Company started. Can you compare their histories?",
+    "expect": {
+      "maxEntities": 2,
+      "maxScore": 25,
+      "level": [
+        "low",
+        "medium"
+      ],
+      "sensitive": []
+    },
+    "inputSelector": "textarea[class*=\"TextArea\"]",
+    "submitSelector": "button[class*=\"sendButton\"]",
+    "steps": [
+      "Navigate to https://poe.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea[class*=\"TextArea\"]",
+      "Click: button[class*=\"sendButton\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 0",
+      "Check side panel: score >= 0",
+      "Check side panel: level in [low, medium]",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "groq",
+    "platformName": "Groq",
+    "url": "https://groq.com",
+    "scenario": 1,
+    "scenarioName": "Basic PII (Names + Email)",
+    "prompt": "Can you write a professional email from John Smith (john.smith@acme.com) to Sarah Johnson (sarah.j@globex.net) about the Q4 budget review meeting?",
+    "expect": {
+      "minEntities": 3,
+      "minScore": 20,
+      "level": [
+        "medium",
+        "high"
+      ],
+      "sensitive": [
+        "john.smith@acme.com",
+        "sarah.j@globex.net"
+      ]
+    },
+    "inputSelector": "textarea",
+    "submitSelector": "button[aria-label*=\"send\" i]",
+    "steps": [
+      "Navigate to https://groq.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea",
+      "Click: button[aria-label*=\"send\" i]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 3",
+      "Check side panel: score >= 20",
+      "Check side panel: level in [medium, high]",
+      "Verify \"john.smith@acme.com\" is NOT in the network request",
+      "Verify \"sarah.j@globex.net\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "groq",
+    "platformName": "Groq",
+    "url": "https://groq.com",
+    "scenario": 2,
+    "scenarioName": "Financial Data (Credit Card + SSN)",
+    "prompt": "I need help formatting this customer record: James Wilson, SSN 423-86-1957, Visa ending 4532-8921-0076-3344, phone (415) 555-0187.",
+    "expect": {
+      "minEntities": 3,
+      "minScore": 40,
+      "level": [
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "423-86-1957",
+        "4532-8921-0076-3344"
+      ]
+    },
+    "inputSelector": "textarea",
+    "submitSelector": "button[aria-label*=\"send\" i]",
+    "steps": [
+      "Navigate to https://groq.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea",
+      "Click: button[aria-label*=\"send\" i]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 3",
+      "Check side panel: score >= 40",
+      "Check side panel: level in [high, critical]",
+      "Verify \"423-86-1957\" is NOT in the network request",
+      "Verify \"4532-8921-0076-3344\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "groq",
+    "platformName": "Groq",
+    "url": "https://groq.com",
+    "scenario": 3,
+    "scenarioName": "API Keys & Credentials",
+    "prompt": "My AWS access key is AKIAIOSFODNN7EXAMPLE and the secret is wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY. Can you help me debug why my S3 upload is failing?",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 15,
+      "level": [
+        "medium",
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "AKIAIOSFODNN7EXAMPLE"
+      ]
+    },
+    "inputSelector": "textarea",
+    "submitSelector": "button[aria-label*=\"send\" i]",
+    "steps": [
+      "Navigate to https://groq.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea",
+      "Click: button[aria-label*=\"send\" i]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 15",
+      "Check side panel: level in [medium, high, critical]",
+      "Verify \"AKIAIOSFODNN7EXAMPLE\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "groq",
+    "platformName": "Groq",
+    "url": "https://groq.com",
+    "scenario": 4,
+    "scenarioName": "Mixed Sensitive Content",
+    "prompt": "Please review this employee record: Dr. Maria Garcia, Employee ID: EMP-29481, salary $185,000, DOB 03/15/1988, works at 742 Evergreen Terrace, Springfield IL 62704. Her manager is Robert Chen (robert.chen@internal.corp).",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 10,
+      "level": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "sensitive": [
+        "robert.chen@internal.corp"
+      ]
+    },
+    "inputSelector": "textarea",
+    "submitSelector": "button[aria-label*=\"send\" i]",
+    "steps": [
+      "Navigate to https://groq.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea",
+      "Click: button[aria-label*=\"send\" i]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 10",
+      "Check side panel: level in [low, medium, high]",
+      "Verify \"robert.chen@internal.corp\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "groq",
+    "platformName": "Groq",
+    "url": "https://groq.com",
+    "scenario": 5,
+    "scenarioName": "Code with Embedded Secrets",
+    "prompt": "Here's my config file:\nDATABASE_URL=postgresql://admin:SuperSecret123@db.prod.mycompany.com:5432/maindb\nAPI_TOKEN=sk-proj-abc123def456ghi789\nSTRIPE_KEY=sk_live_4eC39HqLyjWDarjtT1zdp7dc\nCan you help me set up environment variables properly?",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 10,
+      "level": [
+        "medium",
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "sk_live_4eC39HqLyjWDarjtT1zdp7dc"
+      ]
+    },
+    "inputSelector": "textarea",
+    "submitSelector": "button[aria-label*=\"send\" i]",
+    "steps": [
+      "Navigate to https://groq.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea",
+      "Click: button[aria-label*=\"send\" i]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 10",
+      "Check side panel: level in [medium, high, critical]",
+      "Verify \"sk_live_4eC39HqLyjWDarjtT1zdp7dc\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "groq",
+    "platformName": "Groq",
+    "url": "https://groq.com",
+    "scenario": 6,
+    "scenarioName": "False Positive Check",
+    "prompt": "Can you explain how photosynthesis works in simple terms?",
+    "expect": {
+      "maxEntities": 1,
+      "maxScore": 10,
+      "level": [
+        "low"
+      ],
+      "sensitive": []
+    },
+    "inputSelector": "textarea",
+    "submitSelector": "button[aria-label*=\"send\" i]",
+    "steps": [
+      "Navigate to https://groq.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea",
+      "Click: button[aria-label*=\"send\" i]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 0",
+      "Check side panel: score >= 0",
+      "Check side panel: level in [low]",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "groq",
+    "platformName": "Groq",
+    "url": "https://groq.com",
+    "scenario": 7,
+    "scenarioName": "Brand Names Edge Case",
+    "prompt": "I'm reading about John Deere tractors and how the Ford Motor Company started. Can you compare their histories?",
+    "expect": {
+      "maxEntities": 2,
+      "maxScore": 25,
+      "level": [
+        "low",
+        "medium"
+      ],
+      "sensitive": []
+    },
+    "inputSelector": "textarea",
+    "submitSelector": "button[aria-label*=\"send\" i]",
+    "steps": [
+      "Navigate to https://groq.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea",
+      "Click: button[aria-label*=\"send\" i]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 0",
+      "Check side panel: score >= 0",
+      "Check side panel: level in [low, medium]",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "huggingface",
+    "platformName": "HuggingFace Chat",
+    "url": "https://huggingface.co/chat",
+    "scenario": 1,
+    "scenarioName": "Basic PII (Names + Email)",
+    "prompt": "Can you write a professional email from John Smith (john.smith@acme.com) to Sarah Johnson (sarah.j@globex.net) about the Q4 budget review meeting?",
+    "expect": {
+      "minEntities": 3,
+      "minScore": 20,
+      "level": [
+        "medium",
+        "high"
+      ],
+      "sensitive": [
+        "john.smith@acme.com",
+        "sarah.j@globex.net"
+      ]
+    },
+    "inputSelector": "textarea",
+    "submitSelector": "button[type=\"submit\"]",
+    "steps": [
+      "Navigate to https://huggingface.co/chat",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea",
+      "Click: button[type=\"submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 3",
+      "Check side panel: score >= 20",
+      "Check side panel: level in [medium, high]",
+      "Verify \"john.smith@acme.com\" is NOT in the network request",
+      "Verify \"sarah.j@globex.net\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "huggingface",
+    "platformName": "HuggingFace Chat",
+    "url": "https://huggingface.co/chat",
+    "scenario": 2,
+    "scenarioName": "Financial Data (Credit Card + SSN)",
+    "prompt": "I need help formatting this customer record: James Wilson, SSN 423-86-1957, Visa ending 4532-8921-0076-3344, phone (415) 555-0187.",
+    "expect": {
+      "minEntities": 3,
+      "minScore": 40,
+      "level": [
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "423-86-1957",
+        "4532-8921-0076-3344"
+      ]
+    },
+    "inputSelector": "textarea",
+    "submitSelector": "button[type=\"submit\"]",
+    "steps": [
+      "Navigate to https://huggingface.co/chat",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea",
+      "Click: button[type=\"submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 3",
+      "Check side panel: score >= 40",
+      "Check side panel: level in [high, critical]",
+      "Verify \"423-86-1957\" is NOT in the network request",
+      "Verify \"4532-8921-0076-3344\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "huggingface",
+    "platformName": "HuggingFace Chat",
+    "url": "https://huggingface.co/chat",
+    "scenario": 3,
+    "scenarioName": "API Keys & Credentials",
+    "prompt": "My AWS access key is AKIAIOSFODNN7EXAMPLE and the secret is wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY. Can you help me debug why my S3 upload is failing?",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 15,
+      "level": [
+        "medium",
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "AKIAIOSFODNN7EXAMPLE"
+      ]
+    },
+    "inputSelector": "textarea",
+    "submitSelector": "button[type=\"submit\"]",
+    "steps": [
+      "Navigate to https://huggingface.co/chat",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea",
+      "Click: button[type=\"submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 15",
+      "Check side panel: level in [medium, high, critical]",
+      "Verify \"AKIAIOSFODNN7EXAMPLE\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "huggingface",
+    "platformName": "HuggingFace Chat",
+    "url": "https://huggingface.co/chat",
+    "scenario": 4,
+    "scenarioName": "Mixed Sensitive Content",
+    "prompt": "Please review this employee record: Dr. Maria Garcia, Employee ID: EMP-29481, salary $185,000, DOB 03/15/1988, works at 742 Evergreen Terrace, Springfield IL 62704. Her manager is Robert Chen (robert.chen@internal.corp).",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 10,
+      "level": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "sensitive": [
+        "robert.chen@internal.corp"
+      ]
+    },
+    "inputSelector": "textarea",
+    "submitSelector": "button[type=\"submit\"]",
+    "steps": [
+      "Navigate to https://huggingface.co/chat",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea",
+      "Click: button[type=\"submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 10",
+      "Check side panel: level in [low, medium, high]",
+      "Verify \"robert.chen@internal.corp\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "huggingface",
+    "platformName": "HuggingFace Chat",
+    "url": "https://huggingface.co/chat",
+    "scenario": 5,
+    "scenarioName": "Code with Embedded Secrets",
+    "prompt": "Here's my config file:\nDATABASE_URL=postgresql://admin:SuperSecret123@db.prod.mycompany.com:5432/maindb\nAPI_TOKEN=sk-proj-abc123def456ghi789\nSTRIPE_KEY=sk_live_4eC39HqLyjWDarjtT1zdp7dc\nCan you help me set up environment variables properly?",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 10,
+      "level": [
+        "medium",
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "sk_live_4eC39HqLyjWDarjtT1zdp7dc"
+      ]
+    },
+    "inputSelector": "textarea",
+    "submitSelector": "button[type=\"submit\"]",
+    "steps": [
+      "Navigate to https://huggingface.co/chat",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea",
+      "Click: button[type=\"submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 10",
+      "Check side panel: level in [medium, high, critical]",
+      "Verify \"sk_live_4eC39HqLyjWDarjtT1zdp7dc\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "huggingface",
+    "platformName": "HuggingFace Chat",
+    "url": "https://huggingface.co/chat",
+    "scenario": 6,
+    "scenarioName": "False Positive Check",
+    "prompt": "Can you explain how photosynthesis works in simple terms?",
+    "expect": {
+      "maxEntities": 1,
+      "maxScore": 10,
+      "level": [
+        "low"
+      ],
+      "sensitive": []
+    },
+    "inputSelector": "textarea",
+    "submitSelector": "button[type=\"submit\"]",
+    "steps": [
+      "Navigate to https://huggingface.co/chat",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea",
+      "Click: button[type=\"submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 0",
+      "Check side panel: score >= 0",
+      "Check side panel: level in [low]",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "huggingface",
+    "platformName": "HuggingFace Chat",
+    "url": "https://huggingface.co/chat",
+    "scenario": 7,
+    "scenarioName": "Brand Names Edge Case",
+    "prompt": "I'm reading about John Deere tractors and how the Ford Motor Company started. Can you compare their histories?",
+    "expect": {
+      "maxEntities": 2,
+      "maxScore": 25,
+      "level": [
+        "low",
+        "medium"
+      ],
+      "sensitive": []
+    },
+    "inputSelector": "textarea",
+    "submitSelector": "button[type=\"submit\"]",
+    "steps": [
+      "Navigate to https://huggingface.co/chat",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea",
+      "Click: button[type=\"submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 0",
+      "Check side panel: score >= 0",
+      "Check side panel: level in [low, medium]",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "you",
+    "platformName": "You.com",
+    "url": "https://you.com",
+    "scenario": 1,
+    "scenarioName": "Basic PII (Names + Email)",
+    "prompt": "Can you write a professional email from John Smith (john.smith@acme.com) to Sarah Johnson (sarah.j@globex.net) about the Q4 budget review meeting?",
+    "expect": {
+      "minEntities": 3,
+      "minScore": 20,
+      "level": [
+        "medium",
+        "high"
+      ],
+      "sensitive": [
+        "john.smith@acme.com",
+        "sarah.j@globex.net"
+      ]
+    },
+    "inputSelector": "textarea",
+    "submitSelector": "button[type=\"submit\"]",
+    "steps": [
+      "Navigate to https://you.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea",
+      "Click: button[type=\"submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 3",
+      "Check side panel: score >= 20",
+      "Check side panel: level in [medium, high]",
+      "Verify \"john.smith@acme.com\" is NOT in the network request",
+      "Verify \"sarah.j@globex.net\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "you",
+    "platformName": "You.com",
+    "url": "https://you.com",
+    "scenario": 2,
+    "scenarioName": "Financial Data (Credit Card + SSN)",
+    "prompt": "I need help formatting this customer record: James Wilson, SSN 423-86-1957, Visa ending 4532-8921-0076-3344, phone (415) 555-0187.",
+    "expect": {
+      "minEntities": 3,
+      "minScore": 40,
+      "level": [
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "423-86-1957",
+        "4532-8921-0076-3344"
+      ]
+    },
+    "inputSelector": "textarea",
+    "submitSelector": "button[type=\"submit\"]",
+    "steps": [
+      "Navigate to https://you.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea",
+      "Click: button[type=\"submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 3",
+      "Check side panel: score >= 40",
+      "Check side panel: level in [high, critical]",
+      "Verify \"423-86-1957\" is NOT in the network request",
+      "Verify \"4532-8921-0076-3344\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "you",
+    "platformName": "You.com",
+    "url": "https://you.com",
+    "scenario": 3,
+    "scenarioName": "API Keys & Credentials",
+    "prompt": "My AWS access key is AKIAIOSFODNN7EXAMPLE and the secret is wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY. Can you help me debug why my S3 upload is failing?",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 15,
+      "level": [
+        "medium",
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "AKIAIOSFODNN7EXAMPLE"
+      ]
+    },
+    "inputSelector": "textarea",
+    "submitSelector": "button[type=\"submit\"]",
+    "steps": [
+      "Navigate to https://you.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea",
+      "Click: button[type=\"submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 15",
+      "Check side panel: level in [medium, high, critical]",
+      "Verify \"AKIAIOSFODNN7EXAMPLE\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "you",
+    "platformName": "You.com",
+    "url": "https://you.com",
+    "scenario": 4,
+    "scenarioName": "Mixed Sensitive Content",
+    "prompt": "Please review this employee record: Dr. Maria Garcia, Employee ID: EMP-29481, salary $185,000, DOB 03/15/1988, works at 742 Evergreen Terrace, Springfield IL 62704. Her manager is Robert Chen (robert.chen@internal.corp).",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 10,
+      "level": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "sensitive": [
+        "robert.chen@internal.corp"
+      ]
+    },
+    "inputSelector": "textarea",
+    "submitSelector": "button[type=\"submit\"]",
+    "steps": [
+      "Navigate to https://you.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea",
+      "Click: button[type=\"submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 10",
+      "Check side panel: level in [low, medium, high]",
+      "Verify \"robert.chen@internal.corp\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "you",
+    "platformName": "You.com",
+    "url": "https://you.com",
+    "scenario": 5,
+    "scenarioName": "Code with Embedded Secrets",
+    "prompt": "Here's my config file:\nDATABASE_URL=postgresql://admin:SuperSecret123@db.prod.mycompany.com:5432/maindb\nAPI_TOKEN=sk-proj-abc123def456ghi789\nSTRIPE_KEY=sk_live_4eC39HqLyjWDarjtT1zdp7dc\nCan you help me set up environment variables properly?",
+    "expect": {
+      "minEntities": 1,
+      "minScore": 10,
+      "level": [
+        "medium",
+        "high",
+        "critical"
+      ],
+      "sensitive": [
+        "sk_live_4eC39HqLyjWDarjtT1zdp7dc"
+      ]
+    },
+    "inputSelector": "textarea",
+    "submitSelector": "button[type=\"submit\"]",
+    "steps": [
+      "Navigate to https://you.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea",
+      "Click: button[type=\"submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 1",
+      "Check side panel: score >= 10",
+      "Check side panel: level in [medium, high, critical]",
+      "Verify \"sk_live_4eC39HqLyjWDarjtT1zdp7dc\" is NOT in the network request",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "you",
+    "platformName": "You.com",
+    "url": "https://you.com",
+    "scenario": 6,
+    "scenarioName": "False Positive Check",
+    "prompt": "Can you explain how photosynthesis works in simple terms?",
+    "expect": {
+      "maxEntities": 1,
+      "maxScore": 10,
+      "level": [
+        "low"
+      ],
+      "sensitive": []
+    },
+    "inputSelector": "textarea",
+    "submitSelector": "button[type=\"submit\"]",
+    "steps": [
+      "Navigate to https://you.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea",
+      "Click: button[type=\"submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 0",
+      "Check side panel: score >= 0",
+      "Check side panel: level in [low]",
+      "Screenshot the result"
+    ]
+  },
+  {
+    "platform": "you",
+    "platformName": "You.com",
+    "url": "https://you.com",
+    "scenario": 7,
+    "scenarioName": "Brand Names Edge Case",
+    "prompt": "I'm reading about John Deere tractors and how the Ford Motor Company started. Can you compare their histories?",
+    "expect": {
+      "maxEntities": 2,
+      "maxScore": 25,
+      "level": [
+        "low",
+        "medium"
+      ],
+      "sensitive": []
+    },
+    "inputSelector": "textarea",
+    "submitSelector": "button[type=\"submit\"]",
+    "steps": [
+      "Navigate to https://you.com",
+      "Wait 3 seconds for IronGate injection",
+      "Run in console: window.__IRON_GATE_MAIN_WORLD (expect \"active\")",
+      "Type into: textarea",
+      "Click: button[type=\"submit\"]",
+      "Wait 5-8 seconds for AI response",
+      "Check side panel: entities >= 0",
+      "Check side panel: score >= 0",
+      "Check side panel: level in [low, medium]",
+      "Screenshot the result"
+    ]
+  }
+]

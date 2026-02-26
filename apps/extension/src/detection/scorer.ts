@@ -52,6 +52,13 @@ const ENTITY_WEIGHTS: Record<string, number> = {
   PRIVILEGE_MARKER: 30,
   DEAL_CODENAME: 20,
   OPPOSING_COUNSEL: 15,
+  // Secret scanner entity types
+  API_KEY: 30,
+  AWS_CREDENTIAL: 35,
+  GCP_CREDENTIAL: 30,
+  DATABASE_URI: 35,
+  AUTH_TOKEN: 25,
+  PRIVATE_KEY: 40,
 };
 
 // Legal context keywords that boost scores

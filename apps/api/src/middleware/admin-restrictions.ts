@@ -1,4 +1,5 @@
 import { createMiddleware } from 'hono/factory';
+import { logger } from '../lib/logger';
 
 /**
  * Iron Gate internal admin restrictions middleware.
@@ -101,7 +102,7 @@ function logAdminAction(params: {
   };
 
   // Structured JSON log — ingested by SIEM / audit pipeline
-  console.log(JSON.stringify(entry));
+  logger.info('Admin action', entry);
 }
 
 /**

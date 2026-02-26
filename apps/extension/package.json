@@ -7,17 +7,20 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed"
   },
   "dependencies": {
-    "@iron-gate/types": "workspace:*",
     "@iron-gate/config": "workspace:*",
     "@iron-gate/crypto": "workspace:*",
+    "@iron-gate/types": "workspace:*",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.0.0-beta.28",
+    "@playwright/test": "^1.58.2",
     "@types/chrome": "^0.0.300",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

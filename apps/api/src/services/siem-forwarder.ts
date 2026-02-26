@@ -8,6 +8,7 @@
 import { db } from '../db/client';
 import { firms } from '../db/schema';
 import { eq } from 'drizzle-orm';
+import { logger } from '../lib/logger';
 
 interface SIEMConfig {
   enabled: boolean;
@@ -47,7 +48,7 @@ export async function forward(firmId: string, event: SIEMEvent): Promise<void> {
       signal: AbortSignal.timeout(5000),
     });
   } catch (error) {
-    console.warn('[SIEM Forwarder] Failed to forward event:', error);
+    logger.warn('Failed to forward event to SIEM', { error: error instanceof Error ? error.message : String(error) });
   }
 }
 

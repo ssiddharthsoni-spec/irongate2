@@ -3,6 +3,7 @@ import Stripe from 'stripe';
 import { db } from '../db/client';
 import { subscriptions, invoices } from '../db/schema';
 import { eq } from 'drizzle-orm';
+import { logger } from '../lib/logger';
 
 // This route does NOT use AppEnv — no auth middleware.
 // Stripe sends webhooks directly; we verify the signature instead.
@@ -52,7 +53,7 @@ function mapStripeStatus(status: string): 'active' | 'past_due' | 'canceled' | '
 stripeWebhookRoutes.post('/', async (c) => {
   const stripe = getStripe();
   if (!stripe) {
-    console.warn('[Stripe Webhook] STRIPE_SECRET_KEY not set — ignoring webhook.');
+    logger.warn('STRIPE_SECRET_KEY not set, ignoring webhook');
     return c.json({ received: true, mock: true }, 200);
   }
 
@@ -60,7 +61,7 @@ stripeWebhookRoutes.post('/', async (c) => {
   const signature = c.req.header('stripe-signature');
 
   if (!webhookSecret) {
-    console.error('[Stripe Webhook] STRIPE_WEBHOOK_SECRET not configured.');
+    logger.error('STRIPE_WEBHOOK_SECRET not configured');
     return c.json({ error: 'Webhook secret not configured.' }, 500);
   }
 
@@ -76,7 +77,7 @@ stripeWebhookRoutes.post('/', async (c) => {
     event = stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error('[Stripe Webhook] Signature verification failed:', message);
+    logger.error('Webhook signature verification failed', { error: message });
     return c.json({ error: 'Webhook signature verification failed.' }, 400);
   }
 
@@ -106,10 +107,10 @@ stripeWebhookRoutes.post('/', async (c) => {
       }
 
       default:
-        console.log(`[Stripe Webhook] Unhandled event type: ${event.type}`);
+        logger.info('Unhandled Stripe event type', { eventType: event.type });
     }
   } catch (err) {
-    console.error(`[Stripe Webhook] Error handling ${event.type}:`, err);
+    logger.error('Error handling Stripe webhook event', { eventType: event.type, error: err instanceof Error ? err.message : String(err) });
     // Return 200 so Stripe doesn't retry — we log the error server-side
     return c.json({ received: true, error: 'Handler error logged.' }, 200);
   }
@@ -135,7 +136,7 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
     .limit(1);
 
   if (!sub) {
-    console.warn(`[Stripe Webhook] invoice.paid — no subscription found for customer ${customerId}`);
+    logger.warn('invoice.paid: no subscription found for customer', { customerId });
     return;
   }
 
@@ -161,7 +162,7 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
       },
     });
 
-  console.log(`[Stripe Webhook] invoice.paid — recorded invoice ${invoice.id} for firm ${sub.firmId}`);
+  logger.info('invoice.paid: recorded invoice', { invoiceId: invoice.id, firmId: sub.firmId });
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +182,7 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
     .limit(1);
 
   if (!sub) {
-    console.warn(`[Stripe Webhook] invoice.payment_failed — no subscription found for customer ${customerId}`);
+    logger.warn('invoice.payment_failed: no subscription found for customer', { customerId });
     return;
   }
 
@@ -214,7 +215,7 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
       .where(eq(subscriptions.stripeCustomerId, customerId));
   }
 
-  console.log(`[Stripe Webhook] invoice.payment_failed — invoice ${invoice.id} for firm ${sub.firmId}`);
+  logger.info('invoice.payment_failed: recorded failed invoice', { invoiceId: invoice.id, firmId: sub.firmId });
 }
 
 // ---------------------------------------------------------------------------
@@ -246,8 +247,8 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
         stripePriceId: priceId ?? null,
         tier,
         status,
-        currentPeriodStart: new Date(subscription.current_period_start * 1000),
-        currentPeriodEnd: new Date(subscription.current_period_end * 1000),
+        currentPeriodStart: new Date((subscription as any).current_period_start * 1000),
+        currentPeriodEnd: new Date((subscription as any).current_period_end * 1000),
         cancelAtPeriodEnd: subscription.cancel_at_period_end,
         updatedAt: new Date(),
       })
@@ -257,7 +258,7 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
     // We store with a placeholder firmId from metadata if available.
     const firmId = subscription.metadata?.firmId;
     if (!firmId) {
-      console.warn(`[Stripe Webhook] subscription.updated — no existing record and no firmId in metadata for customer ${customerId}`);
+      logger.warn('subscription.updated: no existing record and no firmId in metadata', { customerId });
       return;
     }
 
@@ -268,13 +269,13 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
       stripePriceId: priceId ?? null,
       tier,
       status,
-      currentPeriodStart: new Date(subscription.current_period_start * 1000),
-      currentPeriodEnd: new Date(subscription.current_period_end * 1000),
+      currentPeriodStart: new Date((subscription as any).current_period_start * 1000),
+      currentPeriodEnd: new Date((subscription as any).current_period_end * 1000),
       cancelAtPeriodEnd: subscription.cancel_at_period_end,
     });
   }
 
-  console.log(`[Stripe Webhook] subscription.updated — customer ${customerId} → tier=${tier}, status=${status}`);
+  logger.info('subscription.updated: updated subscription', { customerId, tier, status });
 }
 
 // ---------------------------------------------------------------------------
@@ -297,5 +298,5 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
     })
     .where(eq(subscriptions.stripeCustomerId, customerId));
 
-  console.log(`[Stripe Webhook] subscription.deleted — customer ${customerId} downgraded to free`);
+  logger.info('subscription.deleted: customer downgraded to free', { customerId });
 }

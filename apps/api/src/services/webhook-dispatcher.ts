@@ -8,6 +8,7 @@
 import { db } from '../db/client';
 import { webhookSubscriptions } from '../db/schema';
 import { eq, and, sql } from 'drizzle-orm';
+import { logger } from '../lib/logger';
 
 /**
  * Dispatch an event to all matching webhook subscriptions for a firm.
@@ -38,11 +39,11 @@ export async function dispatch(
     for (const sub of matching) {
       // Fire-and-forget per subscription
       deliverWithRetry(sub.id, sub.url, sub.secret, eventType, payload).catch((err) => {
-        console.error(`[Webhook] Delivery failed for ${sub.url}:`, err);
+        logger.error('Webhook delivery failed', { url: sub.url, error: String(err) });
       });
     }
   } catch (error) {
-    console.error('[Webhook] Failed to query subscriptions:', error);
+    logger.error('Failed to query webhook subscriptions', { error: error instanceof Error ? error.message : String(error) });
   }
 }
 
@@ -121,7 +122,7 @@ async function deliverWithRetry(
         .update(webhookSubscriptions)
         .set({ isActive: false })
         .where(eq(webhookSubscriptions.id, subId));
-      console.warn(`[Webhook] Deactivated subscription ${subId} after ${maxAttempts} failures`);
+      logger.warn('Deactivated webhook subscription after repeated failures', { subId, maxAttempts });
     }
   } catch (error) {
     if (attempt < maxAttempts) {

@@ -5,6 +5,7 @@ export type AppVariables = {
   userId: string;
   clerkId: string;
   firmId: string;
+  userRole: 'admin' | 'user';
 };
 
 export type AppEnv = {

@@ -6,6 +6,8 @@
 // attempts. Designed to be called as middleware before query execution.
 // ============================================================================
 
+import { logger } from '../lib/logger';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -147,7 +149,7 @@ export function analyzeQuery(sqlQuery: string): QueryAnalysisResult {
 // ---------------------------------------------------------------------------
 
 /**
- * Log a detected query anomaly as structured JSON to stderr.
+ * Log a detected query anomaly via the structured logger.
  *
  * @param rule - The anomaly rule that was matched
  * @param query - The query that triggered the rule (truncated for safety)
@@ -156,12 +158,11 @@ function logQueryAnomaly(rule: QueryAnomalyRule, query: string): void {
   // Truncate the query to prevent log injection / excessive log size
   const truncatedQuery = query.length > 500 ? query.slice(0, 500) + '...[TRUNCATED]' : query;
 
-  console.error(JSON.stringify({
+  logger.error('Query anomaly detected', {
     level: 'QUERY_ANOMALY',
     severity: rule.severity,
     ruleName: rule.name,
     action: rule.action,
     query: truncatedQuery,
-    timestamp: new Date().toISOString(),
-  }));
+  });
 }

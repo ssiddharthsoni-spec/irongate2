@@ -1,6 +1,22 @@
 import { detectAITool } from './detectors';
 import { createCaptureEngine } from './capture';
 import { createSensitivityBadge } from './ui/sensitivity-badge';
+import { createCoachingToasts, getNextCoachingTip, type CoachingToastHandle } from './ui/coaching-toast';
+
+// ── Duplicate Injection Guard ────────────────────────────────────────────────
+// When the extension reloads and re-injects, the OLD content script may still
+// be partially alive. We use a window marker to detect and clean up old instances.
+const CS_MARKER = '__IRON_GATE_CS_ACTIVE';
+if ((window as any)[CS_MARKER]) {
+  // Tell the old instance to shut down
+  window.dispatchEvent(new CustomEvent('iron-gate-cs-replaced'));
+}
+(window as any)[CS_MARKER] = true;
+
+// Debug logging — silent in production, enable via: chrome.storage.local.set({ironGateDebug: true})
+let _IG_DEBUG = false;
+try { chrome.storage.local.get('ironGateDebug', (r) => { _IG_DEBUG = !!r.ironGateDebug; }); } catch {}
+function igLog(...args: any[]) { if (_IG_DEBUG) console.log('[Iron Gate]', ...args); }
 
 /**
  * Iron Gate Content Script
@@ -11,6 +27,13 @@ import { createSensitivityBadge } from './ui/sensitivity-badge';
 let detector: ReturnType<typeof detectAITool> = null;
 let engine: ReturnType<typeof createCaptureEngine> | null = null;
 let badge: ReturnType<typeof createSensitivityBadge> | null = null;
+let toasts: CoachingToastHandle | null = null;
+let contextAlive = true;
+
+// Coaching state — throttle toasts to avoid spam
+let lastToastTime = 0;
+let sessionInterceptCount = 0;
+const TOAST_COOLDOWN = 8000; // Min 8s between toasts
 
 // ── Sync mode with MAIN world script ────────────────────────────────────────
 // The MAIN world script patches window.fetch in the page's JS context.
@@ -24,7 +47,7 @@ function syncModeToMainWorld(newMode: 'audit' | 'proxy') {
 chrome.storage.local.get('firmMode', (result) => {
   const savedMode = result.firmMode === 'proxy' ? 'proxy' : 'audit';
   syncModeToMainWorld(savedMode);
-  console.log(`[Iron Gate] Initial mode from storage: ${savedMode}`);
+  igLog('Initial mode from storage:', savedMode);
 });
 
 // Also watch for storage changes (backup in case MODE_CHANGED message is missed)
@@ -33,7 +56,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
     const newMode = changes.firmMode.newValue === 'proxy' ? 'proxy' : 'audit';
     syncModeToMainWorld(newMode);
     engine?.updateConfig({ mode: newMode });
-    console.log(`[Iron Gate] Mode changed via storage: ${newMode}`);
+    igLog('Mode changed via storage:', newMode);
   }
 });
 
@@ -44,7 +67,22 @@ window.addEventListener('message', (event) => {
   if (event.source !== window) return;
   if (event.data?.type === 'IRON_GATE_HEARTBEAT') {
     mainWorldAlive = true;
-    console.log(`[Iron Gate] MAIN world heartbeat received (v${event.data.version}, mode: ${event.data.mode})`);
+    igLog('MAIN world heartbeat received', `v${event.data.version}, mode: ${event.data.mode}`);
+  }
+  // Health status from MAIN world — relay to service worker for sidepanel
+  if (event.data?.type === 'IRON_GATE_HEALTH') {
+    try {
+      chrome.runtime.sendMessage({
+        type: 'PROTECTION_STATUS',
+        payload: {
+          healthy: event.data.healthy,
+          patchStatus: event.data.patchStatus,
+          adapter: event.data.adapter,
+        },
+      }).catch(() => {});
+    } catch {
+      // Extension context may be invalidated
+    }
   }
 });
 
@@ -66,7 +104,7 @@ function tryScriptTagInjection(): void {
       const script = document.createElement('script');
       script.src = scriptUrl;
       script.onload = () => {
-        console.log('[Iron Gate] Fallback <script> tag injection succeeded');
+        igLog('Fallback <script> tag injection succeeded');
         script.remove();
         chrome.storage.local.get('firmMode', (result) => {
           const savedMode = result.firmMode === 'proxy' ? 'proxy' : 'audit';
@@ -90,10 +128,10 @@ function tryScriptTagInjection(): void {
 // Only try the <script> tag fallback if no heartbeat was received.
 setTimeout(() => {
   if (!mainWorldAlive) {
-    console.log('[Iron Gate] No heartbeat after 500ms — trying <script> tag fallback...');
+    igLog('No heartbeat after 500ms — trying <script> tag fallback...');
     tryScriptTagInjection();
   } else {
-    console.log('[Iron Gate] MAIN world alive via manifest injection — no fallback needed');
+    igLog('MAIN world alive via manifest injection — no fallback needed');
   }
 }, 500);
 
@@ -101,12 +139,74 @@ setTimeout(() => {
 window.addEventListener('message', (event) => {
   if (event.source !== window) return;
 
+  // ── File Upload Detection from MAIN world ────────────────────────────
+  // The main world fetch interceptor detects File objects in FormData bodies
+  // and sends them via postMessage. We relay to the service worker for scanning.
+  if (event.data?.type === 'IRON_GATE_FILE_UPLOAD') {
+    const { fileName, fileSize, fileType, fileBase64, url } = event.data;
+    igLog(`File upload from MAIN world: ${fileName} (${fileSize} bytes) → ${url?.substring(0, 80)}`);
+    try {
+      chrome.runtime.sendMessage(
+        {
+          type: 'FILE_UPLOAD_DETECTED',
+          payload: {
+            fileName,
+            fileSize,
+            fileType,
+            fileBase64,
+            aiToolId: detector?.id || 'unknown',
+            timestamp: Date.now(),
+          },
+        },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            igLog('File upload relay error:', chrome.runtime.lastError.message);
+            return;
+          }
+          // If high/critical, the sidepanel will show the Document Inspector automatically
+          // via the FILE_SCAN_RESULT message from the service worker.
+          if (response && !response.error && (response.level === 'high' || response.level === 'critical')) {
+            igLog(`File scan result: ${response.level} (score: ${response.score})`);
+          }
+        }
+      );
+    } catch {
+      // Extension context may be invalidated
+    }
+    return;
+  }
+
+  // ── File Metadata Detection from MAIN world ──────────────────────────
+  // Detects file upload requests with metadata (e.g., ChatGPT's /backend-api/files)
+  if (event.data?.type === 'IRON_GATE_FILE_METADATA') {
+    const { fileName, fileSize, fileType, url } = event.data;
+    igLog(`File metadata from MAIN world: ${fileName} (${fileSize} bytes) → ${url?.substring(0, 80)}`);
+    // Notify sidepanel via service worker (lightweight — no file content to scan)
+    try {
+      chrome.runtime.sendMessage({
+        type: 'FILE_UPLOAD_DETECTED',
+        payload: {
+          fileName,
+          fileSize,
+          fileType,
+          fileBase64: '', // No content — metadata only
+          aiToolId: detector?.id || 'unknown',
+          timestamp: Date.now(),
+          metadataOnly: true,
+        },
+      }).catch(() => {});
+    } catch {
+      // Extension context may be invalidated
+    }
+    return;
+  }
+
   // MAIN world is requesting the current mode (it loaded before us)
   if (event.data?.type === 'IRON_GATE_REQUEST_MODE') {
     chrome.storage.local.get('firmMode', (result) => {
       const savedMode = result.firmMode === 'proxy' ? 'proxy' : 'audit';
       syncModeToMainWorld(savedMode);
-      console.log(`[Iron Gate] Responded to MAIN world mode request: ${savedMode}`);
+      igLog('Responded to MAIN world mode request:', savedMode);
     });
     return;
   }
@@ -114,7 +214,7 @@ window.addEventListener('message', (event) => {
   // PROXY mode: fetch was pseudonymized before sending to LLM
   if (event.data?.type === 'IRON_GATE_INTERCEPTED') {
     const { originalPrompt, maskedPrompt, mappings, entityCount, level, score, entities } = event.data;
-    console.log(`[Iron Gate] MAIN world intercepted fetch — ${entityCount} entities pseudonymized (${level}, score=${score})`);
+    igLog(`MAIN world intercepted fetch — ${entityCount} entities pseudonymized (${level}, score=${score})`);
 
     try {
       chrome.runtime.sendMessage({
@@ -135,12 +235,15 @@ window.addEventListener('message', (event) => {
     } catch {
       // Extension context may be invalidated
     }
+
+    // Coaching toast: confirm pseudonymization
+    showCoachingFeedback('proxy', entityCount, level, score);
   }
 
   // AUDIT mode: entities detected but NOT pseudonymized (just scored)
   if (event.data?.type === 'IRON_GATE_AUDIT') {
     const { originalPrompt, maskedPrompt, mappings, entityCount, level, score, entities } = event.data;
-    console.log(`[Iron Gate] MAIN world audit — ${entityCount} entities detected (${level}, score=${score})`);
+    igLog(`MAIN world audit — ${entityCount} entities detected (${level}, score=${score})`);
 
     try {
       chrome.runtime.sendMessage({
@@ -161,6 +264,9 @@ window.addEventListener('message', (event) => {
     } catch {
       // Extension context may be invalidated
     }
+
+    // Coaching toast: warn about detected entities in audit mode
+    showCoachingFeedback('audit', entityCount, level, score);
   }
 });
 
@@ -186,7 +292,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       case 'MODE_CHANGED':
         engine?.updateConfig({ mode: message.payload.mode });
         syncModeToMainWorld(message.payload.mode);
-        console.log(`[Iron Gate] Mode switched to: ${message.payload.mode}`);
+        igLog('Mode switched to:', message.payload.mode);
         sendResponse({ ok: true });
         break;
       default:
@@ -199,6 +305,56 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true;
 });
 
+// ── Coaching feedback logic ──────────────────────────────────────────────────
+
+function showCoachingFeedback(mode: 'proxy' | 'audit', entityCount: number, level: string, score: number) {
+  if (!toasts) return;
+  const now = Date.now();
+  if (now - lastToastTime < TOAST_COOLDOWN) return;
+  lastToastTime = now;
+  sessionInterceptCount++;
+
+  if (mode === 'proxy') {
+    // Positive feedback: entities were protected
+    toasts.show({
+      type: 'shield',
+      title: 'Protected',
+      message: `${entityCount} sensitive ${entityCount === 1 ? 'entity' : 'entities'} pseudonymized before reaching the AI.`,
+      duration: 3500,
+    });
+
+    // Every 5th interception, show a coaching tip
+    if (sessionInterceptCount % 5 === 0) {
+      setTimeout(() => {
+        toasts?.show({
+          type: 'tip',
+          title: 'Security Tip',
+          message: getNextCoachingTip(),
+          duration: 6000,
+        });
+      }, 4000);
+    }
+  } else {
+    // Audit mode: severity-based feedback
+    if (level === 'critical' || level === 'high') {
+      toasts.show({
+        type: 'warning',
+        title: level === 'critical' ? 'Critical Risk Detected' : 'High Risk Detected',
+        message: `${entityCount} sensitive ${entityCount === 1 ? 'entity' : 'entities'} found (score: ${score}). Consider enabling proxy mode for automatic protection.`,
+        duration: 5000,
+      });
+    } else if (sessionInterceptCount <= 2) {
+      // Only show for first couple of interactions to avoid noise
+      toasts.show({
+        type: 'shield',
+        title: 'Monitoring Active',
+        message: `${entityCount} ${entityCount === 1 ? 'entity' : 'entities'} detected. Iron Gate is watching for sensitive data.`,
+        duration: 3000,
+      });
+    }
+  }
+}
+
 // Initialize detection (may run before DOM is ready, that's OK)
 function initialize() {
   try {
@@ -206,14 +362,33 @@ function initialize() {
     detector = detectAITool(currentUrl);
 
     if (detector) {
-      console.log(`[Iron Gate] Detected AI tool: ${detector.name} on ${currentUrl}`);
+      igLog('Detected AI tool:', detector.name, 'on', currentUrl);
 
       engine = createCaptureEngine(detector);
       engine.start();
 
       badge = createSensitivityBadge();
+      toasts = createCoachingToasts();
+
+      // Welcome toast on first load (only once per session)
+      try {
+        chrome.storage.session.get('welcomeShown', (result) => {
+          if (chrome.runtime.lastError) return; // Storage not accessible
+          if (!result?.welcomeShown && toasts) {
+            toasts.show({
+              type: 'shield',
+              title: `Iron Gate Active`,
+              message: `Monitoring ${detector!.name} for sensitive data. Your prompts are being scanned in real time.`,
+              duration: 4000,
+            });
+            chrome.storage.session.set({ welcomeShown: true }).catch(() => {});
+          }
+        });
+      } catch {
+        // chrome.storage.session may not be available in all contexts
+      }
     } else {
-      console.log(`[Iron Gate] No AI tool detected on: ${currentUrl}`);
+      igLog('No AI tool detected on:', currentUrl);
     }
   } catch (err) {
     console.error('[Iron Gate] Initialization error:', err);
@@ -226,3 +401,43 @@ if (document.readyState === 'loading') {
 } else {
   initialize();
 }
+
+// ── Extension Context Liveness Check ─────────────────────────────────────────
+// Detect when the extension has been reloaded and our chrome.runtime is dead.
+// The service worker's reinjectAllTabs() will replace us with a fresh instance.
+
+function checkExtensionContext(): void {
+  if (!contextAlive) return;
+  try {
+    if (!chrome.runtime?.id) {
+      contextAlive = false;
+      igLog('Extension context invalidated — orphaned content script');
+      engine?.stop();
+      window.postMessage({ type: 'IRON_GATE_CONTEXT_INVALIDATED' }, '*');
+      if (toasts) {
+        toasts.show({
+          type: 'warning',
+          title: 'Iron Gate Reloaded',
+          message: 'Extension was updated. Protection will resume automatically.',
+          duration: 6000,
+        });
+      }
+      clearInterval(contextCheckInterval);
+    }
+  } catch {
+    contextAlive = false;
+    clearInterval(contextCheckInterval);
+  }
+}
+
+const contextCheckInterval = setInterval(checkExtensionContext, 5000);
+
+// ── Cleanup on Replacement ──────────────────────────────────────────────────
+// When a new content script is injected (e.g., after extension reload),
+// it dispatches 'iron-gate-cs-replaced' to tell us to shut down.
+window.addEventListener('iron-gate-cs-replaced', () => {
+  igLog('Content script being replaced by new instance');
+  contextAlive = false;
+  engine?.stop();
+  clearInterval(contextCheckInterval);
+}, { once: true });

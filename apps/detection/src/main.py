@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
+import os
 import time
 import uuid
 
@@ -19,11 +20,16 @@ app = FastAPI(
     version="0.1.0",
 )
 
+_allowed_origins = os.environ.get(
+    "ALLOWED_ORIGINS",
+    "https://irongate-api.onrender.com,http://localhost:3000",
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[o.strip() for o in _allowed_origins if o.strip()],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # Initialize the detection pipeline
