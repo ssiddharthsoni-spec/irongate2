@@ -190,7 +190,6 @@ jobs:
 
       - name: Run detection tests
         run: python -m pytest apps/detection/ -v --tb=short
-        continue-on-error: true
 
   # ── Security Scanning ────────────────────────────────────────────────────
 
@@ -217,7 +216,6 @@ jobs:
 
       - name: Run dependency audit
         run: pnpm audit --audit-level=high
-        continue-on-error: true
 
   dependency-review:
     name: Dependency Review

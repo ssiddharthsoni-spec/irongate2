@@ -70,7 +70,7 @@ export const authMiddleware = createMiddleware(async (c, next) => {
       c.set('clerkId', 'api-key');
       c.set('firmId', cached.firmId);
       c.set('userRole', (cached.role as 'admin' | 'user') || 'user');
-      db.update(apiKeys).set({ lastUsedAt: new Date() }).where(eq(apiKeys.keyHash, keyHash)).catch(() => {});
+      db.update(apiKeys).set({ lastUsedAt: new Date() }).where(eq(apiKeys.keyHash, keyHash)).catch(err => logger.warn('Failed to update API key lastUsedAt (cached path)', { error: err instanceof Error ? err.message : String(err) }));
       await next();
       return;
     }
@@ -107,7 +107,7 @@ export const authMiddleware = createMiddleware(async (c, next) => {
       c.set('clerkId', 'api-key');
       c.set('firmId', keyRecord.firmId);
       c.set('userRole', (role as 'admin' | 'user') || 'user');
-      db.update(apiKeys).set({ lastUsedAt: new Date() }).where(eq(apiKeys.id, keyRecord.id)).catch(() => {});
+      db.update(apiKeys).set({ lastUsedAt: new Date() }).where(eq(apiKeys.id, keyRecord.id)).catch(err => logger.warn('Failed to update API key lastUsedAt', { error: err instanceof Error ? err.message : String(err) }));
       await next();
       return;
     }

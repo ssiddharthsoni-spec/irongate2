@@ -167,6 +167,161 @@ describe('Event Schema Validation', () => {
   });
 });
 
+// ─── Event Schema Edge Cases (matching real route constraints) ──────────────
+
+describe('Event Schema Edge Cases', () => {
+  // This schema mirrors apps/api/src/routes/events.ts exactly
+  const realEventSchema = z.object({
+    aiToolId: z.string().min(1),
+    aiToolUrl: z.string().optional(),
+    promptHash: z.string().length(64),
+    promptLength: z.number().int().min(0),
+    sensitivityScore: z.number().min(0).max(100),
+    sensitivityLevel: z.enum(['low', 'medium', 'high', 'critical']),
+    entities: z.array(z.object({
+      type: z.string().min(1).max(50),
+      text: z.string().min(1),
+      start: z.number().int().min(0),
+      end: z.number().int().min(0),
+      confidence: z.number().min(0).max(1),
+      source: z.string().min(1).max(20),
+    })).optional().default([]),
+    action: z.enum(['pass', 'warn', 'block', 'proxy', 'override']),
+    overrideReason: z.string().optional(),
+    captureMethod: z.string().min(1).max(20),
+    sessionId: z.string().uuid().optional(),
+    metadata: z.record(z.unknown()).optional(),
+  });
+
+  const base = {
+    aiToolId: 'chatgpt',
+    promptHash: 'a'.repeat(64),
+    promptLength: 100,
+    sensitivityScore: 45,
+    sensitivityLevel: 'medium' as const,
+    action: 'pass' as const,
+    captureMethod: 'fetch',
+  };
+
+  it('should reject entity with confidence > 1', () => {
+    expect(() => realEventSchema.parse({
+      ...base,
+      entities: [{
+        type: 'SSN', text: '123-45-6789', start: 0, end: 11,
+        confidence: 1.5, source: 'regex',
+      }],
+    })).toThrow(z.ZodError);
+  });
+
+  it('should accept entity with confidence exactly 1', () => {
+    const parsed = realEventSchema.parse({
+      ...base,
+      entities: [{
+        type: 'SSN', text: '123-45-6789', start: 0, end: 11,
+        confidence: 1, source: 'regex',
+      }],
+    });
+    expect(parsed.entities[0].confidence).toBe(1);
+  });
+
+  it('should reject entity with confidence < 0', () => {
+    expect(() => realEventSchema.parse({
+      ...base,
+      entities: [{
+        type: 'SSN', text: '123-45-6789', start: 0, end: 11,
+        confidence: -0.1, source: 'regex',
+      }],
+    })).toThrow(z.ZodError);
+  });
+
+  it('should reject entity type > 50 characters', () => {
+    expect(() => realEventSchema.parse({
+      ...base,
+      entities: [{
+        type: 'X'.repeat(51), text: 'test', start: 0, end: 4,
+        confidence: 0.9, source: 'regex',
+      }],
+    })).toThrow(z.ZodError);
+  });
+
+  it('should accept entity type exactly 50 characters', () => {
+    const parsed = realEventSchema.parse({
+      ...base,
+      entities: [{
+        type: 'X'.repeat(50), text: 'test', start: 0, end: 4,
+        confidence: 0.9, source: 'regex',
+      }],
+    });
+    expect(parsed.entities[0].type).toHaveLength(50);
+  });
+
+  it('should reject entity source > 20 characters', () => {
+    expect(() => realEventSchema.parse({
+      ...base,
+      entities: [{
+        type: 'EMAIL', text: 'a@b.com', start: 0, end: 7,
+        confidence: 0.9, source: 'X'.repeat(21),
+      }],
+    })).toThrow(z.ZodError);
+  });
+
+  it('should reject captureMethod > 20 characters', () => {
+    expect(() => realEventSchema.parse({
+      ...base,
+      captureMethod: 'X'.repeat(21),
+    })).toThrow(z.ZodError);
+  });
+
+  it('should accept captureMethod exactly 20 characters', () => {
+    const parsed = realEventSchema.parse({
+      ...base,
+      captureMethod: 'X'.repeat(20),
+    });
+    expect(parsed.captureMethod).toHaveLength(20);
+  });
+
+  it('should accept override action with overrideReason', () => {
+    const parsed = realEventSchema.parse({
+      ...base,
+      action: 'override',
+      overrideReason: 'Client approved disclosure',
+    });
+    expect(parsed.action).toBe('override');
+    expect(parsed.overrideReason).toBe('Client approved disclosure');
+  });
+
+  it('should accept override action without overrideReason (optional)', () => {
+    const parsed = realEventSchema.parse({
+      ...base,
+      action: 'override',
+    });
+    expect(parsed.action).toBe('override');
+    expect(parsed.overrideReason).toBeUndefined();
+  });
+
+  it('should reject negative promptLength', () => {
+    expect(() => realEventSchema.parse({
+      ...base,
+      promptLength: -1,
+    })).toThrow(z.ZodError);
+  });
+
+  it('should reject non-integer promptLength', () => {
+    expect(() => realEventSchema.parse({
+      ...base,
+      promptLength: 10.5,
+    })).toThrow(z.ZodError);
+  });
+
+  it('should accept metadata as arbitrary key-value pairs', () => {
+    const parsed = realEventSchema.parse({
+      ...base,
+      metadata: { browser: 'chrome', tabId: 42, nested: { a: 1 } },
+    });
+    expect(parsed.metadata?.browser).toBe('chrome');
+  });
+});
+
 // ─── Batch Schema Validation ────────────────────────────────────────────────
 
 describe('Batch Event Schema Validation', () => {

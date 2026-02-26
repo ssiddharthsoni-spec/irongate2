@@ -1,7 +1,7 @@
 // Iron Gate — Security Routes
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { randomUUID, randomBytes } from 'node:crypto';
+import { randomUUID, randomBytes, timingSafeEqual } from 'node:crypto';
 import { db } from '../db/client';
 import { firms, users } from '../db/schema';
 import { eq, sql } from 'drizzle-orm';
@@ -42,10 +42,37 @@ function isKillSwitchActive(firmId?: string): boolean {
 export const securityRoutes = new Hono<AppEnv>();
 
 // ---------------------------------------------------------------------------
+// Kill switch rate limiter — 5 requests/minute per IP (strict)
+// ---------------------------------------------------------------------------
+const killSwitchAttempts = new Map<string, number[]>();
+const KILL_SWITCH_LIMIT = 5;
+const KILL_SWITCH_WINDOW = 60_000;
+
+function checkKillSwitchRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const attempts = (killSwitchAttempts.get(ip) || []).filter(t => now - t < KILL_SWITCH_WINDOW);
+  attempts.push(now);
+  killSwitchAttempts.set(ip, attempts);
+  // Evict stale IPs periodically
+  if (killSwitchAttempts.size > 1000) {
+    for (const [k, v] of killSwitchAttempts) {
+      if (v.every(t => now - t >= KILL_SWITCH_WINDOW)) killSwitchAttempts.delete(k);
+    }
+  }
+  return attempts.length <= KILL_SWITCH_LIMIT;
+}
+
+// ---------------------------------------------------------------------------
 // 1. POST /kill-switch — Activate or deactivate kill switch
 //    Requires dual admin API keys: X-Admin-Key-1 and X-Admin-Key-2
 // ---------------------------------------------------------------------------
 securityRoutes.post('/kill-switch', async (c) => {
+  // Strict rate limiting — 5 requests/minute per IP
+  const ip = c.req.header('x-forwarded-for') || 'unknown';
+  if (!checkKillSwitchRateLimit(ip)) {
+    return c.json({ error: 'Rate limit exceeded for kill switch endpoint' }, 429);
+  }
+
   // Dual admin key verification — both headers must be present and match env
   const key1 = c.req.header('X-Admin-Key-1');
   const key2 = c.req.header('X-Admin-Key-2');
@@ -61,8 +88,12 @@ securityRoutes.post('/kill-switch', async (c) => {
     return c.json({ error: 'Kill switch admin keys are not configured on the server' }, 500);
   }
 
-  // Constant-time comparison would be ideal in production; here we verify both keys
-  if (key1 !== expectedKey1 || key2 !== expectedKey2) {
+  // Constant-time comparison to prevent timing attacks on admin keys
+  const key1Match = key1.length === expectedKey1.length &&
+    timingSafeEqual(Buffer.from(key1), Buffer.from(expectedKey1));
+  const key2Match = key2.length === expectedKey2.length &&
+    timingSafeEqual(Buffer.from(key2), Buffer.from(expectedKey2));
+  if (!key1Match || !key2Match) {
     return c.json({ error: 'Invalid admin keys' }, 403);
   }
 

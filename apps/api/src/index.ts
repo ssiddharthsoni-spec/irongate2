@@ -48,6 +48,8 @@ import { requestLoggerMiddleware } from './middleware/request-logger';
 import { requirePerm } from './middleware/rbac';
 import { metrics } from './lib/metrics';
 import { openApiSpec } from './docs/openapi';
+import { sql } from 'drizzle-orm';
+import { db } from './db/client';
 import type { AppEnv } from './types';
 
 const app = new Hono<AppEnv>();
@@ -218,10 +220,19 @@ if (!process.env.ALLOWED_EXTENSION_IDS && !process.env.CHROME_EXTENSION_ID) {
 
 const port = parseInt(process.env.PORT || '3000');
 
+// Verify database connectivity before starting
+try {
+  await db.execute(sql`SELECT 1`);
+  logger.info('Database connection verified');
+} catch (err) {
+  logger.error('Failed to connect to database', { error: err instanceof Error ? err.message : String(err) });
+  process.exit(1);
+}
+
 import('@hono/node-server').then(({ serve }) => {
   serve({ fetch: app.fetch, port }, () => {
     logger.info('Server started', { port, url: `http://localhost:${port}` });
     // Start scheduled jobs
-    import('./jobs/scheduler').then(({ startScheduler }) => startScheduler()).catch(() => {});
+    import('./jobs/scheduler').then(({ startScheduler }) => startScheduler()).catch(err => logger.error('Failed to start scheduler', { error: err instanceof Error ? err.message : String(err) }));
   });
 });

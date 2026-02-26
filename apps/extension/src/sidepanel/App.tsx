@@ -627,25 +627,33 @@ export function App() {
             Get your API key from the <a href="https://irongate-dashboard.vercel.app/admin" target="_blank" rel="noopener" className="text-iron-600 underline">admin dashboard</a>.
           </p>
 
-          {/* Mode toggle */}
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-medium text-gray-500">Mode</span>
+          {/* Mode toggle — Monitor / Protect */}
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex flex-col">
+              <span className="text-xs font-medium text-gray-700">
+                {mode === 'audit' ? 'Monitor' : 'Protect'}
+              </span>
+              <span className="text-[10px] text-gray-400 mt-0.5">
+                {mode === 'audit'
+                  ? 'Scanning only — prompts sent unmodified'
+                  : 'Sensitive data redacted before sending'}
+              </span>
+            </div>
             <button
+              role="switch"
+              aria-checked={mode === 'proxy'}
               onClick={handleModeToggle}
-              className={`relative inline-flex items-center px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                mode === 'audit'
-                  ? 'bg-blue-100 text-blue-700'
-                  : 'bg-amber-100 text-amber-700'
+              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-iron-500 ${
+                mode === 'proxy' ? 'bg-iron-600' : 'bg-gray-300'
               }`}
             >
-              {mode === 'audit' ? 'Audit' : 'Proxy'}
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
+                  mode === 'proxy' ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
             </button>
           </div>
-          <p className="text-[10px] text-gray-400 mb-2">
-            {mode === 'audit'
-              ? 'Passively monitors prompts without modification.'
-              : 'Intercepts and redacts sensitive data before it reaches AI tools.'}
-          </p>
 
           {/* Disconnect */}
           <button
@@ -680,17 +688,15 @@ export function App() {
               ? 'Error'
               : 'Not on an AI tool page'}
           </span>
-          <button
-            onClick={handleModeToggle}
-            className={`ml-auto inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-colors ${
+          <span
+            className={`ml-auto inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${
               mode === 'audit'
-                ? 'bg-blue-100 text-blue-700 hover:bg-blue-200'
-                : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                ? 'bg-blue-50 text-blue-600'
+                : 'bg-emerald-50 text-emerald-600'
             }`}
-            title={`Click to switch to ${mode === 'audit' ? 'PROXY' : 'AUDIT'} mode`}
           >
-            {mode.toUpperCase()}
-          </button>
+            {mode === 'audit' ? 'MONITOR' : 'PROTECT'}
+          </span>
         </div>
         {protectionHealthy === false && (
           <p className="text-xs text-red-600 mt-2">
@@ -698,102 +704,6 @@ export function App() {
           </p>
         )}
       </div>
-
-      {/* Current Score */}
-      {lastScore && (
-        <div className="bg-white rounded-lg p-4 mb-4 shadow-sm border">
-          <h2 className="text-sm font-medium text-gray-500 mb-2">Last Detection</h2>
-          <div className="flex items-center gap-3">
-            <div
-              className={`text-3xl font-bold ${
-                lastScore.level === 'critical'
-                  ? 'text-risk-critical'
-                  : lastScore.level === 'high'
-                  ? 'text-risk-high'
-                  : lastScore.level === 'medium'
-                  ? 'text-risk-medium'
-                  : 'text-risk-low'
-              }`}
-            >
-              {lastScore.score}
-            </div>
-            <div>
-              <div className="text-sm font-medium capitalize">{lastScore.level} Risk</div>
-              <div className="text-xs text-gray-500">
-                {lastScore.entities.length} entities detected
-              </div>
-            </div>
-          </div>
-          {lastScore.explanation && (
-            <p className="text-xs text-gray-600 mt-2">{lastScore.explanation}</p>
-          )}
-          {/* Entity pills with feedback */}
-          <div className="flex flex-wrap gap-1 mt-3">
-            {lastScore.entities.map((entity, i) => (
-              <div key={i} className="relative">
-                <span
-                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
-                    feedbackSent.has(i)
-                      ? 'bg-green-100 text-green-700'
-                      : 'bg-iron-100 text-iron-700'
-                  }`}
-                >
-                  {entity.type}
-                  {!feedbackSent.has(i) && (
-                    <>
-                      <button
-                        onClick={() => sendEntityFeedback(i, 'correct')}
-                        className="ml-0.5 hover:text-green-600"
-                        title="Correct detection"
-                      >
-                        +
-                      </button>
-                      <button
-                        onClick={() => setFeedbackOpen(feedbackOpen === i ? null : i)}
-                        className="hover:text-red-600"
-                        title="Incorrect detection"
-                      >
-                        -
-                      </button>
-                    </>
-                  )}
-                  {feedbackSent.has(i) && (
-                    <span title="Feedback sent">&#10003;</span>
-                  )}
-                </span>
-                {/* Feedback dropdown */}
-                {feedbackOpen === i && (
-                  <div className="absolute top-full left-0 mt-1 w-48 bg-white rounded-lg shadow-lg border z-10 py-1">
-                    <button
-                      onClick={() => sendEntityFeedback(i, 'not_pii')}
-                      className="block w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
-                    >
-                      Not PII
-                    </button>
-                    <button
-                      onClick={() => sendEntityFeedback(i, 'partial_match')}
-                      className="block w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
-                    >
-                      Partial match
-                    </button>
-                    <div className="border-t my-1" />
-                    <p className="px-3 py-1 text-xs text-gray-400">Wrong type -- correct to:</p>
-                    {ENTITY_TYPES.filter((t) => t !== entity.type).slice(0, 6).map((type) => (
-                      <button
-                        key={type}
-                        onClick={() => sendEntityFeedback(i, 'wrong_type', type)}
-                        className="block w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
-                      >
-                        {type}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Prompt Inspector */}
       {inspectorData && (
@@ -946,6 +856,102 @@ export function App() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Last Detection */}
+      {lastScore && (
+        <div className="bg-white rounded-lg p-4 mb-4 shadow-sm border">
+          <h2 className="text-sm font-medium text-gray-500 mb-2">Last Detection</h2>
+          <div className="flex items-center gap-3">
+            <div
+              className={`text-3xl font-bold ${
+                lastScore.level === 'critical'
+                  ? 'text-risk-critical'
+                  : lastScore.level === 'high'
+                  ? 'text-risk-high'
+                  : lastScore.level === 'medium'
+                  ? 'text-risk-medium'
+                  : 'text-risk-low'
+              }`}
+            >
+              {lastScore.score}
+            </div>
+            <div>
+              <div className="text-sm font-medium capitalize">{lastScore.level} Risk</div>
+              <div className="text-xs text-gray-500">
+                {lastScore.entities.length} entities detected
+              </div>
+            </div>
+          </div>
+          {lastScore.explanation && (
+            <p className="text-xs text-gray-600 mt-2">{lastScore.explanation}</p>
+          )}
+          {/* Entity pills with feedback */}
+          <div className="flex flex-wrap gap-1 mt-3">
+            {lastScore.entities.map((entity, i) => (
+              <div key={i} className="relative">
+                <span
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
+                    feedbackSent.has(i)
+                      ? 'bg-green-100 text-green-700'
+                      : 'bg-iron-100 text-iron-700'
+                  }`}
+                >
+                  {entity.type}
+                  {!feedbackSent.has(i) && (
+                    <>
+                      <button
+                        onClick={() => sendEntityFeedback(i, 'correct')}
+                        className="ml-0.5 hover:text-green-600"
+                        title="Correct detection"
+                      >
+                        +
+                      </button>
+                      <button
+                        onClick={() => setFeedbackOpen(feedbackOpen === i ? null : i)}
+                        className="hover:text-red-600"
+                        title="Incorrect detection"
+                      >
+                        -
+                      </button>
+                    </>
+                  )}
+                  {feedbackSent.has(i) && (
+                    <span title="Feedback sent">&#10003;</span>
+                  )}
+                </span>
+                {/* Feedback dropdown */}
+                {feedbackOpen === i && (
+                  <div className="absolute top-full left-0 mt-1 w-48 bg-white rounded-lg shadow-lg border z-10 py-1">
+                    <button
+                      onClick={() => sendEntityFeedback(i, 'not_pii')}
+                      className="block w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                    >
+                      Not PII
+                    </button>
+                    <button
+                      onClick={() => sendEntityFeedback(i, 'partial_match')}
+                      className="block w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                    >
+                      Partial match
+                    </button>
+                    <div className="border-t my-1" />
+                    <p className="px-3 py-1 text-xs text-gray-400">Wrong type -- correct to:</p>
+                    {ENTITY_TYPES.filter((t) => t !== entity.type).slice(0, 6).map((type) => (
+                      <button
+                        key={type}
+                        onClick={() => sendEntityFeedback(i, 'wrong_type', type)}
+                        className="block w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                      >
+                        {type}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

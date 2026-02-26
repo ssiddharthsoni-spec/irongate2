@@ -116,7 +116,7 @@ eventsRoutes.post('/', async (c) => {
 
     // Fire-and-forget: record co-occurrences for sensitivity graph
     if (parsed.entities.length >= 2) {
-      recordCoOccurrences(firmId, parsed.entities as any, parsed.sensitivityScore).catch(() => {});
+      recordCoOccurrences(firmId, parsed.entities as any, parsed.sensitivityScore).catch(err => logger.warn('Failed to record co-occurrences', { error: err instanceof Error ? err.message : String(err) }));
     }
 
     // Fire-and-forget: webhook dispatch for high-risk events
@@ -128,7 +128,7 @@ eventsRoutes.post('/', async (c) => {
         sensitivityLevel: parsed.sensitivityLevel,
         action: parsed.action,
         entityCount: parsed.entities.length,
-      }).catch(() => {});
+      }).catch(err => logger.warn('Failed to dispatch webhook for high-risk event', { error: err instanceof Error ? err.message : String(err) }));
     }
 
     // Fire-and-forget: SIEM forwarding
@@ -142,7 +142,7 @@ eventsRoutes.post('/', async (c) => {
       entityCount: parsed.entities.length,
       captureMethod: parsed.captureMethod,
       timestamp: new Date().toISOString(),
-    }).catch(() => {});
+    }).catch(err => logger.warn('Failed to forward event to SIEM', { error: err instanceof Error ? err.message : String(err) }));
 
     // Fire-and-forget: inference engine auto-trigger every N events
     triggerInferenceIfNeeded(firmId);
@@ -198,7 +198,7 @@ eventsRoutes.post('/batch', async (c) => {
       const inserted = results[i];
 
       if (event.entities.length >= 2) {
-        recordCoOccurrences(firmId, event.entities as any, event.sensitivityScore).catch(() => {});
+        recordCoOccurrences(firmId, event.entities as any, event.sensitivityScore).catch(err => logger.warn('Failed to record batch co-occurrences', { error: err instanceof Error ? err.message : String(err) }));
       }
       if (event.sensitivityScore >= 60) {
         webhookDispatch(firmId, 'high_risk_detected', {
@@ -208,7 +208,7 @@ eventsRoutes.post('/batch', async (c) => {
           sensitivityLevel: event.sensitivityLevel,
           action: event.action,
           entityCount: event.entities.length,
-        }).catch(() => {});
+        }).catch(err => logger.warn('Failed to dispatch webhook for batch high-risk event', { error: err instanceof Error ? err.message : String(err) }));
       }
       siemForward(firmId, {
         eventId: inserted.id,
@@ -220,7 +220,7 @@ eventsRoutes.post('/batch', async (c) => {
         entityCount: event.entities.length,
         captureMethod: event.captureMethod,
         timestamp: new Date().toISOString(),
-      }).catch(() => {});
+      }).catch(err => logger.warn('Failed to forward batch event to SIEM', { error: err instanceof Error ? err.message : String(err) }));
     }
 
     // Trigger inference engine for batch events (same as single-event path)
