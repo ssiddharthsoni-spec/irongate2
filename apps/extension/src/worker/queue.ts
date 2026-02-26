@@ -37,6 +37,7 @@ class EventQueue {
   private batchTimer: ReturnType<typeof setTimeout> | null = null;
   private isFlushing = false;
   private isOnline = true;
+  private noApiKey = false; // true → stop retrying until key is configured
 
   constructor() {
     // Restore queued events from storage on startup
@@ -44,6 +45,16 @@ class EventQueue {
 
     // Monitor online/offline status
     this.checkOnlineStatus();
+
+    // Watch for API key being set — resume queue when it arrives
+    try {
+      chrome.storage.onChanged.addListener((changes) => {
+        if (changes.ironGateApiKey?.newValue) {
+          this.noApiKey = false;
+          if (this.pendingEvents.length > 0) this.scheduleBatch();
+        }
+      });
+    } catch {}
   }
 
   /**
@@ -80,6 +91,9 @@ class EventQueue {
   async flush(): Promise<void> {
     if (this.isFlushing || this.pendingEvents.length === 0) return;
 
+    // Don't bother sending if no API key — events stay queued until one is configured
+    if (this.noApiKey) return;
+
     this.isFlushing = true;
 
     try {
@@ -110,8 +124,17 @@ class EventQueue {
           await this.persistToStorage();
 
           igLog('Batch sent successfully —', batch.length, 'events, IDs:', (result as any)?.eventIds);
-        } catch (error) {
-          console.error('[Iron Gate Queue] ❌ Batch send failed:', error, '— batch data:', JSON.stringify(batch[0]?.data).substring(0, 200));
+        } catch (error: any) {
+          // No API key → log once quietly, pause queue until key is set
+          if (error?.status === 401 || error?.message?.includes('No API key')) {
+            if (!this.noApiKey) {
+              console.warn('[Iron Gate Queue] No API key configured — events are queued locally. Set your API key in the side panel Settings.');
+              this.noApiKey = true;
+            }
+            break;
+          }
+
+          igLog('Batch send failed:', error);
 
           // Increment retry counts
           for (const event of batch) {

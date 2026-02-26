@@ -43,8 +43,25 @@ function syncModeToMainWorld(newMode: 'audit' | 'proxy') {
   window.postMessage({ type: 'IRON_GATE_SET_MODE', mode: newMode }, '*');
 }
 
+// ── Suppress "Extension context invalidated" noise ──────────────────────────
+// Chrome fires this as an uncaught error when callbacks run after a reload.
+// Nothing we can do to prevent it — just silence the console spam.
+self.addEventListener('error', (event) => {
+  if (event.message?.includes('Extension context invalidated')) {
+    event.preventDefault();
+    contextAlive = false;
+  }
+});
+self.addEventListener('unhandledrejection', (event) => {
+  if (String(event.reason).includes('Extension context invalidated')) {
+    event.preventDefault();
+    contextAlive = false;
+  }
+});
+
 // Load saved mode and sync on startup
 chrome.storage.local.get('firmMode', (result) => {
+  if (!contextAlive) return;
   const savedMode = result.firmMode === 'proxy' ? 'proxy' : 'audit';
   syncModeToMainWorld(savedMode);
   igLog('Initial mode from storage:', savedMode);
@@ -52,6 +69,7 @@ chrome.storage.local.get('firmMode', (result) => {
 
 // Also watch for storage changes (backup in case MODE_CHANGED message is missed)
 chrome.storage.onChanged.addListener((changes, area) => {
+  if (!contextAlive) return;
   if (area === 'local' && changes.firmMode) {
     const newMode = changes.firmMode.newValue === 'proxy' ? 'proxy' : 'audit';
     syncModeToMainWorld(newMode);
@@ -272,6 +290,7 @@ window.addEventListener('message', (event) => {
 
 // Register message listener IMMEDIATELY so sidepanel can always reach us
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (!contextAlive) return;
   try {
     switch (message.type) {
       case 'GET_STATUS':
@@ -300,7 +319,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
   } catch (err) {
     console.warn('[Iron Gate] Message handler error:', err);
-    sendResponse({ ok: false, error: String(err) });
+    try { sendResponse({ ok: false, error: String(err) }); } catch {}
   }
   return true;
 });

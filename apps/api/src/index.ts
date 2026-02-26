@@ -201,21 +201,50 @@ app.onError((err, c) => {
 
 // ── Startup Validation ──────────────────────────────────────────────────────
 const isDevAuth = process.env.NODE_ENV === 'development' && process.env.IRON_GATE_DEV_AUTH === 'true';
-const hasDbUrl = !!(process.env.DATABASE_URL || process.env.SUPABASE_DB_URL);
 
-if (!hasDbUrl) {
-  logger.error('FATAL: Neither DATABASE_URL nor SUPABASE_DB_URL is set');
+const envSchema = z.object({
+  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required').optional(),
+  SUPABASE_DB_URL: z.string().min(1).optional(),
+  CLERK_SECRET_KEY: isDevAuth ? z.string().optional() : z.string().min(1, 'CLERK_SECRET_KEY is required for production auth'),
+  IRON_GATE_MASTER_SECRET: z.string().min(16, 'IRON_GATE_MASTER_SECRET must be at least 16 characters').optional(),
+  PORT: z.string().regex(/^\d+$/, 'PORT must be a number').optional().default('3000'),
+  NODE_ENV: z.enum(['development', 'production', 'test']).optional().default('development'),
+  LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).optional().default('info'),
+  REDIS_URL: z.string().url().optional(),
+  CHROME_EXTENSION_ID: z.string().optional(),
+  ALLOWED_EXTENSION_IDS: z.string().optional(),
+  DASHBOARD_URL: z.string().url().optional(),
+  ADMIN_KEY_1: z.string().min(1).optional(),
+  ADMIN_KEY_2: z.string().min(1).optional(),
+  STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  RESEND_API_KEY: z.string().optional(),
+  SENTRY_DSN: z.string().optional(),
+  DETECTION_SERVICE_URL: z.string().url().optional(),
+}).refine(
+  (data) => data.DATABASE_URL || data.SUPABASE_DB_URL,
+  { message: 'Either DATABASE_URL or SUPABASE_DB_URL must be set' },
+);
+
+const envResult = envSchema.safeParse(process.env);
+
+if (!envResult.success) {
+  for (const issue of envResult.error.issues) {
+    logger.error(`ENV ERROR: ${issue.path.join('.')} — ${issue.message}`);
+  }
+  logger.error('FATAL: Environment validation failed. Fix the above errors and restart.');
   process.exit(1);
 }
-if (!process.env.CLERK_SECRET_KEY && !isDevAuth) {
-  logger.error('FATAL: CLERK_SECRET_KEY is not set (required for JWT auth in production)');
-  process.exit(1);
-}
+
+// Warnings for optional but recommended vars
 if (!process.env.REDIS_URL) {
   logger.warn('REDIS_URL not set — rate limiting will use in-memory fallback');
 }
 if (!process.env.ALLOWED_EXTENSION_IDS && !process.env.CHROME_EXTENSION_ID) {
   logger.warn('No ALLOWED_EXTENSION_IDS configured — Chrome extension CORS will be rejected');
+}
+if (!process.env.ADMIN_KEY_1 || !process.env.ADMIN_KEY_2) {
+  logger.warn('ADMIN_KEY_1/ADMIN_KEY_2 not set — kill switch endpoint will be inaccessible');
 }
 
 const port = parseInt(process.env.PORT || '3000');
