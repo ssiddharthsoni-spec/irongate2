@@ -22,7 +22,7 @@
     "next": "^15.1.0",
     "prettier": "^3.4.0",
     "tsx": "^4.19.0",
-    "turbo": "^2.3.0",
+    "turbo": "^2.8.11",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.56.1"
   },
