@@ -18,6 +18,15 @@ const DailyTrendChart = dynamic(
   { ssr: false, loading: () => <ChartPlaceholder /> }
 );
 
+interface ImpactData {
+  totalEntitiesDetected: number;
+  totalActionsProtected: number;
+  entityBreakdown: { entityType: string; count: number }[];
+  actionDistribution: { pass: number; warn: number; block: number; proxy: number; override: number };
+  previousPeriod: { totalInteractions: number; totalEntitiesDetected: number; totalProtected: number; avgSensitivityScore: number };
+  trends: { entitiesChange: number; protectedChange: number; interactionsChange: number };
+}
+
 interface FirmOverview {
   totalInteractions: number;
   totalProtected: number;
@@ -28,6 +37,7 @@ interface FirmOverview {
   dailyTrend: { date: string; count: number; avgScore: number }[];
   topUsers: { userId: string; displayName: string; promptCount: number; avgScore: number; highRiskCount: number }[];
   recentHighRisk: any[];
+  impact?: ImpactData;
 }
 
 const RISK_COLORS = {
@@ -146,6 +156,78 @@ export default function DashboardPage() {
         <SummaryCard title="High Risk Events" value={String(data.scoreDistribution.high + data.scoreDistribution.critical)} color="text-risk-high" />
         <SummaryCard title="Actions Taken" value={String(data.totalProtected)} subtitle={`${data.totalBlocked} blocked`} />
       </div>
+
+      {/* Iron Gate Impact */}
+      {(() => {
+        const impact = data.impact || getDemoImpactData();
+        return (
+          <div className="mb-8">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+              <svg className="w-5 h-5 text-iron-600 dark:text-iron-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
+              </svg>
+              Iron Gate Impact
+            </h2>
+
+            {/* Hero card */}
+            <div className="bg-gradient-to-r from-iron-600 to-iron-800 rounded-xl p-6 shadow-sm border border-iron-700 mb-4">
+              <p className="text-iron-200 text-sm font-medium">Sensitive data instances detected &amp; protected</p>
+              <div className="flex items-baseline gap-3 mt-1">
+                <p className="text-4xl font-bold text-white">
+                  {impact.totalEntitiesDetected.toLocaleString()}
+                </p>
+                <TrendBadge value={impact.trends.entitiesChange} />
+              </div>
+              <p className="text-iron-300 text-sm mt-2">
+                Iron Gate identified {impact.totalEntitiesDetected.toLocaleString()} sensitive entities across{' '}
+                {data.totalInteractions.toLocaleString()} AI interactions and took protective action on{' '}
+                {impact.totalActionsProtected.toLocaleString()} of them.
+              </p>
+            </div>
+
+            {/* Entity breakdown + Action distribution */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              {/* Entity type breakdown */}
+              <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">What Iron Gate Found</h3>
+                <div className="space-y-2">
+                  {impact.entityBreakdown.slice(0, 8).map((item) => {
+                    const maxCount = impact.entityBreakdown[0]?.count || 1;
+                    const pct = Math.round((item.count / maxCount) * 100);
+                    return (
+                      <div key={item.entityType} className="flex items-center gap-3">
+                        <span className="text-xs font-mono text-gray-500 dark:text-gray-400 w-36 truncate">
+                          {formatEntityType(item.entityType)}
+                        </span>
+                        <div className="flex-1 h-5 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-iron-500 rounded-full transition-all"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                        <span className="text-xs font-semibold text-gray-700 dark:text-gray-300 w-12 text-right">
+                          {item.count.toLocaleString()}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Action distribution */}
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Protective Actions Taken</h3>
+                <div className="space-y-3">
+                  <ActionStatRow label="Blocked" count={impact.actionDistribution.block} total={data.totalInteractions} color="bg-red-500" />
+                  <ActionStatRow label="Warned" count={impact.actionDistribution.warn} total={data.totalInteractions} color="bg-orange-400" />
+                  <ActionStatRow label="Redacted" count={impact.actionDistribution.proxy} total={data.totalInteractions} color="bg-yellow-400" />
+                  <ActionStatRow label="Allowed" count={impact.actionDistribution.pass} total={data.totalInteractions} color="bg-green-400" />
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Charts Row 1 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
@@ -312,6 +394,81 @@ function SummaryCard({
   );
 }
 
+function TrendBadge({ value }: { value: number }) {
+  if (value === 0) return null;
+  const isUp = value > 0;
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+      isUp
+        ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
+        : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
+    }`}>
+      {isUp ? '\u2191' : '\u2193'} {Math.abs(value)}% vs prev period
+    </span>
+  );
+}
+
+function ActionStatRow({ label, count, total, color }: { label: string; count: number; total: number; color: string }) {
+  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-1">
+        <span className="text-sm text-gray-600 dark:text-gray-400">{label}</span>
+        <span className="text-sm font-semibold text-gray-900 dark:text-white">{count.toLocaleString()}</span>
+      </div>
+      <div className="h-2 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+        <div className={`h-full ${color} rounded-full`} style={{ width: `${Math.max(pct, 1)}%` }} />
+      </div>
+      <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{pct}% of interactions</p>
+    </div>
+  );
+}
+
+function formatEntityType(type: string): string {
+  return type
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .replace(/Ssn/g, 'SSN')
+    .replace(/Ip /g, 'IP ')
+    .replace(/Api /g, 'API ')
+    .replace(/Aws /g, 'AWS ')
+    .replace(/Gcp /g, 'GCP ')
+    .replace(/Mnpi/g, 'MNPI');
+}
+
+function getDemoImpactData(): ImpactData {
+  return {
+    totalEntitiesDetected: 4283,
+    totalActionsProtected: 632,
+    entityBreakdown: [
+      { entityType: 'PERSON', count: 1247 },
+      { entityType: 'EMAIL', count: 834 },
+      { entityType: 'ORGANIZATION', count: 621 },
+      { entityType: 'SSN', count: 312 },
+      { entityType: 'MONETARY_AMOUNT', count: 289 },
+      { entityType: 'PHONE_NUMBER', count: 245 },
+      { entityType: 'CREDIT_CARD', count: 178 },
+      { entityType: 'MATTER_NUMBER', count: 156 },
+      { entityType: 'PRIVILEGE_MARKER', count: 134 },
+      { entityType: 'API_KEY', count: 98 },
+      { entityType: 'DEAL_CODENAME', count: 87 },
+      { entityType: 'MEDICAL_RECORD', count: 82 },
+    ],
+    actionDistribution: { pass: 2215, warn: 412, block: 143, proxy: 77, override: 0 },
+    previousPeriod: {
+      totalInteractions: 2341,
+      totalEntitiesDetected: 3512,
+      totalProtected: 498,
+      avgSensitivityScore: 38.2,
+    },
+    trends: {
+      entitiesChange: 22,
+      protectedChange: 27,
+      interactionsChange: 22,
+    },
+  };
+}
+
 function getDemoData(): FirmOverview {
   return {
     totalInteractions: 2847,
@@ -360,5 +517,6 @@ function getDemoData(): FirmOverview {
       { id: 'evt-009', aiToolId: 'chatgpt', sensitivityScore: 91, createdAt: '2026-02-19T12:00:00.000Z', entities: ['SSN', 'MEDICAL_RECORD'] },
       { id: 'evt-010', aiToolId: 'claude', sensitivityScore: 82, createdAt: '2026-02-19T08:00:00.000Z', entities: ['PRIVILEGE_MARKER', 'MATTER_NUMBER', 'PERSON'] },
     ],
+    impact: getDemoImpactData(),
   };
 }

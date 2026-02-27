@@ -37,17 +37,29 @@ interface MinimizedEntity {
   length: number;
 }
 
-async function minimizeEntities(entities: RawEntity[]): Promise<MinimizedEntity[]> {
+/** Check if an entity is already minimized (has textHash, no raw text) */
+function isMinimized(e: any): e is MinimizedEntity {
+  return typeof e.textHash === 'string' && !('text' in e);
+}
+
+/**
+ * Ensure all entities are minimized. Pre-minimized entities (from new clients)
+ * pass through unchanged. Raw entities (from legacy clients) get hashed server-side.
+ */
+async function minimizeEntities(entities: any[]): Promise<MinimizedEntity[]> {
   return Promise.all(
-    entities.map(async (e) => ({
-      type: e.type,
-      textHash: await sha256(e.text),
-      start: e.start,
-      end: e.end,
-      confidence: e.confidence,
-      source: e.source,
-      length: e.text.length,
-    })),
+    entities.map(async (e) => {
+      if (isMinimized(e)) return e;
+      return {
+        type: e.type,
+        textHash: await sha256(e.text),
+        start: e.start,
+        end: e.end,
+        confidence: e.confidence,
+        source: e.source,
+        length: e.text.length,
+      };
+    }),
   );
 }
 
@@ -57,6 +69,30 @@ const INFERENCE_TRIGGER_THRESHOLD = 100;
 
 export const eventsRoutes = new Hono<AppEnv>();
 
+// Entity schema: accepts either pre-minimized (textHash+length) or raw (text) format.
+// New clients send pre-minimized entities — raw PII never leaves the browser.
+// Legacy clients may still send raw text — server-side minimization handles those.
+const minimizedEntitySchema = z.object({
+  type: z.string().min(1).max(50),
+  textHash: z.string().length(64),
+  length: z.number().int().min(0),
+  start: z.number().int().min(0),
+  end: z.number().int().min(0),
+  confidence: z.number().min(0).max(1),
+  source: z.string().min(1).max(20),
+});
+
+const rawEntitySchema = z.object({
+  type: z.string().min(1).max(50),
+  text: z.string().min(1),
+  start: z.number().int().min(0),
+  end: z.number().int().min(0),
+  confidence: z.number().min(0).max(1),
+  source: z.string().min(1).max(20),
+});
+
+const entitySchema = z.union([minimizedEntitySchema, rawEntitySchema]);
+
 // Event validation schema
 const eventSchema = z.object({
   aiToolId: z.string().min(1),
@@ -65,14 +101,7 @@ const eventSchema = z.object({
   promptLength: z.number().int().min(0),
   sensitivityScore: z.number().min(0).max(100),
   sensitivityLevel: z.enum(['low', 'medium', 'high', 'critical']),
-  entities: z.array(z.object({
-    type: z.string().min(1).max(50),
-    text: z.string().min(1),
-    start: z.number().int().min(0),
-    end: z.number().int().min(0),
-    confidence: z.number().min(0).max(1),
-    source: z.string().min(1).max(20),
-  })).optional().default([]),
+  entities: z.array(entitySchema).optional().default([]),
   action: z.enum(['pass', 'warn', 'block', 'proxy', 'override']),
   overrideReason: z.string().optional(),
   captureMethod: z.string().min(1).max(20),

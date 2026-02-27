@@ -185,11 +185,13 @@ export async function getToken(): Promise<string> {
     return authState.token;
   }
 
-  // Token exists but may be expiring soon — still return it and let
-  // the API decide (better to try a near-expired token than fail silently)
+  // Token exists but is expired — discard it and return empty string
+  // so API returns 401, triggering re-authentication
   if (authState.token) {
-    console.warn('[Iron Gate Auth] Token may be expired, using it anyway');
-    return authState.token;
+    console.warn('[Iron Gate Auth] Token expired — clearing, user needs to re-authenticate');
+    authState.token = '';
+    authState.expiresAt = 0;
+    return '';
   }
 
   // No token at all — return empty string so API returns 401

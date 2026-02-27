@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "properties": {
+    "apiKey": {
+      "title": "Iron Gate API Key",
+      "description": "The organization's Iron Gate API key (starts with ig_). Required for the extension to communicate with the Iron Gate backend.",
+      "type": "string"
+    },
+    "apiUrl": {
+      "title": "Iron Gate API URL",
+      "description": "The base URL for the Iron Gate API endpoint. Defaults to the production API if not set.",
+      "type": "string"
+    },
+    "firmMode": {
+      "title": "Protection Mode",
+      "description": "Data protection mode. 'audit' = Monitor (detect and log only), 'proxy' = Protect (auto-redact PII before sending).",
+      "type": "string",
+      "enum": ["audit", "proxy"]
+    },
+    "firmId": {
+      "title": "Firm ID",
+      "description": "The organization's firm identifier for event attribution.",
+      "type": "string"
+    },
+    "firmName": {
+      "title": "Organization Name",
+      "description": "Display name for the organization shown in the side panel.",
+      "type": "string"
+    }
+  }
+}

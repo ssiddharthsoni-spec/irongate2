@@ -2,6 +2,7 @@ import { detectAITool } from './detectors';
 import { createCaptureEngine } from './capture';
 import { createSensitivityBadge } from './ui/sensitivity-badge';
 import { createCoachingToasts, getNextCoachingTip, type CoachingToastHandle } from './ui/coaching-toast';
+import { resolveMode } from '../managed-config';
 
 // ── Duplicate Injection Guard ────────────────────────────────────────────────
 // When the extension reloads and re-injects, the OLD content script may still
@@ -40,7 +41,7 @@ const TOAST_COOLDOWN = 8000; // Min 8s between toasts
 // We tell it the current mode so it knows whether to pseudonymize.
 
 function syncModeToMainWorld(newMode: 'audit' | 'proxy') {
-  window.postMessage({ type: 'IRON_GATE_SET_MODE', mode: newMode }, '*');
+  window.postMessage({ type: 'IRON_GATE_SET_MODE', mode: newMode }, window.location.origin);
 }
 
 // ── Suppress "Extension context invalidated" noise ──────────────────────────
@@ -59,22 +60,22 @@ self.addEventListener('unhandledrejection', (event) => {
   }
 });
 
-// Load saved mode and sync on startup
-chrome.storage.local.get('firmMode', (result) => {
+// Load saved mode on startup (managed storage takes priority over local)
+resolveMode().then((savedMode) => {
   if (!contextAlive) return;
-  const savedMode = result.firmMode === 'proxy' ? 'proxy' : 'audit';
   syncModeToMainWorld(savedMode);
   igLog('Initial mode from storage:', savedMode);
-});
+}).catch(() => {});
 
-// Also watch for storage changes (backup in case MODE_CHANGED message is missed)
+// Watch for storage changes in both local AND managed areas
 chrome.storage.onChanged.addListener((changes, area) => {
   if (!contextAlive) return;
-  if (area === 'local' && changes.firmMode) {
-    const newMode = changes.firmMode.newValue === 'proxy' ? 'proxy' : 'audit';
-    syncModeToMainWorld(newMode);
-    engine?.updateConfig({ mode: newMode });
-    igLog('Mode changed via storage:', newMode);
+  if ((area === 'local' && changes.firmMode) || (area === 'managed' && changes.firmMode)) {
+    resolveMode().then((newMode) => {
+      syncModeToMainWorld(newMode);
+      engine?.updateConfig({ mode: newMode });
+      igLog('Mode changed via storage:', newMode, '(area:', area, ')');
+    }).catch(() => {});
   }
 });
 
@@ -231,7 +232,7 @@ window.addEventListener('message', (event) => {
 
   // PROXY mode: fetch was pseudonymized before sending to LLM
   if (event.data?.type === 'IRON_GATE_INTERCEPTED') {
-    const { originalPrompt, maskedPrompt, mappings, entityCount, level, score, entities } = event.data;
+    const { promptHash, promptLength, maskedPrompt, mappings, entityCount, level, score, entities } = event.data;
     igLog(`MAIN world intercepted fetch — ${entityCount} entities pseudonymized (${level}, score=${score})`);
 
     try {
@@ -243,7 +244,8 @@ window.addEventListener('message', (event) => {
           explanation: `Pseudonymized ${entityCount} entities before sending to AI tool.`,
           entities: entities || [],
           aiToolId: detector?.id || 'unknown',
-          originalPrompt,
+          promptHash,
+          promptLength,
           maskedPrompt,
           pseudonymMappings: mappings,
         },
@@ -260,7 +262,7 @@ window.addEventListener('message', (event) => {
 
   // AUDIT mode: entities detected but NOT pseudonymized (just scored)
   if (event.data?.type === 'IRON_GATE_AUDIT') {
-    const { originalPrompt, maskedPrompt, mappings, entityCount, level, score, entities } = event.data;
+    const { promptHash, promptLength, maskedPrompt, mappings, entityCount, level, score, entities } = event.data;
     igLog(`MAIN world audit — ${entityCount} entities detected (${level}, score=${score})`);
 
     try {
@@ -272,7 +274,8 @@ window.addEventListener('message', (event) => {
           explanation: `Detected ${entityCount} sensitive entities in prompt (audit mode — not pseudonymized).`,
           entities: entities || [],
           aiToolId: detector?.id || 'unknown',
-          originalPrompt,
+          promptHash,
+          promptLength,
           maskedPrompt,
           pseudonymMappings: mappings,
         },
@@ -432,7 +435,7 @@ function checkExtensionContext(): void {
       contextAlive = false;
       igLog('Extension context invalidated — orphaned content script');
       engine?.stop();
-      window.postMessage({ type: 'IRON_GATE_CONTEXT_INVALIDATED' }, '*');
+      window.postMessage({ type: 'IRON_GATE_CONTEXT_INVALIDATED' }, window.location.origin);
       if (toasts) {
         toasts.show({
           type: 'warning',

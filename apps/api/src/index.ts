@@ -210,17 +210,17 @@ const envSchema = z.object({
   PORT: z.string().regex(/^\d+$/, 'PORT must be a number').optional().default('3000'),
   NODE_ENV: z.enum(['development', 'production', 'test']).optional().default('development'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).optional().default('info'),
-  REDIS_URL: z.string().url().optional(),
+  REDIS_URL: z.string().min(1).optional(),
   CHROME_EXTENSION_ID: z.string().optional(),
   ALLOWED_EXTENSION_IDS: z.string().optional(),
-  DASHBOARD_URL: z.string().url().optional(),
+  DASHBOARD_URL: z.string().min(1).optional(),
   ADMIN_KEY_1: z.string().min(1).optional(),
   ADMIN_KEY_2: z.string().min(1).optional(),
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
   SENTRY_DSN: z.string().optional(),
-  DETECTION_SERVICE_URL: z.string().url().optional(),
+  DETECTION_SERVICE_URL: z.string().min(1).optional(),
 }).refine(
   (data) => data.DATABASE_URL || data.SUPABASE_DB_URL,
   { message: 'Either DATABASE_URL or SUPABASE_DB_URL must be set' },
@@ -232,8 +232,9 @@ if (!envResult.success) {
   for (const issue of envResult.error.issues) {
     logger.error(`ENV ERROR: ${issue.path.join('.')} — ${issue.message}`);
   }
-  logger.error('FATAL: Environment validation failed. Fix the above errors and restart.');
-  process.exit(1);
+  // Don't exit — let the server start so the healthcheck can respond.
+  // Routes that need missing vars will fail individually with clear errors.
+  logger.error('Environment validation failed. Some features may not work. Fix the above errors.');
 }
 
 // Warnings for optional but recommended vars
@@ -249,18 +250,20 @@ if (!process.env.ADMIN_KEY_1 || !process.env.ADMIN_KEY_2) {
 
 const port = parseInt(process.env.PORT || '3000');
 
-// Verify database connectivity before starting
-try {
-  await db.execute(sql`SELECT 1`);
-  logger.info('Database connection verified');
-} catch (err) {
-  logger.error('Failed to connect to database', { error: err instanceof Error ? err.message : String(err) });
-  process.exit(1);
-}
-
+// Start the server first so the health endpoint is available for platform healthchecks,
+// then verify DB connectivity in the background.
 import('@hono/node-server').then(({ serve }) => {
-  serve({ fetch: app.fetch, port }, () => {
+  serve({ fetch: app.fetch, port }, async () => {
     logger.info('Server started', { port, url: `http://localhost:${port}` });
+
+    // Verify database connectivity (non-fatal — health endpoint reports degraded status)
+    try {
+      await db.execute(sql`SELECT 1`);
+      logger.info('Database connection verified');
+    } catch (err) {
+      logger.error('Database connection failed on startup — routes requiring DB will fail', { error: err instanceof Error ? err.message : String(err) });
+    }
+
     // Start scheduled jobs
     import('./jobs/scheduler').then(({ startScheduler }) => startScheduler()).catch(err => logger.error('Failed to start scheduler', { error: err instanceof Error ? err.message : String(err) }));
   });

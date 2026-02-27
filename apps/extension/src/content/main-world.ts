@@ -31,7 +31,7 @@ if ((window as any).__IRON_GATE_MAIN_WORLD === 'active') {
     version: '0.2.7-dup',
     timestamp: Date.now(),
     mode: (window as any).__IRON_GATE_MODE || 'audit',
-  }, '*');
+  }, window.location.origin);
 } else if ((window as any).__IRON_GATE_MAIN_WORLD === 'loading') {
   const loadingStarted = (window as any).__IRON_GATE_LOADING_SINCE || 0;
   const elapsed = Date.now() - loadingStarted;
@@ -47,10 +47,72 @@ if ((window as any).__IRON_GATE_MAIN_WORLD === 'active') {
 // Use a flag to wrap all initialization — prevents duplicate setup
 if (!(window as any).__IRON_GATE_MAIN_WORLD) {
 
+// ─── Hashing ─────────────────────────────────────────────────────────────────
+// SHA-256 hash — raw PII is hashed before leaving via postMessage so that
+// no other page script can intercept the original sensitive text.
+
+async function igHash(text: string): Promise<string> {
+  const data = new TextEncoder().encode(text);
+  const buf = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Minimize entities for safe postMessage — replace raw text with hash + length */
+async function minimizeEntitiesForTransit(entities: Array<{ type: string; text: string; start: number; end: number; confidence: number; source: string }>) {
+  return Promise.all(entities.map(async e => ({
+    type: e.type,
+    textHash: await igHash(e.text),
+    length: e.text.length,
+    start: e.start,
+    end: e.end,
+    confidence: e.confidence,
+    source: e.source,
+  })));
+}
+
 // ─── State ──────────────────────────────────────────────────────────────────
 
 let mode: 'audit' | 'proxy' = 'audit';
 let currentReverseMap: Record<string, string> = {};
+
+// ─── Mapping Persistence (survives page refresh) ────────────────────────────
+// Stores the reverse map in sessionStorage so de-pseudonymization works after
+// a page refresh within the same tab. sessionStorage is tab-scoped and cleared
+// when the tab is closed.
+const MAPPING_STORAGE_KEY = '__ig_reverse_map';
+let _mappingSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function saveMappingsDebounced(): void {
+  if (_mappingSaveTimer) return; // already scheduled
+  _mappingSaveTimer = setTimeout(() => {
+    _mappingSaveTimer = null;
+    try {
+      const json = JSON.stringify(currentReverseMap);
+      // Only save if under 1MB to avoid sessionStorage quota issues
+      if (json.length < 1_000_000) {
+        sessionStorage.setItem(MAPPING_STORAGE_KEY, json);
+      }
+    } catch {
+      // sessionStorage may be full or blocked — non-critical
+    }
+  }, 500);
+}
+
+function restoreMappings(): number {
+  try {
+    const stored = sessionStorage.getItem(MAPPING_STORAGE_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        currentReverseMap = parsed;
+        return Object.keys(parsed).length;
+      }
+    }
+  } catch {
+    // Parse error or sessionStorage blocked — start fresh
+  }
+  return 0;
+}
 // Forward map declared near pseudonymizer — referenced here for docs.
 // See currentForwardMap near generateFake().
 
@@ -72,6 +134,10 @@ try {
 // Debug logging — disabled by default, enable via: window.__IRON_GATE_DEBUG = true
 const _IG_DEBUG = !!(window as any).__IRON_GATE_DEBUG;
 function igLog(...args: any[]) { if (_IG_DEBUG) console.log('[Iron Gate MAIN]', ...args); }
+
+// Restore reverse mappings from sessionStorage (survives page refresh)
+const _restoredCount = restoreMappings();
+if (_restoredCount > 0) igLog(`Restored ${_restoredCount} reverse mappings from sessionStorage`);
 
 // ─── Adapter Selection ───────────────────────────────────────────────────────
 const activeAdapter: SiteAdapter | null = getAdapter();
@@ -100,12 +166,12 @@ window.addEventListener('message', (event) => {
 
 // Request mode sync from content script immediately
 // (content script may not be loaded yet, but if it is, this gets us the mode faster)
-window.postMessage({ type: 'IRON_GATE_REQUEST_MODE' }, '*');
+window.postMessage({ type: 'IRON_GATE_REQUEST_MODE' }, window.location.origin);
 
 // Retry mode sync after 2s — content script may not have been ready for the first request
 setTimeout(() => {
   if (mode === 'audit') {
-    window.postMessage({ type: 'IRON_GATE_REQUEST_MODE' }, '*');
+    window.postMessage({ type: 'IRON_GATE_REQUEST_MODE' }, window.location.origin);
   }
 }, 2000);
 
@@ -1327,6 +1393,9 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
     if (withZeros !== pseudonym) map[withZeros] = original;
     if (withoutZeros !== pseudonym) map[withoutZeros] = original;
   }
+
+  // Persist to sessionStorage when modifying the global map (not snapshots)
+  if (map === currentReverseMap) saveMappingsDebounced();
 }
 
 function replacePseudonyms(text: string, reverseMap: Record<string, string>): string {
@@ -1418,7 +1487,7 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
   }
 
   const mapKeys = Object.keys(reverseMap);
-  igLog(`depseudonymizeResponse: wrapping stream with ${mapKeys.length} mappings: ${mapKeys.slice(0, 5).map(k => `"${k.substring(0,20)}"→"${reverseMap[k].substring(0,20)}"`).join(', ')}${mapKeys.length > 5 ? '...' : ''}`);
+  igLog(`depseudonymizeResponse: wrapping stream with ${mapKeys.length} mappings`);
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -1453,7 +1522,7 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
 
         // Log first few chunks and any that contain pseudonyms
         if (chunkCount <= 3 || chunkCount % 50 === 0) {
-          igLog(`depseudonymizeResponse chunk #${chunkCount}: ${chunkText.length} chars, buffer: ${buffer.length} chars, preview: "${chunkText.substring(0, 120).replace(/[\x00-\x1f]/g, '?')}"`);
+          igLog(`depseudonymizeResponse chunk #${chunkCount}: ${chunkText.length} chars, buffer: ${buffer.length} chars`);
         }
         // Check if any pseudonym appears in current buffer
         const foundInChunk = mapKeys.some(k => buffer.toLowerCase().includes(k.toLowerCase()));
@@ -1554,7 +1623,7 @@ function startDomDepseudonymizer(): void {
       _domReplacing = false;
       _domReplacementCount++;
       if (_domReplacementCount <= 10) {
-        igLog(`DOM de-pseudo: replaced text node (${text.substring(0, 60)}...)`);
+        igLog(`DOM de-pseudo: replaced text node (${text.length} chars)`);
       }
     }
   }
@@ -1865,7 +1934,7 @@ function _readFileToBase64AndPost(file: File, source: string): void {
         fileBase64: base64,
         url: window.location.href,
         timestamp: Date.now(),
-      }, '*');
+      }, window.location.origin);
     }).catch(() => {});
   } catch { /* don't break the caller */ }
 }
@@ -1898,7 +1967,7 @@ function detectFilesInFormData(formData: FormData, url: string): void {
           fileBase64: base64,
           url,
           timestamp: Date.now(),
-        }, '*');
+        }, window.location.origin);
       }).catch((err) => {
         igLog('Failed to read file from FormData:', err);
       });
@@ -1939,7 +2008,7 @@ function detectFileMetadataInJson(body: string, url: string): void {
           fileType: ext,
           url,
           timestamp: Date.now(),
-        }, '*');
+        }, window.location.origin);
       }
     }
   } catch {
@@ -2023,8 +2092,7 @@ const patchedFetch = async function patchedFetch(
 
   // ChatGPT-specific diagnostic — ALWAYS log (not limited to first 15 calls)
   if (url.includes('chatgpt.com') || url.includes('chat.openai.com') || url.includes('/backend-api/') || url.includes('/conversation')) {
-    igLog(`🎯 ChatGPT fetch: ${method} ${url.substring(0, 80)} — body: ${bodyString.length} chars, bodyType: ${init?.body?.constructor?.name || 'unknown'}`);
-    igLog(`🎯 ChatGPT body preview: "${bodyString.substring(0, 200).replace(/[\x00-\x1f]/g, '?')}"`);
+    igLog(`ChatGPT fetch: ${method} ${url.substring(0, 80)} — body: ${bodyString.length} chars, bodyType: ${init?.body?.constructor?.name || 'unknown'}`);
   }
 
   igLog(`LLM request intercepted — mode: ${mode}, url: ${url.substring(0, 80)}, body: ${bodyString.length} chars`);
@@ -2036,13 +2104,12 @@ const patchedFetch = async function patchedFetch(
   igLog(`LLM fetch intercepted — Mode: ${mode}, URL: ${url.substring(0, 80)}, Adapter: ${activeAdapter?.name || 'none'}, Body: ${bodyString.length} chars`);
   // ════════════════════════════════════════════════════════════════════════
 
-  // Diagnostic: log body snippet for debugging
+  // Diagnostic: log metadata for debugging (no raw body content)
   if (url.includes('gemini') || url.includes('googleapis')) {
-    igLog(`Gemini body preview: "${bodyString.substring(0, 300)}"`);
+    igLog(`Gemini fetch: body ${bodyString.length} chars`);
   }
   if (url.includes('copilot') || url.includes('bing') || url.includes('sydney')) {
-    igLog(`Copilot body preview: "${bodyString.substring(0, 300)}"`);
-    igLog(`Copilot fetch args — input: ${input instanceof Request ? 'Request' : typeof input}, init: ${init ? 'yes' : 'no'}`);
+    igLog(`Copilot fetch: body ${bodyString.length} chars, input: ${input instanceof Request ? 'Request' : typeof input}, init: ${init ? 'yes' : 'no'}`);
   }
 
   // ── Skip fetch proxy for platforms where DOM/WS handles interception ────────
@@ -2071,7 +2138,7 @@ const patchedFetch = async function patchedFetch(
       const promptText = activeAdapter?.extractPrompt(bodyString) ?? extractPrompt(bodyString);
 
       if (!promptText || promptText.length < 10) {
-        igLog(`extractPrompt returned ${promptText === null ? 'null' : `"${promptText?.substring(0, 50)}..." (${promptText?.length} chars)`} — body starts with: "${bodyString.substring(0, 150)}"`);
+        igLog(`extractPrompt returned ${promptText === null ? 'null' : `${promptText?.length} chars`} — body: ${bodyString.length} chars`);
       }
 
       if (promptText && promptText.length >= 10) {
@@ -2093,7 +2160,7 @@ const patchedFetch = async function patchedFetch(
           }
           // Log the full reverse map for diagnostics
           const mapEntries = Object.entries(currentReverseMap);
-          igLog(`Reverse map (${mapEntries.length} entries): ${mapEntries.slice(0, 10).map(([k,v]) => `"${k.substring(0,25)}"→"${v.substring(0,25)}"`).join(', ')}${mapEntries.length > 10 ? '...' : ''}`);
+          igLog(`Reverse map: ${mapEntries.length} entries`);
           // Save a snapshot for this request's response de-pseudonymization
           const requestReverseMap = { ...currentReverseMap };
 
@@ -2160,31 +2227,32 @@ const patchedFetch = async function patchedFetch(
             // ════════════════════════════════════════════════════════════
             const _finalPromptForDiag = activeAdapter?.extractPrompt(modifiedBody) ?? '(could not re-extract)';
             console.log(
-              `%c[Iron Gate WIRE] ✅ PROXY ACTIVE — request WILL be modified`,
+              `%c[Iron Gate WIRE] PROXY ACTIVE — request modified`,
               'color: #00cc00; font-weight: bold; font-size: 13px',
-              `\n\n  📤 WHAT YOU TYPED (original):`,
-              `\n  "${promptText.substring(0, 300)}${promptText.length > 300 ? '...' : ''}"`,
-              `\n\n  🔒 WHAT CHATGPT ACTUALLY RECEIVES (pseudonymized):`,
-              `\n  "${pseudoResult.maskedText.substring(0, 300)}${pseudoResult.maskedText.length > 300 ? '...' : ''}"`,
-              `\n\n  📊 Stats: ${allEntities.length} entities, score=${score}, level=${level}`,
-              `\n  🔄 Mappings: ${pseudoResult.mappings.slice(0, 8).map(m => `"${m.original.substring(0,20)}" → "${m.pseudonym.substring(0,20)}"`).join(', ')}${pseudoResult.mappings.length > 8 ? ` (+${pseudoResult.mappings.length - 8} more)` : ''}`,
-              `\n\n  🔍 Verify: open Network tab → find POST to /backend-api/conversation → check Request Payload → search for the pseudonym text above. It should be there, NOT your original.`,
+              `\n\n  📊 Stats: ${allEntities.length} entities pseudonymized, score=${score}, level=${level}`,
+              `\n  📤 Original: ${promptText.length} chars`,
+              `\n  🔒 Pseudonymized: ${pseudoResult.maskedText.length} chars`,
+              `\n  🔄 ${pseudoResult.mappings.length} mappings applied`,
             );
             // ════════════════════════════════════════════════════════════
 
-            igLog(`PROXY: Pseudonymized ${allEntities.length} entities (${level}, score=${score}). Entities: ${allEntities.map(e => `${e.type}:"${e.text.substring(0,20)}"`).join(', ')}`);
+            igLog(`PROXY: Pseudonymized ${allEntities.length} entities (${level}, score=${score}). Types: ${allEntities.map(e => e.type).join(', ')}`);
 
             // Notify content script (for sidepanel display AND backend event)
+            // SECURITY: hash prompt and entity text before postMessage — no raw PII leaves via postMessage
+            const _ph = await igHash(promptText);
+            const _me = await minimizeEntitiesForTransit(allEntities);
             window.postMessage({
               type: 'IRON_GATE_INTERCEPTED',
-              originalPrompt: promptText,
+              promptHash: _ph,
+              promptLength: promptText.length,
               maskedPrompt: pseudoResult.maskedText,
               mappings: pseudoResult.mappings,
               entityCount: allEntities.length,
               level,
               score,
-              entities: allEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
-            }, '*');
+              entities: _me,
+            }, window.location.origin);
 
             // Send modified request — preserve ALL original fetch arguments.
             // Only override the body to prevent breaking tool-specific properties
@@ -2293,18 +2361,21 @@ const patchedFetch = async function patchedFetch(
           const { level, score } = quickScore(allEntities);
           const pseudoResult = pseudonymizeLocal(promptText, allEntities);
 
-          igLog(`AUDIT: Detected ${allEntities.length} entities (${level}, score=${score}): ${allEntities.map(e => `${e.type}:"${e.text.substring(0,20)}"`).join(', ')}`);
+          igLog(`AUDIT: Detected ${allEntities.length} entities (${level}, score=${score}). Types: ${allEntities.map(e => e.type).join(', ')}`);
 
+          const _aph = await igHash(promptText);
+          const _ame = await minimizeEntitiesForTransit(allEntities);
           window.postMessage({
             type: 'IRON_GATE_AUDIT',
-            originalPrompt: promptText,
+            promptHash: _aph,
+            promptLength: promptText.length,
             maskedPrompt: pseudoResult.maskedText,
             mappings: pseudoResult.mappings,
             entityCount: allEntities.length,
             level,
             score,
-            entities: allEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
-          }, '*');
+            entities: _ame,
+          }, window.location.origin);
         }
       }
     } catch {
@@ -2563,7 +2634,7 @@ XMLHttpRequest.prototype.send = function(body?: any) {
     }
 
     if (url.includes('gemini') || url.includes('googleapis')) {
-      igLog(`XHR Gemini body preview: "${bodyStr.substring(0, 300)}"`);
+      igLog(`XHR Gemini: body ${bodyStr.length} chars`);
     }
 
     if (mode === 'proxy') {
@@ -2586,19 +2657,23 @@ XMLHttpRequest.prototype.send = function(body?: any) {
 
             const modifiedBody = activeAdapter?.replacePrompt(bodyStr, promptText, pseudoResult.maskedText) ?? replacePrompt(bodyStr, promptText, pseudoResult.maskedText);
             if (modifiedBody) {
-              igLog(`XHR PROXY: Pseudonymized ${allEntities.length} entities (${level}, score=${score})`);
-              igLog(`XHR Masked: "${pseudoResult.maskedText.substring(0, 100)}..."`);
+              igLog(`XHR PROXY: Pseudonymized ${allEntities.length} entities (${level}, score=${score}), masked: ${pseudoResult.maskedText.length} chars`);
 
-              window.postMessage({
-                type: 'IRON_GATE_INTERCEPTED',
-                originalPrompt: promptText,
-                maskedPrompt: pseudoResult.maskedText,
-                mappings: pseudoResult.mappings,
-                entityCount: allEntities.length,
-                level,
-                score,
-                entities: allEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
-              }, '*');
+              // SECURITY: hash before postMessage — fire-and-forget async
+              Promise.all([igHash(promptText), minimizeEntitiesForTransit(allEntities)])
+                .then(([ph, me]) => {
+                  window.postMessage({
+                    type: 'IRON_GATE_INTERCEPTED',
+                    promptHash: ph,
+                    promptLength: promptText.length,
+                    maskedPrompt: pseudoResult.maskedText,
+                    mappings: pseudoResult.mappings,
+                    entityCount: allEntities.length,
+                    level,
+                    score,
+                    entities: me,
+                  }, window.location.origin);
+                });
 
               // Patch the response to de-pseudonymize
               // SKIP for platforms where DOM observer handles de-pseudo
@@ -2642,16 +2717,20 @@ XMLHttpRequest.prototype.send = function(body?: any) {
             const { level, score } = quickScore(allEntities);
             const pseudoResult = pseudonymizeLocal(promptText, allEntities);
             igLog(`XHR AUDIT: ${allEntities.length} entities (${level}, score=${score})`);
-            window.postMessage({
-              type: 'IRON_GATE_AUDIT',
-              originalPrompt: promptText,
-              maskedPrompt: pseudoResult.maskedText,
-              mappings: pseudoResult.mappings,
-              entityCount: allEntities.length,
-              level,
-              score,
-              entities: allEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
-            }, '*');
+            Promise.all([igHash(promptText), minimizeEntitiesForTransit(allEntities)])
+              .then(([ph, me]) => {
+                window.postMessage({
+                  type: 'IRON_GATE_AUDIT',
+                  promptHash: ph,
+                  promptLength: promptText.length,
+                  maskedPrompt: pseudoResult.maskedText,
+                  mappings: pseudoResult.mappings,
+                  entityCount: allEntities.length,
+                  level,
+                  score,
+                  entities: me,
+                }, window.location.origin);
+              });
           }
         }
       } catch { /* don't break original */ }
@@ -2869,7 +2948,7 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
           // Too short to contain a prompt — re-encode and send
           return originalSend(_reEncodeBinary(data as unknown as string, wasBinary, originalBinaryFormat));
         }
-        igLog(`WS binary decoded → ${textLen} chars (first 150: "${(data as unknown as string).substring(0, 150)}")`);
+        igLog(`WS binary decoded → ${textLen} chars`);
       }
 
       // At this point, `data` is always a string (either originally or decoded)
@@ -2893,7 +2972,7 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
           }
 
           igLog(`WS PROXY: processing frame (${strData.length} chars, binary=${wasBinary}, url=${urlStr.substring(0,60)})`);
-          igLog(`WS PROXY: frame starts with: "${strData.substring(0, 200).replace(/[\x00-\x1f]/g, '?')}"`);
+
 
           // Try adapter-specific WS frame extraction first, then generic strategies
           let promptText = activeAdapter?.extractFromWsFrame?.(strData) ?? activeAdapter?.extractPrompt(strData) ?? extractPrompt(strData);
@@ -3042,34 +3121,41 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
               igLog(`WS PROXY: replacement=${replacementMethod}, modified=${!!modifiedData && modifiedData !== strData}, origLen=${strData.length}, newLen=${modifiedData?.length || 0}`);
 
               if (modifiedData && modifiedData !== strData) {
-                igLog(`WS PROXY: Pseudonymized ${allEntities.length} entities (${level}, score=${score})`);
-                igLog(`WS PROXY: masked snippet: "${pseudoResult.maskedText.substring(0, 120)}..."`);
+                igLog(`WS PROXY: Pseudonymized ${allEntities.length} entities (${level}, score=${score}), masked: ${pseudoResult.maskedText.length} chars`);
 
-                window.postMessage({
-                  type: 'IRON_GATE_INTERCEPTED',
-                  originalPrompt: promptText,
-                  maskedPrompt: pseudoResult.maskedText,
-                  mappings: pseudoResult.mappings,
-                  entityCount: allEntities.length,
-                  level,
-                  score,
-                  entities: allEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
-                }, '*');
+                Promise.all([igHash(promptText), minimizeEntitiesForTransit(allEntities)])
+                  .then(([ph, me]) => {
+                    window.postMessage({
+                      type: 'IRON_GATE_INTERCEPTED',
+                      promptHash: ph,
+                      promptLength: promptText.length,
+                      maskedPrompt: pseudoResult.maskedText,
+                      mappings: pseudoResult.mappings,
+                      entityCount: allEntities.length,
+                      level,
+                      score,
+                      entities: me,
+                    }, window.location.origin);
+                  });
 
                 return _sendResult(modifiedData);
               } else {
                 console.warn(`[Iron Gate MAIN] WS PROXY: replacement FAILED — sending original. method=${replacementMethod}`);
                 // Still report the detection even though replacement failed
-                window.postMessage({
-                  type: 'IRON_GATE_AUDIT',
-                  originalPrompt: promptText,
-                  maskedPrompt: pseudoResult.maskedText,
-                  mappings: pseudoResult.mappings,
-                  entityCount: allEntities.length,
-                  level,
-                  score,
-                  entities: allEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
-                }, '*');
+                Promise.all([igHash(promptText), minimizeEntitiesForTransit(allEntities)])
+                  .then(([ph, me]) => {
+                    window.postMessage({
+                      type: 'IRON_GATE_AUDIT',
+                      promptHash: ph,
+                      promptLength: promptText.length,
+                      maskedPrompt: pseudoResult.maskedText,
+                      mappings: pseudoResult.mappings,
+                      entityCount: allEntities.length,
+                      level,
+                      score,
+                      entities: me,
+                    }, window.location.origin);
+                  });
               }
             }
           } else if (strData.length >= 100) {
@@ -3110,16 +3196,20 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
               const { level, score } = quickScore(allEntities);
               const pseudoResult = pseudonymizeLocal(promptText, allEntities);
               igLog(`WS AUDIT: ${allEntities.length} entities (${level}, score=${score})`);
-              window.postMessage({
-                type: 'IRON_GATE_AUDIT',
-                originalPrompt: promptText,
-                maskedPrompt: pseudoResult.maskedText,
-                mappings: pseudoResult.mappings,
-                entityCount: allEntities.length,
-                level,
-                score,
-                entities: allEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
-              }, '*');
+              Promise.all([igHash(promptText), minimizeEntitiesForTransit(allEntities)])
+                .then(([ph, me]) => {
+                  window.postMessage({
+                    type: 'IRON_GATE_AUDIT',
+                    promptHash: ph,
+                    promptLength: promptText.length,
+                    maskedPrompt: pseudoResult.maskedText,
+                    mappings: pseudoResult.mappings,
+                    entityCount: allEntities.length,
+                    level,
+                    score,
+                    entities: me,
+                  }, window.location.origin);
+                });
             }
           }
         } catch { /* don't break */ }
@@ -3298,27 +3388,32 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
     // DIAGNOSTIC: DOM PRE-SUBMIT — what gets written to the input
     // ════════════════════════════════════════════════════════════
     console.log(
-      `%c[Iron Gate WIRE] ✅ DOM PRE-SUBMIT PROXY (${adapterName})`,
+      `%c[Iron Gate WIRE] DOM PRE-SUBMIT PROXY (${adapterName})`,
       'color: #00cc00; font-weight: bold; font-size: 13px',
       `\n  Trigger: ${source}`,
-      `\n\n  📤 WHAT YOU TYPED: "${text.substring(0, 200)}${text.length > 200 ? '...' : ''}"`,
-      `\n\n  🔒 WHAT GETS WRITTEN TO INPUT (then sent): "${pseudoResult.maskedText.substring(0, 200)}${pseudoResult.maskedText.length > 200 ? '...' : ''}"`,
-      `\n\n  📊 ${allEntities.length} entities, score=${score}, level=${level}`,
+      `\n  📤 Original: ${text.length} chars`,
+      `\n  🔒 Pseudonymized: ${pseudoResult.maskedText.length} chars`,
+      `\n  📊 ${allEntities.length} entities, score=${score}, level=${level}`,
     );
     // ════════════════════════════════════════════════════════════
 
     igLog(`${adapterName} DOM PROXY (${source}): Pseudonymized ${allEntities.length} entities (${level}, score=${score})`);
 
-    window.postMessage({
-      type: 'IRON_GATE_INTERCEPTED',
-      originalPrompt: text,
-      maskedPrompt: pseudoResult.maskedText,
-      mappings: pseudoResult.mappings,
-      entityCount: allEntities.length,
-      level,
-      score,
-      entities: allEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
-    }, '*');
+    // SECURITY: hash before postMessage — fire-and-forget async
+    Promise.all([igHash(text), minimizeEntitiesForTransit(allEntities)])
+      .then(([ph, me]) => {
+        window.postMessage({
+          type: 'IRON_GATE_INTERCEPTED',
+          promptHash: ph,
+          promptLength: text.length,
+          maskedPrompt: pseudoResult.maskedText,
+          mappings: pseudoResult.mappings,
+          entityCount: allEntities.length,
+          level,
+          score,
+          entities: me,
+        }, window.location.origin);
+      });
 
     return pseudoResult;
   }
@@ -3457,7 +3552,7 @@ window.postMessage({
   version: '0.2.7',
   timestamp: Date.now(),
   mode,
-}, '*');
+}, window.location.origin);
 
 // Health status message — content script relays this to service worker / sidepanel
 window.postMessage({
@@ -3465,7 +3560,7 @@ window.postMessage({
   healthy: _healthy,
   patchStatus: _patchStatus,
   adapter: activeAdapter?.name || null,
-}, '*');
+}, window.location.origin);
 
 (window as any).__IRON_GATE_MAIN_WORLD = 'active';
 (window as any).__IRON_GATE_MODE = mode;

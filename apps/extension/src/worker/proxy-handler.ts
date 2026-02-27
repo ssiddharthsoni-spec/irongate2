@@ -150,7 +150,13 @@ export async function handleProxyFlow(
   } catch (error) {
     // If analysis fails, fall back to allowing the prompt through.
     // We never want to block the user due to our own infrastructure failure.
-    console.error('[Iron Gate Proxy] Analysis failed, falling back to allow:', error);
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes('No API key') || msg.includes('api key')) {
+      // Expected when user hasn't configured their key yet — don't pollute error console
+      console.debug('[Iron Gate Proxy] No API key configured, skipping analysis.');
+    } else {
+      console.warn('[Iron Gate Proxy] Analysis failed, falling back to allow:', error);
+    }
     return {
       action: 'allow',
       score: 0,

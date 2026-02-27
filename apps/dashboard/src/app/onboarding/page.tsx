@@ -45,6 +45,9 @@ export default function OnboardingPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [firmCreated, setFirmCreated] = useState(false);
+  const [generatedApiKey, setGeneratedApiKey] = useState<string | null>(null);
+  const [apiKeyError, setApiKeyError] = useState<string | null>(null);
+  const [apiKeyCopied, setApiKeyCopied] = useState(false);
 
   const [state, setState] = useState<OnboardingState>({
     firmName: '',
@@ -108,6 +111,22 @@ export default function OnboardingPage() {
 
       setFirmCreated(true);
       setCurrentStep(5);
+
+      // Auto-generate an API key for the Chrome extension
+      try {
+        const keyResponse = await apiFetch('/api-keys', {
+          method: 'POST',
+          body: JSON.stringify({ name: 'Chrome Extension', scope: 'write' }),
+        });
+        if (keyResponse.ok) {
+          const keyData = await keyResponse.json();
+          setGeneratedApiKey(keyData.key);
+        } else {
+          setApiKeyError('Auto-generation failed. Create one manually in Settings > API Keys.');
+        }
+      } catch {
+        setApiKeyError('Auto-generation failed. Create one manually in Settings > API Keys.');
+      }
     } catch (err: any) {
       setSubmitError(
         err.message || 'Failed to create firm. Please check your connection and try again.'
@@ -232,6 +251,17 @@ export default function OnboardingPage() {
               onRetry={createFirm}
               isSubmitting={isSubmitting}
               onGoToDashboard={() => router.push('/')}
+              generatedApiKey={generatedApiKey}
+              apiKeyError={apiKeyError}
+              apiKeyCopied={apiKeyCopied}
+              onCopyApiKey={() => {
+                if (generatedApiKey) {
+                  navigator.clipboard.writeText(generatedApiKey).then(() => {
+                    setApiKeyCopied(true);
+                    setTimeout(() => setApiKeyCopied(false), 3000);
+                  });
+                }
+              }}
             />
           )}
 
@@ -627,7 +657,7 @@ function ThresholdSlider({
 // Step 3: Deploy the Extension
 // ============================================================================
 function StepExtension() {
-  const extensionZipUrl = 'https://github.com/ssiddharthsoni-spec/irongate2/releases/latest/download/iron-gate-extension-v0.1.0.zip';
+  const extensionZipUrl = 'https://github.com/ssiddharthsoni-spec/irongate2/releases/latest/download/iron-gate-extension-v0.2.1.zip';
 
   return (
     <div>
@@ -691,6 +721,21 @@ function StepExtension() {
               </p>
             </li>
           </ol>
+        </div>
+
+        {/* API key note */}
+        <div className="p-4 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
+          <div className="flex gap-3">
+            <svg className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z" />
+            </svg>
+            <div>
+              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">API Key</p>
+              <p className="text-xs text-amber-700 dark:text-amber-400 mt-1 leading-relaxed">
+                You&apos;ll receive an API key on the final screen. Share it with your team so they can connect the extension to your organization.
+              </p>
+            </div>
+          </div>
         </div>
 
         {/* Enterprise deployment note */}
@@ -827,6 +872,10 @@ function StepComplete({
   onRetry,
   isSubmitting,
   onGoToDashboard,
+  generatedApiKey,
+  apiKeyError,
+  apiKeyCopied,
+  onCopyApiKey,
 }: {
   state: OnboardingState;
   firmCreated: boolean;
@@ -834,6 +883,10 @@ function StepComplete({
   onRetry: () => void;
   isSubmitting: boolean;
   onGoToDashboard: () => void;
+  generatedApiKey: string | null;
+  apiKeyError: string | null;
+  apiKeyCopied: boolean;
+  onCopyApiKey: () => void;
 }) {
   // If there was an error and firm wasn't created, show error state
   if (!firmCreated && submitError) {
@@ -912,6 +965,49 @@ function StepComplete({
           />
         </div>
       </div>
+
+      {/* API Key Card */}
+      {generatedApiKey && (
+        <div className="bg-amber-50 dark:bg-amber-900/20 rounded-xl p-6 border-2 border-amber-300 dark:border-amber-700 mb-6">
+          <div className="flex items-center gap-2 mb-3">
+            <svg className="w-5 h-5 text-amber-600 dark:text-amber-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z" />
+            </svg>
+            <h3 className="text-sm font-bold text-amber-800 dark:text-amber-300">Your API Key</h3>
+          </div>
+          <p className="text-xs text-amber-700 dark:text-amber-400 mb-3">
+            Share this key with your team. They&apos;ll paste it into the Chrome extension to connect to your organization.
+          </p>
+          <div className="flex items-center gap-2">
+            <code
+              className="flex-1 px-4 py-3 bg-white dark:bg-gray-800 border border-amber-300 dark:border-amber-600 rounded-lg text-sm font-mono text-gray-900 dark:text-white select-all break-all"
+            >
+              {generatedApiKey}
+            </code>
+            <button
+              onClick={onCopyApiKey}
+              className={`flex-shrink-0 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+                apiKeyCopied
+                  ? 'bg-green-600 text-white'
+                  : 'bg-amber-600 hover:bg-amber-700 text-white'
+              }`}
+            >
+              {apiKeyCopied ? 'Copied!' : 'Copy'}
+            </button>
+          </div>
+          <p className="text-xs text-red-600 dark:text-red-400 font-medium mt-3">
+            Copy this key now — it will not be shown again.
+          </p>
+        </div>
+      )}
+
+      {apiKeyError && !generatedApiKey && (
+        <div className="bg-amber-50 dark:bg-amber-900/20 rounded-xl p-4 border border-amber-200 dark:border-amber-700 mb-6">
+          <p className="text-sm text-amber-700 dark:text-amber-400">
+            {apiKeyError}
+          </p>
+        </div>
+      )}
 
       {/* Go to Dashboard button */}
       <button

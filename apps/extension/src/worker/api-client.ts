@@ -3,12 +3,10 @@
  * Handles authentication, retries, and error handling.
  */
 
-let API_BASE_URL = 'https://irongate-api.onrender.com/v1';
+import { resolveConfig, onManagedConfigChanged } from '../managed-config';
+import { loadApiKey } from '../api-key-store';
 
-// Load configurable API base URL from chrome.storage
-chrome.storage.local.get('apiBaseUrl', (result) => {
-  if (result.apiBaseUrl) API_BASE_URL = result.apiBaseUrl;
-});
+let API_BASE_URL = 'https://irongate-api.onrender.com/v1';
 
 interface ApiClientConfig {
   baseUrl: string;
@@ -28,9 +26,24 @@ let config: ApiClientConfig = {
   apiKey: DEFAULT_API_KEY,
 };
 
-// Load user-configured API key from storage (overrides default)
-chrome.storage.local.get('ironGateApiKey', (result) => {
-  if (result.ironGateApiKey) config.apiKey = result.ironGateApiKey;
+// Load config with managed-first priority (replaces direct chrome.storage.local reads)
+resolveConfig().then((resolved) => {
+  if (resolved.apiKey) config.apiKey = resolved.apiKey;
+  if (resolved.apiUrl) { config.baseUrl = resolved.apiUrl; API_BASE_URL = resolved.apiUrl; }
+  if (resolved.firmId) config.firmId = resolved.firmId;
+}).catch(() => {
+  // Fallback: load encrypted API key + base URL from local storage
+  loadApiKey().then(key => { if (key) config.apiKey = key; }).catch(() => {});
+  chrome.storage.local.get(['apiBaseUrl'], (result) => {
+    if (result.apiBaseUrl) API_BASE_URL = result.apiBaseUrl;
+  });
+});
+
+// Update config when managed policy changes
+onManagedConfigChanged((resolved) => {
+  if (resolved.apiKey) config.apiKey = resolved.apiKey;
+  if (resolved.apiUrl) { config.baseUrl = resolved.apiUrl; API_BASE_URL = resolved.apiUrl; }
+  if (resolved.firmId) config.firmId = resolved.firmId;
 });
 
 export function configureApiClient(newConfig: Partial<ApiClientConfig>) {

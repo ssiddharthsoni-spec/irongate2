@@ -49,7 +49,7 @@ class EventQueue {
     // Watch for API key being set — resume queue when it arrives
     try {
       chrome.storage.onChanged.addListener((changes) => {
-        if (changes.ironGateApiKey?.newValue) {
+        if (changes.ironGateApiKey_enc?.newValue || changes.ironGateApiKey?.newValue) {
           this.noApiKey = false;
           if (this.pendingEvents.length > 0) this.scheduleBatch();
         }

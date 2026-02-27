@@ -1,7 +1,7 @@
 import Link from 'next/link';
 
 const EXTENSION_ZIP_URL =
-  'https://github.com/ssiddharthsoni-spec/irongate2/releases/latest/download/iron-gate-extension-v0.1.0.zip';
+  'https://github.com/ssiddharthsoni-spec/irongate2/releases/latest/download/iron-gate-extension-v0.2.1.zip';
 
 const SUPPORTED_TOOLS = [
   'ChatGPT',
@@ -67,7 +67,7 @@ export default function InstallPage() {
             Download Extension (ZIP)
           </a>
           <p className="text-sm text-gray-400 dark:text-gray-500 mt-3">
-            v0.1.0 &middot; Chrome &middot; Manifest V3
+            v0.2.1 &middot; Chrome &middot; Manifest V3
           </p>
         </div>
 
@@ -120,6 +120,19 @@ export default function InstallPage() {
               </div>
             </li>
             <li className="flex gap-4">
+              <span className="flex-shrink-0 w-8 h-8 bg-iron-600 text-white rounded-full flex items-center justify-center text-sm font-bold">
+                5
+              </span>
+              <div>
+                <p className="font-semibold text-gray-900 dark:text-white">Connect to your organization</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                  Right-click the Iron Gate toolbar icon and select <strong>&ldquo;Open side panel&rdquo;</strong>.
+                  The setup wizard will guide you through pasting your API key (starts with <code className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs font-mono">ig_</code>).
+                  Your admin receives this key during onboarding.
+                </p>
+              </div>
+            </li>
+            <li className="flex gap-4">
               <span className="flex-shrink-0 w-8 h-8 bg-green-600 text-white rounded-full flex items-center justify-center">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
@@ -128,7 +141,7 @@ export default function InstallPage() {
               <div>
                 <p className="font-semibold text-gray-900 dark:text-white">You&apos;re protected!</p>
                 <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                  Visit any supported AI tool and Iron Gate will automatically monitor for sensitive data. Open the side panel to see activity.
+                  Visit any supported AI tool and Iron Gate will automatically monitor for sensitive data. Open the side panel to see real-time activity.
                 </p>
               </div>
             </li>
@@ -158,11 +171,20 @@ export default function InstallPage() {
             </svg>
             <div>
               <p className="font-bold text-iron-800 dark:text-iron-300 mb-2">Enterprise Deployment</p>
-              <p className="text-sm text-iron-700 dark:text-iron-400 leading-relaxed">
+              <p className="text-sm text-iron-700 dark:text-iron-400 leading-relaxed mb-3">
                 For organization-wide deployment, use Chrome Enterprise policies to force-install the
-                extension across all managed devices. Use the <span className="font-medium">ExtensionInstallForcelist</span> policy
-                in the Google Chrome Enterprise documentation. This ensures all employees are protected
-                automatically without individual installations.
+                extension across all managed devices. Add the following to your Chrome policy JSON:
+              </p>
+              <pre className="text-xs bg-iron-100 dark:bg-iron-900/40 rounded-lg p-3 overflow-x-auto font-mono text-iron-800 dark:text-iron-200 leading-relaxed">
+{`{
+  "ExtensionInstallForcelist": [
+    "<your-extension-id>;${EXTENSION_ZIP_URL}"
+  ]
+}`}
+              </pre>
+              <p className="text-xs text-iron-600 dark:text-iron-400 mt-2">
+                Replace <code className="font-mono">&lt;your-extension-id&gt;</code> with the ID from <code className="font-mono">chrome://extensions</code>.
+                This ensures all employees are protected automatically without individual installations.
               </p>
             </div>
           </div>

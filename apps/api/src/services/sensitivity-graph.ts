@@ -19,7 +19,7 @@ import { logger } from '../lib/logger';
  */
 export async function recordCoOccurrences(
   firmId: string,
-  entities: DetectedEntity[],
+  entities: any[],
   contextScore: number,
 ): Promise<void> {
   if (entities.length < 2) return;
@@ -64,7 +64,7 @@ export async function recordCoOccurrences(
  */
 export async function getBoostMultiplier(
   firmId: string,
-  entities: DetectedEntity[],
+  entities: any[],
 ): Promise<{ boost: number; reasons: string[] }> {
   if (entities.length < 2) return { boost: 0, reasons: [] };
 
@@ -131,12 +131,12 @@ interface HashedEntity {
 }
 
 async function generatePairs(
-  entities: DetectedEntity[],
+  entities: any[],
 ): Promise<[HashedEntity, HashedEntity][]> {
-  // Hash all entity texts
+  // Hash entity texts — use pre-computed textHash if available (new clients)
   const hashed: HashedEntity[] = await Promise.all(
     entities.map(async (e) => ({
-      hash: await sha256(e.text),
+      hash: e.textHash || await sha256(e.text),
       type: e.type,
     })),
   );

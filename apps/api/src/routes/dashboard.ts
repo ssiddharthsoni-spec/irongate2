@@ -1,12 +1,17 @@
 import { Hono } from 'hono';
 import { db } from '../db/client';
 import { events, users } from '../db/schema';
-import { eq, sql, desc, gte, and } from 'drizzle-orm';
+import { eq, sql, desc, gte, lte, and } from 'drizzle-orm';
 import { computeTrustScore, getTrustHistory } from '../services/trust-score';
 import { getGraph } from '../services/sensitivity-graph';
 import type { AppEnv } from '../types';
 
 export const dashboardRoutes = new Hono<AppEnv>();
+
+function computePercentChange(previous: number, current: number): number {
+  if (previous === 0) return current > 0 ? 100 : 0;
+  return Math.round(((current - previous) / previous) * 100);
+}
 
 /** Support both ?period=30d and ?days=30 query parameter formats */
 function parsePeriodDays(c: any): number {
@@ -28,13 +33,16 @@ dashboardRoutes.get('/overview', async (c) => {
 
   const firmCondition = and(eq(events.firmId, firmId), gte(events.createdAt, since));
 
-  // Total interactions
+  // Total interactions + action distribution
   const [totals] = await db
     .select({
       total: sql<number>`count(*)`,
       avgScore: sql<number>`avg(${events.sensitivityScore})`,
       blocked: sql<number>`count(*) filter (where ${events.action} = 'block')`,
       warned: sql<number>`count(*) filter (where ${events.action} = 'warn')`,
+      passed: sql<number>`count(*) filter (where ${events.action} = 'pass')`,
+      proxied: sql<number>`count(*) filter (where ${events.action} = 'proxy')`,
+      overridden: sql<number>`count(*) filter (where ${events.action} = 'override')`,
     })
     .from(events)
     .where(firmCondition);
@@ -114,6 +122,56 @@ dashboardRoutes.get('/overview', async (c) => {
     .orderBy(desc(events.createdAt))
     .limit(20);
 
+  // Entity type breakdown — unnest JSONB entities array
+  const entityBreakdownResult = await db.execute(
+    sql`SELECT entity->>'type' AS entity_type, COUNT(*)::int AS count
+        FROM ${events}, jsonb_array_elements(${events.entities}) AS entity
+        WHERE ${events.firmId} = ${firmId}
+          AND ${events.createdAt} >= ${since}
+        GROUP BY entity->>'type'
+        ORDER BY count DESC
+        LIMIT 20`
+  );
+
+  // Total entities detected (efficient — no unnesting)
+  const [entityTotals] = await db
+    .select({
+      totalEntities: sql<number>`COALESCE(SUM(jsonb_array_length(${events.entities})), 0)`,
+    })
+    .from(events)
+    .where(firmCondition);
+
+  // Previous period comparison
+  const previousPeriodStart = new Date(Date.now() - daysBack * 2 * 24 * 60 * 60 * 1000);
+  const previousPeriodEnd = since;
+  const previousCondition = and(
+    eq(events.firmId, firmId),
+    gte(events.createdAt, previousPeriodStart),
+    lte(events.createdAt, previousPeriodEnd)
+  );
+
+  const [previousTotals] = await db
+    .select({
+      total: sql<number>`count(*)`,
+      avgScore: sql<number>`avg(${events.sensitivityScore})`,
+      blocked: sql<number>`count(*) filter (where ${events.action} = 'block')`,
+      warned: sql<number>`count(*) filter (where ${events.action} = 'warn')`,
+      proxied: sql<number>`count(*) filter (where ${events.action} = 'proxy')`,
+    })
+    .from(events)
+    .where(previousCondition);
+
+  const [previousEntityTotals] = await db
+    .select({
+      totalEntities: sql<number>`COALESCE(SUM(jsonb_array_length(${events.entities})), 0)`,
+    })
+    .from(events)
+    .where(previousCondition);
+
+  // Compute impact metrics
+  const currentProtected = Number(totals?.warned || 0) + Number(totals?.blocked || 0) + Number(totals?.proxied || 0);
+  const previousProtected = Number(previousTotals?.blocked || 0) + Number(previousTotals?.warned || 0) + Number(previousTotals?.proxied || 0);
+
   return c.json({
     totalInteractions: Number(totals?.total || 0),
     totalProtected: Number(totals?.warned || 0) + Number(totals?.blocked || 0),
@@ -139,6 +197,38 @@ dashboardRoutes.get('/overview', async (c) => {
       highRiskCount: Number(u.highRiskCount),
     })),
     recentHighRisk,
+    impact: {
+      totalEntitiesDetected: Number(entityTotals?.totalEntities || 0),
+      totalActionsProtected: currentProtected,
+      entityBreakdown: [...entityBreakdownResult].map((r: any) => ({
+        entityType: r.entity_type,
+        count: Number(r.count),
+      })),
+      actionDistribution: {
+        pass: Number(totals?.passed || 0),
+        warn: Number(totals?.warned || 0),
+        block: Number(totals?.blocked || 0),
+        proxy: Number(totals?.proxied || 0),
+        override: Number(totals?.overridden || 0),
+      },
+      previousPeriod: {
+        totalInteractions: Number(previousTotals?.total || 0),
+        totalEntitiesDetected: Number(previousEntityTotals?.totalEntities || 0),
+        totalProtected: previousProtected,
+        avgSensitivityScore: Math.round(Number(previousTotals?.avgScore || 0) * 10) / 10,
+      },
+      trends: {
+        entitiesChange: computePercentChange(
+          Number(previousEntityTotals?.totalEntities || 0),
+          Number(entityTotals?.totalEntities || 0)
+        ),
+        protectedChange: computePercentChange(previousProtected, currentProtected),
+        interactionsChange: computePercentChange(
+          Number(previousTotals?.total || 0),
+          Number(totals?.total || 0)
+        ),
+      },
+    },
   });
 });
 

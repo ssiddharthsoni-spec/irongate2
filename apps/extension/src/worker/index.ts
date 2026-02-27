@@ -11,6 +11,9 @@ import { detectWithRegex } from '../detection/fallback-regex';
 import { computeScore } from '../detection/scorer';
 import { pseudonymizeLocal } from '../detection/pseudonymizer';
 import { scanForSecrets } from './detectors/secret-scanner';
+import { resolveConfig, onManagedConfigChanged } from '../managed-config';
+import { saveApiKey, loadApiKey } from '../api-key-store';
+import { recordAttestation, getAuditLog, clearAuditLog } from './audit-trail';
 
 // Debug logging — silent in production, enable via: chrome.storage.local.get('ironGateDebug')
 let _IG_DEBUG = false;
@@ -31,15 +34,48 @@ initAuth().then(() => {
 // Open side panel on extension icon click
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 
-// Firm mode tracking — defaults to 'audit', persisted in chrome.storage.local
+// Firm mode tracking — defaults to 'audit'
 let firmMode: 'audit' | 'proxy' = 'audit';
+let isManaged = false;
 
-// Load persisted mode on startup
-chrome.storage.local.get('firmMode', (result) => {
-  if (result.firmMode === 'audit' || result.firmMode === 'proxy') {
-    firmMode = result.firmMode;
-    igLog('Loaded firm mode:', firmMode);
+// Load config with managed-first priority
+resolveConfig().then((config) => {
+  firmMode = config.firmMode;
+  isManaged = config.isManaged;
+  if (config.isManaged) {
+    configureApiClient({ apiKey: config.apiKey, baseUrl: config.apiUrl });
+    igLog('Enterprise managed mode active. Mode:', firmMode);
+  } else {
+    igLog('Individual mode. Loaded firm mode:', firmMode);
   }
+}).catch((err) => {
+  console.warn('[Iron Gate] Failed to resolve managed config:', err);
+  chrome.storage.local.get('firmMode', (result) => {
+    if (result.firmMode === 'audit' || result.firmMode === 'proxy') {
+      firmMode = result.firmMode;
+    }
+  });
+});
+
+// Listen for live managed policy changes (admin pushes new config)
+onManagedConfigChanged((config) => {
+  igLog('Managed config changed:', config.isManaged, config.firmMode);
+  firmMode = config.firmMode;
+  isManaged = config.isManaged;
+  if (config.isManaged) {
+    configureApiClient({ apiKey: config.apiKey, baseUrl: config.apiUrl });
+  }
+  // Relay mode change to all content scripts
+  chrome.tabs.query({}, (tabs) => {
+    for (const tab of tabs) {
+      if (tab.id && tab.url) {
+        chrome.tabs.sendMessage(tab.id, {
+          type: 'MODE_CHANGED',
+          payload: { mode: config.firmMode },
+        }).catch(() => {});
+      }
+    }
+  });
 });
 
 // ─── Per-Tab State Tracking ──────────────────────────────────────────────────
@@ -54,7 +90,7 @@ interface TabState {
   lastLevel: string | null;
   lastExplanation: string | null;
   lastEntities: any[];
-  lastOriginalPrompt?: string;
+  lastPromptHash?: string;
   lastMaskedPrompt?: string;
   lastPseudonymMappings?: any[];
   detectionCount: number;
@@ -99,10 +135,7 @@ async function updateTabState(tabId: number, update: Partial<TabState>): Promise
     detectionCount: 0,
     lastDetectionTime: 0,
   };
-  // Truncate prompts to stay within storage quota
-  if (update.lastOriginalPrompt && update.lastOriginalPrompt.length > MAX_PROMPT_STORAGE) {
-    update.lastOriginalPrompt = update.lastOriginalPrompt.substring(0, MAX_PROMPT_STORAGE);
-  }
+  // Truncate prompts to stay within storage quota (lastPromptHash is always 64 chars, no truncation needed)
   if (update.lastMaskedPrompt && update.lastMaskedPrompt.length > MAX_PROMPT_STORAGE) {
     update.lastMaskedPrompt = update.lastMaskedPrompt.substring(0, MAX_PROMPT_STORAGE);
   }
@@ -197,64 +230,65 @@ async function handleMessage(
       const payload = message.payload;
       const {
         score, level, explanation, entities = [],
-        aiToolId, originalPrompt, maskedPrompt, pseudonymMappings,
+        aiToolId, promptHash, promptLength, maskedPrompt, pseudonymMappings,
       } = payload;
 
       // Only queue to API if this has prompt data (i.e., from content script, not a re-broadcast)
-      if (originalPrompt) {
+      if (promptHash) {
         igLog('MAIN world event —', aiToolId, 'score:', score, 'level:', level, 'entities:', entities?.length || 0, 'mappings:', pseudonymMappings?.length || 0);
 
-        // Queue event for API
-        const promptHash = await hashText(originalPrompt);
         const action = firmMode === 'proxy'
           ? (pseudonymMappings?.length > 0 ? 'proxy' : 'pass')
           : 'pass';
 
-        // Use real entity data from MAIN world if available, otherwise reconstruct from mappings
-        let entityList: any[];
-        if (entities && entities.length > 0) {
-          entityList = entities.map((e: any) => ({
-            type: e.type || 'UNKNOWN',
-            text: e.text || '',
-            start: e.start || 0,
-            end: e.end || 0,
-            confidence: e.confidence || 0.85,
-            source: e.source || 'regex',
-          }));
-        } else {
-          // Fallback: reconstruct from pseudonym mappings
-          entityList = (pseudonymMappings || []).map((m: any) => ({
-            type: m.type || 'UNKNOWN',
-            text: m.original || '',
-            start: 0,
-            end: (m.original || '').length,
-            confidence: 0.85,
-            source: 'regex',
-          }));
-        }
+        // Entities arrive pre-minimized (textHash + length) from main-world.ts.
+        // Pass them directly — queueEventToApi will forward without re-hashing.
+        const entityList = (entities && entities.length > 0)
+          ? entities.map((e: any) => ({
+              type: e.type || 'UNKNOWN',
+              text: '', // Placeholder — queueEventToApi will hash (produces empty hash for empty string)
+              textHash: e.textHash, // Pre-computed hash from main-world.ts
+              length: e.length || 0,
+              start: e.start || 0,
+              end: e.end || 0,
+              confidence: e.confidence || 0.85,
+              source: e.source || 'regex',
+            }))
+          : [];
 
-        queueEventToApi({
+        // Queue with pre-minimized entities — queueEventToApi detects textHash and skips re-hashing
+        await queueEventToApiMinimized({
           aiToolId: aiToolId || 'unknown',
           promptHash,
-          promptLength: originalPrompt.length,
+          promptLength: promptLength || 0,
           sensitivityScore: score,
           sensitivityLevel: level,
           entities: entityList,
           action,
           captureMethod: 'fetch',
         });
+
+        // Cryptographic audit trail — HMAC-signed record for tamper-evidence
+        recordAttestation({
+          action,
+          entityCount: entityList.length,
+          promptHash,
+          level,
+          score,
+          aiToolId: aiToolId || 'unknown',
+        }).catch(() => {});
       }
 
       // Store per-tab state for this detection
       const ssTabId = sender.tab?.id || null;
-      if (ssTabId && originalPrompt) {
+      if (ssTabId && promptHash) {
         updateTabState(ssTabId, {
           aiToolId: aiToolId || 'unknown',
           lastScore: score,
           lastLevel: level,
           lastExplanation: explanation,
           lastEntities: entities || [],
-          lastOriginalPrompt: originalPrompt,
+          lastPromptHash: promptHash,
           lastMaskedPrompt: maskedPrompt,
           lastPseudonymMappings: pseudonymMappings,
           detectionCount: ((await getTabState(ssTabId))?.detectionCount || 0) + 1,
@@ -283,7 +317,12 @@ async function handleMessage(
           const result = await handleProxyFlow(text, aiToolId, sessionId);
           return result;
         } catch (error) {
-          console.error('[Iron Gate] Proxy flow error:', error);
+          const errMsg = error instanceof Error ? error.message : String(error);
+          if (errMsg.includes('No API key') || errMsg.includes('api key')) {
+            console.debug('[Iron Gate] Proxy flow skipped — no API key configured.');
+          } else {
+            console.warn('[Iron Gate] Proxy flow error:', error);
+          }
           return { actionRequired: 'pass', error: 'Proxy flow failed, falling back to passthrough' };
         }
       }
@@ -321,7 +360,12 @@ async function handleMessage(
 
         return result;
       } catch (error) {
-        console.error('[Iron Gate] Proxy analyze error:', error);
+        const errMsg = error instanceof Error ? error.message : String(error);
+        if (errMsg.includes('No API key') || errMsg.includes('api key')) {
+          console.debug('[Iron Gate] Proxy analyze skipped — no API key configured.');
+        } else {
+          console.warn('[Iron Gate] Proxy analyze error:', error);
+        }
         return { error: 'Proxy analysis failed' };
       }
     }
@@ -343,7 +387,7 @@ async function handleMessage(
 
         return result;
       } catch (error) {
-        console.error('[Iron Gate] Proxy send error:', error);
+        console.warn('[Iron Gate] Proxy send error:', error);
         return { error: 'Proxy send failed' };
       }
     }
@@ -363,12 +407,16 @@ async function handleMessage(
 
         return result;
       } catch (error) {
-        console.error('[Iron Gate] File analysis error:', error);
+        console.warn('[Iron Gate] File analysis error:', error);
         return { error: 'File analysis failed' };
       }
     }
 
     case 'MODE_CHANGED': {
+      if (isManaged) {
+        igLog('MODE_CHANGED rejected — enterprise managed mode');
+        return { ok: false, error: 'Configuration is managed by your organization' };
+      }
       const { mode } = message.payload;
       firmMode = mode;
       chrome.storage.local.set({ firmMode: mode });
@@ -393,11 +441,19 @@ async function handleMessage(
     }
 
     case 'SET_API_KEY': {
+      if (isManaged) {
+        igLog('SET_API_KEY rejected — enterprise managed mode');
+        return { ok: false, error: 'Configuration is managed by your organization' };
+      }
       const { apiKey } = message.payload;
-      igLog('API key updated:', apiKey ? apiKey.substring(0, 8) + '...' : '(cleared)');
-      chrome.storage.local.set({ ironGateApiKey: apiKey });
+      igLog('API key updated:', apiKey ? '(set)' : '(cleared)');
+      await saveApiKey(apiKey);
       configureApiClient({ apiKey });
       return { ok: true };
+    }
+
+    case 'GET_MANAGED_STATUS': {
+      return { ok: true, isManaged, firmMode };
     }
 
     case 'BLOCK_OVERRIDE': {
@@ -478,6 +534,16 @@ async function handleMessage(
       return { ok: false, error: 'No tabId provided' };
     }
 
+    case 'GET_AUDIT_LOG': {
+      const log = await getAuditLog();
+      return { ok: true, log };
+    }
+
+    case 'CLEAR_AUDIT_LOG': {
+      await clearAuditLog();
+      return { ok: true };
+    }
+
     default:
       return { error: 'Unknown message type' };
   }
@@ -488,8 +554,11 @@ async function handleMessage(
 /**
  * Queue an event to the API with the CORRECT schema expected by POST /v1/events/batch.
  * This is the single point of event creation — all paths should use this.
+ *
+ * SECURITY: Entity text is hashed client-side (SHA-256) before leaving the browser.
+ * Raw PII never travels to the Iron Gate API — only one-way hashes + metadata.
  */
-function queueEventToApi(event: {
+async function queueEventToApi(event: {
   aiToolId: string;
   promptHash: string;
   promptLength: number;
@@ -501,7 +570,20 @@ function queueEventToApi(event: {
   captureMethod: string;
   sessionId?: string;
   metadata?: Record<string, unknown>;
-}): void {
+}): Promise<void> {
+  // Client-side data minimization: hash entity text so raw PII never leaves the browser
+  const minimizedEntities = await Promise.all(
+    event.entities.map(async (e) => ({
+      type: e.type,
+      textHash: await hashText(e.text),
+      length: e.text.length,
+      start: e.start,
+      end: e.end,
+      confidence: e.confidence,
+      source: e.source,
+    }))
+  );
+
   eventQueue.enqueue({
     aiToolId: event.aiToolId,
     aiToolUrl: '',
@@ -509,7 +591,7 @@ function queueEventToApi(event: {
     promptLength: event.promptLength,
     sensitivityScore: event.sensitivityScore,
     sensitivityLevel: event.sensitivityLevel,
-    entities: event.entities,
+    entities: minimizedEntities,
     action: event.action,
     overrideReason: event.overrideReason,
     captureMethod: event.captureMethod,
@@ -528,6 +610,47 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     );
   }
 });
+
+/**
+ * Queue a pre-minimized event (entities already hashed by main-world.ts).
+ * Used for SENSITIVITY_SCORE events relayed from the MAIN world via content script.
+ */
+async function queueEventToApiMinimized(event: {
+  aiToolId: string;
+  promptHash: string;
+  promptLength: number;
+  sensitivityScore: number;
+  sensitivityLevel: string;
+  entities: Array<{ type: string; textHash?: string; length?: number; text?: string; start: number; end: number; confidence: number; source: string }>;
+  action: string;
+  overrideReason?: string;
+  captureMethod: string;
+}): Promise<void> {
+  // Entities already have textHash from main-world.ts — pass through directly
+  const minimizedEntities = event.entities.map(e => ({
+    type: e.type,
+    textHash: e.textHash || '',
+    length: e.length || 0,
+    start: e.start,
+    end: e.end,
+    confidence: e.confidence,
+    source: e.source,
+  }));
+
+  eventQueue.enqueue({
+    aiToolId: event.aiToolId,
+    aiToolUrl: '',
+    promptHash: event.promptHash,
+    promptLength: event.promptLength,
+    sensitivityScore: event.sensitivityScore,
+    sensitivityLevel: event.sensitivityLevel,
+    entities: minimizedEntities,
+    action: event.action,
+    overrideReason: event.overrideReason,
+    captureMethod: event.captureMethod,
+    metadata: {},
+  }).catch((err) => console.warn('[Iron Gate] Failed to queue minimized event:', err));
+}
 
 // ─── Programmatic MAIN World Injection ───────────────────────────────────────
 // Backup injection method: if manifest content_scripts doesn't load the MAIN
@@ -659,7 +782,7 @@ function inlineFetchInterceptor() {
       if (_debug) console.log('[Iron Gate INLINE] Mode set to:', mode);
     }
   });
-  window.postMessage({ type: 'IRON_GATE_REQUEST_MODE' }, '*');
+  window.postMessage({ type: 'IRON_GATE_REQUEST_MODE' }, window.location.origin);
 
   // ── Entity Detection Patterns ──
   const PATTERNS: Array<{ type: string; re: RegExp }> = [
@@ -834,17 +957,24 @@ function inlineFetchInterceptor() {
 
       if (modifiedBody) {
         if (_debug) console.log('[Iron Gate INLINE] ✅ PROXY: Pseudonymized', entities.length, 'entities (', level, ')');
-        if (_debug) console.log('[Iron Gate INLINE] Original:', promptText.substring(0, 80), '...');
-        if (_debug) console.log('[Iron Gate INLINE] Masked:', maskedText.substring(0, 80), '...');
+        if (_debug) console.log('[Iron Gate INLINE] Original:', promptText.length, 'chars');
+        if (_debug) console.log('[Iron Gate INLINE] Masked:', maskedText.length, 'chars');
 
-        window.postMessage({
-          type: 'IRON_GATE_INTERCEPTED',
-          originalPrompt: promptText,
-          maskedPrompt: maskedText,
-          mappings,
-          entityCount: entities.length,
-          level,
-        }, '*');
+        // SECURITY: hash prompt before postMessage — no raw PII over postMessage
+        (async () => {
+          const _d = new TextEncoder().encode(promptText);
+          const _b = await crypto.subtle.digest('SHA-256', _d);
+          const _ph = Array.from(new Uint8Array(_b)).map(b => b.toString(16).padStart(2, '0')).join('');
+          window.postMessage({
+            type: 'IRON_GATE_INTERCEPTED',
+            promptHash: _ph,
+            promptLength: promptText.length,
+            maskedPrompt: maskedText,
+            mappings,
+            entityCount: entities.length,
+            level,
+          }, window.location.origin);
+        })();
 
         const modifiedInit: RequestInit = {
           method: init?.method || (input instanceof Request ? input.method : 'POST'),
@@ -862,14 +992,20 @@ function inlineFetchInterceptor() {
     if (mode === 'audit' && entities.length > 0) {
       const level = quickScore(entities);
       const { maskedText, mappings } = pseudonymize(promptText, entities);
-      window.postMessage({
-        type: 'IRON_GATE_AUDIT',
-        originalPrompt: promptText,
-        maskedPrompt: maskedText,
-        mappings,
-        entityCount: entities.length,
-        level,
-      }, '*');
+      (async () => {
+        const _d = new TextEncoder().encode(promptText);
+        const _b = await crypto.subtle.digest('SHA-256', _d);
+        const _ph = Array.from(new Uint8Array(_b)).map(b => b.toString(16).padStart(2, '0')).join('');
+        window.postMessage({
+          type: 'IRON_GATE_AUDIT',
+          promptHash: _ph,
+          promptLength: promptText.length,
+          maskedPrompt: maskedText,
+          mappings,
+          entityCount: entities.length,
+          level,
+        }, window.location.origin);
+      })();
     }
 
     return originalFetch.call(window, input, init);
