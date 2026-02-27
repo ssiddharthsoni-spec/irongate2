@@ -250,7 +250,7 @@ export default function MattersPage() {
       const res = await apiFetch(`/admin/client-matters/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error(`Server responded with ${res.status}`);
       setMatters((prev) => prev.filter((m) => m.id !== id));
-    } catch (err: any) {
+    } catch {
       // In demo mode, remove locally
       setMatters((prev) => prev.filter((m) => m.id !== id));
     } finally {

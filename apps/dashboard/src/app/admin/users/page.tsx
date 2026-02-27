@@ -125,7 +125,7 @@ export default function UsersPage() {
       setInviteEmail('');
       setInviteRole('user');
       await fetchUsers();
-    } catch (err: any) {
+    } catch {
       // In demo mode, add the user locally
       const newUser: User = {
         id: String(Date.now()),
@@ -156,7 +156,7 @@ export default function UsersPage() {
       });
       if (!res.ok) throw new Error(`Server responded with ${res.status}`);
       setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, role: newRole } : u)));
-    } catch (err: any) {
+    } catch {
       // In demo mode, update locally
       setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, role: newRole } : u)));
     } finally {

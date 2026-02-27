@@ -20,6 +20,7 @@
  */
 export const ALLOWED_HOSTS: readonly string[] = [
   'api.irongate.ai',
+  'irongate-api.onrender.com',
   'localhost',
 ] as const;
 

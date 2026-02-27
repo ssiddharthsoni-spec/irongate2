@@ -138,9 +138,11 @@ export const requestLoggerMiddleware = createMiddleware(async (c, next) => {
   });
 
   // Build structured log entry
+  const requestId = (c.get as any)('requestId') || null;
   const logEntry: Record<string, unknown> = {
     timestamp: new Date().toISOString(),
     type: 'http_request',
+    requestId,
     method,
     path,
     statusCode,

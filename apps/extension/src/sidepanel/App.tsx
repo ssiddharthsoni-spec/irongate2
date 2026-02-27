@@ -112,7 +112,7 @@ export function App() {
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [mode, setMode] = useState<'audit' | 'proxy'>('audit');
+  const [mode, setMode] = useState<'audit' | 'proxy'>('proxy');
   const [apiKeyDraft, setApiKeyDraft] = useState('');
   const [apiKeySaved, setApiKeySaved] = useState(false);
   const [protectionHealthy, setProtectionHealthy] = useState<boolean | null>(null);
@@ -532,7 +532,7 @@ export function App() {
   const [setupKeyDraft, setSetupKeyDraft] = useState('');
   const [setupKeyError, setSetupKeyError] = useState<string | null>(null);
   const [setupConnecting, setSetupConnecting] = useState(false);
-  const [setupMode, setSetupMode] = useState<'audit' | 'proxy'>('audit');
+  const [setupMode, setSetupMode] = useState<'audit' | 'proxy'>('proxy');
 
   const handleSetupConnect = useCallback(async () => {
     const key = setupKeyDraft.trim();
@@ -742,46 +742,28 @@ export function App() {
               </p>
             </div>
 
-            {/* Mode toggle */}
-            <div className="bg-white rounded-lg p-4 border mb-4">
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">Protection Mode</h3>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => { setSetupMode('audit'); setMode('audit'); chrome.storage.local.set({ firmMode: 'audit' }); }}
-                  className={`p-3 rounded-lg border-2 text-center transition-all ${
-                    setupMode === 'audit'
-                      ? 'border-iron-600 bg-iron-50'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <p className="text-xs font-semibold text-gray-900">Monitor</p>
-                  <p className="text-[10px] text-gray-500 mt-0.5">Detect & log</p>
-                </button>
-                <button
-                  onClick={() => { setSetupMode('proxy'); setMode('proxy'); chrome.storage.local.set({ firmMode: 'proxy' }); }}
-                  className={`p-3 rounded-lg border-2 text-center transition-all ${
-                    setupMode === 'proxy'
-                      ? 'border-iron-600 bg-iron-50'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <p className="text-xs font-semibold text-gray-900">Protect</p>
-                  <p className="text-[10px] text-gray-500 mt-0.5">Auto-redact PII</p>
-                </button>
+            {/* Protection mode info */}
+            <div className="bg-iron-50 rounded-lg p-4 border border-iron-200 mb-4">
+              <div className="flex items-center gap-2 mb-1">
+                <svg className="w-4 h-4 text-iron-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
+                </svg>
+                <p className="text-xs font-semibold text-iron-800">Protect Mode</p>
               </div>
+              <p className="text-[10px] text-iron-600">Sensitive data is automatically redacted before reaching AI services.</p>
             </div>
 
             <button
               onClick={() => {
                 // Save mode and dismiss wizard
-                chrome.storage.local.set({ firmMode: setupMode });
+                chrome.storage.local.set({ firmMode: 'proxy' });
                 try {
-                  chrome.runtime.sendMessage({ type: 'MODE_CHANGED', payload: { mode: setupMode } });
+                  chrome.runtime.sendMessage({ type: 'MODE_CHANGED', payload: { mode: 'proxy' } });
                 } catch {}
               }}
               className="w-full py-3 px-4 text-sm font-semibold text-white bg-iron-600 rounded-lg hover:bg-iron-700 transition-colors mt-auto"
             >
-              Start Monitoring
+              Start Protection
             </button>
           </div>
         )}
@@ -915,32 +897,17 @@ export function App() {
             Get your API key from the <a href="https://irongate-dashboard.vercel.app/admin" target="_blank" rel="noopener" className="text-iron-600 underline">admin dashboard</a>.
           </p>
 
-          {/* Mode toggle — Monitor / Protect */}
+          {/* Mode info — Protect */}
           <div className="flex items-center justify-between mb-3">
             <div className="flex flex-col">
-              <span className="text-xs font-medium text-gray-700">
-                {mode === 'audit' ? 'Monitor' : 'Protect'}
-              </span>
+              <span className="text-xs font-medium text-gray-700">Mode: Protect</span>
               <span className="text-[10px] text-gray-400 mt-0.5">
-                {mode === 'audit'
-                  ? 'Scanning only — prompts sent unmodified'
-                  : 'Sensitive data redacted before sending'}
+                Sensitive data redacted before sending
               </span>
             </div>
-            <button
-              role="switch"
-              aria-checked={mode === 'proxy'}
-              onClick={handleModeToggle}
-              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-iron-500 ${
-                mode === 'proxy' ? 'bg-iron-600' : 'bg-gray-300'
-              }`}
-            >
-              <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
-                  mode === 'proxy' ? 'translate-x-6' : 'translate-x-1'
-                }`}
-              />
-            </button>
+            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-600">
+              ACTIVE
+            </span>
           </div>
 
           {/* Disconnect — hidden in enterprise managed mode */}
@@ -978,14 +945,8 @@ export function App() {
               ? 'Error'
               : 'Not on an AI tool page'}
           </span>
-          <span
-            className={`ml-auto inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${
-              mode === 'audit'
-                ? 'bg-blue-50 text-blue-600'
-                : 'bg-emerald-50 text-emerald-600'
-            }`}
-          >
-            {mode === 'audit' ? 'MONITOR' : 'PROTECT'}
+          <span className="ml-auto inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-600">
+            PROTECT
           </span>
         </div>
         {protectionHealthy === false && (

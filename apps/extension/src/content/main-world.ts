@@ -30,7 +30,7 @@ if ((window as any).__IRON_GATE_MAIN_WORLD === 'active') {
     type: 'IRON_GATE_HEARTBEAT',
     version: '0.2.7-dup',
     timestamp: Date.now(),
-    mode: (window as any).__IRON_GATE_MODE || 'audit',
+    mode: (window as any).__IRON_GATE_MODE || 'proxy',
   }, window.location.origin);
 } else if ((window as any).__IRON_GATE_MAIN_WORLD === 'loading') {
   const loadingStarted = (window as any).__IRON_GATE_LOADING_SINCE || 0;
@@ -72,7 +72,7 @@ async function minimizeEntitiesForTransit(entities: Array<{ type: string; text: 
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
-let mode: 'audit' | 'proxy' = 'audit';
+let mode: 'audit' | 'proxy' = 'proxy';
 let currentReverseMap: Record<string, string> = {};
 
 // ─── Mapping Persistence (survives page refresh) ────────────────────────────

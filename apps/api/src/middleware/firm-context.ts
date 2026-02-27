@@ -31,7 +31,7 @@ export const firmContextMiddleware = createMiddleware(async (c, next) => {
 
   // Production: firm ID comes from the authenticated user's record
   if (!authFirmId) {
-    return c.json({ error: 'Forbidden: No firm associated with this user' }, 403);
+    return c.json({ error: 'Unauthorized: No firm associated with this user' }, 401);
   }
 
   // If a header was provided, it must match the user's firm (no cross-tenant access)

@@ -4,13 +4,19 @@
 // Maintains a tamper-evident hash chain of all events per firm.
 // Each event's hash includes the previous event's hash,
 // creating a verifiable chain similar to a blockchain.
+//
+// Uses optimistic concurrency control (OCC) instead of advisory locks.
+// A UNIQUE constraint on (firmId, chainPosition) ensures exactly one
+// writer wins each position. Losers retry with the updated chain head.
 // ============================================================================
 
 import { db } from '../db/client';
 import { events } from '../db/schema';
-import { eq, desc, asc, sql } from 'drizzle-orm';
-import { sha256, chainHash, hmacSign } from '@iron-gate/crypto';
+import { eq, desc, asc } from 'drizzle-orm';
+import { chainHash, hmacSign } from '@iron-gate/crypto';
 import { getSigningKey } from './signing-key';
+import { isUniqueViolation } from '../lib/pg-errors';
+import { logger } from '../lib/logger';
 
 interface EventData {
   firmId: string;
@@ -37,21 +43,21 @@ export interface ChainVerification {
   verifiedAt: string;
 }
 
+const MAX_RETRIES = 5;
+const BASE_DELAY_MS = 10;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * Append an event to the cryptographic audit chain.
- * Uses advisory lock to prevent race conditions on chain position.
+ * Uses optimistic concurrency control — retries on chain position conflict.
  */
 export async function appendEvent(eventData: EventData): Promise<{ id: string; eventHash: string; chainPosition: number; serverSignature: string }> {
-  // Use a deterministic lock ID derived from firmId to serialize chain appends per firm
-  const lockId = hashToLockId(eventData.firmId);
-
-  // Execute within a transaction with advisory lock
-  const result = await db.transaction(async (tx) => {
-    // Acquire advisory lock for this firm's chain
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(${lockId})`);
-
-    // Get the latest chain entry for this firm
-    const [latest] = await tx
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    // 1. Read the latest chain head (outside any transaction)
+    const [latest] = await db
       .select({
         eventHash: events.eventHash,
         chainPosition: events.chainPosition,
@@ -64,7 +70,7 @@ export async function appendEvent(eventData: EventData): Promise<{ id: string; e
     const previousHash = latest?.eventHash ?? null;
     const chainPosition = (latest?.chainPosition ?? 0) + 1;
 
-    // Compute event hash
+    // 2. Compute hash + HMAC signature (CPU work, safe to redo on retry)
     const hashData: Record<string, unknown> = {
       firmId: eventData.firmId,
       userId: eventData.userId,
@@ -80,50 +86,67 @@ export async function appendEvent(eventData: EventData): Promise<{ id: string; e
 
     const hash = await chainHash(hashData, previousHash);
 
-    // Server-side HMAC signature — proves server received and authenticated this event
     const signingKey = await getSigningKey();
     const signedAt = new Date();
     const signatureMessage = `v1:${hash}:${signedAt.toISOString()}`;
     const serverSignature = await hmacSign(signatureMessage, signingKey);
 
-    // Insert event with chain metadata + server signature
-    const [inserted] = await tx.insert(events).values({
-      firmId: eventData.firmId,
-      userId: eventData.userId,
-      aiToolId: eventData.aiToolId,
-      aiToolUrl: eventData.aiToolUrl,
-      promptHash: eventData.promptHash,
-      promptLength: eventData.promptLength,
-      sensitivityScore: eventData.sensitivityScore,
-      sensitivityLevel: eventData.sensitivityLevel,
-      entities: eventData.entities || [],
-      action: eventData.action,
-      overrideReason: eventData.overrideReason,
-      captureMethod: eventData.captureMethod,
-      sessionId: eventData.sessionId,
-      metadata: eventData.metadata || {},
-      eventHash: hash,
-      previousHash,
-      chainPosition,
-      serverSignature,
-      signedAt,
-      signatureVersion: 1,
-    }).returning({
-      id: events.id,
-      eventHash: events.eventHash,
-      chainPosition: events.chainPosition,
-      serverSignature: events.serverSignature,
-    });
+    // 3. Attempt INSERT (UNIQUE constraint on firmId+chainPosition catches conflicts)
+    try {
+      const [inserted] = await db.insert(events).values({
+        firmId: eventData.firmId,
+        userId: eventData.userId,
+        aiToolId: eventData.aiToolId,
+        aiToolUrl: eventData.aiToolUrl,
+        promptHash: eventData.promptHash,
+        promptLength: eventData.promptLength,
+        sensitivityScore: eventData.sensitivityScore,
+        sensitivityLevel: eventData.sensitivityLevel,
+        entities: eventData.entities || [],
+        action: eventData.action,
+        overrideReason: eventData.overrideReason,
+        captureMethod: eventData.captureMethod,
+        sessionId: eventData.sessionId,
+        metadata: eventData.metadata || {},
+        eventHash: hash,
+        previousHash,
+        chainPosition,
+        serverSignature,
+        signedAt,
+        signatureVersion: 1,
+      }).returning({
+        id: events.id,
+        eventHash: events.eventHash,
+        chainPosition: events.chainPosition,
+        serverSignature: events.serverSignature,
+      });
 
-    return inserted;
-  });
+      return {
+        id: inserted.id,
+        eventHash: inserted.eventHash!,
+        chainPosition: inserted.chainPosition!,
+        serverSignature: inserted.serverSignature!,
+      };
+    } catch (err) {
+      if (isUniqueViolation(err) && attempt < MAX_RETRIES - 1) {
+        // Another writer claimed this position — retry with fresh chain head
+        const delay = BASE_DELAY_MS * Math.pow(2, attempt) + Math.random() * BASE_DELAY_MS;
+        logger.warn('Chain position conflict, retrying', {
+          firmId: eventData.firmId,
+          chainPosition,
+          attempt: attempt + 1,
+          delayMs: Math.round(delay),
+        });
+        await sleep(delay);
+        continue;
+      }
+      throw err;
+    }
+  }
 
-  return {
-    id: result.id,
-    eventHash: result.eventHash!,
-    chainPosition: result.chainPosition!,
-    serverSignature: result.serverSignature!,
-  };
+  const err = new Error(`Failed to append event after ${MAX_RETRIES} retries (firmId: ${eventData.firmId})`);
+  (err as any).retryExhausted = true;
+  throw err;
 }
 
 /**
@@ -222,13 +245,4 @@ export async function getChainHead(firmId: string) {
     .limit(1);
 
   return latest ?? null;
-}
-
-/**
- * Convert a firm UUID to a deterministic advisory lock ID (bigint).
- * Uses first 8 bytes of the UUID as a signed 64-bit integer.
- */
-function hashToLockId(firmId: string): number {
-  const hex = firmId.replace(/-/g, '').slice(0, 15);
-  return parseInt(hex, 16);
 }

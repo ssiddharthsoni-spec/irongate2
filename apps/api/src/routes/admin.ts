@@ -35,7 +35,7 @@ adminRoutes.post('/firm', async (c) => {
     firmName: z.string().min(1).max(255),
     industry: z.string().optional(),
     firmSize: z.string().optional(),
-    protectionMode: z.enum(['audit', 'proxy']).optional().default('audit'),
+    protectionMode: z.enum(['audit', 'proxy']).optional().default('proxy'),
     thresholds: z.object({
       warn: z.number().min(0).max(100).optional().default(30),
       block: z.number().min(0).max(100).optional().default(60),

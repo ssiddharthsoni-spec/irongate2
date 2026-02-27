@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json.schemastore.org/chrome-extension-policy.json",
+  "comment": "Iron Gate Chrome Enterprise Policy Template — deploy via Google Admin Console, Windows Group Policy, or Jamf (Mac MDM)",
+
+  "ExtensionInstallForcelist": {
+    "Value": [
+      "YOUR_EXTENSION_ID;https://clients2.google.com/service/update2/crx"
+    ],
+    "Description": "Force-install Iron Gate extension for all users in the OU"
+  },
+
+  "3rdparty": {
+    "extensions": {
+      "YOUR_EXTENSION_ID": {
+        "policy": {
+          "apiKey": {
+            "Value": "",
+            "Description": "Iron Gate API key for this firm (required)"
+          },
+          "firmId": {
+            "Value": "",
+            "Description": "Iron Gate firm ID (required)"
+          },
+          "firmMode": {
+            "Value": "proxy",
+            "Description": "Operating mode: 'proxy' (auto-pseudonymize, recommended) or 'audit' (monitor only)"
+          },
+          "apiBaseUrl": {
+            "Value": "https://irongate-api.onrender.com",
+            "Description": "Iron Gate API base URL (override for on-premise deployments)"
+          }
+        }
+      }
+    }
+  }
+}

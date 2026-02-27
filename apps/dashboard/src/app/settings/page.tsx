@@ -22,7 +22,6 @@ export default function GeneralSettingsPage() {
 
   const [firmName, setFirmName] = useState('');
   const [industry, setIndustry] = useState('general');
-  const [mode, setMode] = useState<'audit' | 'proxy'>('audit');
   const [retention, setRetention] = useState(90);
 
   const [loading, setLoading] = useState(true);
@@ -33,7 +32,6 @@ export default function GeneralSettingsPage() {
   const DEMO_CONFIG = {
     firmName: 'Acme Legal LLP',
     industry: 'legal',
-    mode: 'audit' as const,
     retention: 90,
   };
 
@@ -46,13 +44,11 @@ export default function GeneralSettingsPage() {
         const data = await response.json();
         if (data.firmName) setFirmName(data.firmName);
         if (data.industry) setIndustry(data.industry);
-        if (data.mode === 'audit' || data.mode === 'proxy') setMode(data.mode);
         if (data.retention) setRetention(data.retention);
       } catch {
         // Fallback to demo data
         setFirmName(DEMO_CONFIG.firmName);
         setIndustry(DEMO_CONFIG.industry);
-        setMode(DEMO_CONFIG.mode);
         setRetention(DEMO_CONFIG.retention);
       } finally {
         setLoading(false);
@@ -67,7 +63,7 @@ export default function GeneralSettingsPage() {
       setSaveMessage(null);
       const response = await apiFetch('/admin/firm', {
         method: 'PUT',
-        body: JSON.stringify({ firmName, industry, mode, retention }),
+        body: JSON.stringify({ firmName, industry, retention }),
       });
       if (!response.ok) throw new Error(`Server responded with ${response.status}`);
       setSaveMessage({ type: 'success', text: 'Settings saved successfully.' });
@@ -135,43 +131,19 @@ export default function GeneralSettingsPage() {
 
       {/* Protection Mode */}
       <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
-        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Protection Mode</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <button
-            type="button"
-            onClick={() => setMode('audit')}
-            className={`p-4 rounded-lg border-2 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-[#1c1c1e] ${
-              mode === 'audit'
-                ? 'border-iron-500 bg-iron-50 dark:bg-iron-900/20'
-                : 'border-[#d2d2d7]/40 dark:border-[#38383a]/60 hover:border-[#d2d2d7] dark:hover:border-[#424245]'
-            }`}
-          >
-            <div className="flex items-center gap-2 mb-1">
-              <svg className="w-5 h-5 text-iron-600 dark:text-iron-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-              </svg>
-              <p className="font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">Audit Mode</p>
-            </div>
-            <p className="text-sm text-[#6e6e73] dark:text-[#86868b]">Monitor only. No interference with AI tool usage.</p>
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('proxy')}
-            className={`p-4 rounded-lg border-2 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-[#1c1c1e] ${
-              mode === 'proxy'
-                ? 'border-iron-500 bg-iron-50 dark:bg-iron-900/20'
-                : 'border-[#d2d2d7]/40 dark:border-[#38383a]/60 hover:border-[#d2d2d7] dark:hover:border-[#424245]'
-            }`}
-          >
-            <div className="flex items-center gap-2 mb-1">
-              <svg className="w-5 h-5 text-iron-600 dark:text-iron-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m0-10.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.75c0 5.592 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.75h-.152c-3.196 0-6.1-1.249-8.25-3.286Zm0 13.036h.008v.008H12v-.008Z" />
-              </svg>
-              <p className="font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">Proxy Mode</p>
-            </div>
-            <p className="text-sm text-[#6e6e73] dark:text-[#86868b]">Intercept and protect sensitive prompts automatically.</p>
-          </button>
+        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-3">Protection Mode</h2>
+        <div className="flex items-center gap-3 p-4 bg-iron-50 dark:bg-iron-900/20 rounded-lg border border-iron-200 dark:border-iron-800">
+          <div className="w-10 h-10 bg-iron-600 rounded-lg flex items-center justify-center flex-shrink-0">
+            <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
+            </svg>
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-iron-800 dark:text-iron-200">Protect Mode Active</p>
+            <p className="text-xs text-iron-600 dark:text-iron-400">
+              Sensitive data is automatically redacted before reaching AI services.
+            </p>
+          </div>
         </div>
       </div>
 

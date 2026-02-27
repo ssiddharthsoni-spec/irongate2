@@ -94,18 +94,18 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ════════════════ BEFORE / AFTER ════════════════ */}
+      {/* ════════════════ BEFORE / AFTER / RESPONSE ════════════════ */}
       <section className="max-w-7xl mx-auto px-6 md:px-12 pb-16 md:pb-24">
         <div className="text-center mb-10">
           <p className="text-xs font-semibold uppercase tracking-widest text-iron-600 dark:text-iron-400 mb-2">See It In Action</p>
-          <h2 className="text-2xl md:text-3xl font-bold tracking-tight">What the AI actually sees</h2>
-          <p className="mt-3 text-sm text-[#6e6e73] dark:text-[#86868b] max-w-lg mx-auto">
-            Iron Gate replaces sensitive entities with realistic fake values before the AI sees them. The response is useful — with zero real data.
+          <h2 className="text-2xl md:text-3xl font-bold tracking-tight">The full round-trip, protected</h2>
+          <p className="mt-3 text-sm text-[#6e6e73] dark:text-[#86868b] max-w-xl mx-auto">
+            Iron Gate pseudonymizes sensitive data before the AI sees it, then restores the real values in the response. Useful output — zero data exposure.
           </p>
         </div>
 
-        <div className="grid md:grid-cols-2 gap-4 max-w-4xl mx-auto">
-          {/* Before */}
+        <div className="grid md:grid-cols-3 gap-4 max-w-6xl mx-auto">
+          {/* Step 1: What the employee typed */}
           <div className="rounded-xl border border-red-200/80 dark:border-red-900/40 overflow-hidden bg-white dark:bg-[#1c1c1e]">
             <div className="px-4 py-2.5 flex items-center gap-2 border-b border-red-200/60 dark:border-red-900/30 bg-red-50/50 dark:bg-red-950/20">
               <svg className="w-3.5 h-3.5 text-red-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" /></svg>
@@ -116,7 +116,7 @@ export default function LandingPage() {
             </div>
           </div>
 
-          {/* After */}
+          {/* Step 2: What the AI receives */}
           <div className="rounded-xl border border-green-200/80 dark:border-green-900/40 overflow-hidden bg-white dark:bg-[#1c1c1e]">
             <div className="px-4 py-2.5 flex items-center gap-2 border-b border-green-200/60 dark:border-green-900/30 bg-green-50/50 dark:bg-green-950/20">
               <svg className="w-3.5 h-3.5 text-green-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
@@ -126,6 +126,28 @@ export default function LandingPage() {
               Draft a memo about the <span className="bg-green-100/80 dark:bg-green-900/20 text-green-700 dark:text-green-300 px-1 rounded font-semibold">Doe v. Beta Inc</span> case. My client <span className="bg-green-100/80 dark:bg-green-900/20 text-green-700 dark:text-green-300 px-1 rounded font-semibold">John Doe</span> (SSN: <span className="bg-green-100/80 dark:bg-green-900/20 text-green-700 dark:text-green-300 px-1 rounded font-semibold">***-**-****</span>) is seeking <span className="bg-green-100/80 dark:bg-green-900/20 text-green-700 dark:text-green-300 px-1 rounded font-semibold">$[REDACTED]</span> in a <span className="bg-green-100/80 dark:bg-green-900/20 text-green-700 dark:text-green-300 px-1 rounded font-semibold">confidential discussion</span>.
             </div>
           </div>
+
+          {/* Step 3: What the employee gets back */}
+          <div className="rounded-xl border border-blue-200/80 dark:border-blue-900/40 overflow-hidden bg-white dark:bg-[#1c1c1e]">
+            <div className="px-4 py-2.5 flex items-center gap-2 border-b border-blue-200/60 dark:border-blue-900/30 bg-blue-50/50 dark:bg-blue-950/20">
+              <svg className="w-3.5 h-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" /></svg>
+              <span className="text-xs font-semibold text-blue-700 dark:text-blue-400">What the employee gets back</span>
+            </div>
+            <div className="p-4 text-[13px] text-[#424245] dark:text-[#a1a1a6] leading-relaxed font-mono">
+              <span className="text-[11px] uppercase tracking-wide text-blue-500 dark:text-blue-400 font-semibold block mb-2">AI Response (de-pseudonymized)</span>
+              Re: <span className="bg-blue-100/80 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 px-1 rounded font-semibold">Johnson v. Acme Corp</span><br /><br />
+              This memo summarizes the claims of <span className="bg-blue-100/80 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 px-1 rounded font-semibold">Robert Johnson</span> seeking damages of <span className="bg-blue-100/80 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 px-1 rounded font-semibold">$4.2M</span>. Under the applicable statute of limitations&hellip;
+            </div>
+          </div>
+        </div>
+
+        {/* Flow arrows (visible on md+) */}
+        <div className="hidden md:flex items-center justify-center gap-2 mt-4 text-[11px] text-[#86868b] dark:text-[#636366]">
+          <span className="px-2.5 py-1 rounded-full bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 font-semibold">1. Intercept</span>
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" /></svg>
+          <span className="px-2.5 py-1 rounded-full bg-green-50 dark:bg-green-950/20 text-green-600 dark:text-green-400 font-semibold">2. Pseudonymize</span>
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" /></svg>
+          <span className="px-2.5 py-1 rounded-full bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 font-semibold">3. Restore</span>
         </div>
       </section>
 

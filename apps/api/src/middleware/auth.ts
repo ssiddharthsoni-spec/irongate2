@@ -211,7 +211,8 @@ export const authMiddleware = createMiddleware(async (c, next) => {
       return c.json({ error: 'Server configuration error' }, 500);
     }
 
-    // Create user record
+    // Create user record (ON CONFLICT handles race condition if two requests
+    // arrive simultaneously for the same new Clerk user)
     const [newUser] = await db
       .insert(users)
       .values({
@@ -220,6 +221,10 @@ export const authMiddleware = createMiddleware(async (c, next) => {
         email,
         displayName: email.split('@')[0],
         role: 'user',
+      })
+      .onConflictDoUpdate({
+        target: users.clerkId,
+        set: { email }, // no-op update to return the existing row
       })
       .returning({ id: users.id, firmId: users.firmId });
 

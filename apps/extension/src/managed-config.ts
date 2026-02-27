@@ -63,7 +63,7 @@ export async function resolveConfig(): Promise<ResolvedConfig> {
     return {
       apiKey: managed.apiKey,
       apiUrl: managed.apiUrl || local.apiBaseUrl || DEFAULT_API_URL,
-      firmMode: (managed.firmMode === 'proxy' ? 'proxy' : 'audit'),
+      firmMode: (managed.firmMode === 'audit' ? 'audit' : 'proxy'),
       firmId: managed.firmId || local.connectionState?.firmId || null,
       firmName: managed.firmName || local.connectionState?.firmName || null,
       isManaged: true,
@@ -73,7 +73,7 @@ export async function resolveConfig(): Promise<ResolvedConfig> {
   return {
     apiKey: local._decryptedApiKey || '',
     apiUrl: local.apiBaseUrl || DEFAULT_API_URL,
-    firmMode: local.firmMode === 'proxy' ? 'proxy' : 'audit',
+    firmMode: local.firmMode === 'audit' ? 'audit' : 'proxy',
     firmId: local.connectionState?.firmId || null,
     firmName: local.connectionState?.firmName || null,
     isManaged: false,
@@ -98,7 +98,7 @@ export async function resolveMode(): Promise<'audit' | 'proxy'> {
   }
   return new Promise((resolve) => {
     chrome.storage.local.get('firmMode', (result) => {
-      resolve(result.firmMode === 'proxy' ? 'proxy' : 'audit');
+      resolve(result.firmMode === 'audit' ? 'audit' : 'proxy');
     });
   });
 }

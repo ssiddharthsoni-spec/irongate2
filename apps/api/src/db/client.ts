@@ -6,21 +6,34 @@ import * as schema from './schema';
 // Force IPv4 resolution — Railway can't reach Supabase over IPv6
 dns.setDefaultResultOrder('ipv4first');
 
-// Use SUPABASE_DB_URL first (avoids Railway overriding DATABASE_URL), then DATABASE_URL
-const connectionString = process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || 'postgresql://localhost:5432/irongate';
-const isRemote = connectionString.includes('supabase') || connectionString.includes('neon');
-const isPooler = connectionString.includes('pooler.supabase.com');
+// --- Write connection (primary) ---
+const writeUrl = process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || 'postgresql://localhost:5432/irongate';
+const isRemote = writeUrl.includes('supabase') || writeUrl.includes('neon');
+const isPooler = writeUrl.includes('pooler.supabase.com');
 
-// Create postgres client
-const client = postgres(connectionString, {
-  max: parseInt(process.env.DB_POOL_SIZE || '20', 10),
+const writeClient = postgres(writeUrl, {
+  max: parseInt(process.env.DB_POOL_SIZE || '30', 10),
   idle_timeout: parseInt(process.env.DB_IDLE_TIMEOUT || '20', 10),
   connect_timeout: 10,
   ssl: isRemote ? 'require' : false,
   prepare: isPooler ? false : true,
 });
 
-// Create drizzle instance
-export const db = drizzle(client, { schema });
+export const db = drizzle(writeClient, { schema });
+
+// --- Read connection (replica or same primary) ---
+const readUrl = process.env.DATABASE_READ_URL || writeUrl;
+const isReadRemote = readUrl.includes('supabase') || readUrl.includes('neon');
+const isReadPooler = readUrl.includes('pooler.supabase.com');
+
+const readClient = postgres(readUrl, {
+  max: parseInt(process.env.DB_READ_POOL_SIZE || '30', 10),
+  idle_timeout: parseInt(process.env.DB_IDLE_TIMEOUT || '20', 10),
+  connect_timeout: 10,
+  ssl: isReadRemote ? 'require' : false,
+  prepare: isReadPooler ? false : true,
+});
+
+export const dbRead = drizzle(readClient, { schema });
 
 export type Database = typeof db;

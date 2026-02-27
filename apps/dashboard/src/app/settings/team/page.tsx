@@ -74,7 +74,7 @@ export default function TeamSettingsPage() {
       setMembers([...members, newMember]);
       setInviteEmail('');
       setInviteMessage({ type: 'success', text: `Invitation sent to ${inviteEmail.trim()}.` });
-    } catch (err: any) {
+    } catch {
       // In demo mode, still add the member locally
       const newMember: TeamMember = {
         id: Date.now().toString(),

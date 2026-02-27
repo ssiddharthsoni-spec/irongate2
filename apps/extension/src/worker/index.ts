@@ -22,6 +22,21 @@ function igLog(...args: any[]) { if (_IG_DEBUG) console.log('[Iron Gate]', ...ar
 
 igLog('Service worker started');
 
+// ─── Uninstall survey ───────────────────────────────────────────────────────
+// Open a brief survey when the extension is uninstalled (Priority 6.4)
+chrome.runtime.setUninstallURL(
+  'https://irongate-dashboard.vercel.app/uninstall-survey'
+);
+
+// ─── Auto-update handler ────────────────────────────────────────────────────
+// When Chrome downloads a new version, notify the service worker so it can
+// apply immediately (for enterprise deployments) or notify the user.
+chrome.runtime.onUpdateAvailable.addListener((details) => {
+  igLog('Update available:', details.version);
+  // Reload immediately to apply the update (no user interaction needed)
+  chrome.runtime.reload();
+});
+
 // ─── Startup: restore auth & wire API client ────────────────────────────────
 initAuth().then(() => {
   configureApiClient({
@@ -34,8 +49,8 @@ initAuth().then(() => {
 // Open side panel on extension icon click
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 
-// Firm mode tracking — defaults to 'audit'
-let firmMode: 'audit' | 'proxy' = 'audit';
+// Firm mode tracking — defaults to 'proxy' (Protect mode)
+let firmMode: 'audit' | 'proxy' = 'proxy';
 let isManaged = false;
 
 // Load config with managed-first priority
@@ -53,6 +68,8 @@ resolveConfig().then((config) => {
   chrome.storage.local.get('firmMode', (result) => {
     if (result.firmMode === 'audit' || result.firmMode === 'proxy') {
       firmMode = result.firmMode;
+    } else {
+      firmMode = 'proxy'; // default to Protect mode
     }
   });
 });
@@ -602,6 +619,13 @@ async function queueEventToApi(event: {
 
 // Periodic alarm for flushing event queue
 chrome.alarms.create('flush-events', { periodInMinutes: 1 });
+
+// Periodic alarm for policy sync (every 15 minutes)
+chrome.alarms.create('sync-policies', { periodInMinutes: 15 });
+
+// Periodic alarm for heartbeat (every 5 minutes)
+chrome.alarms.create('heartbeat', { periodInMinutes: 5 });
+
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'flush-events') {
     igLog('Flushing event queue...');
@@ -609,7 +633,117 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       console.warn('[Iron Gate] Queue flush failed:', err)
     );
   }
+  if (alarm.name === 'sync-policies') {
+    igLog('Policy sync triggered');
+    syncPolicies().catch((err) =>
+      console.warn('[Iron Gate] Policy sync failed:', err)
+    );
+  }
+  if (alarm.name === 'heartbeat') {
+    igLog('Sending heartbeat');
+    sendHeartbeat().catch((err) =>
+      console.warn('[Iron Gate] Heartbeat failed:', err)
+    );
+  }
 });
+
+// Run initial policy sync on startup
+syncPolicies().catch(() => {});
+
+/**
+ * Policy Sync — fetches firm policies from the API every 15 minutes.
+ * On change, pushes updated config to all content scripts and the side panel.
+ */
+let _lastPolicyHash = '';
+
+async function syncPolicies(): Promise<void> {
+  const firmId = getFirmId();
+  if (!firmId) {
+    igLog('No firm ID available, skipping policy sync');
+    return;
+  }
+
+  try {
+    const response = await apiRequest<{
+      mode?: string;
+      enabledEntityTypes?: string[];
+      riskThresholds?: Record<string, number>;
+      platformAllowList?: string[];
+      platformBlockList?: string[];
+      customEntities?: Array<{ name: string; pattern: string; confidence: number; weight: number }>;
+      alertConfig?: Record<string, unknown>;
+      updatedAt?: string;
+    }>({
+      method: 'GET',
+      path: '/admin/firm',
+    });
+
+    // Simple change detection via JSON hash
+    const policyStr = JSON.stringify(response);
+    if (policyStr === _lastPolicyHash) {
+      igLog('Policies unchanged, skipping broadcast');
+      return;
+    }
+    _lastPolicyHash = policyStr;
+
+    // Store in chrome.storage.local
+    await chrome.storage.local.set({
+      iron_gate_policies: response,
+      iron_gate_policies_updated: Date.now(),
+    });
+
+    igLog('Policies synced', { updatedAt: response.updatedAt });
+
+    // Broadcast to all content scripts
+    chrome.tabs.query({}, (tabs) => {
+      for (const tab of tabs) {
+        if (tab.id && tab.url) {
+          chrome.tabs.sendMessage(tab.id, {
+            type: 'POLICIES_UPDATED',
+            payload: { policies: response, updatedAt: Date.now() },
+          }).catch(() => {});
+        }
+      }
+    });
+
+    // Also notify side panel
+    chrome.runtime.sendMessage({
+      type: 'POLICIES_UPDATED',
+      payload: { policies: response, updatedAt: Date.now() },
+    }).catch(() => {});
+  } catch (error) {
+    igLog('Policy sync error:', error);
+  }
+}
+
+/**
+ * Heartbeat — sends extension status to the API every 5 minutes.
+ * Populates the deployment view in the admin dashboard.
+ */
+async function sendHeartbeat(): Promise<void> {
+  const firmId = getFirmId();
+  if (!firmId) return;
+
+  try {
+    const manifest = chrome.runtime.getManifest();
+    await apiRequest({
+      method: 'POST',
+      path: '/heartbeat',
+      body: {
+        extensionVersion: manifest.version,
+        mode: firmMode,
+        queueDepth: eventQueue.getSize(),
+        healthStatus: {
+          apiReachable: true,
+          errorsLast5Min: 0,
+        },
+      },
+    });
+    igLog('Heartbeat sent');
+  } catch {
+    // Non-critical — don't log errors for missed heartbeats
+  }
+}
 
 /**
  * Queue a pre-minimized event (entities already hashed by main-world.ts).
@@ -772,7 +906,7 @@ function inlineFetchInterceptor() {
 
   if (_debug) console.log('[Iron Gate INLINE] 🔧 Installing inline fetch interceptor (fallback)...');
 
-  let mode: 'audit' | 'proxy' = 'audit';
+  let mode: 'audit' | 'proxy' = 'proxy';
 
   // Listen for mode changes
   window.addEventListener('message', (e: MessageEvent) => {

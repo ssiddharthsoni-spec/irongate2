@@ -1,0 +1,125 @@
+{
+  "name": "irongate-vscode",
+  "displayName": "Iron Gate — AI Data Protection",
+  "description": "Protect sensitive data in AI coding assistants. Detects PII, credentials, and confidential information before it reaches LLMs.",
+  "version": "0.1.0",
+  "publisher": "irongate",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning"
+  ],
+  "keywords": [
+    "security",
+    "privacy",
+    "AI",
+    "copilot",
+    "PII",
+    "data protection"
+  ],
+  "icon": "assets/icon.png",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "irongate.scanFile",
+        "title": "Iron Gate: Scan Current File",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "irongate.toggleMode",
+        "title": "Iron Gate: Toggle Mode (Audit/Proxy)"
+      },
+      {
+        "command": "irongate.showSidebar",
+        "title": "Iron Gate: Show Sidebar"
+      },
+      {
+        "command": "irongate.configure",
+        "title": "Iron Gate: Configure API Settings"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "irongate",
+          "title": "Iron Gate",
+          "icon": "assets/shield.svg"
+        }
+      ]
+    },
+    "views": {
+      "irongate": [
+        {
+          "type": "webview",
+          "id": "irongate.sidebar",
+          "name": "Iron Gate",
+          "contextualTitle": "AI Data Protection"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Iron Gate",
+      "properties": {
+        "irongate.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Iron Gate API key for authentication"
+        },
+        "irongate.firmId": {
+          "type": "string",
+          "default": "",
+          "description": "Iron Gate firm identifier"
+        },
+        "irongate.apiBaseUrl": {
+          "type": "string",
+          "default": "https://irongate-api.onrender.com",
+          "description": "Iron Gate API base URL"
+        },
+        "irongate.mode": {
+          "type": "string",
+          "enum": ["audit", "proxy"],
+          "default": "audit",
+          "description": "Operating mode: audit (monitor only) or proxy (auto-pseudonymize)"
+        },
+        "irongate.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Iron Gate protection"
+        }
+      }
+    },
+    "menus": {
+      "editor/title": [
+        {
+          "command": "irongate.scanFile",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsc && node esbuild.config.js",
+    "watch": "node esbuild.config.js --watch",
+    "lint": "eslint src --ext ts",
+    "test": "vitest run",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "dependencies": {
+    "@iron-gate/types": "workspace:*"
+  }
+}

@@ -1,9 +1,11 @@
 // Iron Gate API Server
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { bodyLimit } from 'hono/body-limit';
 import { logger as honoLogger } from 'hono/logger';
 import { logger } from './lib/logger';
 import { z } from 'zod';
+import crypto from 'crypto';
 
 // ── Sentry (initialize before anything else) ──────────────────────────────
 let SentryMod: any = null;
@@ -30,6 +32,7 @@ import { feedbackRoutes } from './routes/feedback';
 import { proxyRoutes } from './routes/proxy';
 import { documentRoutes } from './routes/documents';
 import { auditRoutes } from './routes/audit';
+import { heartbeatRoutes } from './routes/heartbeat';
 import { authRoutes } from './routes/auth';
 import { securityRoutes } from './routes/security';
 import { billingRoutes } from './routes/billing';
@@ -40,11 +43,14 @@ import { alertRoutes } from './routes/alerts';
 import { apiKeyRoutes } from './routes/api-keys';
 import { complianceRoutes } from './routes/compliance';
 import { userDataRoutes } from './routes/user-data';
+import { logoutRoutes } from './routes/logout';
 import { authMiddleware } from './middleware/auth';
 import { rateLimitMiddleware } from './middleware/rate-limit';
 import { firmContextMiddleware } from './middleware/firm-context';
 import { securityHeadersMiddleware } from './middleware/security-headers';
 import { requestLoggerMiddleware } from './middleware/request-logger';
+import { csrfProtectionMiddleware } from './middleware/csrf';
+import { jwtRevocationMiddleware } from './middleware/jwt-revocation';
 import { requirePerm } from './middleware/rbac';
 import { metrics } from './lib/metrics';
 import { openApiSpec } from './docs/openapi';
@@ -69,6 +75,18 @@ if (process.env.CHROME_EXTENSION_ID) {
 }
 
 // Global middleware
+
+// 1. Request body size limit — prevent memory exhaustion attacks (10 MB)
+app.use('*', bodyLimit({ maxSize: 10 * 1024 * 1024 }));
+
+// 2. Request ID correlation — propagate or generate X-Request-Id for tracing
+app.use('*', async (c, next) => {
+  const requestId = c.req.header('X-Request-Id') || crypto.randomUUID();
+  c.set('requestId' as any, requestId);
+  c.header('X-Request-Id', requestId);
+  await next();
+});
+
 app.use('*', honoLogger());
 app.use('*', securityHeadersMiddleware);
 app.use('*', requestLoggerMiddleware);
@@ -126,9 +144,44 @@ app.get('/v1/health', async (c) => {
   });
 });
 
-// Metrics endpoint (no auth) — operational metrics for monitoring
-app.get('/health/metrics', (c) => {
-  return c.json(metrics.snapshot());
+// Metrics endpoint — gated behind API key or admin key for security
+app.get('/health/metrics', async (c) => {
+  const apiKey = c.req.header('X-API-Key');
+  const adminKey = c.req.header('X-Admin-Key-1');
+  const metricsKey = process.env.METRICS_API_KEY;
+
+  // Require at least one form of authentication
+  const isAuthed =
+    (apiKey && metricsKey && apiKey === metricsKey) ||
+    (adminKey && process.env.ADMIN_KEY_1 && adminKey === process.env.ADMIN_KEY_1);
+
+  if (!isAuthed) {
+    return c.json({ error: 'Unauthorized: Provide X-API-Key or X-Admin-Key-1' }, 401);
+  }
+
+  const snapshot = metrics.snapshot();
+
+  // Add BullMQ queue metrics if available
+  try {
+    const { coOccurrencesQueue, webhooksQueue, siemQueue, inferenceQueue } = await import('./jobs/queues');
+    const queueMetrics: Record<string, unknown> = {};
+
+    for (const [name, queue] of Object.entries({
+      'co-occurrences': coOccurrencesQueue,
+      webhooks: webhooksQueue,
+      siem: siemQueue,
+      inference: inferenceQueue,
+    })) {
+      if (queue) {
+        const counts = await queue.getJobCounts('active', 'waiting', 'completed', 'failed');
+        queueMetrics[name] = counts;
+      }
+    }
+
+    return c.json({ ...snapshot, queues: queueMetrics });
+  } catch {
+    return c.json(snapshot);
+  }
 });
 
 // API Documentation (no auth)
@@ -150,8 +203,10 @@ app.route('/v1/auth', authRoutes);
 // Stripe webhook (no auth — verified via webhook signature)
 app.route('/v1/webhooks/stripe', stripeWebhookRoutes);
 
-// API routes (with auth)
+// API routes (with auth + security middleware)
+app.use('/v1/*', csrfProtectionMiddleware);
 app.use('/v1/*', authMiddleware);
+app.use('/v1/*', jwtRevocationMiddleware);
 app.use('/v1/*', rateLimitMiddleware);
 app.use('/v1/*', firmContextMiddleware);
 
@@ -175,6 +230,8 @@ app.route('/v1/alerts', alertRoutes);
 app.route('/v1/api-keys', apiKeyRoutes);
 app.route('/v1/compliance', complianceRoutes);
 app.route('/v1/user', userDataRoutes);
+app.route('/v1/auth', logoutRoutes);
+app.route('/v1/heartbeat', heartbeatRoutes);
 
 // 404 handler
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
@@ -184,6 +241,7 @@ app.onError((err, c) => {
   if (err instanceof z.ZodError) {
     return c.json({ error: 'Validation error', details: err.errors }, 400);
   }
+  const requestId = (c.get as any)('requestId');
   // Report to Sentry if initialized
   if (SentryMod) {
     SentryMod.captureException(err, {
@@ -192,10 +250,11 @@ app.onError((err, c) => {
         path: c.req.path,
         firmId: c.get('firmId'),
         userId: c.get('userId'),
+        requestId,
       },
     });
   }
-  logger.error('Unhandled error', { error: err instanceof Error ? err.message : String(err) });
+  logger.error('Unhandled error', { error: err instanceof Error ? err.message : String(err), requestId });
   return c.json({ error: 'Internal server error' }, 500);
 });
 
@@ -250,10 +309,25 @@ if (!process.env.ADMIN_KEY_1 || !process.env.ADMIN_KEY_2) {
 
 const port = parseInt(process.env.PORT || '3000');
 
-// Start the server first so the health endpoint is available for platform healthchecks,
-// then verify DB connectivity in the background.
+// ── Process-level error handlers ────────────────────────────────────────────
+process.on('unhandledRejection', (reason) => {
+  logger.error('Unhandled promise rejection', {
+    error: reason instanceof Error ? reason.message : String(reason),
+    stack: reason instanceof Error ? reason.stack : undefined,
+  });
+  if (SentryMod) SentryMod.captureException(reason);
+});
+
+process.on('uncaughtException', (err) => {
+  logger.error('Uncaught exception', { error: err.message, stack: err.stack });
+  if (SentryMod) SentryMod.captureException(err);
+  // Give Sentry time to flush, then exit
+  setTimeout(() => process.exit(1), 1000);
+});
+
+// ── Server startup with graceful shutdown ───────────────────────────────────
 import('@hono/node-server').then(({ serve }) => {
-  serve({ fetch: app.fetch, port }, async () => {
+  const server = serve({ fetch: app.fetch, port }, async () => {
     logger.info('Server started', { port, url: `http://localhost:${port}` });
 
     // Verify database connectivity (non-fatal — health endpoint reports degraded status)
@@ -266,5 +340,48 @@ import('@hono/node-server').then(({ serve }) => {
 
     // Start scheduled jobs
     import('./jobs/scheduler').then(({ startScheduler }) => startScheduler()).catch(err => logger.error('Failed to start scheduler', { error: err instanceof Error ? err.message : String(err) }));
+
+    // Start BullMQ background workers (co-occurrences, webhooks, SIEM, inference)
+    import('./jobs/workers').then(({ startWorkers }) => startWorkers()).catch(err => logger.error('Failed to start workers', { error: err instanceof Error ? err.message : String(err) }));
   });
+
+  // ── Graceful Shutdown ───────────────────────────────────────────────────
+  const shutdown = async (signal: string) => {
+    logger.info(`${signal} received — shutting down gracefully`);
+
+    // 1. Stop accepting new connections
+    server.close(() => {
+      logger.info('HTTP server closed');
+    });
+
+    // 2. Close BullMQ workers (let in-flight jobs finish)
+    try {
+      const { closeWorkers } = await import('./jobs/workers');
+      await closeWorkers();
+      logger.info('BullMQ workers closed');
+    } catch { /* workers may not be started */ }
+
+    // 3. Close Redis connection
+    try {
+      const { closeRedis } = await import('./lib/redis');
+      await closeRedis();
+      logger.info('Redis connection closed');
+    } catch { /* Redis may not be connected */ }
+
+    // 4. Flush Sentry events
+    if (SentryMod) {
+      await SentryMod.close(2000);
+    }
+
+    // 5. Exit after a timeout to prevent hanging
+    setTimeout(() => {
+      logger.warn('Graceful shutdown timed out — forcing exit');
+      process.exit(1);
+    }, 10_000).unref();
+
+    process.exit(0);
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 });

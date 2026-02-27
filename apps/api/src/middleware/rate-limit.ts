@@ -1,4 +1,5 @@
 import { createMiddleware } from 'hono/factory';
+import { getRedisClient } from '../lib/redis';
 import { logger } from '../lib/logger';
 
 /**
@@ -11,48 +12,12 @@ const WINDOW_MS = 60_000; // 1 minute
 const MAX_REQUESTS = 300; // 300 requests per minute
 
 // ---------------------------------------------------------------------------
-// Redis client (lazy initialization)
-// ---------------------------------------------------------------------------
-
-let redis: any = null;
-let redisAvailable = false;
-
-async function getRedis() {
-  if (redis !== null) return redisAvailable ? redis : null;
-
-  const redisUrl = process.env.REDIS_URL;
-  if (!redisUrl) {
-    redis = false;
-    redisAvailable = false;
-    return null;
-  }
-
-  try {
-    const { default: Redis } = await import('ioredis');
-    redis = new Redis(redisUrl, {
-      maxRetriesPerRequest: 1,
-      connectTimeout: 3000,
-      lazyConnect: true,
-    });
-    await redis.connect();
-    redisAvailable = true;
-    logger.info('Redis connected');
-    return redis;
-  } catch {
-    logger.warn('Redis unavailable, using in-memory fallback');
-    redis = false;
-    redisAvailable = false;
-    return null;
-  }
-}
-
-// ---------------------------------------------------------------------------
 // In-memory fallback
 // ---------------------------------------------------------------------------
 
-const requestCounts = new Map<string, { count: number; resetTime: number }>();
+const requestCounts = new Map<string, { count: number; resetTime: number; lastAccess: number }>();
 const MAX_MAP_ENTRIES = 10_000;
-const CLEANUP_INTERVAL = 5 * 60_000;
+const CLEANUP_INTERVAL = 60_000;
 let lastCleanup = Date.now();
 
 function evictExpiredEntries() {
@@ -67,27 +32,34 @@ function evictExpiredEntries() {
   }
 }
 
+function evictLRU() {
+  // Evict entries with the oldest lastAccess time
+  const entries = Array.from(requestCounts.entries());
+  entries.sort((a, b) => a[1].lastAccess - b[1].lastAccess);
+  const toDelete = entries.length - MAX_MAP_ENTRIES + 1000;
+  for (let i = 0; i < toDelete && i < entries.length; i++) {
+    requestCounts.delete(entries[i][0]);
+  }
+  logger.warn('Rate limiter in-memory fallback: evicted LRU entries', { evicted: toDelete, remaining: requestCounts.size });
+}
+
 async function checkInMemory(key: string): Promise<{ count: number; remaining: number; resetTime: number }> {
   const now = Date.now();
   evictExpiredEntries();
 
-  // Hard cap: evict oldest entries if map grows too large
+  // Hard cap: evict least recently used entries if map grows too large
   if (requestCounts.size > MAX_MAP_ENTRIES) {
-    const toDelete = requestCounts.size - MAX_MAP_ENTRIES + 1000;
-    const iter = requestCounts.keys();
-    for (let i = 0; i < toDelete; i++) {
-      const k = iter.next().value;
-      if (k) requestCounts.delete(k);
-    }
+    evictLRU();
   }
 
   let entry = requestCounts.get(key);
   if (!entry || now > entry.resetTime) {
-    entry = { count: 0, resetTime: now + WINDOW_MS };
+    entry = { count: 0, resetTime: now + WINDOW_MS, lastAccess: now };
     requestCounts.set(key, entry);
   }
 
   entry.count++;
+  entry.lastAccess = now;
   return {
     count: entry.count,
     remaining: Math.max(0, MAX_REQUESTS - entry.count),
@@ -130,14 +102,17 @@ export const rateLimitMiddleware = createMiddleware(async (c, next) => {
   let result: { count: number; remaining: number; resetTime: number };
 
   try {
-    const redisClient = await getRedis();
+    const redisClient = getRedisClient();
     if (redisClient) {
       result = await checkRedis(redisClient, key);
     } else {
       result = await checkInMemory(key);
     }
-  } catch {
+  } catch (err) {
     // On any Redis error, fall back to in-memory
+    logger.warn('Redis rate-limit failed, using in-memory fallback', {
+      error: err instanceof Error ? err.message : String(err),
+    });
     result = await checkInMemory(key);
   }
 

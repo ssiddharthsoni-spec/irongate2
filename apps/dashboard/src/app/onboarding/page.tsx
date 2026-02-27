@@ -15,8 +15,6 @@ const INDUSTRIES = [
 
 const FIRM_SIZES = ['1-50', '51-200', '201-500', '500+'] as const;
 
-type ProtectionMode = 'audit' | 'proxy';
-
 interface TeamMember {
   email: string;
   role: 'admin' | 'user';
@@ -28,7 +26,7 @@ interface OnboardingState {
   industry: string;
   firmSize: string;
   // Step 2
-  protectionMode: ProtectionMode;
+  protectionMode: 'audit' | 'proxy';
   warnThreshold: number;
   blockThreshold: number;
   proxyThreshold: number;
@@ -59,7 +57,7 @@ const DEFAULT_STATE: OnboardingState = {
   firmName: '',
   industry: '',
   firmSize: '',
-  protectionMode: 'audit',
+  protectionMode: 'proxy',
   warnThreshold: 30,
   blockThreshold: 60,
   proxyThreshold: 80,
@@ -440,41 +438,25 @@ function StepProtection({
       <div className="mb-8">
         <h2 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Configure Protection</h2>
         <p className="text-[#6e6e73] dark:text-[#86868b] mt-1">
-          Choose how Iron Gate monitors and protects AI interactions at your firm.
+          Fine-tune how Iron Gate protects AI interactions at your firm.
         </p>
       </div>
 
-      {/* Mode selection */}
-      <div className="grid grid-cols-2 gap-4 mb-6">
-        <ModeCard
-          title="Audit Mode"
-          subtitle="Monitor Only"
-          description="Observe AI usage across your organization without interfering. Ideal for understanding current patterns before enforcing policies."
-          pros={['Zero disruption to workflows', 'Full visibility into AI usage', 'Builds data for informed policy decisions']}
-          cons={['No active blocking of sensitive data', 'Relies on post-hoc review']}
-          isSelected={state.protectionMode === 'audit'}
-          onSelect={() => updateState('protectionMode', 'audit')}
-          icon={
-            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-            </svg>
-          }
-        />
-        <ModeCard
-          title="Proxy Mode"
-          subtitle="Active Protection"
-          description="Intercept and filter AI interactions in real-time. Sensitive content is blocked or redacted before reaching external AI services."
-          pros={['Real-time sensitive data protection', 'Automatic PII redaction', 'Enforces compliance policies instantly']}
-          cons={['May add slight latency to requests', 'Requires extension in proxy mode']}
-          isSelected={state.protectionMode === 'proxy'}
-          onSelect={() => updateState('protectionMode', 'proxy')}
-          icon={
-            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+      {/* Protection mode info */}
+      <div className="bg-iron-50 dark:bg-iron-900/20 rounded-xl p-5 border border-iron-200 dark:border-iron-800 mb-6">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-iron-600 rounded-lg flex items-center justify-center flex-shrink-0">
+            <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
             </svg>
-          }
-        />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-iron-800 dark:text-iron-200">Protect Mode Active</p>
+            <p className="text-xs text-iron-600 dark:text-iron-400 mt-0.5">
+              Sensitive data is automatically redacted before reaching AI services. Your prompts are protected in real-time.
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* Sensitivity thresholds */}
@@ -564,71 +546,6 @@ function StepProtection({
   );
 }
 
-function ModeCard({
-  title,
-  subtitle,
-  description,
-  pros,
-  cons,
-  isSelected,
-  onSelect,
-  icon,
-}: {
-  title: string;
-  subtitle: string;
-  description: string;
-  pros: string[];
-  cons: string[];
-  isSelected: boolean;
-  onSelect: () => void;
-  icon: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={`text-left rounded-xl p-5 border-2 transition-all ${
-        isSelected
-          ? 'border-iron-600 bg-iron-50 dark:bg-iron-900/20 shadow-sm'
-          : 'border-[#d2d2d7]/40 dark:border-[#38383a]/60 bg-white dark:bg-[#1c1c1e] hover:border-[#d2d2d7] dark:hover:border-[#38383a]'
-      }`}
-    >
-      <div className="flex items-center gap-3 mb-3">
-        <div
-          className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-            isSelected ? 'bg-iron-600 text-white' : 'bg-[#f5f5f7] dark:bg-[#2c2c2e] text-[#6e6e73] dark:text-[#86868b]'
-          }`}
-        >
-          {icon}
-        </div>
-        <div>
-          <p className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">{title}</p>
-          <p className="text-xs text-[#6e6e73] dark:text-[#86868b]">{subtitle}</p>
-        </div>
-      </div>
-      <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-3 leading-relaxed">{description}</p>
-      <div className="space-y-1.5">
-        {pros.map((pro) => (
-          <div key={pro} className="flex items-start gap-1.5">
-            <svg className="w-3.5 h-3.5 text-green-500 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
-            </svg>
-            <span className="text-xs text-[#6e6e73] dark:text-[#86868b]">{pro}</span>
-          </div>
-        ))}
-        {cons.map((con) => (
-          <div key={con} className="flex items-start gap-1.5">
-            <svg className="w-3.5 h-3.5 text-[#86868b] mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
-            </svg>
-            <span className="text-xs text-[#6e6e73] dark:text-[#86868b]">{con}</span>
-          </div>
-        ))}
-      </div>
-    </button>
-  );
-}
-
 function ThresholdSlider({
   label,
   description,
@@ -684,13 +601,19 @@ function StepExtension() {
       <div className="mb-8">
         <h2 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Install the Extension</h2>
         <p className="text-[#6e6e73] dark:text-[#86868b] mt-1">
-          The Chrome extension monitors AI tool usage and detects sensitive data in real-time.
+          The Chrome extension protects sensitive data in real-time before it reaches AI services.
         </p>
       </div>
 
-      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 space-y-6">
+      {/* Quick Setup (Testing) */}
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 space-y-6 mb-6">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wide text-iron-600 bg-iron-50 px-2.5 py-1 rounded-full">Quick Setup</span>
+          <span className="text-xs text-[#86868b]">For testing and individual use</span>
+        </div>
+
         {/* Download button */}
-        <div className="text-center py-4">
+        <div className="text-center py-2">
           <a
             href={extensionZipUrl}
             className="inline-flex items-center gap-3 px-6 py-3 bg-iron-600 hover:bg-iron-700 text-white font-semibold rounded-xl transition-all shadow-lg shadow-iron-600/20"
@@ -707,25 +630,19 @@ function StepExtension() {
           <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-3">After downloading:</h3>
           <ol className="space-y-3">
             <li className="flex items-start gap-3">
-              <span className="flex-shrink-0 w-6 h-6 bg-iron-100 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 rounded-full flex items-center justify-center text-xs font-semibold">
-                1
-              </span>
+              <span className="flex-shrink-0 w-6 h-6 bg-iron-100 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 rounded-full flex items-center justify-center text-xs font-semibold">1</span>
               <p className="text-sm text-[#424245] dark:text-[#a1a1a6]">
                 <strong>Unzip</strong> the downloaded file to a folder on your computer.
               </p>
             </li>
             <li className="flex items-start gap-3">
-              <span className="flex-shrink-0 w-6 h-6 bg-iron-100 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 rounded-full flex items-center justify-center text-xs font-semibold">
-                2
-              </span>
+              <span className="flex-shrink-0 w-6 h-6 bg-iron-100 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 rounded-full flex items-center justify-center text-xs font-semibold">2</span>
               <p className="text-sm text-[#424245] dark:text-[#a1a1a6]">
                 Open <strong>chrome://extensions</strong>, enable <strong>Developer mode</strong> (top-right toggle).
               </p>
             </li>
             <li className="flex items-start gap-3">
-              <span className="flex-shrink-0 w-6 h-6 bg-iron-100 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 rounded-full flex items-center justify-center text-xs font-semibold">
-                3
-              </span>
+              <span className="flex-shrink-0 w-6 h-6 bg-iron-100 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 rounded-full flex items-center justify-center text-xs font-semibold">3</span>
               <p className="text-sm text-[#424245] dark:text-[#a1a1a6]">
                 Click <strong>&ldquo;Load unpacked&rdquo;</strong> and select the unzipped folder.
               </p>
@@ -752,28 +669,68 @@ function StepExtension() {
             <div>
               <p className="text-sm font-medium text-amber-800 dark:text-amber-300">API Key</p>
               <p className="text-xs text-amber-700 dark:text-amber-400 mt-1 leading-relaxed">
-                You&apos;ll receive an API key on the final screen. Share it with your team so they can connect the extension to your organization.
+                You&apos;ll receive an API key on the final screen. Paste it into the extension side panel to connect.
               </p>
             </div>
           </div>
         </div>
+      </div>
 
-        {/* Enterprise deployment note */}
-        <div className="p-4 bg-iron-50 dark:bg-iron-900/20 rounded-lg border border-iron-100 dark:border-iron-800">
-          <div className="flex gap-3">
-            <svg className="w-5 h-5 text-iron-600 dark:text-iron-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
-            </svg>
+      {/* Enterprise Deployment */}
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 space-y-5">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wide text-purple-600 bg-purple-50 px-2.5 py-1 rounded-full">Enterprise</span>
+          <span className="text-xs text-[#86868b]">For organization-wide deployment</span>
+        </div>
+
+        <p className="text-sm text-[#424245] dark:text-[#a1a1a6] leading-relaxed">
+          Deploy Iron Gate across your entire organization using Chrome Enterprise policies. No manual setup required per user.
+        </p>
+
+        <ol className="space-y-4">
+          <li className="flex items-start gap-3">
+            <span className="flex-shrink-0 w-6 h-6 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-full flex items-center justify-center text-xs font-semibold">1</span>
             <div>
-              <p className="text-sm font-medium text-iron-800 dark:text-iron-300">Enterprise Deployment</p>
-              <p className="text-xs text-iron-600 dark:text-iron-400 mt-1 leading-relaxed">
-                For organization-wide deployment, use Chrome Enterprise policies to force-install the
-                extension across all managed devices. Use the{' '}
-                <span className="font-medium">ExtensionInstallForcelist</span> policy in the Google
-                Chrome Enterprise documentation.
+              <p className="text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">Publish to Chrome Web Store</p>
+              <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mt-0.5">
+                Upload the extension ZIP to the Chrome Web Store Developer Dashboard. Set visibility to <strong>Unlisted</strong> so only your organization can install it.
               </p>
             </div>
-          </div>
+          </li>
+          <li className="flex items-start gap-3">
+            <span className="flex-shrink-0 w-6 h-6 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-full flex items-center justify-center text-xs font-semibold">2</span>
+            <div>
+              <p className="text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">Configure in Google Admin Console</p>
+              <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mt-0.5">
+                Go to <strong>admin.google.com</strong> &rarr; Devices &rarr; Chrome &rarr; Apps &amp; Extensions. Add the extension by ID and set to <strong>Force Install</strong>.
+              </p>
+            </div>
+          </li>
+          <li className="flex items-start gap-3">
+            <span className="flex-shrink-0 w-6 h-6 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-full flex items-center justify-center text-xs font-semibold">3</span>
+            <div>
+              <p className="text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">Set Managed Configuration</p>
+              <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mt-0.5">
+                Under the extension&apos;s managed configuration, paste your firm&apos;s policy JSON (provided on the final screen). This auto-configures the API key, firm ID, and mode for every user.
+              </p>
+            </div>
+          </li>
+          <li className="flex items-start gap-3">
+            <span className="flex-shrink-0 w-6 h-6 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-full flex items-center justify-center">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+              </svg>
+            </span>
+            <p className="text-sm text-[#424245] dark:text-[#a1a1a6]">
+              <strong>Done!</strong> Every enrolled Chrome browser auto-installs Iron Gate. No user action needed.
+            </p>
+          </li>
+        </ol>
+
+        <div className="p-3 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded-lg">
+          <p className="text-xs text-[#6e6e73] dark:text-[#86868b]">
+            <strong>Also supported:</strong> Mac MDM (Jamf) via Chrome browser management profile, and Windows Group Policy via Chrome ADMX templates.
+          </p>
         </div>
       </div>
     </div>
@@ -889,7 +846,7 @@ function StepComplete({
   state,
   firmCreated,
   submitError,
-  onRetry,
+  onRetry: _onRetry,
   isSubmitting,
   onGoToDashboard,
   generatedApiKey,
@@ -961,10 +918,7 @@ function StepComplete({
           <SummaryRow label="Firm" value={state.firmName} />
           <SummaryRow label="Industry" value={state.industry} />
           <SummaryRow label="Size" value={`${state.firmSize} employees`} />
-          <SummaryRow
-            label="Protection Mode"
-            value={state.protectionMode === 'audit' ? 'Audit Mode (Monitor Only)' : 'Proxy Mode (Active Protection)'}
-          />
+          <SummaryRow label="Protection Mode" value="Protect (Active Redaction)" />
           <SummaryRow
             label="Thresholds"
             value={`Warn: ${state.warnThreshold} | Block: ${state.blockThreshold} | Proxy: ${state.proxyThreshold}`}
@@ -1019,6 +973,11 @@ function StepComplete({
         </div>
       )}
 
+      {/* Enterprise Policy JSON */}
+      {generatedApiKey && (
+        <EnterprisePolicyCard apiKey={generatedApiKey} firmName={state.firmName} />
+      )}
+
       {/* Go to Dashboard button */}
       <button
         onClick={onGoToDashboard}
@@ -1059,6 +1018,56 @@ function StepComplete({
             </svg>
           }
         />
+      </div>
+    </div>
+  );
+}
+
+function EnterprisePolicyCard({ apiKey, firmName }: { apiKey: string; firmName: string }) {
+  const [copied, setCopied] = React.useState(false);
+
+  const policyJson = JSON.stringify(
+    {
+      apiKey,
+      firmMode: 'proxy',
+      firmName,
+    },
+    null,
+    2,
+  );
+
+  function handleCopy() {
+    navigator.clipboard.writeText(policyJson).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 3000);
+    });
+  }
+
+  return (
+    <div className="bg-purple-50 dark:bg-purple-900/20 rounded-xl p-6 border border-purple-200 dark:border-purple-700 mb-6">
+      <div className="flex items-center gap-2 mb-3">
+        <svg className="w-5 h-5 text-purple-600 dark:text-purple-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3.75 0h.008v.008h-.008v-.008Zm0 3h.008v.008h-.008v-.008Zm0 3h.008v.008h-.008v-.008Z" />
+        </svg>
+        <h3 className="text-sm font-bold text-purple-800 dark:text-purple-300">Enterprise Policy JSON</h3>
+      </div>
+      <p className="text-xs text-purple-700 dark:text-purple-400 mb-3">
+        Use this JSON in Google Admin Console (Managed Configuration) to auto-configure Iron Gate for all users in your organization.
+      </p>
+      <div className="relative">
+        <pre className="px-4 py-3 bg-white dark:bg-[#1c1c1e] border border-purple-200 dark:border-purple-600 rounded-lg text-xs font-mono text-[#1d1d1f] dark:text-[#f5f5f7] overflow-x-auto select-all">
+          {policyJson}
+        </pre>
+        <button
+          onClick={handleCopy}
+          className={`absolute top-2 right-2 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+            copied
+              ? 'bg-green-600 text-white'
+              : 'bg-purple-600 hover:bg-purple-700 text-white'
+          }`}
+        >
+          {copied ? 'Copied!' : 'Copy'}
+        </button>
       </div>
     </div>
   );

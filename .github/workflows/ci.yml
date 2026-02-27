@@ -238,3 +238,22 @@ jobs:
         run: railway up --service irongate-api
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
+      - name: Post-deploy health check
+        run: |
+          echo "Waiting 30s for deployment to stabilize..."
+          sleep 30
+          API_URL="${API_HEALTH_URL:-https://irongate-api.onrender.com}"
+          for i in 1 2 3 4 5; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/health" || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "Health check passed (attempt $i)"
+              exit 0
+            fi
+            echo "Health check attempt $i returned $STATUS, retrying in 10s..."
+            sleep 10
+          done
+          echo "Health check failed after 5 attempts"
+          exit 1
+        env:
+          API_HEALTH_URL: ${{ secrets.API_HEALTH_URL }}

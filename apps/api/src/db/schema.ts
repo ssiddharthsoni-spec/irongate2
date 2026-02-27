@@ -24,7 +24,7 @@ export const firms = pgTable('firms', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: varchar('name', { length: 255 }).notNull(),
   domain: varchar('domain', { length: 255 }),
-  mode: firmModeEnum('mode').notNull().default('audit'),
+  mode: firmModeEnum('mode').notNull().default('proxy'),
   config: jsonb('config').default({}),
   /** Hex-encoded PBKDF2 salt for per-firm AES-256-GCM key derivation */
   encryptionSalt: varchar('encryption_salt', { length: 64 }),
@@ -81,6 +81,7 @@ export const events = pgTable('events', {
   index('events_ai_tool_id_idx').on(table.aiToolId),
   index('events_firm_created_idx').on(table.firmId, table.createdAt),
   index('events_firm_chain_idx').on(table.firmId, table.chainPosition),
+  unique('events_firm_chain_position_uniq').on(table.firmId, table.chainPosition),
 ]);
 
 // --- Feedback ---

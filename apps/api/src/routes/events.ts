@@ -1,13 +1,11 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { db } from '../db/client';
+import { db, dbRead } from '../db/client';
 import { events } from '../db/schema';
 import { eq, desc, and, gte, lte, sql } from 'drizzle-orm';
 import { appendEvent } from '../services/audit-chain';
-import { recordCoOccurrences } from '../services/sensitivity-graph';
-import { dispatch as webhookDispatch } from '../services/webhook-dispatcher';
-import { forward as siemForward } from '../services/siem-forwarder';
-import { analyzePatterns } from '../services/inference-engine';
+import { enqueueCoOccurrences, enqueueWebhook, enqueueSIEM } from '../jobs/enqueue';
+import { triggerInferenceDistributed } from '../services/inference-trigger';
 import { sha256 } from '@iron-gate/crypto';
 import type { AppEnv } from '../types';
 import { logger } from '../lib/logger';
@@ -63,10 +61,6 @@ async function minimizeEntities(entities: any[]): Promise<MinimizedEntity[]> {
   );
 }
 
-// Track event counts per firm for inference engine auto-trigger
-const firmEventCounters = new Map<string, number>();
-const INFERENCE_TRIGGER_THRESHOLD = 100;
-
 export const eventsRoutes = new Hono<AppEnv>();
 
 // Entity schema: accepts either pre-minimized (textHash+length) or raw (text) format.
@@ -101,7 +95,7 @@ const eventSchema = z.object({
   promptLength: z.number().int().min(0),
   sensitivityScore: z.number().min(0).max(100),
   sensitivityLevel: z.enum(['low', 'medium', 'high', 'critical']),
-  entities: z.array(entitySchema).optional().default([]),
+  entities: z.array(entitySchema).max(100).optional().default([]),
   action: z.enum(['pass', 'warn', 'block', 'proxy', 'override']),
   overrideReason: z.string().optional(),
   captureMethod: z.string().min(1).max(20),
@@ -143,38 +137,49 @@ eventsRoutes.post('/', async (c) => {
       metadata: parsed.metadata || {},
     });
 
-    // Fire-and-forget: record co-occurrences for sensitivity graph
+    // Enqueue background work via BullMQ (falls back to fire-and-forget if Redis unavailable)
     if (parsed.entities.length >= 2) {
-      recordCoOccurrences(firmId, parsed.entities as any, parsed.sensitivityScore).catch(err => logger.warn('Failed to record co-occurrences', { error: err instanceof Error ? err.message : String(err) }));
+      enqueueCoOccurrences({ firmId, entities: parsed.entities, sensitivityScore: parsed.sensitivityScore }).catch((err) =>
+        logger.warn('Failed to enqueue co-occurrences', { error: err instanceof Error ? err.message : String(err) }),
+      );
     }
 
-    // Fire-and-forget: webhook dispatch for high-risk events
     if (parsed.sensitivityScore >= 60) {
-      webhookDispatch(firmId, 'high_risk_detected', {
+      enqueueWebhook({
+        firmId,
+        eventType: 'high_risk_detected',
+        payload: {
+          eventId: inserted.id,
+          aiToolId: parsed.aiToolId,
+          sensitivityScore: parsed.sensitivityScore,
+          sensitivityLevel: parsed.sensitivityLevel,
+          action: parsed.action,
+          entityCount: parsed.entities.length,
+        },
+      }).catch((err) =>
+        logger.warn('Failed to enqueue webhook', { error: err instanceof Error ? err.message : String(err) }),
+      );
+    }
+
+    enqueueSIEM({
+      firmId,
+      event: {
         eventId: inserted.id,
+        firmId,
         aiToolId: parsed.aiToolId,
         sensitivityScore: parsed.sensitivityScore,
         sensitivityLevel: parsed.sensitivityLevel,
         action: parsed.action,
         entityCount: parsed.entities.length,
-      }).catch(err => logger.warn('Failed to dispatch webhook for high-risk event', { error: err instanceof Error ? err.message : String(err) }));
-    }
+        captureMethod: parsed.captureMethod,
+        timestamp: new Date().toISOString(),
+      },
+    }).catch((err) =>
+      logger.warn('Failed to enqueue SIEM forward', { error: err instanceof Error ? err.message : String(err) }),
+    );
 
-    // Fire-and-forget: SIEM forwarding
-    siemForward(firmId, {
-      eventId: inserted.id,
-      firmId,
-      aiToolId: parsed.aiToolId,
-      sensitivityScore: parsed.sensitivityScore,
-      sensitivityLevel: parsed.sensitivityLevel,
-      action: parsed.action,
-      entityCount: parsed.entities.length,
-      captureMethod: parsed.captureMethod,
-      timestamp: new Date().toISOString(),
-    }).catch(err => logger.warn('Failed to forward event to SIEM', { error: err instanceof Error ? err.message : String(err) }));
-
-    // Fire-and-forget: inference engine auto-trigger every N events
-    triggerInferenceIfNeeded(firmId);
+    // Distributed inference trigger (Redis INCR counter, threshold = 100)
+    triggerInferenceDistributed(firmId);
 
     return c.json({
       eventId: inserted.id,
@@ -183,6 +188,10 @@ eventsRoutes.post('/', async (c) => {
   } catch (error) {
     if (error instanceof z.ZodError) {
       return c.json({ error: 'Validation error', details: error.errors }, 400);
+    }
+    if ((error as any)?.retryExhausted) {
+      c.header('Retry-After', '1');
+      return c.json({ error: 'Service temporarily unavailable — high contention, retry shortly' }, 503);
     }
     throw error;
   }
@@ -196,70 +205,100 @@ eventsRoutes.post('/batch', async (c) => {
     const firmId = c.get('firmId');
     const userId = c.get('userId');
 
-    // Insert each event via audit chain (sequential for chain integrity)
-    const results = [];
-    for (const event of parsed.events) {
-      // Data minimization: strip raw PII text, store only hashes + lengths
-      const minimizedEntities = await minimizeEntities(event.entities as RawEntity[]);
+    // Insert each event via audit chain (sequential for chain integrity).
+    // Partial failure returns succeeded + failed arrays so the client
+    // knows exactly which events were committed.
+    const succeeded: { id: string; eventHash: string; chainPosition: number; index: number }[] = [];
+    const failed: { index: number; error: string }[] = [];
 
-      const inserted = await appendEvent({
-        firmId,
-        userId,
-        aiToolId: event.aiToolId,
-        aiToolUrl: event.aiToolUrl,
-        promptHash: event.promptHash,
-        promptLength: event.promptLength,
-        sensitivityScore: event.sensitivityScore,
-        sensitivityLevel: event.sensitivityLevel as any,
-        entities: minimizedEntities,
-        action: event.action as any,
-        overrideReason: event.overrideReason,
-        captureMethod: event.captureMethod,
-        sessionId: event.sessionId,
-        metadata: event.metadata || {},
-      });
-      results.push(inserted);
+    for (let i = 0; i < parsed.events.length; i++) {
+      const event = parsed.events[i];
+      try {
+        const minimizedEntities = await minimizeEntities(event.entities as RawEntity[]);
+
+        const inserted = await appendEvent({
+          firmId,
+          userId,
+          aiToolId: event.aiToolId,
+          aiToolUrl: event.aiToolUrl,
+          promptHash: event.promptHash,
+          promptLength: event.promptLength,
+          sensitivityScore: event.sensitivityScore,
+          sensitivityLevel: event.sensitivityLevel as any,
+          entities: minimizedEntities,
+          action: event.action as any,
+          overrideReason: event.overrideReason,
+          captureMethod: event.captureMethod,
+          sessionId: event.sessionId,
+          metadata: event.metadata || {},
+        });
+        succeeded.push({ ...inserted, index: i });
+      } catch (err) {
+        logger.warn('Batch event insert failed', {
+          batchId: parsed.batchId,
+          index: i,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        failed.push({ index: i, error: err instanceof Error ? err.message : 'Insert failed' });
+      }
     }
 
-    // Fire-and-forget: co-occurrences, webhooks, SIEM for batch
-    for (let i = 0; i < results.length; i++) {
-      const event = parsed.events[i];
-      const inserted = results[i];
+    // Enqueue background work for successfully inserted events
+    for (const item of succeeded) {
+      const event = parsed.events[item.index];
 
       if (event.entities.length >= 2) {
-        recordCoOccurrences(firmId, event.entities as any, event.sensitivityScore).catch(err => logger.warn('Failed to record batch co-occurrences', { error: err instanceof Error ? err.message : String(err) }));
+        enqueueCoOccurrences({ firmId, entities: event.entities, sensitivityScore: event.sensitivityScore }).catch((err) =>
+          logger.warn('Failed to enqueue batch co-occurrences', { error: err instanceof Error ? err.message : String(err) }),
+        );
       }
       if (event.sensitivityScore >= 60) {
-        webhookDispatch(firmId, 'high_risk_detected', {
-          eventId: inserted.id,
+        enqueueWebhook({
+          firmId,
+          eventType: 'high_risk_detected',
+          payload: {
+            eventId: item.id,
+            aiToolId: event.aiToolId,
+            sensitivityScore: event.sensitivityScore,
+            sensitivityLevel: event.sensitivityLevel,
+            action: event.action,
+            entityCount: event.entities.length,
+          },
+        }).catch((err) =>
+          logger.warn('Failed to enqueue batch webhook', { error: err instanceof Error ? err.message : String(err) }),
+        );
+      }
+      enqueueSIEM({
+        firmId,
+        event: {
+          eventId: item.id,
+          firmId,
           aiToolId: event.aiToolId,
           sensitivityScore: event.sensitivityScore,
           sensitivityLevel: event.sensitivityLevel,
           action: event.action,
           entityCount: event.entities.length,
-        }).catch(err => logger.warn('Failed to dispatch webhook for batch high-risk event', { error: err instanceof Error ? err.message : String(err) }));
-      }
-      siemForward(firmId, {
-        eventId: inserted.id,
-        firmId,
-        aiToolId: event.aiToolId,
-        sensitivityScore: event.sensitivityScore,
-        sensitivityLevel: event.sensitivityLevel,
-        action: event.action,
-        entityCount: event.entities.length,
-        captureMethod: event.captureMethod,
-        timestamp: new Date().toISOString(),
-      }).catch(err => logger.warn('Failed to forward batch event to SIEM', { error: err instanceof Error ? err.message : String(err) }));
+          captureMethod: event.captureMethod,
+          timestamp: new Date().toISOString(),
+        },
+      }).catch((err) =>
+        logger.warn('Failed to enqueue batch SIEM forward', { error: err instanceof Error ? err.message : String(err) }),
+      );
     }
 
-    // Trigger inference engine for batch events (same as single-event path)
-    triggerInferenceIfNeeded(firmId);
+    // Distributed inference trigger for batch
+    if (succeeded.length > 0) {
+      triggerInferenceDistributed(firmId);
+    }
+
+    const statusCode = failed.length === 0 ? 200 : succeeded.length > 0 ? 207 : 500;
 
     return c.json({
       batchId: parsed.batchId,
-      eventIds: results.map((r) => r.id),
-      count: results.length,
-    });
+      eventIds: succeeded.map((r) => r.id),
+      count: succeeded.length,
+      ...(failed.length > 0 && { failed }),
+    }, statusCode);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return c.json({ error: 'Validation error', details: error.errors }, 400);
@@ -268,7 +307,7 @@ eventsRoutes.post('/batch', async (c) => {
   }
 });
 
-// GET /v1/events — List events with pagination and filters
+// GET /v1/events — List events with pagination and filters (uses read replica)
 eventsRoutes.get('/', async (c) => {
   const firmId = c.get('firmId');
   const limit = Math.min(parseInt(c.req.query('limit') || '50'), 100);
@@ -293,7 +332,7 @@ eventsRoutes.get('/', async (c) => {
     conditions.push(lte(events.createdAt, new Date(endDate)));
   }
 
-  const results = await db
+  const results = await dbRead
     .select()
     .from(events)
     .where(and(...conditions))
@@ -301,7 +340,7 @@ eventsRoutes.get('/', async (c) => {
     .limit(limit)
     .offset(offset);
 
-  const [countResult] = await db
+  const [countResult] = await dbRead
     .select({ count: sql<number>`count(*)` })
     .from(events)
     .where(and(...conditions));
@@ -314,12 +353,12 @@ eventsRoutes.get('/', async (c) => {
   });
 });
 
-// GET /v1/events/:id — Single event
+// GET /v1/events/:id — Single event (uses read replica)
 eventsRoutes.get('/:id', async (c) => {
   const id = c.req.param('id');
   const firmId = c.get('firmId');
 
-  const [event] = await db
+  const [event] = await dbRead
     .select()
     .from(events)
     .where(and(eq(events.id, id), eq(events.firmId, firmId)))
@@ -331,19 +370,3 @@ eventsRoutes.get('/:id', async (c) => {
 
   return c.json(event);
 });
-
-// ---------------------------------------------------------------------------
-// Inference Engine Auto-Trigger
-// ---------------------------------------------------------------------------
-
-function triggerInferenceIfNeeded(firmId: string): void {
-  const count = (firmEventCounters.get(firmId) || 0) + 1;
-  firmEventCounters.set(firmId, count);
-
-  if (count >= INFERENCE_TRIGGER_THRESHOLD) {
-    firmEventCounters.set(firmId, 0);
-    analyzePatterns(firmId).catch((err) =>
-      logger.warn('Inference engine auto-trigger failed', { error: err instanceof Error ? err.message : String(err) }),
-    );
-  }
-}

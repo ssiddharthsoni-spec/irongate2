@@ -92,3 +92,91 @@ feedbackRoutes.get('/stats', async (c) => {
     })),
   });
 });
+
+// GET /v1/feedback/accuracy — Detection accuracy by entity type (for dashboard chart)
+feedbackRoutes.get('/accuracy', async (c) => {
+  const firmId = c.get('firmId');
+
+  const byType = await db
+    .select({
+      entityType: feedback.entityType,
+      total: sql<number>`count(*)`,
+      correct: sql<number>`count(*) filter (where ${feedback.isCorrect} = true)`,
+      incorrect: sql<number>`count(*) filter (where ${feedback.isCorrect} = false)`,
+    })
+    .from(feedback)
+    .where(eq(feedback.firmId, firmId))
+    .groupBy(feedback.entityType);
+
+  const accuracy = byType.map((t) => {
+    const total = Number(t.total);
+    const correct = Number(t.correct);
+    const rate = total > 0 ? Math.round((correct / total) * 100) : 100;
+    return {
+      entityType: t.entityType,
+      total,
+      correct,
+      incorrect: Number(t.incorrect),
+      accuracyRate: rate,
+      flagged: rate < 70, // Flag types below 70% accuracy for review
+    };
+  });
+
+  return c.json({
+    accuracy: accuracy.sort((a, b) => a.accuracyRate - b.accuracyRate),
+    flaggedTypes: accuracy.filter((a) => a.flagged).map((a) => a.entityType),
+  });
+});
+
+// GET /v1/feedback/rules — Computed suppression rules from feedback data (Priority 5.4)
+feedbackRoutes.get('/rules', async (c) => {
+  const firmId = c.get('firmId');
+
+  const byType = await db
+    .select({
+      entityType: feedback.entityType,
+      total: sql<number>`count(*)`,
+      correct: sql<number>`count(*) filter (where ${feedback.isCorrect} = true)`,
+      incorrect: sql<number>`count(*) filter (where ${feedback.isCorrect} = false)`,
+    })
+    .from(feedback)
+    .where(eq(feedback.firmId, firmId))
+    .groupBy(feedback.entityType);
+
+  const rules: Array<{
+    entityType: string;
+    rule: string;
+    description: string;
+    confidence: number;
+  }> = [];
+
+  for (const t of byType) {
+    const total = Number(t.total);
+    const incorrect = Number(t.incorrect);
+    if (total < 10) continue; // Need minimum sample size
+
+    const falsePositiveRate = incorrect / total;
+
+    // Rule: If 80%+ of a type's detections are false positives, suppress short matches
+    if (falsePositiveRate >= 0.8) {
+      rules.push({
+        entityType: t.entityType,
+        rule: 'suppress_short',
+        description: `Suppress ${t.entityType} detections under 4 characters (${Math.round(falsePositiveRate * 100)}% false positive rate)`,
+        confidence: falsePositiveRate,
+      });
+    }
+
+    // Rule: If 60%+ false positive rate, reduce confidence by 50%
+    if (falsePositiveRate >= 0.6) {
+      rules.push({
+        entityType: t.entityType,
+        rule: 'reduce_confidence',
+        description: `Reduce ${t.entityType} confidence by 50% (${Math.round(falsePositiveRate * 100)}% false positive rate)`,
+        confidence: falsePositiveRate,
+      });
+    }
+  }
+
+  return c.json({ rules, generatedAt: new Date().toISOString() });
+});
