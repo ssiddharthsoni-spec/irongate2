@@ -306,6 +306,7 @@ export default function OnboardingPage() {
           {currentStep < 5 && (
             <div className="flex items-center justify-between mt-8">
               <button
+                type="button"
                 onClick={handleBack}
                 disabled={currentStep === 1}
                 className={`px-5 py-2.5 rounded-lg text-sm font-medium transition-colors ${
@@ -317,6 +318,7 @@ export default function OnboardingPage() {
                 Back
               </button>
               <button
+                type="button"
                 onClick={handleNext}
                 disabled={!canProceed() || isSubmitting}
                 className={`min-w-[120px] min-h-[44px] px-6 py-2.5 rounded-lg text-sm font-medium transition-colors ${
