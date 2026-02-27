@@ -113,7 +113,7 @@ export default function AuditPage() {
   const [status, setStatus] = useState<AuditStatus>(getDemoStatus());
   const [isLive, setIsLive] = useState(false);
   const [statusLoading, setStatusLoading] = useState(true);
-  const [statusError, setStatusError] = useState<string | null>(null);
+  const [_statusError, setStatusError] = useState<string | null>(null);
 
   // Verify
   const [verifyResult, setVerifyResult] = useState<VerifyResult | null>(null);
@@ -196,6 +196,29 @@ export default function AuditPage() {
     }
   }, [apiFetch, isLive, status.chainLength]);
 
+  /* ---------- Export chain ---------- */
+  function handleExportAuditChain() {
+    const rows = [
+      ['Position', 'Event Hash', 'Previous Hash', 'Action', 'Sensitivity Score', 'Created At'],
+      ...chain.entries.map(e => [
+        String(e.chainPosition),
+        e.eventHash,
+        e.previousHash,
+        e.action,
+        String(Math.round(e.sensitivityScore)),
+        e.createdAt,
+      ]),
+    ];
+    const csv = rows.map(r => r.map(cell => `"${cell}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `iron-gate-audit-chain.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   /* ---------- Helpers ---------- */
   function truncateHash(hash: string, len = 12): string {
     if (!hash) return '--';
@@ -236,8 +259,8 @@ export default function AuditPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Cryptographic Audit Chain</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+          <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Cryptographic Audit Chain</h1>
+          <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-1">
             Tamper-proof event log with hash-linked integrity verification
           </p>
         </div>
@@ -276,62 +299,71 @@ export default function AuditPage() {
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-          <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Chain Length</p>
-          <p className="text-3xl font-bold text-gray-900 dark:text-white mt-1">
-            {statusLoading ? '--' : status.chainLength.toLocaleString()}
+        <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+          <p className="text-sm font-medium text-[#6e6e73] dark:text-[#86868b]">Chain Length</p>
+          <p className="text-3xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7] mt-1">
+            {statusLoading ? '--' : (status.chainLength ?? 0).toLocaleString()}
           </p>
-          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">total events recorded</p>
+          <p className="text-xs text-[#86868b] dark:text-[#636366] mt-1">total events recorded</p>
         </div>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-          <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Last Position</p>
-          <p className="text-3xl font-bold text-gray-900 dark:text-white mt-1">
-            {statusLoading ? '--' : status.lastPosition.toLocaleString()}
+        <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+          <p className="text-sm font-medium text-[#6e6e73] dark:text-[#86868b]">Last Position</p>
+          <p className="text-3xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7] mt-1">
+            {statusLoading ? '--' : (status.lastPosition ?? 0).toLocaleString()}
           </p>
-          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">most recent chain index</p>
+          <p className="text-xs text-[#86868b] dark:text-[#636366] mt-1">most recent chain index</p>
         </div>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-          <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Last Hash</p>
-          <p className="text-lg font-mono font-bold text-gray-900 dark:text-white mt-1 break-all" title={status.lastHash}>
-            {statusLoading ? '--' : truncateHash(status.lastHash, 20)}
+        <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+          <p className="text-sm font-medium text-[#6e6e73] dark:text-[#86868b]">Last Hash</p>
+          <p className="text-lg font-mono font-bold text-[#1d1d1f] dark:text-[#f5f5f7] mt-1 break-all" title={status.lastHash}>
+            {statusLoading ? '--' : truncateHash(status.lastHash ?? '', 20)}
           </p>
-          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1" title="SHA-256 is a cryptographic hash function that produces a unique 64-character fingerprint for any data">SHA-256 head of chain</p>
+          <p className="text-xs text-[#86868b] dark:text-[#636366] mt-1" title="SHA-256 is a cryptographic hash function that produces a unique 64-character fingerprint for any data">SHA-256 head of chain</p>
         </div>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-          <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Status</p>
+        <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+          <p className="text-sm font-medium text-[#6e6e73] dark:text-[#86868b]">Status</p>
           <p className={`text-3xl font-bold mt-1 ${status.isValid ? 'text-green-600' : 'text-red-600'}`}>
             {statusLoading ? '--' : status.isValid ? 'Valid' : 'Broken'}
           </p>
-          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">chain integrity</p>
+          <p className="text-xs text-[#86868b] dark:text-[#636366] mt-1">chain integrity</p>
         </div>
       </div>
 
       {/* Verify Section */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700 mb-6">
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 mb-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Chain Verification</h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">Chain Verification</h2>
+            <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-1">
               Run a full cryptographic verification of the entire audit chain to confirm no events have been tampered with or deleted.
             </p>
           </div>
-          <button
-            onClick={handleVerify}
-            disabled={verifying}
-            className={`min-h-[44px] px-5 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 ${
-              verifying
-                ? 'bg-gray-100 text-gray-400 cursor-not-allowed dark:bg-gray-700 dark:text-gray-500'
-                : 'bg-iron-600 text-white hover:bg-iron-700'
-            }`}
-          >
-            {verifying && (
-              <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-              </svg>
-            )}
-            {verifying ? 'Verifying...' : 'Verify Chain'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleExportAuditChain}
+              className="min-h-[44px] px-5 py-2.5 rounded-lg text-sm font-medium border border-[#d2d2d7]/40 dark:border-[#38383a]/60 text-[#424245] dark:text-[#a1a1a6] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] transition-colors flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+              Export CSV
+            </button>
+            <button
+              onClick={handleVerify}
+              disabled={verifying}
+              className={`min-h-[44px] px-5 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-[#111113] ${
+                verifying
+                  ? 'bg-[#f5f5f7] text-[#86868b] cursor-not-allowed dark:bg-[#2c2c2e] dark:text-[#636366]'
+                  : 'bg-iron-600 text-white hover:bg-iron-700'
+              }`}
+            >
+              {verifying && (
+                <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+              )}
+              {verifying ? 'Verifying...' : 'Verify Chain'}
+            </button>
+          </div>
         </div>
 
         {/* Verify result */}
@@ -355,8 +387,8 @@ export default function AuditPage() {
               )}
               <span className={`text-sm font-medium ${verifyResult.valid ? 'text-green-800 dark:text-green-300' : 'text-red-800 dark:text-red-300'}`}>
                 {verifyResult.valid
-                  ? `Verification passed -- all ${verifyResult.totalEvents.toLocaleString()} events are intact.`
-                  : `Verification failed -- chain broken at position ${verifyResult.brokenAt?.toLocaleString() ?? 'unknown'} (${verifyResult.totalEvents.toLocaleString()} events checked).`}
+                  ? `Verification passed -- all ${(verifyResult.totalEvents ?? 0).toLocaleString()} events are intact.`
+                  : `Verification failed -- chain broken at position ${verifyResult.brokenAt?.toLocaleString() ?? 'unknown'} (${(verifyResult.totalEvents ?? 0).toLocaleString()} events checked).`}
               </span>
             </div>
           </div>
@@ -371,18 +403,18 @@ export default function AuditPage() {
       </div>
 
       {/* Chain Events Table */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Audit Chain Events</h2>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-            {chain.total.toLocaleString()} total entries
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 overflow-hidden">
+        <div className="px-6 py-4 border-b border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+          <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">Audit Chain Events</h2>
+          <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-0.5">
+            {(chain.total ?? 0).toLocaleString()} total entries
           </p>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
-              <tr className="bg-gray-50 dark:bg-gray-800/50 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+              <tr className="bg-[#f5f5f7] dark:bg-[#1c1c1e]/80 text-left text-xs font-medium text-[#6e6e73] dark:text-[#86868b] uppercase tracking-wider">
                 <th className="px-6 py-3">Position</th>
                 <th className="px-6 py-3">Event Hash</th>
                 <th className="px-6 py-3">Previous Hash</th>
@@ -391,12 +423,12 @@ export default function AuditPage() {
                 <th className="px-6 py-3">Created At</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+            <tbody className="divide-y divide-[#d2d2d7]/40 dark:divide-[#38383a]/60">
               {chainLoading ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-gray-400 dark:text-gray-500">
+                  <td colSpan={6} className="px-6 py-12 text-center text-[#86868b] dark:text-[#636366]">
                     <div className="flex items-center justify-center gap-2">
-                      <svg className="animate-spin h-5 w-5 text-gray-400 dark:text-gray-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <svg className="animate-spin h-5 w-5 text-[#86868b] dark:text-[#636366]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                       </svg>
@@ -408,28 +440,28 @@ export default function AuditPage() {
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center">
                     <div className="flex flex-col items-center gap-2">
-                      <svg className="w-10 h-10 text-gray-300 dark:text-gray-600" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor">
+                      <svg className="w-10 h-10 text-[#d2d2d7] dark:text-[#38383a]" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
                       </svg>
-                      <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">No audit entries found</p>
-                      <p className="text-xs text-gray-400 dark:text-gray-500">Events will appear here once AI interactions are captured by the Iron Gate extension.</p>
+                      <p className="text-sm text-[#6e6e73] dark:text-[#86868b] font-medium">No audit entries found</p>
+                      <p className="text-xs text-[#86868b] dark:text-[#636366]">Events will appear here once AI interactions are captured by the Iron Gate extension.</p>
                     </div>
                   </td>
                 </tr>
               ) : (
                 chain.entries.map((entry) => (
-                  <tr key={entry.chainPosition} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                    <td className="px-6 py-3 text-sm font-medium text-gray-900 dark:text-white">
+                  <tr key={entry.chainPosition} className="hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e]">
+                    <td className="px-6 py-3 text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">
                       #{entry.chainPosition.toLocaleString()}
                     </td>
-                    <td className="px-6 py-3 text-sm font-mono text-gray-600 dark:text-gray-400" title={entry.eventHash}>
+                    <td className="px-6 py-3 text-sm font-mono text-[#6e6e73] dark:text-[#86868b]" title={entry.eventHash}>
                       {truncateHash(entry.eventHash, 12)}
                     </td>
-                    <td className="px-6 py-3 text-sm font-mono text-gray-400 dark:text-gray-500" title={entry.previousHash}>
+                    <td className="px-6 py-3 text-sm font-mono text-[#86868b] dark:text-[#636366]" title={entry.previousHash}>
                       {truncateHash(entry.previousHash, 12)}
                     </td>
-                    <td className="px-6 py-3 text-sm text-gray-900 dark:text-white">
-                      <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">
+                    <td className="px-6 py-3 text-sm text-[#1d1d1f] dark:text-[#f5f5f7]">
+                      <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-[#f5f5f7] text-[#424245] dark:bg-[#2c2c2e] dark:text-[#a1a1a6]">
                         {formatAction(entry.action)}
                       </span>
                     </td>
@@ -448,7 +480,7 @@ export default function AuditPage() {
                         {Math.round(entry.sensitivityScore)}
                       </span>
                     </td>
-                    <td className="px-6 py-3 text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap" suppressHydrationWarning>
+                    <td className="px-6 py-3 text-sm text-[#6e6e73] dark:text-[#86868b] whitespace-nowrap" suppressHydrationWarning>
                       {new Date(entry.createdAt).toLocaleDateString('en-US', {
                         month: 'short',
                         day: 'numeric',
@@ -465,7 +497,7 @@ export default function AuditPage() {
         </div>
 
         {/* Pagination */}
-        <div className="px-6 py-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
+        <div className="px-6 py-3 border-t border-[#d2d2d7]/40 dark:border-[#38383a]/60 flex items-center justify-between">
           <button
             onClick={() =>
               setPagination((p) => ({
@@ -474,12 +506,12 @@ export default function AuditPage() {
               }))
             }
             disabled={pagination.offset === 0}
-            className="min-h-[44px] px-4 py-2.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500"
+            className="min-h-[44px] px-4 py-2.5 text-sm rounded-lg border border-[#d2d2d7]/40 dark:border-[#38383a]/60 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500"
           >
             Previous
           </button>
-          <span className="text-sm text-gray-500 dark:text-gray-400">
-            Page {currentPage} of {totalPages} ({chain.total.toLocaleString()} entries)
+          <span className="text-sm text-[#6e6e73] dark:text-[#86868b]">
+            Page {currentPage} of {totalPages} ({(chain.total ?? 0).toLocaleString()} entries)
           </span>
           <button
             onClick={() =>
@@ -489,7 +521,7 @@ export default function AuditPage() {
               }))
             }
             disabled={pagination.offset + pagination.limit >= chain.total}
-            className="min-h-[44px] px-4 py-2.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500"
+            className="min-h-[44px] px-4 py-2.5 text-sm rounded-lg border border-[#d2d2d7]/40 dark:border-[#38383a]/60 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500"
           >
             Next
           </button>

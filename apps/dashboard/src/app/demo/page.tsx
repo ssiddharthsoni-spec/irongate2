@@ -803,7 +803,7 @@ export default function DemoPage() {
   const actionColor = scenario.action === 'BLOCK' ? 'text-red-500' : scenario.action === 'WARN' ? 'text-orange-500' : 'text-yellow-500';
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-white">
+    <div className="min-h-screen bg-[#f5f5f7] dark:bg-[#0a0a0a] text-[#1d1d1f] dark:text-[#f5f5f7]">
       {/* Top bar */}
       <nav className="flex items-center justify-between px-6 md:px-12 py-4 max-w-7xl mx-auto">
         <Link href="/" className="flex items-center gap-3">
@@ -813,10 +813,10 @@ export default function DemoPage() {
           <span className="text-xl font-bold">Iron Gate</span>
         </Link>
         <div className="flex items-center gap-4">
-          <Link href="/dashboard" className="text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">
+          <Link href="/dashboard" className="text-sm font-medium text-[#6e6e73] dark:text-[#86868b] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7] transition-colors">
             Dashboard
           </Link>
-          <Link href="/" className="text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">
+          <Link href="/" className="text-sm font-medium text-[#6e6e73] dark:text-[#86868b] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7] transition-colors">
             Home
           </Link>
         </div>
@@ -826,7 +826,7 @@ export default function DemoPage() {
         {/* Header */}
         <div className="text-center mb-6">
           <h1 className="text-3xl md:text-4xl font-bold mb-3">Live Simulation</h1>
-          <p className="text-gray-500 dark:text-gray-400 max-w-2xl mx-auto">
+          <p className="text-[#6e6e73] dark:text-[#86868b] max-w-2xl mx-auto">
             Watch how Iron Gate intercepts sensitive prompts, hashes entities client-side, detects confidential data,
             encrypts with AES-256-GCM, pseudonymizes content before it reaches the AI, and stores only
             one-way hashes — never the raw PII itself.
@@ -842,7 +842,7 @@ export default function DemoPage() {
               className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium border-2 transition-all ${
                 scenarioId === sc.id
                   ? 'border-iron-500 bg-iron-50 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 shadow-sm'
-                  : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800'
+                  : 'border-[#d2d2d7]/40 dark:border-[#38383a]/60 text-[#6e6e73] dark:text-[#86868b] hover:border-[#d2d2d7] dark:hover:border-[#38383a] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e]'
               }`}
             >
               <span dangerouslySetInnerHTML={{ __html: sc.icon }} />
@@ -850,7 +850,7 @@ export default function DemoPage() {
               <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
                 scenarioId === sc.id
                   ? 'bg-iron-200 dark:bg-iron-800 text-iron-700 dark:text-iron-300'
-                  : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+                  : 'bg-[#f5f5f7] dark:bg-[#2c2c2e] text-[#6e6e73] dark:text-[#86868b]'
               }`}>
                 {sc.aiTool}
               </span>
@@ -865,7 +865,7 @@ export default function DemoPage() {
             disabled={isRunning}
             className={`px-6 py-2.5 rounded-lg font-semibold text-sm transition-colors ${
               isRunning
-                ? 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed'
+                ? 'bg-[#d2d2d7] dark:bg-[#2c2c2e] text-[#6e6e73] dark:text-[#86868b] cursor-not-allowed'
                 : 'bg-iron-600 hover:bg-iron-700 text-white shadow-lg shadow-iron-600/25'
             }`}
           >
@@ -874,7 +874,7 @@ export default function DemoPage() {
           {isRunning && (
             <button
               onClick={resetSimulation}
-              className="px-4 py-2.5 rounded-lg text-sm font-medium border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              className="px-4 py-2.5 rounded-lg text-sm font-medium border border-[#d2d2d7] dark:border-[#38383a]/60 text-[#424245] dark:text-[#a1a1a6] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] transition-colors"
             >
               Reset
             </button>
@@ -892,15 +892,15 @@ export default function DemoPage() {
         {/* Step indicator */}
         <div className="flex items-center justify-center gap-2 mb-8">
           <div className={`w-2.5 h-2.5 rounded-full ${
-            step === 'idle' ? 'bg-gray-400' :
+            step === 'idle' ? 'bg-[#86868b]' :
             step === 'complete' ? 'bg-green-500' :
             'bg-iron-500 animate-pulse'
           }`} />
-          <span className="text-sm font-medium text-gray-600 dark:text-gray-400">
+          <span className="text-sm font-medium text-[#6e6e73] dark:text-[#86868b]">
             {STEP_LABELS[step]}
           </span>
           {step !== 'idle' && (
-            <span className="text-xs text-gray-400 dark:text-gray-500 ml-2">
+            <span className="text-xs text-[#86868b] dark:text-[#636366] ml-2">
               {scenario.industry} scenario via {scenario.aiTool}
             </span>
           )}
@@ -911,13 +911,13 @@ export default function DemoPage() {
           {/* Chat simulation — left side */}
           <div className="lg:col-span-3">
             {/* AI tool header */}
-            <div className="bg-white dark:bg-gray-900 rounded-t-xl border border-b-0 border-gray-200 dark:border-gray-800 px-4 py-3 flex items-center gap-3">
+            <div className="bg-white dark:bg-[#141414] rounded-t-xl border border-b-0 border-[#d2d2d7]/40 dark:border-[#38383a]/40 px-4 py-3 flex items-center gap-3">
               <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: scenario.aiToolColor }}>
                 {scenario.aiToolIcon}
               </div>
               <div>
                 <p className="text-sm font-semibold">{scenario.aiTool}</p>
-                <p className="text-xs text-gray-400">Simulated interface</p>
+                <p className="text-xs text-[#86868b]">Simulated interface</p>
               </div>
               {step !== 'idle' && (
                 <div className="ml-auto flex items-center gap-2">
@@ -932,14 +932,14 @@ export default function DemoPage() {
             {/* Chat messages area */}
             <div
               ref={chatRef}
-              className="bg-white dark:bg-gray-900 border-x border-gray-200 dark:border-gray-800 p-4 min-h-[320px] max-h-[420px] overflow-y-auto"
+              className="bg-white dark:bg-[#141414] border-x border-[#d2d2d7]/40 dark:border-[#38383a]/40 p-4 min-h-[320px] max-h-[420px] overflow-y-auto"
             >
               {step === 'idle' ? (
                 <div className="flex flex-col items-center justify-center h-64 gap-3">
-                  <p className="text-gray-400 dark:text-gray-600 text-sm">
+                  <p className="text-[#86868b] dark:text-[#38383a] text-sm">
                     Select a scenario above, then click &quot;Start Simulation&quot;
                   </p>
-                  <div className="flex items-center gap-2 text-xs text-gray-300 dark:text-gray-700">
+                  <div className="flex items-center gap-2 text-xs text-[#d2d2d7] dark:text-[#38383a]">
                     <span dangerouslySetInnerHTML={{ __html: scenario.icon }} className="text-base" />
                     <span>{scenario.industry} &mdash; {scenario.userName} on {scenario.aiTool}</span>
                   </div>
@@ -950,13 +950,13 @@ export default function DemoPage() {
                     <span className="text-white text-xs font-bold">{scenario.userInitials}</span>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">{scenario.userName}</p>
-                    <div className="text-sm leading-relaxed text-gray-800 dark:text-gray-200 whitespace-pre-wrap">
+                    <p className="text-xs font-medium text-[#6e6e73] dark:text-[#86868b] mb-1">{scenario.userName}</p>
+                    <div className="text-sm leading-relaxed text-[#1d1d1f] dark:text-[#d2d2d7] whitespace-pre-wrap">
                       {shouldHighlight
                         ? renderHighlightedText(scenario.prompt, visibleEntities)
                         : scenario.prompt.slice(0, typedLength)}
                       {step === 'typing' && (
-                        <span className="inline-block w-0.5 h-4 bg-gray-800 dark:bg-gray-200 animate-pulse ml-0.5 align-middle" />
+                        <span className="inline-block w-0.5 h-4 bg-[#1d1d1f] dark:bg-[#d2d2d7]/40 animate-pulse ml-0.5 align-middle" />
                       )}
                     </div>
                   </div>
@@ -965,11 +965,11 @@ export default function DemoPage() {
             </div>
 
             {/* Chat input bar */}
-            <div className="bg-white dark:bg-gray-900 rounded-b-xl border border-t-0 border-gray-200 dark:border-gray-800 px-4 py-3">
-              <div className="flex items-center gap-3 bg-gray-100 dark:bg-gray-800 rounded-xl px-4 py-2.5">
-                <span className="text-sm text-gray-400 dark:text-gray-500 flex-1">Message {scenario.aiTool}...</span>
-                <div className="w-8 h-8 bg-gray-300 dark:bg-gray-700 rounded-lg flex items-center justify-center">
-                  <svg className="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+            <div className="bg-white dark:bg-[#141414] rounded-b-xl border border-t-0 border-[#d2d2d7]/40 dark:border-[#38383a]/40 px-4 py-3">
+              <div className="flex items-center gap-3 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded-xl px-4 py-2.5">
+                <span className="text-sm text-[#86868b] dark:text-[#636366] flex-1">Message {scenario.aiTool}...</span>
+                <div className="w-8 h-8 bg-[#d2d2d7] dark:bg-[#2c2c2e] rounded-lg flex items-center justify-center">
+                  <svg className="w-4 h-4 text-[#6e6e73]" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 10.5 12 3m0 0 7.5 7.5M12 3v18" />
                   </svg>
                 </div>
@@ -980,9 +980,9 @@ export default function DemoPage() {
           {/* Detection panel — right side */}
           <div className="lg:col-span-2 space-y-4">
             {/* Score card */}
-            <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
+            <div className="bg-white dark:bg-[#141414] rounded-xl border border-[#d2d2d7]/40 dark:border-[#38383a]/40 p-5">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Sensitivity Score</h3>
+                <h3 className="text-sm font-semibold uppercase tracking-wider text-[#6e6e73] dark:text-[#86868b]">Sensitivity Score</h3>
                 <div className="w-6 h-6 bg-iron-600 rounded flex items-center justify-center">
                   <span className="text-white text-[8px] font-bold">IG</span>
                 </div>
@@ -996,9 +996,9 @@ export default function DemoPage() {
                 }`}>
                   {currentScore}
                 </span>
-                <span className="text-sm text-gray-400 dark:text-gray-500 mb-1">/ 100</span>
+                <span className="text-sm text-[#86868b] dark:text-[#636366] mb-1">/ 100</span>
               </div>
-              <div className="w-full h-3 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+              <div className="w-full h-3 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded-full overflow-hidden">
                 <div
                   className={`h-full rounded-full transition-all duration-100 ${
                     currentScore >= 85 ? 'bg-red-500' :
@@ -1018,27 +1018,27 @@ export default function DemoPage() {
                 </div>
               )}
               {step !== 'idle' && step !== 'typing' && (
-                <p className="mt-3 text-xs text-gray-400 dark:text-gray-500">
+                <p className="mt-3 text-xs text-[#86868b] dark:text-[#636366]">
                   Action: <span className={`font-semibold ${actionColor}`}>{scenario.action}</span> — {scenario.actionReason}
                 </p>
               )}
             </div>
 
             {/* Detected entities */}
-            <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-3">
+            <div className="bg-white dark:bg-[#141414] rounded-xl border border-[#d2d2d7]/40 dark:border-[#38383a]/40 p-5">
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-[#6e6e73] dark:text-[#86868b] mb-3">
                 Detected Entities ({detectedCount}/{scenario.entities.length})
               </h3>
               <div className="space-y-2 max-h-[280px] overflow-y-auto">
                 {detectedCount === 0 ? (
-                  <p className="text-xs text-gray-400 dark:text-gray-600 py-4 text-center">
+                  <p className="text-xs text-[#86868b] dark:text-[#38383a] py-4 text-center">
                     {step === 'idle' ? 'Waiting for simulation...' : 'Scanning...'}
                   </p>
                 ) : (
                   visibleEntities.map((e, i) => (
                     <div
                       key={i}
-                      className="flex items-start gap-2 p-2 rounded-lg bg-gray-50 dark:bg-gray-800/50"
+                      className="flex items-start gap-2 p-2 rounded-lg bg-[#f5f5f7] dark:bg-[#2c2c2e]/50"
                     >
                       <span
                         className="text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap flex-shrink-0 mt-0.5"
@@ -1047,9 +1047,9 @@ export default function DemoPage() {
                         {e.type}
                       </span>
                       <div className="min-w-0">
-                        <p className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{e.text}</p>
+                        <p className="text-xs font-medium text-[#1d1d1f] dark:text-[#d2d2d7] truncate">{e.text}</p>
                         {showPseudonymized && (
-                          <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 flex items-center gap-1">
+                          <p className="text-[10px] text-[#86868b] dark:text-[#636366] mt-0.5 flex items-center gap-1">
                             <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
                             </svg>
@@ -1065,7 +1065,7 @@ export default function DemoPage() {
                           </p>
                         )}
                       </div>
-                      <span className="ml-auto text-[10px] font-semibold text-gray-400 dark:text-gray-500 flex-shrink-0">
+                      <span className="ml-auto text-[10px] font-semibold text-[#86868b] dark:text-[#636366] flex-shrink-0">
                         +{e.weight}
                       </span>
                     </div>
@@ -1079,26 +1079,26 @@ export default function DemoPage() {
         {/* Pseudonymized output */}
         {showPseudonymized && (
           <div className="mt-8 grid lg:grid-cols-2 gap-6">
-            <div className="bg-white dark:bg-gray-900 rounded-xl border border-red-200 dark:border-red-900/50 p-5">
+            <div className="bg-white dark:bg-[#141414] rounded-xl border border-red-200 dark:border-red-900/50 p-5">
               <div className="flex items-center gap-2 mb-3">
                 <svg className="w-4 h-4 text-red-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
                 </svg>
                 <h3 className="text-sm font-semibold text-red-600 dark:text-red-400">Original Prompt (BLOCKED)</h3>
               </div>
-              <div className="text-xs leading-relaxed text-gray-600 dark:text-gray-400 bg-red-50 dark:bg-red-950/30 rounded-lg p-4 max-h-48 overflow-y-auto whitespace-pre-wrap font-mono">
+              <div className="text-xs leading-relaxed text-[#6e6e73] dark:text-[#86868b] bg-red-50 dark:bg-red-950/30 rounded-lg p-4 max-h-48 overflow-y-auto whitespace-pre-wrap font-mono">
                 {renderHighlightedText(scenario.prompt, scenario.entities)}
               </div>
             </div>
 
-            <div className="bg-white dark:bg-gray-900 rounded-xl border border-green-200 dark:border-green-900/50 p-5">
+            <div className="bg-white dark:bg-[#141414] rounded-xl border border-green-200 dark:border-green-900/50 p-5">
               <div className="flex items-center gap-2 mb-3">
                 <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
                 </svg>
                 <h3 className="text-sm font-semibold text-green-600 dark:text-green-400">Pseudonymized Version (SAFE)</h3>
               </div>
-              <div className="text-xs leading-relaxed text-gray-600 dark:text-gray-400 bg-green-50 dark:bg-green-950/30 rounded-lg p-4 max-h-48 overflow-y-auto whitespace-pre-wrap font-mono">
+              <div className="text-xs leading-relaxed text-[#6e6e73] dark:text-[#86868b] bg-green-50 dark:bg-green-950/30 rounded-lg p-4 max-h-48 overflow-y-auto whitespace-pre-wrap font-mono">
                 {buildPseudonymized(scenario)}
               </div>
             </div>
@@ -1114,7 +1114,7 @@ export default function DemoPage() {
               </div>
               <div>
                 <h2 className="text-lg font-bold">Response Round-Trip</h2>
-                <p className="text-xs text-gray-500 dark:text-gray-400">
+                <p className="text-xs text-[#6e6e73] dark:text-[#86868b]">
                   The AI responds using pseudonymized tokens — Iron Gate restores real data on the way back
                 </p>
               </div>
@@ -1142,7 +1142,7 @@ export default function DemoPage() {
 
             <div className="grid lg:grid-cols-2 gap-6">
               {/* AI Response (pseudonymized) */}
-              <div className="bg-white dark:bg-gray-900 rounded-xl border border-blue-200 dark:border-blue-900/50 p-5">
+              <div className="bg-white dark:bg-[#141414] rounded-xl border border-blue-200 dark:border-blue-900/50 p-5">
                 <div className="flex items-center gap-2 mb-3">
                   <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ backgroundColor: scenario.aiToolColor }}>
                     <span className="text-white text-[8px]">{scenario.aiToolIcon}</span>
@@ -1156,23 +1156,23 @@ export default function DemoPage() {
                 </div>
                 <div
                   ref={responseRef}
-                  className="text-xs leading-relaxed text-gray-600 dark:text-gray-400 bg-blue-50 dark:bg-blue-950/20 rounded-lg p-4 max-h-64 overflow-y-auto whitespace-pre-wrap font-mono"
+                  className="text-xs leading-relaxed text-[#6e6e73] dark:text-[#86868b] bg-blue-50 dark:bg-blue-950/20 rounded-lg p-4 max-h-64 overflow-y-auto whitespace-pre-wrap font-mono"
                 >
                   {scenario.aiResponsePseudonymized.slice(0, aiResponseLength)}
                   {step === 'responding' && aiResponseLength < scenario.aiResponsePseudonymized.length && (
                     <span className="inline-block w-0.5 h-3 bg-blue-500 animate-pulse ml-0.5 align-middle" />
                   )}
                 </div>
-                <p className="mt-2 text-[10px] text-gray-400 dark:text-gray-500">
+                <p className="mt-2 text-[10px] text-[#86868b] dark:text-[#636366]">
                   No real names, numbers, or identifiers were sent to or received from {scenario.aiTool}
                 </p>
               </div>
 
               {/* De-pseudonymized response */}
-              <div className={`bg-white dark:bg-gray-900 rounded-xl border p-5 transition-all duration-500 ${
+              <div className={`bg-white dark:bg-[#141414] rounded-xl border p-5 transition-all duration-500 ${
                 showDePseudonymized
                   ? 'border-green-200 dark:border-green-900/50 opacity-100'
-                  : 'border-gray-200 dark:border-gray-800 opacity-40'
+                  : 'border-[#d2d2d7]/40 dark:border-[#38383a]/40 opacity-40'
               }`}>
                 <div className="flex items-center gap-2 mb-3">
                   <svg className="w-5 h-5 text-green-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
@@ -1189,22 +1189,22 @@ export default function DemoPage() {
                 </div>
                 {showDePseudonymized ? (
                   <>
-                    <div className="text-xs leading-relaxed text-gray-600 dark:text-gray-400 bg-green-50 dark:bg-green-950/20 rounded-lg p-4 max-h-64 overflow-y-auto whitespace-pre-wrap font-mono">
+                    <div className="text-xs leading-relaxed text-[#6e6e73] dark:text-[#86868b] bg-green-50 dark:bg-green-950/20 rounded-lg p-4 max-h-64 overflow-y-auto whitespace-pre-wrap font-mono">
                       {scenario.aiResponseReal}
                     </div>
-                    <p className="mt-2 text-[10px] text-gray-400 dark:text-gray-500">
+                    <p className="mt-2 text-[10px] text-[#86868b] dark:text-[#636366]">
                       Iron Gate mapped pseudonyms back to real values — the response is fully coherent with original context
                     </p>
                   </>
                 ) : (
                   <div className="flex flex-col items-center justify-center h-48 gap-3">
-                    <div className="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
-                      <svg className="w-5 h-5 text-gray-400 dark:text-gray-600 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <div className="w-10 h-10 rounded-full bg-[#f5f5f7] dark:bg-[#2c2c2e] flex items-center justify-center">
+                      <svg className="w-5 h-5 text-[#86868b] dark:text-[#38383a] animate-spin" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                       </svg>
                     </div>
-                    <p className="text-xs text-gray-400 dark:text-gray-600">Waiting for de-pseudonymization...</p>
+                    <p className="text-xs text-[#86868b] dark:text-[#38383a]">Waiting for de-pseudonymization...</p>
                   </div>
                 )}
               </div>
@@ -1212,12 +1212,12 @@ export default function DemoPage() {
 
             {/* Entity mapping table */}
             {showDePseudonymized && (
-              <div className="mt-6 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
+              <div className="mt-6 bg-white dark:bg-[#141414] rounded-xl border border-[#d2d2d7]/40 dark:border-[#38383a]/40 p-5">
                 <div className="flex items-center gap-2 mb-4">
                   <svg className="w-4 h-4 text-iron-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
                   </svg>
-                  <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Pseudonym Mapping (Encrypted, Firm-Only)</h3>
+                  <h3 className="text-sm font-semibold text-[#424245] dark:text-[#a1a1a6]">Pseudonym Mapping (Encrypted, Firm-Only)</h3>
                   <span className="ml-auto text-[10px] font-medium px-2 py-0.5 rounded-full bg-iron-100 dark:bg-iron-900/30 text-iron-600 dark:text-iron-400">
                     {scenario.entities.length} mappings
                   </span>
@@ -1225,17 +1225,17 @@ export default function DemoPage() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead>
-                      <tr className="border-b border-gray-100 dark:border-gray-800">
-                        <th className="text-left py-2 pr-3 font-semibold text-gray-500 dark:text-gray-400">Type</th>
-                        <th className="text-left py-2 pr-3 font-semibold text-gray-500 dark:text-gray-400">Detected (ephemeral)</th>
-                        <th className="text-left py-2 pr-3 font-semibold text-gray-500 dark:text-gray-400">Pseudonym</th>
+                      <tr className="border-b border-[#d2d2d7]/30 dark:border-[#38383a]/40">
+                        <th className="text-left py-2 pr-3 font-semibold text-[#6e6e73] dark:text-[#86868b]">Type</th>
+                        <th className="text-left py-2 pr-3 font-semibold text-[#6e6e73] dark:text-[#86868b]">Detected (ephemeral)</th>
+                        <th className="text-left py-2 pr-3 font-semibold text-[#6e6e73] dark:text-[#86868b]">Pseudonym</th>
                         <th className="text-left py-2 pr-3 font-semibold text-iron-500 dark:text-iron-400">Stored in DB</th>
-                        <th className="text-right py-2 font-semibold text-gray-500 dark:text-gray-400">Weight</th>
+                        <th className="text-right py-2 font-semibold text-[#6e6e73] dark:text-[#86868b]">Weight</th>
                       </tr>
                     </thead>
                     <tbody>
                       {scenario.entities.map((e, i) => (
-                        <tr key={i} className="border-b border-gray-50 dark:border-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/30">
+                        <tr key={i} className="border-b border-[#f5f5f7] dark:border-[#38383a]/50 hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e]/30">
                           <td className="py-1.5 pr-3">
                             <span
                               className="text-[9px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap"
@@ -1244,8 +1244,8 @@ export default function DemoPage() {
                               {e.type}
                             </span>
                           </td>
-                          <td className="py-1.5 pr-3 font-mono text-gray-700 dark:text-gray-300 line-through opacity-60">{e.text}</td>
-                          <td className="py-1.5 pr-3 font-mono text-gray-400 dark:text-gray-500">
+                          <td className="py-1.5 pr-3 font-mono text-[#424245] dark:text-[#a1a1a6] line-through opacity-60">{e.text}</td>
+                          <td className="py-1.5 pr-3 font-mono text-[#86868b] dark:text-[#636366]">
                             <span className="flex items-center gap-1">
                               <svg className="w-3 h-3 flex-shrink-0 text-iron-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
@@ -1261,13 +1261,13 @@ export default function DemoPage() {
                               SHA-256 · {e.text.length} chars
                             </span>
                           </td>
-                          <td className="py-1.5 text-right font-semibold text-gray-400 dark:text-gray-500">+{e.weight}</td>
+                          <td className="py-1.5 text-right font-semibold text-[#86868b] dark:text-[#636366]">+{e.weight}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-                <div className="mt-3 flex items-center gap-4 text-[10px] text-gray-400 dark:text-gray-500">
+                <div className="mt-3 flex items-center gap-4 text-[10px] text-[#86868b] dark:text-[#636366]">
                   <span className="flex items-center gap-1">
                     <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
@@ -1294,8 +1294,8 @@ export default function DemoPage() {
 
         {/* Pipeline diagram */}
         {step !== 'idle' && (
-          <div className="mt-8 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-6">
-            <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-4 text-center">
+          <div className="mt-8 bg-white dark:bg-[#141414] rounded-xl border border-[#d2d2d7]/40 dark:border-[#38383a]/40 p-6">
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-[#6e6e73] dark:text-[#86868b] mb-4 text-center">
               Iron Gate Pipeline
             </h3>
             <div className="flex flex-wrap items-center justify-center gap-3 md:gap-4">
@@ -1315,17 +1315,17 @@ export default function DemoPage() {
                   <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-all ${
                     s.active
                       ? 'bg-iron-50 dark:bg-iron-900/30 border-iron-300 dark:border-iron-700 text-iron-700 dark:text-iron-300'
-                      : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500'
+                      : 'bg-[#f5f5f7] dark:bg-[#2c2c2e] border-[#d2d2d7]/40 dark:border-[#38383a]/60 text-[#86868b] dark:text-[#636366]'
                   }`}>
                     <span className={`w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center ${
-                      s.active ? 'bg-iron-600 text-white' : 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400'
+                      s.active ? 'bg-iron-600 text-white' : 'bg-[#d2d2d7] dark:bg-[#38383a] text-[#6e6e73] dark:text-[#86868b]'
                     }`}>
                       {s.icon}
                     </span>
                     <span className="text-xs font-medium">{s.label}</span>
                   </div>
                   {i < 9 && (
-                    <svg className="w-4 h-4 text-gray-300 dark:text-gray-600 hidden md:block" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <svg className="w-4 h-4 text-[#d2d2d7] dark:text-[#38383a] hidden md:block" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
                     </svg>
                   )}
@@ -1337,8 +1337,8 @@ export default function DemoPage() {
 
         {/* Entity type summary at bottom */}
         {step === 'complete' && (
-          <div className="mt-8 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-6">
-            <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-4">
+          <div className="mt-8 bg-white dark:bg-[#141414] rounded-xl border border-[#d2d2d7]/40 dark:border-[#38383a]/40 p-6">
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-[#6e6e73] dark:text-[#86868b] mb-4">
               Detection Summary — {scenario.industry}
             </h3>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -1354,11 +1354,11 @@ export default function DemoPage() {
                   }
                 }
                 return Array.from(typeMap.entries()).map(([type, data]) => (
-                  <div key={type} className="flex items-center gap-2 p-2 rounded-lg bg-gray-50 dark:bg-gray-800/50">
+                  <div key={type} className="flex items-center gap-2 p-2 rounded-lg bg-[#f5f5f7] dark:bg-[#2c2c2e]/50">
                     <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: data.color }} />
                     <div className="min-w-0">
-                      <p className="text-[10px] font-bold text-gray-700 dark:text-gray-300 truncate">{type}</p>
-                      <p className="text-[10px] text-gray-400 dark:text-gray-500">{data.count}x &middot; +{data.totalWeight} pts</p>
+                      <p className="text-[10px] font-bold text-[#424245] dark:text-[#a1a1a6] truncate">{type}</p>
+                      <p className="text-[10px] text-[#86868b] dark:text-[#636366]">{data.count}x &middot; +{data.totalWeight} pts</p>
                     </div>
                   </div>
                 ));
@@ -1369,7 +1369,7 @@ export default function DemoPage() {
 
         {/* Security Layer Info */}
         {step === 'complete' && (
-          <div className="mt-6 bg-white dark:bg-gray-900 rounded-xl border border-iron-200 dark:border-iron-800 p-6">
+          <div className="mt-6 bg-white dark:bg-[#141414] rounded-xl border border-iron-200 dark:border-iron-800 p-6">
             <h3 className="text-sm font-semibold uppercase tracking-wider text-iron-600 dark:text-iron-400 mb-4">
               Security Layer Applied
             </h3>
@@ -1386,7 +1386,7 @@ export default function DemoPage() {
                   <div className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
                   <div>
                     <p className="text-[10px] font-bold text-iron-700 dark:text-iron-300">{item.label}</p>
-                    <p className="text-[10px] text-gray-500 dark:text-gray-400">{item.value}</p>
+                    <p className="text-[10px] text-[#6e6e73] dark:text-[#86868b]">{item.value}</p>
                   </div>
                 </div>
               ))}
@@ -1396,8 +1396,8 @@ export default function DemoPage() {
 
         {/* Data Minimization — What Gets Stored */}
         {step === 'complete' && (
-          <div className="mt-6 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-6">
-            <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-4">
+          <div className="mt-6 bg-white dark:bg-[#141414] rounded-xl border border-[#d2d2d7]/40 dark:border-[#38383a]/40 p-6">
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-[#6e6e73] dark:text-[#86868b] mb-4">
               Never Store What You Don&apos;t Need
             </h3>
             <div className="grid md:grid-cols-2 gap-6">
@@ -1408,7 +1408,7 @@ export default function DemoPage() {
                   </svg>
                   <span className="text-sm font-semibold text-green-600 dark:text-green-400">What Iron Gate Stores</span>
                 </div>
-                <ul className="space-y-2 text-xs text-gray-600 dark:text-gray-400">
+                <ul className="space-y-2 text-xs text-[#6e6e73] dark:text-[#86868b]">
                   <li className="flex items-start gap-2">
                     <span className="text-green-500 mt-0.5">&#10003;</span>
                     <span>SHA-256 hash of the prompt (for deduplication)</span>
@@ -1438,7 +1438,7 @@ export default function DemoPage() {
                   </svg>
                   <span className="text-sm font-semibold text-red-600 dark:text-red-400">What Iron Gate Never Stores</span>
                 </div>
-                <ul className="space-y-2 text-xs text-gray-600 dark:text-gray-400">
+                <ul className="space-y-2 text-xs text-[#6e6e73] dark:text-[#86868b]">
                   <li className="flex items-start gap-2">
                     <span className="text-red-500 mt-0.5">&#10007;</span>
                     <span>The raw prompt text</span>
@@ -1471,7 +1471,7 @@ export default function DemoPage() {
         <div className="mt-12 text-center">
           <Link
             href="/"
-            className="text-sm text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+            className="text-sm text-[#86868b] dark:text-[#636366] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7] transition-colors"
           >
             Back to Home
           </Link>

@@ -131,7 +131,6 @@ export default function WeightsPage() {
 
   useEffect(() => {
     fetchOverrides();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ---------------------------------------------------------------------------
@@ -224,13 +223,13 @@ export default function WeightsPage() {
   if (loading) {
     return (
       <div className="max-w-5xl">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-8">
+        <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7] mb-8">
           Entity Weight Configuration
         </h1>
         <div className="flex items-center justify-center py-16">
           <div className="flex items-center gap-3">
             <div className="w-6 h-6 border-2 border-iron-200 border-t-iron-600 rounded-full animate-spin" />
-            <span className="text-sm text-gray-500 dark:text-gray-400">
+            <span className="text-sm text-[#6e6e73] dark:text-[#86868b]">
               Loading weight overrides...
             </span>
           </div>
@@ -246,10 +245,10 @@ export default function WeightsPage() {
     <div className="max-w-6xl">
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+        <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">
           Entity Weight Configuration
         </h1>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 max-w-2xl">
+        <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-1 max-w-2xl">
           Weights determine how much each entity type contributes to the overall
           risk score of a scanned document. Higher weights cause the entity to
           have a greater impact on flagging content as sensitive. Adjust the
@@ -267,38 +266,38 @@ export default function WeightsPage() {
       {/* Entity categories */}
       {Object.entries(CATEGORY_LABELS).map(([category, types]) => (
         <div key={category} className="mb-8">
-          <h2 className="text-sm font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3">
+          <h2 className="text-sm font-semibold text-[#86868b] dark:text-[#636366] uppercase tracking-wider mb-3">
             {category}
           </h2>
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+          <div className="bg-white dark:bg-[#1c1c1e] rounded-xl shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-gray-200 dark:border-gray-700 text-left bg-gray-50/60 dark:bg-gray-800/60">
-                    <th className="px-4 py-3 font-medium text-gray-500 dark:text-gray-400 w-48">
+                  <tr className="border-b border-[#d2d2d7]/40 dark:border-[#38383a]/60 text-left bg-[#f5f5f7]/60 dark:bg-[#1c1c1e]/60">
+                    <th className="px-4 py-3 font-medium text-[#6e6e73] dark:text-[#86868b] w-48">
                       Entity Type
                     </th>
-                    <th className="px-4 py-3 font-medium text-gray-500 dark:text-gray-400 w-24 text-center">
+                    <th className="px-4 py-3 font-medium text-[#6e6e73] dark:text-[#86868b] w-24 text-center">
                       Weight
                     </th>
-                    <th className="px-4 py-3 font-medium text-gray-500 dark:text-gray-400">
+                    <th className="px-4 py-3 font-medium text-[#6e6e73] dark:text-[#86868b]">
                       Relative Weight
                     </th>
-                    <th className="px-4 py-3 font-medium text-gray-500 dark:text-gray-400 w-28 text-right">
+                    <th className="px-4 py-3 font-medium text-[#6e6e73] dark:text-[#86868b] w-28 text-right">
                       Samples
                     </th>
-                    <th className="px-4 py-3 font-medium text-gray-500 dark:text-gray-400 w-24 text-right">
+                    <th className="px-4 py-3 font-medium text-[#6e6e73] dark:text-[#86868b] w-24 text-right">
                       FP Rate
                     </th>
-                    <th className="px-4 py-3 font-medium text-gray-500 dark:text-gray-400 w-32 text-right">
+                    <th className="px-4 py-3 font-medium text-[#6e6e73] dark:text-[#86868b] w-32 text-right">
                       Last Updated
                     </th>
-                    <th className="px-4 py-3 font-medium text-gray-500 dark:text-gray-400 w-48 text-right">
+                    <th className="px-4 py-3 font-medium text-[#6e6e73] dark:text-[#86868b] w-48 text-right">
                       Actions
                     </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                <tbody className="divide-y divide-[#d2d2d7]/40 dark:divide-[#38383a]/60">
                   {types.map((entityType) => {
                     const override = getOverride(entityType);
                     const isOverridden = hasOverride(entityType);
@@ -312,22 +311,22 @@ export default function WeightsPage() {
                       <tr
                         key={entityType}
                         className={`group transition-colors ${
-                          isDirty ? 'bg-iron-50/40 dark:bg-iron-900/20' : 'hover:bg-gray-50/50 dark:hover:bg-gray-700/30'
+                          isDirty ? 'bg-iron-50/40 dark:bg-iron-900/20' : 'hover:bg-[#f5f5f7]/50 dark:hover:bg-[#2c2c2e]/30'
                         }`}
                       >
                         {/* Entity type name */}
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
-                            <span className="font-medium text-gray-900 dark:text-white">
+                            <span className="font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">
                               {formatEntityType(entityType)}
                             </span>
                             {!isOverridden && (
-                              <span className="text-[10px] font-medium text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded">
+                              <span className="text-[10px] font-medium text-[#86868b] dark:text-[#636366] bg-[#f5f5f7] dark:bg-[#2c2c2e] px-1.5 py-0.5 rounded">
                                 DEFAULT
                               </span>
                             )}
                           </div>
-                          <span className="font-mono text-[11px] text-gray-400 dark:text-gray-500">
+                          <span className="font-mono text-[11px] text-[#86868b] dark:text-[#636366]">
                             {entityType}
                           </span>
                         </td>
@@ -349,8 +348,8 @@ export default function WeightsPage() {
                               }
                               className={`w-20 text-center rounded-lg border px-2 py-1.5 text-sm font-medium tabular-nums focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 ${
                                 isOverridden
-                                  ? 'border-gray-300 dark:border-gray-600 text-gray-900 dark:text-white dark:bg-gray-700'
-                                  : 'border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500 dark:bg-gray-800'
+                                  ? 'border-[#d2d2d7] dark:border-[#38383a] text-[#1d1d1f] dark:text-[#f5f5f7] dark:bg-[#2c2c2e]'
+                                  : 'border-[#d2d2d7]/40 dark:border-[#38383a]/60 text-[#86868b] dark:text-[#636366] dark:bg-[#1c1c1e]'
                               }`}
                             />
                             <input
@@ -373,7 +372,7 @@ export default function WeightsPage() {
                         {/* Visual weight bar */}
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
-                            <div className="flex-1 h-2 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+                            <div className="flex-1 h-2 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded-full overflow-hidden">
                               <div
                                 className={`h-full rounded-full transition-all duration-300 ${weightBarColor(
                                   currentWeight,
@@ -386,17 +385,17 @@ export default function WeightsPage() {
                                 }}
                               />
                             </div>
-                            <span className="text-xs text-gray-400 dark:text-gray-500 tabular-nums w-8 text-right">
+                            <span className="text-xs text-[#86868b] dark:text-[#636366] tabular-nums w-8 text-right">
                               {currentWeight}
                             </span>
                           </div>
                         </td>
 
                         {/* Sample count */}
-                        <td className="px-4 py-3 text-right tabular-nums text-gray-600 dark:text-gray-400">
+                        <td className="px-4 py-3 text-right tabular-nums text-[#6e6e73] dark:text-[#86868b]">
                           {override
                             ? override.sampleCount.toLocaleString()
-                            : <span className="text-gray-300 dark:text-gray-600">--</span>}
+                            : <span className="text-[#d2d2d7] dark:text-[#38383a]">--</span>}
                         </td>
 
                         {/* False positive rate */}
@@ -410,15 +409,15 @@ export default function WeightsPage() {
                               {(override.falsePositiveRate * 100).toFixed(1)}%
                             </span>
                           ) : (
-                            <span className="text-gray-300 dark:text-gray-600 text-xs">--</span>
+                            <span className="text-[#d2d2d7] dark:text-[#38383a] text-xs">--</span>
                           )}
                         </td>
 
                         {/* Last updated */}
-                        <td className="px-4 py-3 text-right text-gray-500 dark:text-gray-400 whitespace-nowrap text-xs">
+                        <td className="px-4 py-3 text-right text-[#6e6e73] dark:text-[#86868b] whitespace-nowrap text-xs">
                           {override
                             ? new Date(override.lastUpdated).toLocaleDateString()
-                            : <span className="text-gray-300 dark:text-gray-600">--</span>}
+                            : <span className="text-[#d2d2d7] dark:text-[#38383a]">--</span>}
                         </td>
 
                         {/* Actions */}
@@ -433,7 +432,7 @@ export default function WeightsPage() {
                                   ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800'
                                   : isDirty
                                     ? 'bg-iron-600 hover:bg-iron-700 text-white'
-                                    : 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                                    : 'bg-[#f5f5f7] dark:bg-[#2c2c2e] text-[#86868b] dark:text-[#636366] cursor-not-allowed'
                               }`}
                             >
                               {isSaving ? (
@@ -456,13 +455,13 @@ export default function WeightsPage() {
                               }
                               className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-colors ${
                                 isOverridden || isDirty
-                                  ? 'bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-400'
-                                  : 'bg-gray-50 dark:bg-gray-800 text-gray-300 dark:text-gray-600 cursor-not-allowed'
+                                  ? 'bg-[#f5f5f7] dark:bg-[#2c2c2e] hover:bg-[#d2d2d7]/40 dark:hover:bg-[#38383a] text-[#6e6e73] dark:text-[#86868b]'
+                                  : 'bg-[#f5f5f7] dark:bg-[#2c2c2e] text-[#d2d2d7] dark:text-[#38383a] cursor-not-allowed'
                               }`}
                             >
                               {isResetting ? (
                                 <span className="flex items-center gap-1.5">
-                                  <span className="w-3 h-3 border-2 border-gray-300/30 border-t-gray-500 rounded-full animate-spin" />
+                                  <span className="w-3 h-3 border-2 border-[#d2d2d7]/30 border-t-[#6e6e73] rounded-full animate-spin" />
                                   Resetting
                                 </span>
                               ) : (
@@ -482,11 +481,11 @@ export default function WeightsPage() {
       ))}
 
       {/* Legend */}
-      <div className="mt-2 mb-8 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-        <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
+      <div className="mt-2 mb-8 bg-[#f5f5f7] dark:bg-[#2c2c2e]/50 rounded-xl border border-[#d2d2d7]/40 dark:border-[#38383a]/60 p-4">
+        <h3 className="text-xs font-semibold text-[#6e6e73] dark:text-[#86868b] uppercase tracking-wider mb-3">
           Weight Bar Legend
         </h3>
-        <div className="flex flex-wrap gap-4 text-xs text-gray-600 dark:text-gray-400">
+        <div className="flex flex-wrap gap-4 text-xs text-[#6e6e73] dark:text-[#86868b]">
           <div className="flex items-center gap-1.5">
             <span className="w-3 h-3 rounded-sm bg-blue-500" />
             <span>Low (&lt; 15)</span>
@@ -503,7 +502,7 @@ export default function WeightsPage() {
             <span className="w-3 h-3 rounded-sm bg-red-500" />
             <span>Critical (40+)</span>
           </div>
-          <span className="ml-auto text-gray-400 dark:text-gray-500">
+          <span className="ml-auto text-[#86868b] dark:text-[#636366]">
             Weights range from 0.1 to 3.0. Default values shown when no override exists.
           </span>
         </div>

@@ -1093,20 +1093,17 @@ export function App() {
               <div className="p-3 max-h-64 overflow-y-auto">
                 {inspectorView === 'original' && (
                   <div>
-                    <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1.5">Detected sensitive entities</p>
-                    <p className="text-xs text-gray-500 mb-2">Original prompt text is not stored for security. See the mappings below for detected entities.</p>
-                    {inspectorData.pseudonymMappings.length > 0 ? (
-                      <div className="space-y-1">
-                        {inspectorData.pseudonymMappings.map((m, i) => (
-                          <div key={i} className="flex items-center gap-2 text-xs bg-red-50 border border-red-100 rounded px-2 py-1">
-                            <span className="text-red-600 font-medium">{m.type}</span>
-                            <span className="text-gray-400">{m.pseudonym}</span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-gray-400 italic">No entities detected</p>
-                    )}
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1.5">Original prompt (with sensitive data)</p>
+                    <pre className="text-xs text-gray-700 whitespace-pre-wrap break-words bg-red-50 border border-red-100 rounded-md p-2.5 leading-relaxed font-mono">
+                      {(() => {
+                        // Reconstruct original prompt by reversing pseudonym mappings
+                        let text = inspectorData.maskedPrompt;
+                        for (const m of inspectorData.pseudonymMappings) {
+                          text = text.split(m.pseudonym).join(m.original);
+                        }
+                        return text;
+                      })()}
+                    </pre>
                   </div>
                 )}
 

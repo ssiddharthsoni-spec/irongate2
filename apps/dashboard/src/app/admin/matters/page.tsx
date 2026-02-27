@@ -264,12 +264,12 @@ export default function MattersPage() {
   function statusBadge(status: Matter['status']) {
     const styles: Record<Matter['status'], string> = {
       active: 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400',
-      closed: 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400',
+      closed: 'bg-[#f5f5f7] dark:bg-[#2c2c2e] text-[#6e6e73] dark:text-[#86868b]',
       archived: 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400',
     };
     const dotStyles: Record<Matter['status'], string> = {
       active: 'bg-green-500',
-      closed: 'bg-gray-400',
+      closed: 'bg-[#86868b]',
       archived: 'bg-yellow-500',
     };
     return (
@@ -302,24 +302,24 @@ export default function MattersPage() {
       <div className="max-w-5xl">
         {/* Breadcrumb */}
         <nav aria-label="Breadcrumb" className="mb-4 text-sm">
-          <ol className="flex items-center gap-1.5 text-gray-500 dark:text-gray-400">
-            <li><a href="/admin" className="hover:text-gray-700 dark:hover:text-gray-300 transition-colors">Admin</a></li>
+          <ol className="flex items-center gap-1.5 text-[#6e6e73] dark:text-[#86868b]">
+            <li><a href="/admin" className="hover:text-[#424245] dark:hover:text-[#d2d2d7] transition-colors">Admin</a></li>
             <li><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg></li>
-            <li className="font-medium text-gray-900 dark:text-white">Matters</li>
+            <li className="font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">Matters</li>
           </ol>
         </nav>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-8">Client Matters</h1>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
+        <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7] mb-8">Client Matters</h1>
+        <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
           <div className="space-y-4">
             {Array.from({ length: 5 }).map((_, i) => (
               <div key={i} className="flex items-center gap-4 animate-pulse">
-                <div className="h-4 w-32 bg-gray-200 dark:bg-gray-700 rounded" />
-                <div className="h-4 w-20 bg-gray-200 dark:bg-gray-700 rounded" />
-                <div className="h-4 w-40 bg-gray-200 dark:bg-gray-700 rounded" />
-                <div className="h-4 w-24 bg-gray-200 dark:bg-gray-700 rounded" />
-                <div className="h-5 w-16 bg-gray-200 dark:bg-gray-700 rounded-full" />
+                <div className="h-4 w-32 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded" />
+                <div className="h-4 w-20 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded" />
+                <div className="h-4 w-40 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded" />
+                <div className="h-4 w-24 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded" />
+                <div className="h-5 w-16 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded-full" />
                 <div className="flex-1" />
-                <div className="h-4 w-20 bg-gray-200 dark:bg-gray-700 rounded" />
+                <div className="h-4 w-20 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded" />
               </div>
             ))}
           </div>
@@ -335,23 +335,23 @@ export default function MattersPage() {
     <div className="max-w-5xl">
       {/* Breadcrumb */}
       <nav aria-label="Breadcrumb" className="mb-4 text-sm">
-        <ol className="flex items-center gap-1.5 text-gray-500 dark:text-gray-400">
-          <li><a href="/admin" className="hover:text-gray-700 dark:hover:text-gray-300 transition-colors">Admin</a></li>
+        <ol className="flex items-center gap-1.5 text-[#6e6e73] dark:text-[#86868b]">
+          <li><a href="/admin" className="hover:text-[#424245] dark:hover:text-[#d2d2d7] transition-colors">Admin</a></li>
           <li><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg></li>
-          <li className="font-medium text-gray-900 dark:text-white">Matters</li>
+          <li className="font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">Matters</li>
         </ol>
       </nav>
 
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Client Matters</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+          <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Client Matters</h1>
+          <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-1">
             Manage client-matter records used for sensitivity detection and data classification.
           </p>
         </div>
         <button
           onClick={() => setShowUpload(!showUpload)}
-          className="min-h-[44px] bg-iron-600 hover:bg-iron-700 text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900"
+          className="min-h-[44px] bg-iron-600 hover:bg-iron-700 text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-[#111113]"
         >
           {showUpload ? 'Cancel' : 'Import CSV'}
         </button>
@@ -366,23 +366,23 @@ export default function MattersPage() {
 
       {/* CSV upload area */}
       {showUpload && (
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700 mb-6">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Import Client Matters</h2>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+        <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 mb-6">
+          <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-2">Import Client Matters</h2>
+          <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mb-4">
             Upload a CSV file with columns: clientName, clientNumber, matterName, matterNumber, status.
           </p>
-          <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-8 text-center">
+          <div className="border-2 border-dashed border-[#d2d2d7] dark:border-[#38383a] rounded-lg p-8 text-center">
             {uploading ? (
               <div className="flex flex-col items-center gap-2">
                 <div className="w-6 h-6 border-2 border-iron-200 border-t-iron-600 rounded-full animate-spin" />
-                <p className="text-sm text-gray-500 dark:text-gray-400">Uploading and processing CSV...</p>
+                <p className="text-sm text-[#6e6e73] dark:text-[#86868b]">Uploading and processing CSV...</p>
               </div>
             ) : (
               <>
-                <svg className="mx-auto h-10 w-10 text-gray-400 dark:text-gray-500 mb-3" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <svg className="mx-auto h-10 w-10 text-[#86868b] dark:text-[#636366] mb-3" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
                 </svg>
-                <p className="text-sm text-gray-400 dark:text-gray-500">Drag and drop a CSV file here, or click to browse</p>
+                <p className="text-sm text-[#86868b] dark:text-[#636366]">Drag and drop a CSV file here, or click to browse</p>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -393,7 +393,7 @@ export default function MattersPage() {
                 />
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className="mt-3 px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-sm hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                  className="mt-3 px-4 py-2 bg-[#f5f5f7] dark:bg-[#2c2c2e] text-[#424245] dark:text-[#a1a1a6] rounded-lg text-sm hover:bg-[#d2d2d7]/40 dark:hover:bg-[#38383a] transition-colors"
                 >
                   Browse Files
                 </button>
@@ -416,11 +416,11 @@ export default function MattersPage() {
       )}
 
       {/* Search and filter bar */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-200 dark:border-gray-700 mb-6">
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-4 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 mb-6">
         <div className="flex flex-col sm:flex-row gap-3">
           <div className="flex-1 relative">
             <svg
-              className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-gray-500"
+              className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#86868b] dark:text-[#636366]"
               fill="none"
               viewBox="0 0 24 24"
               strokeWidth={1.5}
@@ -433,13 +433,13 @@ export default function MattersPage() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search by client name, matter name, or number..."
-              className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 placeholder-gray-400 dark:placeholder-gray-500"
+              className="w-full rounded-lg border border-[#d2d2d7] dark:border-[#38383a] bg-white dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 placeholder-[#86868b] dark:placeholder-[#636366]"
             />
           </div>
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as 'all' | 'active' | 'closed' | 'archived')}
-            className="rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500"
+            className="rounded-lg border border-[#d2d2d7] dark:border-[#38383a] bg-white dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500"
           >
             <option value="all">All Statuses</option>
             <option value="active">Active</option>
@@ -450,9 +450,9 @@ export default function MattersPage() {
       </div>
 
       {/* Matters table */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
         {filteredMatters.length === 0 ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-8">
+          <p className="text-sm text-[#6e6e73] dark:text-[#86868b] text-center py-8">
             {matters.length === 0
               ? 'No client matters found. Click "Import CSV" to add records.'
               : 'No matters match your search criteria.'}
@@ -461,35 +461,35 @@ export default function MattersPage() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-gray-200 dark:border-gray-700 text-left">
-                  <th className="pb-3 font-medium text-gray-500 dark:text-gray-400">Client Name</th>
-                  <th className="pb-3 font-medium text-gray-500 dark:text-gray-400">Client #</th>
-                  <th className="pb-3 font-medium text-gray-500 dark:text-gray-400">Matter Name</th>
-                  <th className="pb-3 font-medium text-gray-500 dark:text-gray-400">Matter #</th>
-                  <th className="pb-3 font-medium text-gray-500 dark:text-gray-400">Status</th>
-                  <th className="pb-3 font-medium text-gray-500 dark:text-gray-400">Imported</th>
-                  <th className="pb-3 font-medium text-gray-500 dark:text-gray-400 text-right">Actions</th>
+                <tr className="border-b border-[#d2d2d7]/40 dark:border-[#38383a]/60 text-left">
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b]">Client Name</th>
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b]">Client #</th>
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b]">Matter Name</th>
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b]">Matter #</th>
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b]">Status</th>
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b]">Imported</th>
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b] text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+              <tbody className="divide-y divide-[#d2d2d7]/40 dark:divide-[#38383a]/60">
                 {filteredMatters.map((matter) => (
                   <tr key={matter.id}>
                     <td className="py-3 pr-4">
-                      <p className="font-medium text-gray-900 dark:text-white">{matter.clientName}</p>
+                      <p className="font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">{matter.clientName}</p>
                     </td>
                     <td className="py-3 pr-4">
-                      <span className="font-mono text-xs text-gray-600 dark:text-gray-400">{matter.clientNumber}</span>
+                      <span className="font-mono text-xs text-[#6e6e73] dark:text-[#86868b]">{matter.clientNumber}</span>
                     </td>
-                    <td className="py-3 pr-4 text-gray-700 dark:text-gray-300">
+                    <td className="py-3 pr-4 text-[#424245] dark:text-[#a1a1a6]">
                       {matter.matterName}
                     </td>
                     <td className="py-3 pr-4">
-                      <span className="font-mono text-xs text-gray-600 dark:text-gray-400">{matter.matterNumber}</span>
+                      <span className="font-mono text-xs text-[#6e6e73] dark:text-[#86868b]">{matter.matterNumber}</span>
                     </td>
                     <td className="py-3 pr-4">
                       {statusBadge(matter.status)}
                     </td>
-                    <td className="py-3 pr-4 text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                    <td className="py-3 pr-4 text-[#6e6e73] dark:text-[#86868b] whitespace-nowrap">
                       {new Date(matter.importedAt).toLocaleDateString('en-US', {
                         month: 'short',
                         day: 'numeric',
@@ -514,8 +514,8 @@ export default function MattersPage() {
 
         {/* Record count */}
         {matters.length > 0 && (
-          <div className="mt-4 pt-3 border-t border-gray-100 dark:border-gray-700">
-            <p className="text-xs text-gray-400 dark:text-gray-500">
+          <div className="mt-4 pt-3 border-t border-[#d2d2d7]/30 dark:border-[#38383a]/60">
+            <p className="text-xs text-[#86868b] dark:text-[#636366]">
               Showing {filteredMatters.length} of {matters.length} matter{matters.length !== 1 ? 's' : ''}
             </p>
           </div>
@@ -526,7 +526,7 @@ export default function MattersPage() {
       {confirmDeleteId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/50" onClick={() => setConfirmDeleteId(null)} />
-          <div role="alertdialog" aria-modal="true" aria-label="Confirm deletion" className="relative bg-white dark:bg-gray-800 rounded-xl p-6 max-w-sm mx-4 shadow-xl border border-gray-200 dark:border-gray-700">
+          <div role="alertdialog" aria-modal="true" aria-label="Confirm deletion" className="relative bg-white dark:bg-[#1c1c1e] rounded-xl p-6 max-w-sm mx-4 shadow-xl border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center flex-shrink-0">
                 <svg className="w-5 h-5 text-red-600 dark:text-red-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
@@ -534,8 +534,8 @@ export default function MattersPage() {
                 </svg>
               </div>
               <div>
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Delete Matter</h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
+                <h3 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">Delete Matter</h3>
+                <p className="text-sm text-[#6e6e73] dark:text-[#86868b]">
                   Are you sure you want to delete this client matter? This action cannot be undone.
                 </p>
               </div>
@@ -543,7 +543,7 @@ export default function MattersPage() {
             <div className="flex justify-end gap-3">
               <button
                 onClick={() => setConfirmDeleteId(null)}
-                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                className="px-4 py-2 text-sm font-medium text-[#424245] dark:text-[#a1a1a6] bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded-lg hover:bg-[#d2d2d7]/40 dark:hover:bg-[#38383a] transition-colors"
               >
                 Cancel
               </button>

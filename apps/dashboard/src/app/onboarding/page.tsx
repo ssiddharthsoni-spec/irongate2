@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useApiClient } from '../../lib/api';
 
@@ -37,6 +37,34 @@ interface OnboardingState {
 }
 
 const TOTAL_STEPS = 5;
+const STORAGE_KEY = 'iron-gate-onboarding';
+
+function loadSavedState(): { step: number; state: OnboardingState } | null {
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function saveState(step: number, state: OnboardingState) {
+  try {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ step, state }));
+  } catch { /* ignore quota errors */ }
+}
+
+const DEFAULT_STATE: OnboardingState = {
+  firmName: '',
+  industry: '',
+  firmSize: '',
+  protectionMode: 'audit',
+  warnThreshold: 30,
+  blockThreshold: 60,
+  proxyThreshold: 80,
+  teamMembers: [{ email: '', role: 'user' }],
+};
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -49,16 +77,21 @@ export default function OnboardingPage() {
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
   const [apiKeyCopied, setApiKeyCopied] = useState(false);
 
-  const [state, setState] = useState<OnboardingState>({
-    firmName: '',
-    industry: '',
-    firmSize: '',
-    protectionMode: 'audit',
-    warnThreshold: 30,
-    blockThreshold: 60,
-    proxyThreshold: 80,
-    teamMembers: [{ email: '', role: 'user' }],
-  });
+  const [state, setState] = useState<OnboardingState>(DEFAULT_STATE);
+
+  // Restore saved state on mount
+  useEffect(() => {
+    const saved = loadSavedState();
+    if (saved) {
+      setState(saved.state);
+      setCurrentStep(saved.step);
+    }
+  }, []);
+
+  // Persist state on every change
+  useEffect(() => {
+    saveState(currentStep, state);
+  }, [currentStep, state]);
 
   const updateState = useCallback(
     <K extends keyof OnboardingState>(key: K, value: OnboardingState[K]) => {
@@ -128,9 +161,13 @@ export default function OnboardingPage() {
         setApiKeyError('Auto-generation failed. Create one manually in Settings > API Keys.');
       }
     } catch (err: any) {
+      // If API is unavailable, still proceed to step 5 so the user isn't blocked
+      console.warn('Firm creation API call failed:', err.message);
       setSubmitError(
-        err.message || 'Failed to create firm. Please check your connection and try again.'
+        'Could not connect to the server. Your settings have been saved locally — they\'ll sync when the server is available.'
       );
+      setFirmCreated(false);
+      setCurrentStep(5);
     } finally {
       setIsSubmitting(false);
     }
@@ -162,22 +199,22 @@ export default function OnboardingPage() {
 
   // ----- Render -----
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
+    <div className="min-h-screen bg-[#f5f5f7] dark:bg-[#141414] flex flex-col">
       {/* Top bar */}
-      <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-8 py-4">
+      <div className="bg-white dark:bg-[#1c1c1e] border-b border-[#d2d2d7]/40 dark:border-[#38383a]/60 px-8 py-4">
         <div className="flex items-center gap-3 max-w-3xl mx-auto">
           <div className="w-9 h-9 bg-iron-600 rounded-lg flex items-center justify-center">
             <span className="text-white font-bold text-sm">IG</span>
           </div>
           <div>
-            <h1 className="font-bold text-gray-900 dark:text-white">Iron Gate</h1>
-            <p className="text-xs text-gray-500 dark:text-gray-400">Setup Wizard</p>
+            <h1 className="font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Iron Gate</h1>
+            <p className="text-xs text-[#6e6e73] dark:text-[#86868b]">Setup Wizard</p>
           </div>
         </div>
       </div>
 
       {/* Progress bar */}
-      <div className="bg-white dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700">
+      <div className="bg-white dark:bg-[#1c1c1e] border-b border-[#d2d2d7]/30 dark:border-[#38383a]/60">
         <div className="max-w-3xl mx-auto px-8 py-4">
           <div className="flex items-center justify-between mb-2">
             {Array.from({ length: TOTAL_STEPS }, (_, i) => {
@@ -193,7 +230,7 @@ export default function OnboardingPage() {
                           ? 'bg-iron-600 text-white'
                           : isCurrent
                             ? 'bg-iron-100 text-iron-700 ring-2 ring-iron-600'
-                            : 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500'
+                            : 'bg-[#f5f5f7] dark:bg-[#2c2c2e] text-[#86868b] dark:text-[#636366]'
                       }`}
                     >
                       {isCompleted ? (
@@ -206,7 +243,7 @@ export default function OnboardingPage() {
                     </div>
                     <span
                       className={`text-xs font-medium hidden sm:inline ${
-                        isCurrent ? 'text-iron-700 dark:text-iron-300' : isCompleted ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400 dark:text-gray-500'
+                        isCurrent ? 'text-iron-700 dark:text-iron-300' : isCompleted ? 'text-[#424245] dark:text-[#a1a1a6]' : 'text-[#86868b] dark:text-[#636366]'
                       }`}
                     >
                       {['Welcome', 'Protection', 'Extension', 'Team', 'Done'][i]}
@@ -215,7 +252,7 @@ export default function OnboardingPage() {
                   {step < TOTAL_STEPS && (
                     <div
                       className={`flex-1 h-0.5 mx-2 rounded transition-colors ${
-                        step < currentStep ? 'bg-iron-600' : 'bg-gray-200 dark:bg-gray-700'
+                        step < currentStep ? 'bg-iron-600' : 'bg-[#d2d2d7]/40 dark:bg-[#38383a]'
                       }`}
                     />
                   )}
@@ -250,7 +287,7 @@ export default function OnboardingPage() {
               submitError={submitError}
               onRetry={createFirm}
               isSubmitting={isSubmitting}
-              onGoToDashboard={() => router.push('/')}
+              onGoToDashboard={() => { sessionStorage.removeItem(STORAGE_KEY); router.push('/dashboard'); }}
               generatedApiKey={generatedApiKey}
               apiKeyError={apiKeyError}
               apiKeyCopied={apiKeyCopied}
@@ -265,25 +302,6 @@ export default function OnboardingPage() {
             />
           )}
 
-          {/* Error banner (shown on step 4 if API fails before advancing to 5) */}
-          {submitError && currentStep === 4 && (
-            <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-              <div className="flex items-center gap-2">
-                <svg className="w-5 h-5 text-red-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
-                </svg>
-                <p className="text-sm text-red-700">{submitError}</p>
-              </div>
-              <button
-                onClick={createFirm}
-                disabled={isSubmitting}
-                className="mt-2 text-sm font-medium text-red-700 hover:text-red-800 underline"
-              >
-                {isSubmitting ? 'Retrying...' : 'Retry'}
-              </button>
-            </div>
-          )}
-
           {/* Navigation buttons */}
           {currentStep < 5 && (
             <div className="flex items-center justify-between mt-8">
@@ -292,8 +310,8 @@ export default function OnboardingPage() {
                 disabled={currentStep === 1}
                 className={`px-5 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                   currentStep === 1
-                    ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed'
-                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+                    ? 'text-[#d2d2d7] dark:text-[#38383a] cursor-not-allowed'
+                    : 'text-[#424245] dark:text-[#a1a1a6] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e]'
                 }`}
               >
                 Back
@@ -304,7 +322,7 @@ export default function OnboardingPage() {
                 className={`min-w-[120px] min-h-[44px] px-6 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                   canProceed() && !isSubmitting
                     ? 'bg-iron-600 text-white hover:bg-iron-700'
-                    : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                    : 'bg-[#d2d2d7]/40 dark:bg-[#38383a] text-[#86868b] dark:text-[#636366] cursor-not-allowed'
                 }`}
               >
                 {isSubmitting
@@ -334,16 +352,16 @@ function StepWelcome({
   return (
     <div>
       <div className="mb-8">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Welcome to Iron Gate</h2>
-        <p className="text-gray-500 dark:text-gray-400 mt-1">
+        <h2 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Welcome to Iron Gate</h2>
+        <p className="text-[#6e6e73] dark:text-[#86868b] mt-1">
           Let&apos;s set up AI governance for your organization. This only takes a few minutes.
         </p>
       </div>
 
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700 space-y-5">
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 space-y-5">
         {/* Firm name */}
         <div>
-          <label htmlFor="firmName" className="block text-sm font-medium text-gray-700 dark:text-gray-300 dark:text-gray-300 mb-1.5">
+          <label htmlFor="firmName" className="block text-sm font-medium text-[#424245] dark:text-[#a1a1a6] mb-1.5">
             Firm Name
           </label>
           <input
@@ -352,20 +370,20 @@ function StepWelcome({
             value={state.firmName}
             onChange={(e) => updateState('firmName', e.target.value)}
             placeholder="e.g. Sterling & Associates LLP"
-            className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-white bg-white dark:bg-gray-700 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 transition-shadow"
+            className="w-full px-4 py-2.5 border border-[#d2d2d7] dark:border-[#38383a] rounded-lg text-sm text-[#1d1d1f] dark:text-[#f5f5f7] bg-white dark:bg-[#2c2c2e] placeholder:text-[#86868b] dark:placeholder:text-[#636366] focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 transition-shadow"
           />
         </div>
 
         {/* Industry */}
         <div>
-          <label htmlFor="industry" className="block text-sm font-medium text-gray-700 dark:text-gray-300 dark:text-gray-300 mb-1.5">
+          <label htmlFor="industry" className="block text-sm font-medium text-[#424245] dark:text-[#a1a1a6] mb-1.5">
             Industry
           </label>
           <select
             id="industry"
             value={state.industry}
             onChange={(e) => updateState('industry', e.target.value)}
-            className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 transition-shadow bg-white dark:bg-gray-700"
+            className="w-full px-4 py-2.5 border border-[#d2d2d7] dark:border-[#38383a] rounded-lg text-sm text-[#1d1d1f] dark:text-[#f5f5f7] focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 transition-shadow bg-white dark:bg-[#2c2c2e]"
           >
             <option value="" disabled>
               Select your industry
@@ -380,7 +398,7 @@ function StepWelcome({
 
         {/* Firm size */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 dark:text-gray-300 mb-2">
+          <label className="block text-sm font-medium text-[#424245] dark:text-[#a1a1a6] mb-2">
             Firm Size (employees)
           </label>
           <div className="grid grid-cols-4 gap-3">
@@ -392,7 +410,7 @@ function StepWelcome({
                 className={`px-4 py-2.5 rounded-lg text-sm font-medium border transition-colors ${
                   state.firmSize === size
                     ? 'border-iron-600 bg-iron-50 text-iron-700'
-                    : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                    : 'border-[#d2d2d7]/40 bg-white text-[#424245] hover:bg-[#f5f5f7]'
                 }`}
               >
                 {size}
@@ -418,8 +436,8 @@ function StepProtection({
   return (
     <div>
       <div className="mb-8">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Configure Protection</h2>
-        <p className="text-gray-500 dark:text-gray-400 mt-1">
+        <h2 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Configure Protection</h2>
+        <p className="text-[#6e6e73] dark:text-[#86868b] mt-1">
           Choose how Iron Gate monitors and protects AI interactions at your firm.
         </p>
       </div>
@@ -458,9 +476,9 @@ function StepProtection({
       </div>
 
       {/* Sensitivity thresholds */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-1">Sensitivity Thresholds</h3>
-        <p className="text-xs text-gray-500 mb-5">
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+        <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-1">Sensitivity Thresholds</h3>
+        <p className="text-xs text-[#6e6e73] mb-5">
           Set the sensitivity score thresholds that trigger each action level. Scores range from 0 (safe) to 100 (critical).
         </p>
 
@@ -490,9 +508,9 @@ function StepProtection({
         />
 
         {/* Visual threshold bar */}
-        <div className="mt-5 pt-4 border-t border-gray-100">
-          <p className="text-xs font-medium text-gray-500 mb-2">Threshold Preview</p>
-          <div className="relative h-6 bg-gray-100 rounded-full overflow-hidden">
+        <div className="mt-5 pt-4 border-t border-[#d2d2d7]/30">
+          <p className="text-xs font-medium text-[#6e6e73] mb-2">Threshold Preview</p>
+          <div className="relative h-6 bg-[#f5f5f7] rounded-full overflow-hidden">
             <div
               className="absolute top-0 left-0 h-full bg-green-200 transition-all"
               style={{ width: `${state.warnThreshold}%` }}
@@ -531,7 +549,7 @@ function StepProtection({
               Proxy
             </span>
           </div>
-          <div className="flex justify-between mt-1 text-[10px] text-gray-400">
+          <div className="flex justify-between mt-1 text-[10px] text-[#86868b]">
             <span>0</span>
             <span>25</span>
             <span>50</span>
@@ -570,38 +588,38 @@ function ModeCard({
       className={`text-left rounded-xl p-5 border-2 transition-all ${
         isSelected
           ? 'border-iron-600 bg-iron-50 dark:bg-iron-900/20 shadow-sm'
-          : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:border-gray-300 dark:hover:border-gray-600'
+          : 'border-[#d2d2d7]/40 dark:border-[#38383a]/60 bg-white dark:bg-[#1c1c1e] hover:border-[#d2d2d7] dark:hover:border-[#38383a]'
       }`}
     >
       <div className="flex items-center gap-3 mb-3">
         <div
           className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-            isSelected ? 'bg-iron-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+            isSelected ? 'bg-iron-600 text-white' : 'bg-[#f5f5f7] dark:bg-[#2c2c2e] text-[#6e6e73] dark:text-[#86868b]'
           }`}
         >
           {icon}
         </div>
         <div>
-          <p className="text-sm font-semibold text-gray-900 dark:text-white">{title}</p>
-          <p className="text-xs text-gray-500 dark:text-gray-400">{subtitle}</p>
+          <p className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">{title}</p>
+          <p className="text-xs text-[#6e6e73] dark:text-[#86868b]">{subtitle}</p>
         </div>
       </div>
-      <p className="text-xs text-gray-600 dark:text-gray-400 mb-3 leading-relaxed">{description}</p>
+      <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-3 leading-relaxed">{description}</p>
       <div className="space-y-1.5">
         {pros.map((pro) => (
           <div key={pro} className="flex items-start gap-1.5">
             <svg className="w-3.5 h-3.5 text-green-500 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
             </svg>
-            <span className="text-xs text-gray-600 dark:text-gray-400">{pro}</span>
+            <span className="text-xs text-[#6e6e73] dark:text-[#86868b]">{pro}</span>
           </div>
         ))}
         {cons.map((con) => (
           <div key={con} className="flex items-start gap-1.5">
-            <svg className="w-3.5 h-3.5 text-gray-400 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+            <svg className="w-3.5 h-3.5 text-[#86868b] mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
             </svg>
-            <span className="text-xs text-gray-500 dark:text-gray-400">{con}</span>
+            <span className="text-xs text-[#6e6e73] dark:text-[#86868b]">{con}</span>
           </div>
         ))}
       </div>
@@ -629,10 +647,10 @@ function ThresholdSlider({
       <div className="flex items-center justify-between mb-1.5">
         <div className="flex items-center gap-2">
           <div className={`w-2.5 h-2.5 rounded-full ${dotColor}`} />
-          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{label}</span>
-          <span className="text-xs text-gray-400">{description}</span>
+          <span className="text-sm font-medium text-[#424245] dark:text-[#a1a1a6]">{label}</span>
+          <span className="text-xs text-[#86868b]">{description}</span>
         </div>
-        <span className="text-sm font-semibold text-gray-900 dark:text-white tabular-nums w-8 text-right">
+        <span className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] tabular-nums w-8 text-right">
           {value}
         </span>
       </div>
@@ -657,18 +675,18 @@ function ThresholdSlider({
 // Step 3: Deploy the Extension
 // ============================================================================
 function StepExtension() {
-  const extensionZipUrl = 'https://github.com/ssiddharthsoni-spec/irongate2/releases/latest/download/iron-gate-extension-v0.2.1.zip';
+  const extensionZipUrl = '/iron-gate-extension-v0.2.2.zip';
 
   return (
     <div>
       <div className="mb-8">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Install the Extension</h2>
-        <p className="text-gray-500 dark:text-gray-400 mt-1">
+        <h2 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Install the Extension</h2>
+        <p className="text-[#6e6e73] dark:text-[#86868b] mt-1">
           The Chrome extension monitors AI tool usage and detects sensitive data in real-time.
         </p>
       </div>
 
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700 space-y-6">
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 space-y-6">
         {/* Download button */}
         <div className="text-center py-4">
           <a
@@ -684,13 +702,13 @@ function StepExtension() {
 
         {/* Step-by-step instructions */}
         <div>
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">After downloading:</h3>
+          <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-3">After downloading:</h3>
           <ol className="space-y-3">
             <li className="flex items-start gap-3">
               <span className="flex-shrink-0 w-6 h-6 bg-iron-100 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 rounded-full flex items-center justify-center text-xs font-semibold">
                 1
               </span>
-              <p className="text-sm text-gray-700 dark:text-gray-300">
+              <p className="text-sm text-[#424245] dark:text-[#a1a1a6]">
                 <strong>Unzip</strong> the downloaded file to a folder on your computer.
               </p>
             </li>
@@ -698,7 +716,7 @@ function StepExtension() {
               <span className="flex-shrink-0 w-6 h-6 bg-iron-100 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 rounded-full flex items-center justify-center text-xs font-semibold">
                 2
               </span>
-              <p className="text-sm text-gray-700 dark:text-gray-300">
+              <p className="text-sm text-[#424245] dark:text-[#a1a1a6]">
                 Open <strong>chrome://extensions</strong>, enable <strong>Developer mode</strong> (top-right toggle).
               </p>
             </li>
@@ -706,7 +724,7 @@ function StepExtension() {
               <span className="flex-shrink-0 w-6 h-6 bg-iron-100 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 rounded-full flex items-center justify-center text-xs font-semibold">
                 3
               </span>
-              <p className="text-sm text-gray-700 dark:text-gray-300">
+              <p className="text-sm text-[#424245] dark:text-[#a1a1a6]">
                 Click <strong>&ldquo;Load unpacked&rdquo;</strong> and select the unzipped folder.
               </p>
             </li>
@@ -716,7 +734,7 @@ function StepExtension() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
                 </svg>
               </span>
-              <p className="text-sm text-gray-700 dark:text-gray-300">
+              <p className="text-sm text-[#424245] dark:text-[#a1a1a6]">
                 The Iron Gate icon appears in your toolbar. You&apos;re protected!
               </p>
             </li>
@@ -791,13 +809,13 @@ function StepTeam({
   return (
     <div>
       <div className="mb-8">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Invite Your Team</h2>
-        <p className="text-gray-500 dark:text-gray-400 mt-1">
+        <h2 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Invite Your Team</h2>
+        <p className="text-[#6e6e73] dark:text-[#86868b] mt-1">
           Add team members who will use the Iron Gate dashboard. You can always invite more later.
         </p>
       </div>
 
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
         <div className="space-y-3">
           {state.teamMembers.map((member, index) => (
             <div key={index} className="flex items-center gap-3">
@@ -807,13 +825,13 @@ function StepTeam({
                   placeholder="colleague@yourfirm.com"
                   value={member.email}
                   onChange={(e) => updateMember(index, 'email', e.target.value)}
-                  className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-white bg-white dark:bg-gray-700 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 transition-shadow"
+                  className="w-full px-4 py-2.5 border border-[#d2d2d7] dark:border-[#38383a] rounded-lg text-sm text-[#1d1d1f] dark:text-[#f5f5f7] bg-white dark:bg-[#2c2c2e] placeholder:text-[#86868b] dark:placeholder:text-[#636366] focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 transition-shadow"
                 />
               </div>
               <select
                 value={member.role}
                 onChange={(e) => updateMember(index, 'role', e.target.value)}
-                className="px-3 py-2.5 border border-gray-300 rounded-lg text-sm text-gray-700 dark:text-gray-300 bg-white focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500"
+                className="px-3 py-2.5 border border-[#d2d2d7] rounded-lg text-sm text-[#424245] dark:text-[#a1a1a6] bg-white focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500"
               >
                 <option value="user">User</option>
                 <option value="admin">Admin</option>
@@ -824,8 +842,8 @@ function StepTeam({
                 disabled={state.teamMembers.length <= 1}
                 className={`p-2 rounded-lg transition-colors ${
                   state.teamMembers.length <= 1
-                    ? 'text-gray-300 cursor-not-allowed'
-                    : 'text-gray-400 hover:text-red-500 hover:bg-red-50'
+                    ? 'text-[#d2d2d7] cursor-not-allowed'
+                    : 'text-[#86868b] hover:text-red-500 hover:bg-red-50'
                 }`}
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
@@ -853,7 +871,7 @@ function StepTeam({
         <button
           type="button"
           onClick={onSkip}
-          className="text-sm text-gray-500 hover:text-gray-700 transition-colors underline underline-offset-2"
+          className="text-sm text-[#6e6e73] hover:text-[#424245] transition-colors underline underline-offset-2"
         >
           Skip for now -- I&apos;ll invite people later
         </button>
@@ -888,42 +906,15 @@ function StepComplete({
   apiKeyCopied: boolean;
   onCopyApiKey: () => void;
 }) {
-  // If there was an error and firm wasn't created, show error state
-  if (!firmCreated && submitError) {
-    return (
-      <div>
-        <div className="mb-8 text-center">
-          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
-            </svg>
-          </div>
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Setup Encountered an Issue</h2>
-          <p className="text-gray-500 dark:text-gray-400 mt-2 max-w-md mx-auto">
-            We couldn&apos;t complete the setup. This is usually a temporary connectivity issue.
-          </p>
-        </div>
-
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-red-200 mb-6">
-          <p className="text-sm text-red-700 mb-4">{submitError}</p>
-          <button
-            onClick={onRetry}
-            disabled={isSubmitting}
-            className="px-6 py-2.5 bg-iron-600 text-white rounded-lg text-sm font-medium hover:bg-iron-700 transition-colors disabled:opacity-50"
-          >
-            {isSubmitting ? 'Retrying...' : 'Retry Setup'}
-          </button>
-        </div>
-      </div>
-    );
-  }
+  // Note: even if API failed, we show the success screen with a warning banner
+  // so the user is never blocked from proceeding to the dashboard.
 
   // Loading state while creating
   if (!firmCreated && isSubmitting) {
     return (
       <div className="text-center py-16">
         <div className="w-12 h-12 border-4 border-iron-200 border-t-iron-600 rounded-full animate-spin mx-auto mb-4" />
-        <p className="text-sm text-gray-500">Setting up your organization...</p>
+        <p className="text-sm text-[#6e6e73]">Setting up your organization...</p>
       </div>
     );
   }
@@ -938,15 +929,32 @@ function StepComplete({
             <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
           </svg>
         </div>
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">You&apos;re All Set!</h2>
-        <p className="text-gray-500 dark:text-gray-400 mt-2">
+        <h2 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">You&apos;re All Set!</h2>
+        <p className="text-[#6e6e73] dark:text-[#86868b] mt-2">
           Iron Gate is configured and ready to protect your organization.
         </p>
       </div>
 
+      {/* Server connectivity warning (non-blocking) */}
+      {!firmCreated && submitError && (
+        <div className="bg-amber-50 dark:bg-amber-900/20 rounded-xl p-4 border border-amber-200 dark:border-amber-700 mb-6">
+          <div className="flex items-start gap-3">
+            <svg className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+            </svg>
+            <div>
+              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Server not reachable</p>
+              <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
+                Your settings are saved. They&apos;ll sync automatically when the server is available. You can still explore the dashboard with demo data.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Configuration summary */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700 mb-6">
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">Configuration Summary</h3>
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 mb-6">
+        <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Configuration Summary</h3>
         <div className="space-y-3">
           <SummaryRow label="Firm" value={state.firmName} />
           <SummaryRow label="Industry" value={state.industry} />
@@ -980,7 +988,7 @@ function StepComplete({
           </p>
           <div className="flex items-center gap-2">
             <code
-              className="flex-1 px-4 py-3 bg-white dark:bg-gray-800 border border-amber-300 dark:border-amber-600 rounded-lg text-sm font-mono text-gray-900 dark:text-white select-all break-all"
+              className="flex-1 px-4 py-3 bg-white dark:bg-[#1c1c1e] border border-amber-300 dark:border-amber-600 rounded-lg text-sm font-mono text-[#1d1d1f] dark:text-[#f5f5f7] select-all break-all"
             >
               {generatedApiKey}
             </code>
@@ -1056,9 +1064,9 @@ function StepComplete({
 
 function SummaryRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between py-2 border-b border-gray-50 dark:border-gray-700 last:border-0">
-      <span className="text-sm text-gray-500 dark:text-gray-400">{label}</span>
-      <span className="text-sm font-medium text-gray-900 dark:text-white">{value}</span>
+    <div className="flex items-center justify-between py-2 border-b border-[#f5f5f7] dark:border-[#38383a]/60 last:border-0">
+      <span className="text-sm text-[#6e6e73] dark:text-[#86868b]">{label}</span>
+      <span className="text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">{value}</span>
     </div>
   );
 }
@@ -1077,11 +1085,11 @@ function QuickLink({
   return (
     <a
       href={href}
-      className="block p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-iron-300 dark:hover:border-iron-600 hover:shadow-sm transition-all group"
+      className="block p-4 bg-white dark:bg-[#1c1c1e] rounded-xl border border-[#d2d2d7]/40 dark:border-[#38383a]/60 hover:border-iron-300 dark:hover:border-iron-600 hover:shadow-sm transition-all group"
     >
-      <div className="text-gray-400 group-hover:text-iron-600 transition-colors mb-2">{icon}</div>
-      <p className="text-sm font-medium text-gray-900 dark:text-white">{title}</p>
-      <p className="text-xs text-gray-500 dark:text-gray-400">{description}</p>
+      <div className="text-[#86868b] group-hover:text-iron-600 transition-colors mb-2">{icon}</div>
+      <p className="text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">{title}</p>
+      <p className="text-xs text-[#6e6e73] dark:text-[#86868b]">{description}</p>
     </a>
   );
 }

@@ -21,7 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <body>
           <ThemeProvider>
             <PostHogProvider>
-              <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors">
+              <div className="min-h-screen bg-[#f5f5f7] dark:bg-[#111113] transition-colors">
                 <Sidebar />
                 <MainContentInner>{children}</MainContentInner>
               </div>

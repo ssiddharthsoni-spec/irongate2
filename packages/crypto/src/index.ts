@@ -14,6 +14,12 @@ export {
 } from './hashing';
 
 export {
+  deriveHmacSigningKey,
+  hmacSign,
+  hmacVerify,
+} from './hmac';
+
+export {
   encryptForFirm,
   decryptForFirm,
   generateDataKey,

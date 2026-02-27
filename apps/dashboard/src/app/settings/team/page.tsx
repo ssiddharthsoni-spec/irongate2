@@ -122,24 +122,24 @@ export default function TeamSettingsPage() {
       case 'editor':
         return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400';
       default:
-        return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
+        return 'bg-[#f5f5f7] text-[#424245] dark:bg-[#2c2c2e] dark:text-[#a1a1a6]';
     }
   }
 
   if (loading) {
     return (
       <div className="space-y-6 max-w-2xl">
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-          <div className="h-5 w-32 bg-gray-200 dark:bg-gray-700 rounded animate-pulse mb-4" />
+        <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+          <div className="h-5 w-32 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded animate-pulse mb-4" />
           <div className="space-y-3">
             {[1, 2, 3].map((i) => (
               <div key={i} className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-gray-200 dark:bg-gray-700 rounded-full animate-pulse" />
+                <div className="w-10 h-10 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded-full animate-pulse" />
                 <div className="flex-1">
-                  <div className="h-4 w-32 bg-gray-200 dark:bg-gray-700 rounded animate-pulse mb-1" />
-                  <div className="h-3 w-48 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+                  <div className="h-4 w-32 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded animate-pulse mb-1" />
+                  <div className="h-3 w-48 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded animate-pulse" />
                 </div>
-                <div className="h-8 w-20 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+                <div className="h-8 w-20 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded animate-pulse" />
               </div>
             ))}
           </div>
@@ -151,9 +151,9 @@ export default function TeamSettingsPage() {
   return (
     <div className="space-y-6 max-w-2xl">
       {/* Invite Form */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">Invite Team Member</h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-1">Invite Team Member</h2>
+        <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mb-4">
           Send an invitation to join your Iron Gate workspace.
         </p>
         <div className="flex flex-col sm:flex-row gap-3">
@@ -163,13 +163,13 @@ export default function TeamSettingsPage() {
             onChange={(e) => setInviteEmail(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') handleInvite(); }}
             placeholder="colleague@firm.com"
-            className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-iron-500 focus:border-iron-500 outline-none transition-colors"
+            className="flex-1 px-3 py-2 border border-[#d2d2d7] dark:border-[#38383a] rounded-lg text-sm bg-white dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] placeholder-[#86868b] dark:placeholder-[#636366] focus:ring-2 focus:ring-iron-500 focus:border-iron-500 outline-none transition-colors"
             aria-label="Invite email address"
           />
           <select
             value={inviteRole}
             onChange={(e) => setInviteRole(e.target.value as 'admin' | 'editor' | 'viewer')}
-            className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-iron-500 focus:border-iron-500 outline-none transition-colors"
+            className="px-3 py-2 border border-[#d2d2d7] dark:border-[#38383a] rounded-lg text-sm bg-white dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] focus:ring-2 focus:ring-iron-500 focus:border-iron-500 outline-none transition-colors"
             aria-label="Invite role"
           >
             {ROLES.map((r) => (
@@ -180,7 +180,7 @@ export default function TeamSettingsPage() {
             type="button"
             onClick={handleInvite}
             disabled={inviting || !inviteEmail.trim()}
-            className={`min-h-[44px] px-5 py-2 rounded-lg text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800 ${
+            className={`min-h-[44px] px-5 py-2 rounded-lg text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-[#1c1c1e] ${
               inviting || !inviteEmail.trim()
                 ? 'bg-iron-400 dark:bg-iron-800 cursor-not-allowed'
                 : 'bg-iron-600 hover:bg-iron-700'
@@ -204,20 +204,20 @@ export default function TeamSettingsPage() {
       </div>
 
       {/* Team Members List */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
-        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+        <div className="px-6 py-4 border-b border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+          <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">
             Team Members
-            <span className="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400">({members.length})</span>
+            <span className="ml-2 text-sm font-normal text-[#6e6e73] dark:text-[#86868b]">({members.length})</span>
           </h2>
         </div>
-        <div className="divide-y divide-gray-100 dark:divide-gray-700">
+        <div className="divide-y divide-[#d2d2d7]/40 dark:divide-[#38383a]/60">
           {members.length === 0 ? (
             <div className="px-6 py-12 text-center">
-              <svg className="w-10 h-10 text-gray-300 dark:text-gray-600 mx-auto mb-2" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor">
+              <svg className="w-10 h-10 text-[#d2d2d7] dark:text-[#38383a] mx-auto mb-2" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" />
               </svg>
-              <p className="text-sm text-gray-500 dark:text-gray-400">No team members yet. Send an invite above.</p>
+              <p className="text-sm text-[#6e6e73] dark:text-[#86868b]">No team members yet. Send an invite above.</p>
             </div>
           ) : (
             members.map((member) => (
@@ -232,16 +232,16 @@ export default function TeamSettingsPage() {
                 {/* Info */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{member.name || member.email}</p>
+                    <p className="text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7] truncate">{member.name || member.email}</p>
                     {member.status === 'pending' && (
                       <span className="inline-flex px-2 py-0.5 text-xs font-medium rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400">
                         Pending
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{member.email}</p>
+                  <p className="text-xs text-[#6e6e73] dark:text-[#86868b] truncate">{member.email}</p>
                   {member.lastActive && (
-                    <p className="text-xs text-gray-400 dark:text-gray-500" suppressHydrationWarning>
+                    <p className="text-xs text-[#86868b] dark:text-[#636366]" suppressHydrationWarning>
                       Last active {new Date(member.lastActive).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                     </p>
                   )}
@@ -277,7 +277,7 @@ export default function TeamSettingsPage() {
                     <button
                       type="button"
                       onClick={() => setConfirmRemoveId(null)}
-                      className="min-h-[36px] px-3 py-1.5 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs font-medium rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400"
+                      className="min-h-[36px] px-3 py-1.5 bg-[#f5f5f7] dark:bg-[#2c2c2e] text-[#424245] dark:text-[#a1a1a6] text-xs font-medium rounded-lg hover:bg-[#d2d2d7]/40 dark:hover:bg-[#38383a] transition-colors focus:outline-none focus:ring-2 focus:ring-[#86868b]"
                     >
                       Cancel
                     </button>
@@ -286,7 +286,7 @@ export default function TeamSettingsPage() {
                   <button
                     type="button"
                     onClick={() => setConfirmRemoveId(member.id)}
-                    className="min-h-[36px] p-2 text-gray-400 dark:text-gray-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500"
+                    className="min-h-[36px] p-2 text-[#86868b] dark:text-[#636366] hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500"
                     aria-label={`Remove ${member.name || member.email}`}
                   >
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
@@ -301,15 +301,15 @@ export default function TeamSettingsPage() {
       </div>
 
       {/* Role Descriptions */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Role Permissions</h2>
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Role Permissions</h2>
         <div className="space-y-3">
           {ROLES.map((role) => (
             <div key={role.value} className="flex items-start gap-3">
               <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${getRoleBadgeClass(role.value)}`}>
                 {role.label}
               </span>
-              <p className="text-sm text-gray-500 dark:text-gray-400">{role.description}</p>
+              <p className="text-sm text-[#6e6e73] dark:text-[#86868b]">{role.description}</p>
             </div>
           ))}
         </div>

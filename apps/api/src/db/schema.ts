@@ -68,6 +68,10 @@ export const events = pgTable('events', {
   eventHash: varchar('event_hash', { length: 64 }),
   previousHash: varchar('previous_hash', { length: 64 }),
   chainPosition: bigint('chain_position', { mode: 'number' }),
+  // ★ MOAT: Server-Side HMAC Signature (tamper-proof, compliance-ready)
+  serverSignature: varchar('server_signature', { length: 64 }),
+  signedAt: timestamp('signed_at'),
+  signatureVersion: integer('signature_version').default(1),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (table) => [
   index('events_firm_id_idx').on(table.firmId),

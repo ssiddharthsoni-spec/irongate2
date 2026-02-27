@@ -9,7 +9,8 @@
 import { db } from '../db/client';
 import { events } from '../db/schema';
 import { eq, desc, asc, sql } from 'drizzle-orm';
-import { sha256, chainHash } from '@iron-gate/crypto';
+import { sha256, chainHash, hmacSign } from '@iron-gate/crypto';
+import { getSigningKey } from './signing-key';
 
 interface EventData {
   firmId: string;
@@ -40,7 +41,7 @@ export interface ChainVerification {
  * Append an event to the cryptographic audit chain.
  * Uses advisory lock to prevent race conditions on chain position.
  */
-export async function appendEvent(eventData: EventData): Promise<{ id: string; eventHash: string; chainPosition: number }> {
+export async function appendEvent(eventData: EventData): Promise<{ id: string; eventHash: string; chainPosition: number; serverSignature: string }> {
   // Use a deterministic lock ID derived from firmId to serialize chain appends per firm
   const lockId = hashToLockId(eventData.firmId);
 
@@ -79,7 +80,13 @@ export async function appendEvent(eventData: EventData): Promise<{ id: string; e
 
     const hash = await chainHash(hashData, previousHash);
 
-    // Insert event with chain metadata
+    // Server-side HMAC signature — proves server received and authenticated this event
+    const signingKey = await getSigningKey();
+    const signedAt = new Date();
+    const signatureMessage = `v1:${hash}:${signedAt.toISOString()}`;
+    const serverSignature = await hmacSign(signatureMessage, signingKey);
+
+    // Insert event with chain metadata + server signature
     const [inserted] = await tx.insert(events).values({
       firmId: eventData.firmId,
       userId: eventData.userId,
@@ -98,10 +105,14 @@ export async function appendEvent(eventData: EventData): Promise<{ id: string; e
       eventHash: hash,
       previousHash,
       chainPosition,
+      serverSignature,
+      signedAt,
+      signatureVersion: 1,
     }).returning({
       id: events.id,
       eventHash: events.eventHash,
       chainPosition: events.chainPosition,
+      serverSignature: events.serverSignature,
     });
 
     return inserted;
@@ -111,6 +122,7 @@ export async function appendEvent(eventData: EventData): Promise<{ id: string; e
     id: result.id,
     eventHash: result.eventHash!,
     chainPosition: result.chainPosition!,
+    serverSignature: result.serverSignature!,
   };
 }
 

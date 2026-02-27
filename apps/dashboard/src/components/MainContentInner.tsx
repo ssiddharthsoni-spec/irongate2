@@ -9,10 +9,12 @@ export function MainContentInner({ children }: { children: React.ReactNode }) {
   const isOnboarding = pathname.startsWith('/onboarding');
   const isPrivacy = pathname === '/privacy';
   const isTerms = pathname === '/terms';
-  const isFullWidth = isLanding || isDemo || isOnboarding || isPrivacy || isTerms;
+  const isInstall = pathname === '/install';
+  const isAuth = pathname.startsWith('/sign-in') || pathname.startsWith('/sign-up');
+  const isFullWidth = isLanding || isDemo || isOnboarding || isPrivacy || isTerms || isInstall || isAuth;
 
   return (
-    <main className={isFullWidth ? '' : 'md:ml-64 ml-0 p-8 animate-fadeIn'}>
+    <main className={isFullWidth ? '' : 'md:ml-[240px] ml-0 p-8 animate-fadeIn'}>
       {children}
     </main>
   );

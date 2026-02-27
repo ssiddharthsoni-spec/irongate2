@@ -83,9 +83,9 @@ export default function GeneralSettingsPage() {
     return (
       <div className="space-y-6 max-w-2xl">
         {[1, 2, 3, 4].map((i) => (
-          <div key={i} className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-            <div className="h-5 w-32 bg-gray-200 dark:bg-gray-700 rounded animate-pulse mb-4" />
-            <div className="h-10 w-full bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+          <div key={i} className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+            <div className="h-5 w-32 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded animate-pulse mb-4" />
+            <div className="h-10 w-full bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded animate-pulse" />
           </div>
         ))}
       </div>
@@ -99,11 +99,11 @@ export default function GeneralSettingsPage() {
   return (
     <div className="space-y-6 max-w-2xl">
       {/* Firm Details */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Firm Details</h2>
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Firm Details</h2>
         <div className="space-y-4">
           <div>
-            <label htmlFor="firmName" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label htmlFor="firmName" className="block text-sm font-medium text-[#424245] dark:text-[#a1a1a6] mb-1">
               Firm Name
             </label>
             <input
@@ -112,18 +112,18 @@ export default function GeneralSettingsPage() {
               value={firmName}
               onChange={(e) => setFirmName(e.target.value)}
               placeholder="Enter firm name"
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-iron-500 focus:border-iron-500 outline-none transition-colors"
+              className="w-full px-3 py-2 border border-[#d2d2d7] dark:border-[#38383a] rounded-lg text-sm bg-white dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] placeholder-[#86868b] dark:placeholder-[#636366] focus:ring-2 focus:ring-iron-500 focus:border-iron-500 outline-none transition-colors"
             />
           </div>
           <div>
-            <label htmlFor="industry" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label htmlFor="industry" className="block text-sm font-medium text-[#424245] dark:text-[#a1a1a6] mb-1">
               Industry
             </label>
             <select
               id="industry"
               value={industry}
               onChange={(e) => setIndustry(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-iron-500 focus:border-iron-500 outline-none transition-colors"
+              className="w-full px-3 py-2 border border-[#d2d2d7] dark:border-[#38383a] rounded-lg text-sm bg-white dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] focus:ring-2 focus:ring-iron-500 focus:border-iron-500 outline-none transition-colors"
             >
               {INDUSTRIES.map((ind) => (
                 <option key={ind.value} value={ind.value}>{ind.label}</option>
@@ -134,16 +134,16 @@ export default function GeneralSettingsPage() {
       </div>
 
       {/* Protection Mode */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Protection Mode</h2>
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Protection Mode</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <button
             type="button"
             onClick={() => setMode('audit')}
-            className={`p-4 rounded-lg border-2 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800 ${
+            className={`p-4 rounded-lg border-2 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-[#1c1c1e] ${
               mode === 'audit'
                 ? 'border-iron-500 bg-iron-50 dark:bg-iron-900/20'
-                : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                : 'border-[#d2d2d7]/40 dark:border-[#38383a]/60 hover:border-[#d2d2d7] dark:hover:border-[#424245]'
             }`}
           >
             <div className="flex items-center gap-2 mb-1">
@@ -151,34 +151,34 @@ export default function GeneralSettingsPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
               </svg>
-              <p className="font-medium text-gray-900 dark:text-white">Audit Mode</p>
+              <p className="font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">Audit Mode</p>
             </div>
-            <p className="text-sm text-gray-500 dark:text-gray-400">Monitor only. No interference with AI tool usage.</p>
+            <p className="text-sm text-[#6e6e73] dark:text-[#86868b]">Monitor only. No interference with AI tool usage.</p>
           </button>
           <button
             type="button"
             onClick={() => setMode('proxy')}
-            className={`p-4 rounded-lg border-2 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800 ${
+            className={`p-4 rounded-lg border-2 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-[#1c1c1e] ${
               mode === 'proxy'
                 ? 'border-iron-500 bg-iron-50 dark:bg-iron-900/20'
-                : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                : 'border-[#d2d2d7]/40 dark:border-[#38383a]/60 hover:border-[#d2d2d7] dark:hover:border-[#424245]'
             }`}
           >
             <div className="flex items-center gap-2 mb-1">
               <svg className="w-5 h-5 text-iron-600 dark:text-iron-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m0-10.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.75c0 5.592 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.75h-.152c-3.196 0-6.1-1.249-8.25-3.286Zm0 13.036h.008v.008H12v-.008Z" />
               </svg>
-              <p className="font-medium text-gray-900 dark:text-white">Proxy Mode</p>
+              <p className="font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">Proxy Mode</p>
             </div>
-            <p className="text-sm text-gray-500 dark:text-gray-400">Intercept and protect sensitive prompts automatically.</p>
+            <p className="text-sm text-[#6e6e73] dark:text-[#86868b]">Intercept and protect sensitive prompts automatically.</p>
           </button>
         </div>
       </div>
 
       {/* Data Retention */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Data Retention</h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Data Retention</h2>
+        <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mb-4">
           How long event data is retained before automatic deletion.
         </p>
         <div>
@@ -198,7 +198,7 @@ export default function GeneralSettingsPage() {
                 className={`text-xs font-medium ${
                   retention === days
                     ? 'text-iron-600 dark:text-iron-400'
-                    : 'text-gray-400 dark:text-gray-500'
+                    : 'text-[#86868b] dark:text-[#636366]'
                 }`}
               >
                 {days} days
@@ -214,7 +214,7 @@ export default function GeneralSettingsPage() {
           type="button"
           onClick={handleSave}
           disabled={saving}
-          className={`min-h-[44px] px-6 py-2.5 rounded-lg text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 ${
+          className={`min-h-[44px] px-6 py-2.5 rounded-lg text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-[#111113] ${
             saving
               ? 'bg-iron-400 dark:bg-iron-800 cursor-not-allowed'
               : 'bg-iron-600 hover:bg-iron-700'

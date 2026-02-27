@@ -133,10 +133,10 @@ function KpiCard({
 }) {
   return (
     <div
-      className={`rounded-xl p-5 border border-gray-200 dark:border-gray-700 shadow-sm ${bgClass || 'bg-white dark:bg-gray-800'}`}
+      className={`rounded-xl p-5 border border-[#d2d2d7]/40 dark:border-[#38383a]/60 shadow-sm ${bgClass || 'bg-white dark:bg-[#1c1c1e]'}`}
     >
-      <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">{label}</p>
-      <p className={`text-3xl font-bold ${colorClass || 'text-gray-900 dark:text-white'}`}>
+      <p className="text-sm font-medium text-[#6e6e73] dark:text-[#86868b] mb-1">{label}</p>
+      <p className={`text-3xl font-bold ${colorClass || 'text-[#1d1d1f] dark:text-[#f5f5f7]'}`}>
         {typeof value === 'number' ? value.toLocaleString() : value}
       </p>
     </div>
@@ -188,8 +188,8 @@ function StackedBar({ distribution }: { distribution: ScoreDistribution }) {
           return (
             <div key={seg.key} className="flex items-center gap-2 text-sm">
               <span className={`w-3 h-3 rounded-sm ${seg.color}`} />
-              <span className="text-gray-700 dark:text-gray-300 font-medium">{seg.key}</span>
-              <span className="text-gray-400 dark:text-gray-500">
+              <span className="text-[#424245] dark:text-[#a1a1a6] font-medium">{seg.key}</span>
+              <span className="text-[#86868b] dark:text-[#636366]">
                 {seg.count.toLocaleString()} ({pct}%)
               </span>
             </div>
@@ -211,7 +211,7 @@ function ToolBreakdownTable({ tools }: { tools: ToolBreakdownEntry[] }) {
     <div className="overflow-x-auto">
       <table className="w-full">
         <thead>
-          <tr className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+          <tr className="text-left text-xs font-medium text-[#6e6e73] dark:text-[#86868b] uppercase tracking-wider">
             <th className="pb-3 pr-4">Tool</th>
             <th className="pb-3 pr-4">Usage Count</th>
             <th className="pb-3 pr-4">Avg Score</th>
@@ -219,15 +219,15 @@ function ToolBreakdownTable({ tools }: { tools: ToolBreakdownEntry[] }) {
             <th className="pb-3">Usage</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+        <tbody className="divide-y divide-[#d2d2d7]/40 dark:divide-[#38383a]/60">
           {tools.map((tool) => {
             const barPct = (tool.count / maxCount) * 100;
             return (
-              <tr key={tool.toolId} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                <td className="py-3 pr-4 text-sm font-medium text-gray-900 dark:text-white">
+              <tr key={tool.toolId} className="hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e]/50">
+                <td className="py-3 pr-4 text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">
                   {tool.toolId}
                 </td>
-                <td className="py-3 pr-4 text-sm text-gray-700 dark:text-gray-300">
+                <td className="py-3 pr-4 text-sm text-[#424245] dark:text-[#a1a1a6]">
                   {tool.count.toLocaleString()}
                 </td>
                 <td className="py-3 pr-4 text-sm">
@@ -241,7 +241,7 @@ function ToolBreakdownTable({ tools }: { tools: ToolBreakdownEntry[] }) {
                   {tool.highRiskCount.toLocaleString()}
                 </td>
                 <td className="py-3 min-w-[120px]">
-                  <div className="w-full h-2 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+                  <div className="w-full h-2 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded-full overflow-hidden">
                     <div
                       className="h-full rounded-full bg-iron-500 transition-all duration-500"
                       style={{ width: `${barPct}%` }}
@@ -286,7 +286,7 @@ function DailyTrendChart({ trend }: { trend: DailyTrendEntry[] }) {
             >
               {/* Tooltip */}
               <div className="absolute bottom-full mb-2 hidden group-hover:block z-10">
-                <div className="bg-gray-900 text-white text-xs rounded-lg px-3 py-2 whitespace-nowrap shadow-lg">
+                <div className="bg-[#1d1d1f] text-white text-xs rounded-lg px-3 py-2 whitespace-nowrap shadow-lg">
                   <p className="font-semibold">{day.date}</p>
                   <p>Count: {day.count}</p>
                   <p>Avg Score: {day.avgScore}</p>
@@ -304,20 +304,20 @@ function DailyTrendChart({ trend }: { trend: DailyTrendEntry[] }) {
       {/* X-axis labels — show first, middle, and last dates */}
       {trend.length > 0 && (
         <div className="flex justify-between mt-2">
-          <span className="text-xs text-gray-400 dark:text-gray-500">{trend[0].date}</span>
+          <span className="text-xs text-[#86868b] dark:text-[#636366]">{trend[0].date}</span>
           {trend.length > 2 && (
-            <span className="text-xs text-gray-400 dark:text-gray-500">
+            <span className="text-xs text-[#86868b] dark:text-[#636366]">
               {trend[Math.floor(trend.length / 2)].date}
             </span>
           )}
-          <span className="text-xs text-gray-400 dark:text-gray-500">
+          <span className="text-xs text-[#86868b] dark:text-[#636366]">
             {trend[trend.length - 1].date}
           </span>
         </div>
       )}
 
       {/* Color legend */}
-      <div className="flex flex-wrap gap-x-5 gap-y-1 mt-3 text-xs text-gray-500 dark:text-gray-400">
+      <div className="flex flex-wrap gap-x-5 gap-y-1 mt-3 text-xs text-[#6e6e73] dark:text-[#86868b]">
         <span className="flex items-center gap-1">
           <span className="w-2.5 h-2.5 rounded-sm bg-green-500" /> Low (&le;25)
         </span>
@@ -348,25 +348,26 @@ export default function ExposureReportPage() {
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(30);
 
-  const fetchReport = useCallback(async () => {
+  const fetchReport = useCallback(async (periodDays: number) => {
     try {
       setLoading(true);
-      const response = await apiFetch(`/reports/exposure?days=${days}`);
+      const response = await apiFetch(`/reports/exposure?days=${periodDays}`);
       if (response.ok) {
         setReport(await response.json());
       } else {
-        setReport(getDemoReport(days));
+        setReport(getDemoReport(periodDays));
       }
     } catch {
-      setReport(getDemoReport(days));
+      setReport(getDemoReport(periodDays));
     } finally {
       setLoading(false);
     }
-  }, [days, apiFetch]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
-    fetchReport();
-  }, [fetchReport]);
+    fetchReport(days);
+  }, [days, fetchReport]);
 
   /* Loading state */
   if (loading) {
@@ -374,7 +375,7 @@ export default function ExposureReportPage() {
       <div className="flex items-center justify-center h-96">
         <div className="text-center">
           <div className="inline-block w-8 h-8 border-4 border-iron-200 border-t-iron-600 rounded-full animate-spin mb-3" />
-          <p className="text-gray-500 dark:text-gray-400 text-sm">Generating report...</p>
+          <p className="text-[#6e6e73] dark:text-[#86868b] text-sm">Generating report...</p>
         </div>
       </div>
     );
@@ -395,10 +396,10 @@ export default function ExposureReportPage() {
       {/* ---- Header ---- */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+          <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">
             Shadow AI Exposure Report
           </h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+          <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-1">
             Generated{' '}
             <span suppressHydrationWarning>
               {new Date(report.reportDate).toLocaleDateString()}
@@ -412,7 +413,7 @@ export default function ExposureReportPage() {
           <select
             value={days}
             onChange={(e) => setDays(Number(e.target.value))}
-            className="px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg text-sm bg-white dark:bg-gray-800 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-iron-500"
+            className="px-3 py-2 border border-[#d2d2d7]/40 dark:border-[#38383a]/60 rounded-lg text-sm bg-white dark:bg-[#1c1c1e] dark:text-[#a1a1a6] focus:outline-none focus:ring-2 focus:ring-iron-500"
           >
             {PERIOD_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
@@ -423,8 +424,8 @@ export default function ExposureReportPage() {
 
           {/* Refresh */}
           <button
-            onClick={fetchReport}
-            className="px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+            onClick={() => fetchReport(days)}
+            className="px-4 py-2 border border-[#d2d2d7]/40 dark:border-[#38383a]/60 rounded-lg text-sm text-[#424245] dark:text-[#a1a1a6] bg-white dark:bg-[#1c1c1e] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] transition-colors"
           >
             Refresh
           </button>
@@ -441,7 +442,7 @@ export default function ExposureReportPage() {
 
       {/* ---- Executive Summary ---- */}
       <section className="mb-8">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">
           Executive Summary
         </h2>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
@@ -457,19 +458,19 @@ export default function ExposureReportPage() {
             label="Avg Sensitivity"
             value={executiveSummary.avgSensitivityScore}
             colorClass={sensitivityScoreColor(executiveSummary.avgSensitivityScore)}
-            bgClass={`${sensitivityScoreBg(executiveSummary.avgSensitivityScore)} border border-gray-200 dark:border-gray-700 shadow-sm`}
+            bgClass={`${sensitivityScoreBg(executiveSummary.avgSensitivityScore)} border border-[#d2d2d7]/40 dark:border-[#38383a]/60 shadow-sm`}
           />
           <KpiCard
             label="High-Risk"
             value={executiveSummary.highRiskInteractions}
             colorClass="text-orange-500"
-            bgClass="bg-orange-50 dark:bg-orange-900/20 border border-gray-200 dark:border-gray-700 shadow-sm"
+            bgClass="bg-orange-50 dark:bg-orange-900/20 border border-[#d2d2d7]/40 dark:border-[#38383a]/60 shadow-sm"
           />
           <KpiCard
             label="Critical"
             value={executiveSummary.criticalInteractions}
             colorClass="text-red-500"
-            bgClass="bg-red-50 dark:bg-red-900/20 border border-gray-200 dark:border-gray-700 shadow-sm"
+            bgClass="bg-red-50 dark:bg-red-900/20 border border-[#d2d2d7]/40 dark:border-[#38383a]/60 shadow-sm"
           />
           <KpiCard
             label="Max Score"
@@ -479,32 +480,32 @@ export default function ExposureReportPage() {
       </section>
 
       {/* ---- Score Distribution ---- */}
-      <section className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700 mb-6">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+      <section className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 mb-6">
+        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">
           Sensitivity Score Distribution
         </h2>
         <StackedBar distribution={report.scoreDistribution} />
       </section>
 
       {/* ---- AI Tool Breakdown ---- */}
-      <section className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700 mb-6">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+      <section className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 mb-6">
+        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">
           AI Tool Breakdown
         </h2>
         <ToolBreakdownTable tools={report.toolBreakdown} />
       </section>
 
       {/* ---- Daily Trend ---- */}
-      <section className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700 mb-6">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+      <section className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 mb-6">
+        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">
           Daily Trend
         </h2>
         <DailyTrendChart trend={report.dailyTrend} />
       </section>
 
       {/* ---- Recommendations ---- */}
-      <section className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700 mb-6">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+      <section className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 mb-6">
+        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">
           Recommendations
         </h2>
         <ul className="space-y-3">
@@ -513,7 +514,7 @@ export default function ExposureReportPage() {
               <span className="flex-shrink-0 w-6 h-6 bg-iron-100 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 rounded-full flex items-center justify-center text-sm font-medium mt-0.5">
                 {i + 1}
               </span>
-              <span className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
+              <span className="text-sm text-[#424245] dark:text-[#a1a1a6] leading-relaxed">
                 {rec}
               </span>
             </li>

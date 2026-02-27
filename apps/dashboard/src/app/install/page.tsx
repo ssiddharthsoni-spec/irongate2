@@ -1,7 +1,6 @@
 import Link from 'next/link';
 
-const EXTENSION_ZIP_URL =
-  'https://github.com/ssiddharthsoni-spec/irongate2/releases/latest/download/iron-gate-extension-v0.2.1.zip';
+const EXTENSION_ZIP_URL = '/iron-gate-extension-v0.2.2.zip';
 
 const SUPPORTED_TOOLS = [
   'ChatGPT',
@@ -18,9 +17,9 @@ const SUPPORTED_TOOLS = [
 
 export default function InstallPage() {
   return (
-    <div className="min-h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-white">
+    <div className="min-h-screen bg-white dark:bg-[#0a0a0a] text-[#1d1d1f] dark:text-[#f5f5f7]">
       {/* Nav */}
-      <nav className="border-b border-gray-100 dark:border-gray-800/50 bg-white/80 dark:bg-gray-950/80 backdrop-blur-lg">
+      <nav className="border-b border-[#d2d2d7]/30 dark:border-[#38383a]/40/50 bg-white/80 dark:bg-[#0a0a0a]/80 backdrop-blur-lg">
         <div className="flex items-center justify-between px-6 md:px-12 py-3 max-w-5xl mx-auto">
           <Link href="/" className="flex items-center gap-2.5">
             <div className="w-9 h-9 bg-iron-600 rounded-lg flex items-center justify-center shadow-lg shadow-iron-600/20">
@@ -31,7 +30,7 @@ export default function InstallPage() {
             <span className="text-lg font-bold tracking-tight">Iron Gate</span>
           </Link>
           <div className="flex items-center gap-4">
-            <Link href="/sign-in" className="text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">
+            <Link href="/sign-in" className="text-sm font-medium text-[#6e6e73] dark:text-[#86868b] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7] transition-colors">
               Sign In
             </Link>
             <Link href="/sign-up" className="px-4 py-2 bg-iron-600 hover:bg-iron-700 text-white text-sm font-semibold rounded-lg transition-all shadow-md shadow-iron-600/20">
@@ -45,13 +44,13 @@ export default function InstallPage() {
         {/* Header */}
         <div className="text-center mb-16">
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-iron-50 dark:bg-iron-900/30 border border-iron-200 dark:border-iron-800 text-iron-700 dark:text-iron-300 text-xs font-semibold mb-6 tracking-wide uppercase">
-            Chrome Extension
+            Browser Extension
           </div>
           <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4">
             Install Iron Gate
           </h1>
-          <p className="text-lg text-gray-500 dark:text-gray-400 max-w-xl mx-auto">
-            The Chrome extension monitors AI tool usage and detects sensitive data in real-time. Setup takes less than 2 minutes.
+          <p className="text-lg text-[#6e6e73] dark:text-[#86868b] max-w-xl mx-auto">
+            The browser extension monitors AI tool usage and detects sensitive data in real-time. Works with Chrome, Edge, Brave, and any Chromium-based browser. Setup takes less than 2 minutes.
           </p>
         </div>
 
@@ -66,13 +65,13 @@ export default function InstallPage() {
             </svg>
             Download Extension (ZIP)
           </a>
-          <p className="text-sm text-gray-400 dark:text-gray-500 mt-3">
-            v0.2.1 &middot; Chrome &middot; Manifest V3
+          <p className="text-sm text-[#86868b] dark:text-[#636366] mt-3">
+            v0.2.2 &middot; Chrome, Edge, Brave &middot; Manifest V3
           </p>
         </div>
 
         {/* Installation Steps */}
-        <div className="bg-gray-50 dark:bg-gray-900 rounded-2xl p-8 md:p-10 border border-gray-200 dark:border-gray-800 mb-16">
+        <div className="bg-[#f5f5f7] dark:bg-[#141414] rounded-2xl p-8 md:p-10 border border-[#d2d2d7]/40 dark:border-[#38383a]/40 mb-16">
           <h2 className="text-xl font-bold mb-8">Installation Steps</h2>
           <ol className="space-y-8">
             <li className="flex gap-4">
@@ -80,8 +79,8 @@ export default function InstallPage() {
                 1
               </span>
               <div>
-                <p className="font-semibold text-gray-900 dark:text-white">Download the ZIP file</p>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                <p className="font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">Download the ZIP file</p>
+                <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-1">
                   Click the download button above to get the extension package.
                 </p>
               </div>
@@ -91,8 +90,8 @@ export default function InstallPage() {
                 2
               </span>
               <div>
-                <p className="font-semibold text-gray-900 dark:text-white">Unzip the file</p>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                <p className="font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">Unzip the file</p>
+                <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-1">
                   Extract the ZIP to a folder on your computer. Remember where you saved it.
                 </p>
               </div>
@@ -102,9 +101,9 @@ export default function InstallPage() {
                 3
               </span>
               <div>
-                <p className="font-semibold text-gray-900 dark:text-white">Open Chrome Extensions</p>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                  Navigate to <code className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs font-mono">chrome://extensions</code> in your browser. Enable <strong>Developer mode</strong> using the toggle in the top-right corner.
+                <p className="font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">Open Extensions Page</p>
+                <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-1">
+                  Navigate to <code className="px-1.5 py-0.5 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded text-xs font-mono">chrome://extensions</code> in Chrome, Edge, or Brave. Enable <strong>Developer mode</strong> using the toggle in the top-right corner.
                 </p>
               </div>
             </li>
@@ -113,8 +112,8 @@ export default function InstallPage() {
                 4
               </span>
               <div>
-                <p className="font-semibold text-gray-900 dark:text-white">Load the extension</p>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                <p className="font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">Load the extension</p>
+                <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-1">
                   Click <strong>&ldquo;Load unpacked&rdquo;</strong> and select the unzipped folder. The Iron Gate icon will appear in your toolbar.
                 </p>
               </div>
@@ -124,10 +123,10 @@ export default function InstallPage() {
                 5
               </span>
               <div>
-                <p className="font-semibold text-gray-900 dark:text-white">Connect to your organization</p>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                <p className="font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">Connect to your organization</p>
+                <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-1">
                   Right-click the Iron Gate toolbar icon and select <strong>&ldquo;Open side panel&rdquo;</strong>.
-                  The setup wizard will guide you through pasting your API key (starts with <code className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs font-mono">ig_</code>).
+                  The setup wizard will guide you through pasting your API key (starts with <code className="px-1.5 py-0.5 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded text-xs font-mono">ig_</code>).
                   Your admin receives this key during onboarding.
                 </p>
               </div>
@@ -139,8 +138,8 @@ export default function InstallPage() {
                 </svg>
               </span>
               <div>
-                <p className="font-semibold text-gray-900 dark:text-white">You&apos;re protected!</p>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                <p className="font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">You&apos;re protected!</p>
+                <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-1">
                   Visit any supported AI tool and Iron Gate will automatically monitor for sensitive data. Open the side panel to see real-time activity.
                 </p>
               </div>
@@ -155,7 +154,7 @@ export default function InstallPage() {
             {SUPPORTED_TOOLS.map((tool) => (
               <span
                 key={tool}
-                className="px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700"
+                className="px-4 py-2 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded-lg text-sm font-medium text-[#424245] dark:text-[#a1a1a6] border border-[#d2d2d7]/40 dark:border-[#38383a]/60"
               >
                 {tool}
               </span>
@@ -172,8 +171,8 @@ export default function InstallPage() {
             <div>
               <p className="font-bold text-iron-800 dark:text-iron-300 mb-2">Enterprise Deployment</p>
               <p className="text-sm text-iron-700 dark:text-iron-400 leading-relaxed mb-3">
-                For organization-wide deployment, use Chrome Enterprise policies to force-install the
-                extension across all managed devices. Add the following to your Chrome policy JSON:
+                For organization-wide deployment, use Chrome/Edge Enterprise policies to force-install the
+                extension across all managed devices. This also works with Edge and Brave on managed Chromium profiles. Add the following to your policy JSON:
               </p>
               <pre className="text-xs bg-iron-100 dark:bg-iron-900/40 rounded-lg p-3 overflow-x-auto font-mono text-iron-800 dark:text-iron-200 leading-relaxed">
 {`{
@@ -192,7 +191,7 @@ export default function InstallPage() {
 
         {/* CTA */}
         <div className="text-center mt-16">
-          <p className="text-gray-500 dark:text-gray-400 mb-4">
+          <p className="text-[#6e6e73] dark:text-[#86868b] mb-4">
             Don&apos;t have an Iron Gate account yet?
           </p>
           <Link

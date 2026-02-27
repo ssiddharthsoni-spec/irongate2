@@ -129,18 +129,18 @@ export default function ApiKeysPage() {
       case 'write':
         return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400';
       default:
-        return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
+        return 'bg-[#f5f5f7] text-[#424245] dark:bg-[#2c2c2e] dark:text-[#a1a1a6]';
     }
   }
 
   if (loading) {
     return (
       <div className="space-y-6 max-w-2xl">
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-          <div className="h-5 w-32 bg-gray-200 dark:bg-gray-700 rounded animate-pulse mb-4" />
+        <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+          <div className="h-5 w-32 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded animate-pulse mb-4" />
           <div className="space-y-3">
             {[1, 2, 3].map((i) => (
-              <div key={i} className="h-16 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse" />
+              <div key={i} className="h-16 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded-lg animate-pulse" />
             ))}
           </div>
         </div>
@@ -163,7 +163,7 @@ export default function ApiKeysPage() {
                 Copy this key now. You will not be able to see it again.
               </p>
               <div className="flex items-center gap-2">
-                <code className="flex-1 px-3 py-2 bg-white dark:bg-gray-800 rounded-lg text-sm font-mono text-gray-900 dark:text-white border border-green-200 dark:border-green-800 break-all">
+                <code className="flex-1 px-3 py-2 bg-white dark:bg-[#1c1c1e] rounded-lg text-sm font-mono text-[#1d1d1f] dark:text-[#f5f5f7] border border-green-200 dark:border-green-800 break-all">
                   {newlyCreatedKey}
                 </code>
                 <button
@@ -190,11 +190,11 @@ export default function ApiKeysPage() {
       )}
 
       {/* Create Key */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">API Keys</h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">API Keys</h2>
+            <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-1">
               Manage API keys for programmatic access to Iron Gate.
             </p>
           </div>
@@ -202,7 +202,7 @@ export default function ApiKeysPage() {
             <button
               type="button"
               onClick={() => setShowCreateForm(true)}
-              className="min-h-[44px] px-4 py-2 bg-iron-600 hover:bg-iron-700 text-white text-sm font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800"
+              className="min-h-[44px] px-4 py-2 bg-iron-600 hover:bg-iron-700 text-white text-sm font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-[#1c1c1e]"
             >
               Create New Key
             </button>
@@ -210,11 +210,11 @@ export default function ApiKeysPage() {
         </div>
 
         {showCreateForm && (
-          <div className="p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg mb-4 border border-gray-200 dark:border-gray-600">
-            <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">Create New API Key</h3>
+          <div className="p-4 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded-lg mb-4 border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+            <h3 className="text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7] mb-3">Create New API Key</h3>
             <div className="space-y-3">
               <div>
-                <label htmlFor="keyName" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label htmlFor="keyName" className="block text-sm font-medium text-[#424245] dark:text-[#a1a1a6] mb-1">
                   Key Name
                 </label>
                 <input
@@ -224,18 +224,18 @@ export default function ApiKeysPage() {
                   onChange={(e) => setNewKeyName(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') handleCreate(); }}
                   placeholder="e.g., Production API, CI/CD Pipeline"
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-iron-500 focus:border-iron-500 outline-none transition-colors"
+                  className="w-full px-3 py-2 border border-[#d2d2d7] dark:border-[#38383a] rounded-lg text-sm bg-white dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] placeholder-[#86868b] dark:placeholder-[#636366] focus:ring-2 focus:ring-iron-500 focus:border-iron-500 outline-none transition-colors"
                 />
               </div>
               <div>
-                <label htmlFor="keyScope" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label htmlFor="keyScope" className="block text-sm font-medium text-[#424245] dark:text-[#a1a1a6] mb-1">
                   Scope
                 </label>
                 <select
                   id="keyScope"
                   value={newKeyScope}
                   onChange={(e) => setNewKeyScope(e.target.value as 'read' | 'write' | 'admin')}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-iron-500 focus:border-iron-500 outline-none transition-colors"
+                  className="w-full px-3 py-2 border border-[#d2d2d7] dark:border-[#38383a] rounded-lg text-sm bg-white dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] focus:ring-2 focus:ring-iron-500 focus:border-iron-500 outline-none transition-colors"
                 >
                   {SCOPES.map((scope) => (
                     <option key={scope.value} value={scope.value}>
@@ -249,7 +249,7 @@ export default function ApiKeysPage() {
                   type="button"
                   onClick={handleCreate}
                   disabled={creating || !newKeyName.trim()}
-                  className={`min-h-[44px] px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-gray-700 ${
+                  className={`min-h-[44px] px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-[#2c2c2e] ${
                     creating || !newKeyName.trim()
                       ? 'bg-iron-400 dark:bg-iron-800 cursor-not-allowed'
                       : 'bg-iron-600 hover:bg-iron-700'
@@ -267,7 +267,7 @@ export default function ApiKeysPage() {
                 <button
                   type="button"
                   onClick={() => { setShowCreateForm(false); setNewKeyName(''); }}
-                  className="min-h-[44px] px-4 py-2 rounded-lg text-sm font-medium border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400"
+                  className="min-h-[44px] px-4 py-2 rounded-lg text-sm font-medium border border-[#d2d2d7] dark:border-[#38383a] text-[#424245] dark:text-[#a1a1a6] hover:bg-[#f5f5f7] dark:hover:bg-[#38383a] transition-colors focus:outline-none focus:ring-2 focus:ring-[#86868b]"
                 >
                   Cancel
                 </button>
@@ -277,14 +277,14 @@ export default function ApiKeysPage() {
         )}
 
         {/* Keys List */}
-        <div className="divide-y divide-gray-100 dark:divide-gray-700">
+        <div className="divide-y divide-[#d2d2d7]/40 dark:divide-[#38383a]/60">
           {keys.length === 0 ? (
             <div className="py-12 text-center">
-              <svg className="w-10 h-10 text-gray-300 dark:text-gray-600 mx-auto mb-2" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor">
+              <svg className="w-10 h-10 text-[#d2d2d7] dark:text-[#38383a] mx-auto mb-2" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z" />
               </svg>
-              <p className="text-sm text-gray-500 dark:text-gray-400">No API keys yet.</p>
-              <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Create your first key to get started.</p>
+              <p className="text-sm text-[#6e6e73] dark:text-[#86868b]">No API keys yet.</p>
+              <p className="text-xs text-[#86868b] dark:text-[#636366] mt-1">Create your first key to get started.</p>
             </div>
           ) : (
             keys.map((key) => (
@@ -292,17 +292,17 @@ export default function ApiKeysPage() {
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 mb-1">
-                      <p className="text-sm font-medium text-gray-900 dark:text-white">{key.name}</p>
+                      <p className="text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">{key.name}</p>
                       <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium capitalize ${getScopeBadgeClass(key.scope)}`}>
                         {key.scope}
                       </span>
                     </div>
-                    <p className="text-sm font-mono text-gray-500 dark:text-gray-400">{key.prefix}...</p>
+                    <p className="text-sm font-mono text-[#6e6e73] dark:text-[#86868b]">{key.prefix}...</p>
                     <div className="flex items-center gap-4 mt-1">
-                      <span className="text-xs text-gray-400 dark:text-gray-500" suppressHydrationWarning>
+                      <span className="text-xs text-[#86868b] dark:text-[#636366]" suppressHydrationWarning>
                         Created {new Date(key.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                       </span>
-                      <span className="text-xs text-gray-400 dark:text-gray-500" suppressHydrationWarning>
+                      <span className="text-xs text-[#86868b] dark:text-[#636366]" suppressHydrationWarning>
                         {key.lastUsed
                           ? `Last used ${new Date(key.lastUsed).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
                           : 'Never used'}
@@ -328,7 +328,7 @@ export default function ApiKeysPage() {
                       <button
                         type="button"
                         onClick={() => setConfirmRevokeId(null)}
-                        className="min-h-[36px] px-3 py-1.5 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs font-medium rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400"
+                        className="min-h-[36px] px-3 py-1.5 bg-[#f5f5f7] dark:bg-[#2c2c2e] text-[#424245] dark:text-[#a1a1a6] text-xs font-medium rounded-lg hover:bg-[#d2d2d7]/40 dark:hover:bg-[#38383a] transition-colors focus:outline-none focus:ring-2 focus:ring-[#86868b]"
                       >
                         Cancel
                       </button>
@@ -350,15 +350,15 @@ export default function ApiKeysPage() {
       </div>
 
       {/* Scope Descriptions */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Scope Permissions</h2>
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Scope Permissions</h2>
         <div className="space-y-3">
           {SCOPES.map((scope) => (
             <div key={scope.value} className="flex items-start gap-3">
               <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${getScopeBadgeClass(scope.value)}`}>
                 {scope.label}
               </span>
-              <p className="text-sm text-gray-500 dark:text-gray-400">{scope.description}</p>
+              <p className="text-sm text-[#6e6e73] dark:text-[#86868b]">{scope.description}</p>
             </div>
           ))}
         </div>

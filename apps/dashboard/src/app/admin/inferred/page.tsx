@@ -13,9 +13,9 @@ interface InferredEntity {
 }
 
 const STATUS_STYLES: Record<string, string> = {
-  pending: 'bg-yellow-50 text-yellow-700 border border-yellow-200',
-  confirmed: 'bg-green-50 text-green-700 border border-green-200',
-  rejected: 'bg-red-50 text-red-700 border border-red-200',
+  pending: 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400 border border-yellow-200 dark:border-yellow-800',
+  confirmed: 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800',
+  rejected: 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800',
 };
 
 const STATUS_DOT: Record<string, string> = {
@@ -125,11 +125,11 @@ export default function InferredEntitiesPage() {
   if (loading) {
     return (
       <div className="max-w-5xl">
-        <h1 className="text-2xl font-bold text-gray-900 mb-8">Inferred Entities</h1>
+        <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7] mb-8">Inferred Entities</h1>
         <div className="flex items-center justify-center py-16">
           <div className="flex items-center gap-3">
             <div className="w-6 h-6 border-2 border-iron-200 border-t-iron-600 rounded-full animate-spin" />
-            <span className="text-sm text-gray-500">Loading inferred entities...</span>
+            <span className="text-sm text-[#6e6e73] dark:text-[#86868b]">Loading inferred entities...</span>
           </div>
         </div>
       </div>
@@ -143,8 +143,8 @@ export default function InferredEntitiesPage() {
     <div className="max-w-5xl">
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Inferred Entities</h1>
-          <p className="text-sm text-gray-500 mt-1">
+          <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Inferred Entities</h1>
+          <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-1">
             Review entity proposals discovered by pattern analysis.
           </p>
         </div>
@@ -170,7 +170,7 @@ export default function InferredEntitiesPage() {
 
       {/* Error banner */}
       {error && (
-        <div className="mb-6 p-3 rounded-lg text-sm font-medium bg-red-50 text-red-700 border border-red-200">
+        <div className="mb-6 p-3 rounded-lg text-sm font-medium bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800">
           {error}
         </div>
       )}
@@ -180,8 +180,8 @@ export default function InferredEntitiesPage() {
         <div
           className={`mb-6 p-3 rounded-lg text-sm font-medium ${
             analyzeMessage.type === 'success'
-              ? 'bg-green-50 text-green-700 border border-green-200'
-              : 'bg-red-50 text-red-700 border border-red-200'
+              ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800'
+              : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800'
           }`}
         >
           {analyzeMessage.text}
@@ -189,33 +189,33 @@ export default function InferredEntitiesPage() {
       )}
 
       {/* Entities table */}
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
         {entities.length === 0 ? (
-          <p className="text-sm text-gray-500 text-center py-8">
+          <p className="text-sm text-[#6e6e73] dark:text-[#86868b] text-center py-8">
             No inferred entities found. Click &quot;Run Analysis&quot; to discover patterns.
           </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-gray-200 text-left">
-                  <th className="pb-3 font-medium text-gray-500">Inferred Type</th>
-                  <th className="pb-3 font-medium text-gray-500">Confidence</th>
-                  <th className="pb-3 font-medium text-gray-500">Evidence</th>
-                  <th className="pb-3 font-medium text-gray-500">Status</th>
-                  <th className="pb-3 font-medium text-gray-500">First Seen</th>
-                  <th className="pb-3 font-medium text-gray-500 text-right">Actions</th>
+                <tr className="border-b border-[#d2d2d7]/40 dark:border-[#38383a]/60 text-left">
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b]">Inferred Type</th>
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b]">Confidence</th>
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b]">Evidence</th>
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b]">Status</th>
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b]">First Seen</th>
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b] text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-[#d2d2d7]/40 dark:divide-[#38383a]/60">
                 {entities.map((entity) => (
-                  <tr key={entity.id}>
+                  <tr key={entity.id} className="bg-[#f5f5f7] dark:bg-[#2c2c2e]/50">
                     <td className="py-3 pr-4">
-                      <span className="font-medium text-gray-900">{entity.inferredType}</span>
+                      <span className="font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">{entity.inferredType}</span>
                     </td>
                     <td className="py-3 pr-4">
                       <div className="flex items-center gap-2">
-                        <div className="w-16 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                        <div className="w-16 h-1.5 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded-full overflow-hidden">
                           <div
                             className={`h-full rounded-full ${
                               entity.confidence >= 0.8
@@ -227,12 +227,12 @@ export default function InferredEntitiesPage() {
                             style={{ width: `${entity.confidence * 100}%` }}
                           />
                         </div>
-                        <span className="text-xs font-medium text-gray-600 tabular-nums">
+                        <span className="text-xs font-medium text-[#6e6e73] dark:text-[#86868b] tabular-nums">
                           {formatConfidence(entity.confidence)}
                         </span>
                       </div>
                     </td>
-                    <td className="py-3 pr-4 text-gray-600 tabular-nums">
+                    <td className="py-3 pr-4 text-[#6e6e73] dark:text-[#86868b] tabular-nums">
                       {entity.evidenceCount}
                     </td>
                     <td className="py-3 pr-4">
@@ -243,13 +243,13 @@ export default function InferredEntitiesPage() {
                       >
                         <span
                           className={`w-1.5 h-1.5 rounded-full ${
-                            STATUS_DOT[entity.status] ?? 'bg-gray-400'
+                            STATUS_DOT[entity.status] ?? 'bg-[#86868b]'
                           }`}
                         />
                         {entity.status.charAt(0).toUpperCase() + entity.status.slice(1)}
                       </span>
                     </td>
-                    <td className="py-3 pr-4 text-gray-500 whitespace-nowrap">
+                    <td className="py-3 pr-4 text-[#6e6e73] dark:text-[#86868b] whitespace-nowrap">
                       {new Date(entity.firstSeenAt).toLocaleDateString()}
                     </td>
                     <td className="py-3 text-right">
@@ -271,7 +271,7 @@ export default function InferredEntitiesPage() {
                           </button>
                         </div>
                       ) : (
-                        <span className="text-xs text-gray-400">--</span>
+                        <span className="text-xs text-[#86868b] dark:text-[#636366]">--</span>
                       )}
                     </td>
                   </tr>

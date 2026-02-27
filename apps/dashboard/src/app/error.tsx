@@ -20,10 +20,10 @@ export default function GlobalError({
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
           </svg>
         </div>
-        <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+        <h2 className="text-xl font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-2">
           {isAuthError ? 'Session Expired' : 'Something went wrong'}
         </h2>
-        <p className="text-gray-600 dark:text-gray-400 mb-6">
+        <p className="text-[#6e6e73] dark:text-[#86868b] mb-6">
           {isAuthError
             ? 'Your session has expired. Please sign in again to continue.'
             : 'An unexpected error occurred. Please try again.'}
@@ -38,7 +38,7 @@ export default function GlobalError({
         ) : (
           <button
             onClick={reset}
-            className="inline-flex items-center px-4 py-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-lg hover:bg-gray-800 dark:hover:bg-gray-100 transition-colors"
+            className="inline-flex items-center px-4 py-2 bg-[#1d1d1f] dark:bg-white text-white dark:text-[#1d1d1f] rounded-lg hover:bg-[#424245] dark:hover:bg-[#d2d2d7] transition-colors"
           >
             Try Again
           </button>

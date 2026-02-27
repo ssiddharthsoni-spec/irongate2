@@ -144,11 +144,11 @@ export default function PluginsPage() {
   if (loading) {
     return (
       <div className="max-w-5xl">
-        <h1 className="text-2xl font-bold text-gray-900 mb-8">Plugins</h1>
+        <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7] mb-8">Plugins</h1>
         <div className="flex items-center justify-center py-16">
           <div className="flex items-center gap-3">
             <div className="w-6 h-6 border-2 border-iron-200 border-t-iron-600 rounded-full animate-spin" />
-            <span className="text-sm text-gray-500">Loading plugins...</span>
+            <span className="text-sm text-[#6e6e73] dark:text-[#86868b]">Loading plugins...</span>
           </div>
         </div>
       </div>
@@ -161,7 +161,7 @@ export default function PluginsPage() {
   return (
     <div className="max-w-5xl">
       <div className="flex items-center justify-between mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Plugins</h1>
+        <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Plugins</h1>
         <button
           onClick={() => setShowForm(!showForm)}
           className="bg-iron-600 hover:bg-iron-700 text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors"
@@ -172,19 +172,19 @@ export default function PluginsPage() {
 
       {/* Error banner */}
       {error && (
-        <div className="mb-6 p-3 rounded-lg text-sm font-medium bg-red-50 text-red-700 border border-red-200">
+        <div className="mb-6 p-3 rounded-lg text-sm font-medium bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800">
           {error}
         </div>
       )}
 
       {/* Upload Plugin form */}
       {showForm && (
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200 mb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Upload Plugin</h2>
+        <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 mb-6">
+          <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Upload Plugin</h2>
           <form onSubmit={handleUpload} className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-[#424245] dark:text-[#a1a1a6] mb-1">
                   Name
                 </label>
                 <input
@@ -193,11 +193,11 @@ export default function PluginsPage() {
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
                   placeholder="My Custom Plugin"
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500"
+                  className="w-full rounded-lg border border-[#d2d2d7] dark:border-[#38383a] bg-white dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 placeholder-[#86868b] dark:placeholder-[#636366]"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-[#424245] dark:text-[#a1a1a6] mb-1">
                   Version
                 </label>
                 <input
@@ -205,13 +205,13 @@ export default function PluginsPage() {
                   value={formVersion}
                   onChange={(e) => setFormVersion(e.target.value)}
                   placeholder="1.0.0"
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500"
+                  className="w-full rounded-lg border border-[#d2d2d7] dark:border-[#38383a] bg-white dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 placeholder-[#86868b] dark:placeholder-[#636366]"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-[#424245] dark:text-[#a1a1a6] mb-1">
                 Description
               </label>
               <input
@@ -219,12 +219,12 @@ export default function PluginsPage() {
                 value={formDescription}
                 onChange={(e) => setFormDescription(e.target.value)}
                 placeholder="A brief description of what this plugin does"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500"
+                className="w-full rounded-lg border border-[#d2d2d7] dark:border-[#38383a] bg-white dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 placeholder-[#86868b] dark:placeholder-[#636366]"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-[#424245] dark:text-[#a1a1a6] mb-1">
                 Entity Types
               </label>
               <input
@@ -232,15 +232,15 @@ export default function PluginsPage() {
                 value={formEntityTypes}
                 onChange={(e) => setFormEntityTypes(e.target.value)}
                 placeholder="client_name, matter_number, ssn (comma-separated)"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500"
+                className="w-full rounded-lg border border-[#d2d2d7] dark:border-[#38383a] bg-white dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 placeholder-[#86868b] dark:placeholder-[#636366]"
               />
-              <p className="mt-1 text-xs text-gray-400">
+              <p className="mt-1 text-xs text-[#86868b] dark:text-[#636366]">
                 Comma-separated list of entity types this plugin detects.
               </p>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-[#424245] dark:text-[#a1a1a6] mb-1">
                 Code
               </label>
               <textarea
@@ -249,12 +249,12 @@ export default function PluginsPage() {
                 value={formCode}
                 onChange={(e) => setFormCode(e.target.value)}
                 placeholder="// Plugin detection logic..."
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500"
+                className="w-full rounded-lg border border-[#d2d2d7] dark:border-[#38383a] bg-white dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 placeholder-[#86868b] dark:placeholder-[#636366]"
               />
             </div>
 
             {formError && (
-              <div className="p-3 rounded-lg text-sm font-medium bg-red-50 text-red-700 border border-red-200">
+              <div className="p-3 rounded-lg text-sm font-medium bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800">
                 {formError}
               </div>
             )}
@@ -284,67 +284,67 @@ export default function PluginsPage() {
       )}
 
       {/* Plugins table */}
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
         {plugins.length === 0 ? (
-          <p className="text-sm text-gray-500 text-center py-8">
+          <p className="text-sm text-[#6e6e73] dark:text-[#86868b] text-center py-8">
             No plugins installed. Click &quot;Upload Plugin&quot; to add one.
           </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-gray-200 text-left">
-                  <th className="pb-3 font-medium text-gray-500">Name</th>
-                  <th className="pb-3 font-medium text-gray-500">Version</th>
-                  <th className="pb-3 font-medium text-gray-500">Entity Types</th>
-                  <th className="pb-3 font-medium text-gray-500">Hits</th>
-                  <th className="pb-3 font-medium text-gray-500">FP Rate</th>
-                  <th className="pb-3 font-medium text-gray-500">Status</th>
-                  <th className="pb-3 font-medium text-gray-500 text-right">Actions</th>
+                <tr className="border-b border-[#d2d2d7]/40 dark:border-[#38383a]/60 text-left">
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b]">Name</th>
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b]">Version</th>
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b]">Entity Types</th>
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b]">Hits</th>
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b]">FP Rate</th>
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b]">Status</th>
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b] text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-[#d2d2d7]/40 dark:divide-[#38383a]/60">
                 {plugins.map((plugin) => (
                   <tr key={plugin.id}>
                     <td className="py-3 pr-4">
                       <div>
-                        <p className="font-medium text-gray-900">{plugin.name}</p>
+                        <p className="font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">{plugin.name}</p>
                         {plugin.description && (
-                          <p className="text-xs text-gray-400 mt-0.5 truncate max-w-xs">
+                          <p className="text-xs text-[#86868b] dark:text-[#636366] mt-0.5 truncate max-w-xs">
                             {plugin.description}
                           </p>
                         )}
                       </div>
                     </td>
                     <td className="py-3 pr-4">
-                      <span className="font-mono text-xs text-gray-600">{plugin.version}</span>
+                      <span className="font-mono text-xs text-[#6e6e73] dark:text-[#86868b]">{plugin.version}</span>
                     </td>
                     <td className="py-3 pr-4">
                       <div className="flex flex-wrap gap-1">
                         {plugin.entityTypes.map((et) => (
                           <span
                             key={et}
-                            className="inline-block bg-iron-50 text-iron-700 text-xs font-medium px-2 py-0.5 rounded-full"
+                            className="inline-block bg-iron-50 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 text-xs font-medium px-2 py-0.5 rounded-full"
                           >
                             {et}
                           </span>
                         ))}
                       </div>
                     </td>
-                    <td className="py-3 pr-4 text-gray-600 tabular-nums">
-                      {plugin.hitCount.toLocaleString()}
+                    <td className="py-3 pr-4 text-[#6e6e73] dark:text-[#86868b] tabular-nums">
+                      {(plugin.hitCount ?? 0).toLocaleString()}
                     </td>
                     <td className="py-3 pr-4">
                       <span
                         className={`text-xs font-medium ${
-                          plugin.falsePositiveRate > 0.2
-                            ? 'text-red-600'
-                            : plugin.falsePositiveRate > 0.1
-                              ? 'text-yellow-600'
-                              : 'text-green-600'
+                          (plugin.falsePositiveRate ?? 0) > 0.2
+                            ? 'text-red-600 dark:text-red-400'
+                            : (plugin.falsePositiveRate ?? 0) > 0.1
+                              ? 'text-yellow-600 dark:text-yellow-400'
+                              : 'text-green-600 dark:text-green-400'
                         }`}
                       >
-                        {(plugin.falsePositiveRate * 100).toFixed(1)}%
+                        {((plugin.falsePositiveRate ?? 0) * 100).toFixed(1)}%
                       </span>
                     </td>
                     <td className="py-3 pr-4">
@@ -369,7 +369,7 @@ export default function PluginsPage() {
                       <button
                         onClick={() => handleDelete(plugin.id)}
                         disabled={deletingId === plugin.id}
-                        className="text-red-600 hover:text-red-800 text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {deletingId === plugin.id ? 'Deleting...' : 'Delete'}
                       </button>

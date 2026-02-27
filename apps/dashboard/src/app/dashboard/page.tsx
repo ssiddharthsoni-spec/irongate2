@@ -97,6 +97,37 @@ export default function DashboardPage() {
     { name: 'Critical (86-100)', value: data.scoreDistribution.critical, color: RISK_COLORS.critical },
   ];
 
+  function handleExportDashboard() {
+    const rows = [
+      ['Iron Gate Dashboard Report'],
+      ['Generated', new Date().toISOString()],
+      ['Time Range', `${timeRange} days`],
+      [],
+      ['Summary'],
+      ['Total Interactions', String(data.totalInteractions)],
+      ['Avg Sensitivity Score', String(data.avgSensitivityScore)],
+      ['High Risk Events', String(data.scoreDistribution.high + data.scoreDistribution.critical)],
+      ['Actions Taken', String(data.totalProtected)],
+      ['Blocked', String(data.totalBlocked)],
+      [],
+      ['Tool Breakdown'],
+      ['Tool', 'Count', 'Percentage'],
+      ...data.toolBreakdown.map(t => [t.toolName, String(t.count), `${t.percentage}%`]),
+      [],
+      ['Top Users'],
+      ['User', 'Prompts', 'Avg Score', 'High Risk Count'],
+      ...data.topUsers.map(u => [u.displayName, String(u.promptCount), String(u.avgScore), String(u.highRiskCount)]),
+    ];
+    const csv = rows.map(r => r.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `iron-gate-dashboard-${timeRange}d.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div>
       {/* Demo data banner */}
@@ -120,8 +151,8 @@ export default function DashboardPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{firmName || 'Your Organization'}</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400">
+          <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">{firmName || 'Your Organization'}</h1>
+          <p className="text-sm text-[#6e6e73] dark:text-[#86868b]">
             Iron Gate — AI Governance & Security Dashboard
             {syncing && (
               <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
@@ -138,12 +169,19 @@ export default function DashboardPage() {
               className={`px-3 py-1.5 text-sm rounded-lg ${
                 timeRange === days
                   ? 'bg-iron-600 text-white'
-                  : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-700 dark:hover:bg-gray-700'
+                  : 'bg-white text-[#424245] border border-[#d2d2d7]/40 hover:bg-[#f5f5f7] dark:bg-[#1c1c1e] dark:text-[#a1a1a6] dark:border-[#38383a]/60 dark:hover:bg-[#2c2c2e]'
               }`}
             >
               {days}d
             </button>
           ))}
+          <button
+            onClick={handleExportDashboard}
+            className="px-3 py-1.5 text-sm rounded-lg bg-white text-[#424245] border border-[#d2d2d7]/40 hover:bg-[#f5f5f7] dark:bg-[#1c1c1e] dark:text-[#a1a1a6] dark:border-[#38383a]/60 dark:hover:bg-[#2c2c2e] flex items-center gap-1.5"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+            Export
+          </button>
         </div>
       </div>
 
@@ -162,7 +200,7 @@ export default function DashboardPage() {
         const impact = data.impact || getDemoImpactData();
         return (
           <div className="mb-8">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4 flex items-center gap-2">
               <svg className="w-5 h-5 text-iron-600 dark:text-iron-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
               </svg>
@@ -174,38 +212,38 @@ export default function DashboardPage() {
               <p className="text-iron-200 text-sm font-medium">Sensitive data instances detected &amp; protected</p>
               <div className="flex items-baseline gap-3 mt-1">
                 <p className="text-4xl font-bold text-white">
-                  {impact.totalEntitiesDetected.toLocaleString()}
+                  {(impact.totalEntitiesDetected ?? 0).toLocaleString()}
                 </p>
-                <TrendBadge value={impact.trends.entitiesChange} />
+                <TrendBadge value={impact.trends?.entitiesChange ?? 0} />
               </div>
               <p className="text-iron-300 text-sm mt-2">
-                Iron Gate identified {impact.totalEntitiesDetected.toLocaleString()} sensitive entities across{' '}
-                {data.totalInteractions.toLocaleString()} AI interactions and took protective action on{' '}
-                {impact.totalActionsProtected.toLocaleString()} of them.
+                Iron Gate identified {(impact.totalEntitiesDetected ?? 0).toLocaleString()} sensitive entities across{' '}
+                {(data.totalInteractions ?? 0).toLocaleString()} AI interactions and took protective action on{' '}
+                {(impact.totalActionsProtected ?? 0).toLocaleString()} of them.
               </p>
             </div>
 
             {/* Entity breakdown + Action distribution */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               {/* Entity type breakdown */}
-              <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-                <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">What Iron Gate Found</h3>
+              <div className="lg:col-span-2 bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+                <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-3">What Iron Gate Found</h3>
                 <div className="space-y-2">
                   {impact.entityBreakdown.slice(0, 8).map((item) => {
                     const maxCount = impact.entityBreakdown[0]?.count || 1;
                     const pct = Math.round((item.count / maxCount) * 100);
                     return (
                       <div key={item.entityType} className="flex items-center gap-3">
-                        <span className="text-xs font-mono text-gray-500 dark:text-gray-400 w-36 truncate">
+                        <span className="text-xs font-mono text-[#6e6e73] dark:text-[#86868b] w-36 truncate">
                           {formatEntityType(item.entityType)}
                         </span>
-                        <div className="flex-1 h-5 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+                        <div className="flex-1 h-5 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded-full overflow-hidden">
                           <div
                             className="h-full bg-iron-500 rounded-full transition-all"
                             style={{ width: `${pct}%` }}
                           />
                         </div>
-                        <span className="text-xs font-semibold text-gray-700 dark:text-gray-300 w-12 text-right">
+                        <span className="text-xs font-semibold text-[#424245] dark:text-[#a1a1a6] w-12 text-right">
                           {item.count.toLocaleString()}
                         </span>
                       </div>
@@ -215,8 +253,8 @@ export default function DashboardPage() {
               </div>
 
               {/* Action distribution */}
-              <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-                <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Protective Actions Taken</h3>
+              <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+                <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-3">Protective Actions Taken</h3>
                 <div className="space-y-3">
                   <ActionStatRow label="Blocked" count={impact.actionDistribution.block} total={data.totalInteractions} color="bg-red-500" />
                   <ActionStatRow label="Warned" count={impact.actionDistribution.warn} total={data.totalInteractions} color="bg-orange-400" />
@@ -231,15 +269,15 @@ export default function DashboardPage() {
 
       {/* Charts Row 1 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Sensitivity Distribution</h2>
+        <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+          <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Sensitivity Distribution</h2>
           <div style={{ width: '100%', height: 300 }}>
             <SensitivityDistributionChart data={distributionData} />
           </div>
         </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">AI Tool Usage</h2>
+        <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+          <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">AI Tool Usage</h2>
           <div style={{ width: '100%', height: 300 }}>
             <ToolBreakdownChart data={data.toolBreakdown} />
           </div>
@@ -247,8 +285,8 @@ export default function DashboardPage() {
       </div>
 
       {/* Charts Row 2 */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700 mb-6">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Daily Trend</h2>
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 mb-6">
+        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Daily Trend</h2>
         <div style={{ width: '100%', height: 300 }}>
           <DailyTrendChart data={data.dailyTrend} />
         </div>
@@ -256,78 +294,78 @@ export default function DashboardPage() {
 
       {/* Security Posture */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-200 dark:border-gray-700">
+        <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-5 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
           <div className="flex items-center gap-2 mb-2">
             <div className="w-8 h-8 rounded-lg bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
               <svg className="w-4 h-4 text-green-600 dark:text-green-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
               </svg>
             </div>
-            <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Encryption</p>
+            <p className="text-sm font-medium text-[#6e6e73] dark:text-[#86868b]">Encryption</p>
           </div>
           <p className="text-lg font-bold text-green-600 dark:text-green-400">AES-256-GCM</p>
-          <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Envelope encryption active</p>
+          <p className="text-xs text-[#86868b] dark:text-[#636366] mt-0.5">Envelope encryption active</p>
         </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-200 dark:border-gray-700">
+        <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-5 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
           <div className="flex items-center gap-2 mb-2">
             <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
               <svg className="w-4 h-4 text-blue-600 dark:text-blue-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
               </svg>
             </div>
-            <p className="text-sm font-medium text-gray-500 dark:text-gray-400">RLS Isolation</p>
+            <p className="text-sm font-medium text-[#6e6e73] dark:text-[#86868b]">RLS Isolation</p>
           </div>
           <p className="text-lg font-bold text-blue-600 dark:text-blue-400">Enforced</p>
-          <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Per-firm database isolation</p>
+          <p className="text-xs text-[#86868b] dark:text-[#636366] mt-0.5">Per-firm database isolation</p>
         </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-200 dark:border-gray-700">
+        <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-5 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
           <div className="flex items-center gap-2 mb-2">
             <div className="w-8 h-8 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
               <svg className="w-4 h-4 text-purple-600 dark:text-purple-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
               </svg>
             </div>
-            <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Audit Chain</p>
+            <p className="text-sm font-medium text-[#6e6e73] dark:text-[#86868b]">Audit Chain</p>
           </div>
           <p className="text-lg font-bold text-purple-600 dark:text-purple-400">Verified</p>
-          <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">SHA-256 hash chain intact</p>
+          <p className="text-xs text-[#86868b] dark:text-[#636366] mt-0.5">SHA-256 hash chain intact</p>
         </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-200 dark:border-gray-700">
+        <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-5 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
           <div className="flex items-center gap-2 mb-2">
             <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
               <svg className="w-4 h-4 text-emerald-600 dark:text-emerald-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
               </svg>
             </div>
-            <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Kill Switch</p>
+            <p className="text-sm font-medium text-[#6e6e73] dark:text-[#86868b]">Kill Switch</p>
           </div>
           <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400">Standby</p>
-          <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Ready for emergency activation</p>
+          <p className="text-xs text-[#86868b] dark:text-[#636366] mt-0.5">Ready for emergency activation</p>
         </div>
       </div>
 
       {/* Tables Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Top Users */}
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Top Users</h2>
+        <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+          <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Top Users</h2>
           <table className="w-full">
             <thead>
-              <tr className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+              <tr className="text-left text-xs font-medium text-[#6e6e73] dark:text-[#86868b] uppercase tracking-wider">
                 <th className="pb-3">User</th>
                 <th className="pb-3">Prompts</th>
                 <th className="pb-3">Avg Score</th>
                 <th className="pb-3">High Risk</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+            <tbody className="divide-y divide-[#d2d2d7]/40 dark:divide-[#38383a]/60">
               {data.topUsers.map((user) => (
                 <tr key={user.userId}>
-                  <td className="py-2 text-sm text-gray-900 dark:text-white">{user.displayName}</td>
-                  <td className="py-2 text-sm text-gray-600 dark:text-gray-400">{user.promptCount}</td>
+                  <td className="py-2 text-sm text-[#1d1d1f] dark:text-[#f5f5f7]">{user.displayName}</td>
+                  <td className="py-2 text-sm text-[#6e6e73] dark:text-[#86868b]">{user.promptCount}</td>
                   <td className="py-2 text-sm">
                     <span className={user.avgScore > 60 ? 'text-risk-high font-medium' : user.avgScore > 25 ? 'text-risk-medium' : 'text-risk-low'}>
                       {user.avgScore}
@@ -341,17 +379,17 @@ export default function DashboardPage() {
         </div>
 
         {/* Recent High Risk */}
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Recent High Risk Events</h2>
+        <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+          <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Recent High Risk Events</h2>
           <div className="space-y-3 max-h-96 overflow-y-auto">
             {data.recentHighRisk.length === 0 ? (
-              <p className="text-sm text-gray-400 dark:text-gray-500 text-center py-8">No high risk events</p>
+              <p className="text-sm text-[#86868b] dark:text-[#636366] text-center py-8">No high risk events</p>
             ) : (
               data.recentHighRisk.slice(0, 10).map((event: any) => (
                 <div key={event.id} className="flex items-center justify-between p-3 bg-red-50 dark:bg-red-900/20 rounded-lg">
                   <div>
-                    <span className="text-sm font-medium text-gray-900 dark:text-white">{event.aiToolId}</span>
-                    <span className="text-xs text-gray-500 dark:text-gray-400 ml-2" suppressHydrationWarning>
+                    <span className="text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">{event.aiToolId}</span>
+                    <span className="text-xs text-[#6e6e73] dark:text-[#86868b] ml-2" suppressHydrationWarning>
                       {new Date(event.createdAt).toLocaleString()}
                     </span>
                   </div>
@@ -368,8 +406,8 @@ export default function DashboardPage() {
 
 function ChartPlaceholder() {
   return (
-    <div className="flex items-center justify-center h-[300px] bg-gray-50 dark:bg-gray-700/50 rounded-lg animate-pulse">
-      <span className="text-sm text-gray-400 dark:text-gray-500">Loading chart...</span>
+    <div className="flex items-center justify-center h-[300px] bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded-lg animate-pulse">
+      <span className="text-sm text-[#86868b] dark:text-[#636366]">Loading chart...</span>
     </div>
   );
 }
@@ -378,7 +416,7 @@ function SummaryCard({
   title,
   value,
   subtitle,
-  color = 'text-gray-900',
+  color = 'text-[#1d1d1f]',
 }: {
   title: string;
   value: string;
@@ -386,10 +424,10 @@ function SummaryCard({
   color?: string;
 }) {
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-      <p className="text-sm font-medium text-gray-500 dark:text-gray-400">{title}</p>
+    <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+      <p className="text-sm font-medium text-[#6e6e73] dark:text-[#86868b]">{title}</p>
       <p className={`text-3xl font-bold mt-1 ${color}`}>{value}</p>
-      {subtitle && <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{subtitle}</p>}
+      {subtitle && <p className="text-xs text-[#86868b] dark:text-[#636366] mt-1">{subtitle}</p>}
     </div>
   );
 }
@@ -413,13 +451,13 @@ function ActionStatRow({ label, count, total, color }: { label: string; count: n
   return (
     <div>
       <div className="flex justify-between items-center mb-1">
-        <span className="text-sm text-gray-600 dark:text-gray-400">{label}</span>
-        <span className="text-sm font-semibold text-gray-900 dark:text-white">{count.toLocaleString()}</span>
+        <span className="text-sm text-[#6e6e73] dark:text-[#86868b]">{label}</span>
+        <span className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">{count.toLocaleString()}</span>
       </div>
-      <div className="h-2 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+      <div className="h-2 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded-full overflow-hidden">
         <div className={`h-full ${color} rounded-full`} style={{ width: `${Math.max(pct, 1)}%` }} />
       </div>
-      <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{pct}% of interactions</p>
+      <p className="text-xs text-[#86868b] dark:text-[#636366] mt-0.5">{pct}% of interactions</p>
     </div>
   );
 }

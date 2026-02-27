@@ -116,11 +116,11 @@ export default function WebhooksPage() {
   if (loading) {
     return (
       <div className="max-w-5xl">
-        <h1 className="text-2xl font-bold text-gray-900 mb-8">Webhooks</h1>
+        <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7] mb-8">Webhooks</h1>
         <div className="flex items-center justify-center py-16">
           <div className="flex items-center gap-3">
             <div className="w-6 h-6 border-2 border-iron-200 border-t-iron-600 rounded-full animate-spin" />
-            <span className="text-sm text-gray-500">Loading webhooks...</span>
+            <span className="text-sm text-[#6e6e73] dark:text-[#86868b]">Loading webhooks...</span>
           </div>
         </div>
       </div>
@@ -133,7 +133,7 @@ export default function WebhooksPage() {
   return (
     <div className="max-w-5xl">
       <div className="flex items-center justify-between mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Webhooks</h1>
+        <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Webhooks</h1>
         <button
           onClick={() => setShowForm(!showForm)}
           className="bg-iron-600 hover:bg-iron-700 text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors"
@@ -144,18 +144,18 @@ export default function WebhooksPage() {
 
       {/* Error banner */}
       {error && (
-        <div className="mb-6 p-3 rounded-lg text-sm font-medium bg-red-50 text-red-700 border border-red-200">
+        <div className="mb-6 p-3 rounded-lg text-sm font-medium bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800">
           {error}
         </div>
       )}
 
       {/* Add Webhook form */}
       {showForm && (
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200 mb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Add Webhook</h2>
+        <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 mb-6">
+          <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Add Webhook</h2>
           <form onSubmit={handleAdd} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-[#424245] dark:text-[#a1a1a6] mb-1">
                 Endpoint URL
               </label>
               <input
@@ -164,12 +164,12 @@ export default function WebhooksPage() {
                 value={formUrl}
                 onChange={(e) => setFormUrl(e.target.value)}
                 placeholder="https://example.com/webhook"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500"
+                className="w-full rounded-lg border border-[#d2d2d7] dark:border-[#38383a] bg-white dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 placeholder-[#86868b] dark:placeholder-[#636366]"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-[#424245] dark:text-[#a1a1a6] mb-1">
                 Secret
               </label>
               <input
@@ -177,24 +177,24 @@ export default function WebhooksPage() {
                 value={formSecret}
                 onChange={(e) => setFormSecret(e.target.value)}
                 placeholder="whsec_..."
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500"
+                className="w-full rounded-lg border border-[#d2d2d7] dark:border-[#38383a] bg-white dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 placeholder-[#86868b] dark:placeholder-[#636366]"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-[#424245] dark:text-[#a1a1a6] mb-2">
                 Event Types
               </label>
               <div className="flex flex-wrap gap-3">
                 {AVAILABLE_EVENT_TYPES.map((type) => (
-                  <label key={type} className="flex items-center gap-2 text-sm text-gray-700">
+                  <label key={type} className="flex items-center gap-2 text-sm text-[#424245] dark:text-[#a1a1a6]">
                     <input
                       type="checkbox"
                       checked={formEventTypes.includes(type)}
                       onChange={() => toggleEventType(type)}
-                      className="rounded border-gray-300 text-iron-600 focus:ring-iron-500"
+                      className="rounded border-[#d2d2d7] text-iron-600 focus:ring-iron-500"
                     />
-                    <span className="font-mono text-xs bg-gray-100 px-2 py-0.5 rounded">
+                    <span className="font-mono text-xs bg-[#f5f5f7] dark:bg-[#2c2c2e] px-2 py-0.5 rounded">
                       {type}
                     </span>
                   </label>
@@ -203,7 +203,7 @@ export default function WebhooksPage() {
             </div>
 
             {formError && (
-              <div className="p-3 rounded-lg text-sm font-medium bg-red-50 text-red-700 border border-red-200">
+              <div className="p-3 rounded-lg text-sm font-medium bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800">
                 {formError}
               </div>
             )}
@@ -233,24 +233,24 @@ export default function WebhooksPage() {
       )}
 
       {/* Webhooks table */}
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
         {webhooks.length === 0 ? (
-          <p className="text-sm text-gray-500 text-center py-8">
+          <p className="text-sm text-[#6e6e73] dark:text-[#86868b] text-center py-8">
             No webhooks configured. Click &quot;Add Webhook&quot; to create one.
           </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-gray-200 text-left">
-                  <th className="pb-3 font-medium text-gray-500">URL</th>
-                  <th className="pb-3 font-medium text-gray-500">Event Types</th>
-                  <th className="pb-3 font-medium text-gray-500">Status</th>
-                  <th className="pb-3 font-medium text-gray-500">Created</th>
-                  <th className="pb-3 font-medium text-gray-500 text-right">Actions</th>
+                <tr className="border-b border-[#d2d2d7]/40 dark:border-[#38383a]/60 text-left">
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b]">URL</th>
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b]">Event Types</th>
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b]">Status</th>
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b]">Created</th>
+                  <th className="pb-3 font-medium text-[#6e6e73] dark:text-[#86868b] text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-[#d2d2d7]/40 dark:divide-[#38383a]/60">
                 {webhooks.map((wh) => (
                   <tr key={wh.id}>
                     <td className="py-3 pr-4">
@@ -261,7 +261,7 @@ export default function WebhooksPage() {
                         {wh.eventTypes.map((et) => (
                           <span
                             key={et}
-                            className="inline-block bg-iron-50 text-iron-700 text-xs font-medium px-2 py-0.5 rounded-full"
+                            className="inline-block bg-iron-50 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 text-xs font-medium px-2 py-0.5 rounded-full"
                           >
                             {et}
                           </span>
@@ -272,26 +272,26 @@ export default function WebhooksPage() {
                       <span
                         className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${
                           wh.isActive
-                            ? 'bg-green-50 text-green-700'
-                            : 'bg-gray-100 text-gray-500'
+                            ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'
+                            : 'bg-[#f5f5f7] dark:bg-[#2c2c2e] text-[#6e6e73] dark:text-[#86868b]'
                         }`}
                       >
                         <span
                           className={`w-1.5 h-1.5 rounded-full ${
-                            wh.isActive ? 'bg-green-500' : 'bg-gray-400'
+                            wh.isActive ? 'bg-green-500' : 'bg-[#86868b]'
                           }`}
                         />
                         {wh.isActive ? 'Active' : 'Inactive'}
                       </span>
                     </td>
-                    <td className="py-3 pr-4 text-gray-500 whitespace-nowrap">
+                    <td className="py-3 pr-4 text-[#6e6e73] dark:text-[#86868b] whitespace-nowrap">
                       {new Date(wh.createdAt).toLocaleDateString()}
                     </td>
                     <td className="py-3 text-right">
                       <button
                         onClick={() => handleDelete(wh.id)}
                         disabled={deletingId === wh.id}
-                        className="text-red-600 hover:text-red-800 text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {deletingId === wh.id ? 'Deleting...' : 'Delete'}
                       </button>

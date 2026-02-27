@@ -131,12 +131,12 @@ export default function ProtectionSettingsPage() {
     return (
       <div className="space-y-6 max-w-2xl">
         {[1, 2, 3].map((i) => (
-          <div key={i} className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-            <div className="h-5 w-40 bg-gray-200 dark:bg-gray-700 rounded animate-pulse mb-4" />
+          <div key={i} className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+            <div className="h-5 w-40 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded animate-pulse mb-4" />
             <div className="space-y-3">
-              <div className="h-8 w-full bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
-              <div className="h-8 w-full bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
-              <div className="h-8 w-full bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+              <div className="h-8 w-full bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded animate-pulse" />
+              <div className="h-8 w-full bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded animate-pulse" />
+              <div className="h-8 w-full bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded animate-pulse" />
             </div>
           </div>
         ))}
@@ -147,15 +147,15 @@ export default function ProtectionSettingsPage() {
   return (
     <div className="space-y-6 max-w-2xl">
       {/* Sensitivity Thresholds */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">Sensitivity Thresholds</h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-5">
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-1">Sensitivity Thresholds</h2>
+        <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mb-5">
           Configure risk score thresholds that trigger each protection action.
         </p>
         <div className="space-y-5">
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Warn Threshold</label>
+              <label className="text-sm font-medium text-[#424245] dark:text-[#a1a1a6]">Warn Threshold</label>
               <span className="text-sm font-semibold text-yellow-600 dark:text-yellow-400 tabular-nums">{thresholds.warn}</span>
             </div>
             <input
@@ -167,11 +167,11 @@ export default function ProtectionSettingsPage() {
               className="w-full accent-yellow-500"
               aria-label="Warn threshold"
             />
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Events above this score will trigger a warning.</p>
+            <p className="text-xs text-[#86868b] dark:text-[#636366] mt-1">Events above this score will trigger a warning.</p>
           </div>
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Block Threshold</label>
+              <label className="text-sm font-medium text-[#424245] dark:text-[#a1a1a6]">Block Threshold</label>
               <span className="text-sm font-semibold text-red-600 dark:text-red-400 tabular-nums">{thresholds.block}</span>
             </div>
             <input
@@ -183,11 +183,11 @@ export default function ProtectionSettingsPage() {
               className="w-full accent-red-500"
               aria-label="Block threshold"
             />
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Events above this score will be blocked entirely.</p>
+            <p className="text-xs text-[#86868b] dark:text-[#636366] mt-1">Events above this score will be blocked entirely.</p>
           </div>
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Proxy Threshold</label>
+              <label className="text-sm font-medium text-[#424245] dark:text-[#a1a1a6]">Proxy Threshold</label>
               <span className="text-sm font-semibold text-iron-600 dark:text-iron-400 tabular-nums">{thresholds.proxy}</span>
             </div>
             <input
@@ -199,23 +199,23 @@ export default function ProtectionSettingsPage() {
               className="w-full accent-iron-500"
               aria-label="Proxy threshold"
             />
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Events above this score will be routed through the protection proxy.</p>
+            <p className="text-xs text-[#86868b] dark:text-[#636366] mt-1">Events above this score will be routed through the protection proxy.</p>
           </div>
         </div>
       </div>
 
       {/* Entity Type Toggles */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">Entity Detection</h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-5">
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-1">Entity Detection</h2>
+        <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mb-5">
           Enable or disable detection for specific entity types.
         </p>
         <div className="space-y-3">
           {ENTITY_TYPES.map((entity) => (
-            <div key={entity.key} className="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-700 last:border-0">
+            <div key={entity.key} className="flex items-center justify-between py-2 border-b border-[#d2d2d7]/20 dark:border-[#38383a]/40 last:border-0">
               <div className="min-w-0 flex-1 mr-4">
-                <p className="text-sm font-medium text-gray-900 dark:text-white">{entity.label}</p>
-                <p className="text-xs text-gray-500 dark:text-gray-400">{entity.description}</p>
+                <p className="text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">{entity.label}</p>
+                <p className="text-xs text-[#6e6e73] dark:text-[#86868b]">{entity.description}</p>
               </div>
               <button
                 type="button"
@@ -223,8 +223,8 @@ export default function ProtectionSettingsPage() {
                 aria-checked={entityToggles[entity.key] ?? true}
                 aria-label={`Toggle ${entity.label} detection`}
                 onClick={() => toggleEntity(entity.key)}
-                className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800 ${
-                  entityToggles[entity.key] ? 'bg-iron-600' : 'bg-gray-300 dark:bg-gray-600'
+                className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-[#1c1c1e] ${
+                  entityToggles[entity.key] ? 'bg-iron-600' : 'bg-[#d2d2d7] dark:bg-[#48484a]'
                 }`}
               >
                 <span
@@ -239,9 +239,9 @@ export default function ProtectionSettingsPage() {
       </div>
 
       {/* Allowlist */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">Allowlist</h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-1">Allowlist</h2>
+        <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mb-4">
           Terms in the allowlist will never be flagged as sensitive.
         </p>
         <div className="flex gap-2 mb-3">
@@ -251,13 +251,13 @@ export default function ProtectionSettingsPage() {
             onChange={(e) => setNewAllowItem(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') addAllowItem(); }}
             placeholder="Add term..."
-            className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-iron-500 focus:border-iron-500 outline-none transition-colors"
+            className="flex-1 px-3 py-2 border border-[#d2d2d7] dark:border-[#38383a] rounded-lg text-sm bg-white dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] placeholder-[#86868b] dark:placeholder-[#636366] focus:ring-2 focus:ring-iron-500 focus:border-iron-500 outline-none transition-colors"
             aria-label="New allowlist term"
           />
           <button
             type="button"
             onClick={addAllowItem}
-            className="min-h-[44px] px-4 py-2 bg-iron-600 hover:bg-iron-700 text-white text-sm font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800"
+            className="min-h-[44px] px-4 py-2 bg-iron-600 hover:bg-iron-700 text-white text-sm font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-[#1c1c1e]"
           >
             Add
           </button>
@@ -284,14 +284,14 @@ export default function ProtectionSettingsPage() {
             ))}
           </div>
         ) : (
-          <p className="text-sm text-gray-400 dark:text-gray-500">No items in the allowlist.</p>
+          <p className="text-sm text-[#86868b] dark:text-[#636366]">No items in the allowlist.</p>
         )}
       </div>
 
       {/* Blocklist */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">Blocklist</h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-1">Blocklist</h2>
+        <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mb-4">
           Terms in the blocklist will always be flagged and blocked.
         </p>
         <div className="flex gap-2 mb-3">
@@ -301,13 +301,13 @@ export default function ProtectionSettingsPage() {
             onChange={(e) => setNewBlockItem(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') addBlockItem(); }}
             placeholder="Add term..."
-            className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-iron-500 focus:border-iron-500 outline-none transition-colors"
+            className="flex-1 px-3 py-2 border border-[#d2d2d7] dark:border-[#38383a] rounded-lg text-sm bg-white dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] placeholder-[#86868b] dark:placeholder-[#636366] focus:ring-2 focus:ring-iron-500 focus:border-iron-500 outline-none transition-colors"
             aria-label="New blocklist term"
           />
           <button
             type="button"
             onClick={addBlockItem}
-            className="min-h-[44px] px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800"
+            className="min-h-[44px] px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 dark:focus:ring-offset-[#1c1c1e]"
           >
             Add
           </button>
@@ -334,7 +334,7 @@ export default function ProtectionSettingsPage() {
             ))}
           </div>
         ) : (
-          <p className="text-sm text-gray-400 dark:text-gray-500">No items in the blocklist.</p>
+          <p className="text-sm text-[#86868b] dark:text-[#636366]">No items in the blocklist.</p>
         )}
       </div>
 
@@ -344,7 +344,7 @@ export default function ProtectionSettingsPage() {
           type="button"
           onClick={handleSave}
           disabled={saving}
-          className={`min-h-[44px] px-6 py-2.5 rounded-lg text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 ${
+          className={`min-h-[44px] px-6 py-2.5 rounded-lg text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-[#111113] ${
             saving
               ? 'bg-iron-400 dark:bg-iron-800 cursor-not-allowed'
               : 'bg-iron-600 hover:bg-iron-700'

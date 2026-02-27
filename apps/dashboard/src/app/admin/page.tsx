@@ -159,11 +159,11 @@ export default function AdminPage() {
   if (loading) {
     return (
       <div className="max-w-3xl">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-8">Admin Settings</h1>
+        <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7] mb-8">Admin Settings</h1>
         <div className="flex items-center justify-center py-16">
           <div className="flex items-center gap-3">
             <div className="w-6 h-6 border-2 border-iron-200 border-t-iron-600 rounded-full animate-spin" />
-            <span className="text-sm text-gray-500 dark:text-gray-400">Loading configuration...</span>
+            <span className="text-sm text-[#6e6e73] dark:text-[#86868b]">Loading configuration...</span>
           </div>
         </div>
       </div>
@@ -175,14 +175,14 @@ export default function AdminPage() {
   // ---------------------------------------------------------------------------
   return (
     <div className="max-w-3xl">
-      <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-8">Admin Settings</h1>
+      <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7] mb-8">Admin Settings</h1>
 
       {/* Firm Details */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border dark:border-gray-700 mb-6">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Firm Details</h2>
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border dark:border-[#38383a]/60 mb-6">
+        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Firm Details</h2>
         <div className="space-y-4">
           <div>
-            <label htmlFor="firmName" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label htmlFor="firmName" className="block text-sm font-medium text-[#424245] dark:text-[#a1a1a6] mb-1">
               Firm Name
             </label>
             <input
@@ -191,18 +191,18 @@ export default function AdminPage() {
               value={firmName}
               onChange={(e) => setFirmName(e.target.value)}
               placeholder="Enter firm name"
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-iron-500 focus:border-iron-500 outline-none transition-colors"
+              className="w-full px-3 py-2 border border-[#d2d2d7] dark:border-[#38383a] rounded-lg text-sm bg-white dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] placeholder-[#86868b] dark:placeholder-[#636366] focus:ring-2 focus:ring-iron-500 focus:border-iron-500 outline-none transition-colors"
             />
           </div>
           <div>
-            <label htmlFor="industry" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label htmlFor="industry" className="block text-sm font-medium text-[#424245] dark:text-[#a1a1a6] mb-1">
               Industry
             </label>
             <select
               id="industry"
               value={industry}
               onChange={(e) => setIndustry(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-iron-500 focus:border-iron-500 outline-none transition-colors"
+              className="w-full px-3 py-2 border border-[#d2d2d7] dark:border-[#38383a] rounded-lg text-sm bg-white dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] focus:ring-2 focus:ring-iron-500 focus:border-iron-500 outline-none transition-colors"
             >
               <option value="general">General</option>
               <option value="legal">Legal</option>
@@ -217,36 +217,36 @@ export default function AdminPage() {
       </div>
 
       {/* Mode Selection */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border dark:border-gray-700 mb-6">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Operation Mode</h2>
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border dark:border-[#38383a]/60 mb-6">
+        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Operation Mode</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <button
             onClick={() => setMode('audit')}
             className={`p-4 rounded-lg border-2 text-left ${
-              mode === 'audit' ? 'border-iron-500 bg-iron-50 dark:bg-iron-900/20' : 'border-gray-200 dark:border-gray-700'
+              mode === 'audit' ? 'border-iron-500 bg-iron-50 dark:bg-iron-900/20' : 'border-[#d2d2d7]/40 dark:border-[#38383a]/60'
             }`}
           >
             <p className="font-medium dark:text-white">Audit Mode</p>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Monitor only. No interference with AI tool usage.</p>
+            <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-1">Monitor only. No interference with AI tool usage.</p>
           </button>
           <button
             onClick={() => setMode('proxy')}
             className={`p-4 rounded-lg border-2 text-left ${
-              mode === 'proxy' ? 'border-iron-500 bg-iron-50 dark:bg-iron-900/20' : 'border-gray-200 dark:border-gray-700'
+              mode === 'proxy' ? 'border-iron-500 bg-iron-50 dark:bg-iron-900/20' : 'border-[#d2d2d7]/40 dark:border-[#38383a]/60'
             }`}
           >
             <p className="font-medium dark:text-white">Proxy Mode</p>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Intercept and protect sensitive prompts automatically.</p>
+            <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-1">Intercept and protect sensitive prompts automatically.</p>
           </button>
         </div>
       </div>
 
       {/* Thresholds */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border dark:border-gray-700 mb-6">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Sensitivity Thresholds</h2>
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border dark:border-[#38383a]/60 mb-6">
+        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Sensitivity Thresholds</h2>
         <div className="space-y-4">
           <div>
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Warn Threshold: {thresholds.warn}</label>
+            <label className="text-sm font-medium text-[#424245] dark:text-[#a1a1a6]">Warn Threshold: {thresholds.warn}</label>
             <input
               type="range" min="0" max="100"
               value={thresholds.warn}
@@ -255,7 +255,7 @@ export default function AdminPage() {
             />
           </div>
           <div>
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Block Threshold: {thresholds.block}</label>
+            <label className="text-sm font-medium text-[#424245] dark:text-[#a1a1a6]">Block Threshold: {thresholds.block}</label>
             <input
               type="range" min="0" max="100"
               value={thresholds.block}
@@ -264,7 +264,7 @@ export default function AdminPage() {
             />
           </div>
           <div>
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Proxy Threshold: {thresholds.proxy}</label>
+            <label className="text-sm font-medium text-[#424245] dark:text-[#a1a1a6]">Proxy Threshold: {thresholds.proxy}</label>
             <input
               type="range" min="0" max="100"
               value={thresholds.proxy}
@@ -278,7 +278,7 @@ export default function AdminPage() {
           <button
             onClick={handleSave}
             disabled={saving}
-            className={`min-h-[44px] px-4 py-2 rounded-lg text-sm text-white transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800 ${
+            className={`min-h-[44px] px-4 py-2 rounded-lg text-sm text-white transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-[#1c1c1e] ${
               saving
                 ? 'bg-iron-400 dark:bg-iron-800 cursor-not-allowed'
                 : 'bg-iron-600 hover:bg-iron-700'
@@ -307,21 +307,21 @@ export default function AdminPage() {
       </div>
 
       {/* Client/Matter Import */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border dark:border-gray-700">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Client/Matter Data</h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border dark:border-[#38383a]/60">
+        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Client/Matter Data</h2>
+        <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mb-4">
           Import client and matter data to enhance detection accuracy.
           Upload a CSV with columns: clientName, matterNumber, aliases, parties.
         </p>
-        <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-8 text-center">
+        <div className="border-2 border-dashed border-[#d2d2d7] dark:border-[#38383a] rounded-lg p-8 text-center">
           {uploading ? (
             <div className="flex flex-col items-center gap-2">
               <div className="w-6 h-6 border-2 border-iron-200 border-t-iron-600 rounded-full animate-spin" />
-              <p className="text-sm text-gray-500 dark:text-gray-400">Uploading and processing CSV...</p>
+              <p className="text-sm text-[#6e6e73] dark:text-[#86868b]">Uploading and processing CSV...</p>
             </div>
           ) : (
             <>
-              <p className="text-sm text-gray-400 dark:text-gray-500">Drag and drop CSV file here, or click to browse</p>
+              <p className="text-sm text-[#86868b] dark:text-[#636366]">Drag and drop CSV file here, or click to browse</p>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -332,7 +332,7 @@ export default function AdminPage() {
               />
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="mt-3 px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-sm hover:bg-gray-200 dark:hover:bg-gray-600"
+                className="mt-3 px-4 py-2 bg-[#f5f5f7] dark:bg-[#2c2c2e] text-[#424245] dark:text-[#a1a1a6] rounded-lg text-sm hover:bg-[#d2d2d7]/40 dark:hover:bg-[#38383a]"
               >
                 Browse Files
               </button>

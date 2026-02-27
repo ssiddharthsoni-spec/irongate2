@@ -134,8 +134,8 @@ export default function ScanPage() {
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Document Scanner</h1>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+        <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Document Scanner</h1>
+        <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-1">
           Upload a document to scan for sensitive information. Supports PDF, Word, and Excel files.
         </p>
       </div>
@@ -145,7 +145,7 @@ export default function ScanPage() {
         className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
           dragOver
             ? 'border-iron-500 bg-iron-50 dark:bg-iron-900/20'
-            : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 bg-white dark:bg-gray-800'
+            : 'border-[#d2d2d7] dark:border-[#38383a] hover:border-[#86868b] dark:hover:border-[#636366] bg-white dark:bg-[#1c1c1e]'
         } ${scanning ? 'opacity-60 pointer-events-none' : ''}`}
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
@@ -166,21 +166,21 @@ export default function ScanPage() {
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
             </svg>
-            <p className="text-sm text-gray-600 dark:text-gray-400">Scanning document for sensitive information...</p>
+            <p className="text-sm text-[#6e6e73] dark:text-[#86868b]">Scanning document for sensitive information...</p>
           </div>
         ) : (
           <>
-            <svg className="w-12 h-12 text-gray-400 dark:text-gray-500 mx-auto mb-3" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor">
+            <svg className="w-12 h-12 text-[#86868b] dark:text-[#636366] mx-auto mb-3" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m6.75 12H9.75m3 0v3.375m0-3.375h3.375M6.75 15.75h.008v.008H6.75v-.008Zm0 3h.008v.008H6.75v-.008ZM6.75 12h.008v.008H6.75V12Zm0-3h.008v.008H6.75V9Zm12-3.75V5.625c0-1.036-.84-1.875-1.875-1.875h-3.75A1.875 1.875 0 0 0 11.25 5.625V7.5m8.25 3.75v4.5a1.875 1.875 0 0 1-1.875 1.875H6.375A1.875 1.875 0 0 1 4.5 15.75v-4.5" />
             </svg>
-            <p className="text-gray-600 dark:text-gray-400 mb-2">Drag and drop a file here, or</p>
+            <p className="text-[#6e6e73] dark:text-[#86868b] mb-2">Drag and drop a file here, or</p>
             <button
               onClick={() => fileInputRef.current?.click()}
               className="px-4 py-2 bg-iron-600 text-white rounded-lg text-sm font-medium hover:bg-iron-700 transition-colors"
             >
               Browse Files
             </button>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-3">PDF, DOCX, or XLSX up to 10 MB</p>
+            <p className="text-xs text-[#86868b] dark:text-[#636366] mt-3">PDF, DOCX, or XLSX up to 10 MB</p>
           </>
         )}
       </div>
@@ -202,48 +202,48 @@ export default function ScanPage() {
       {result && (
         <div className="mt-6 space-y-6">
           {/* Summary Card */}
-          <div className={`bg-white dark:bg-gray-800 border rounded-xl p-6 ${levelBorderColors[result.level] || 'border-gray-200 dark:border-gray-700'}`}>
+          <div className={`bg-white dark:bg-[#1c1c1e] border rounded-xl p-6 ${levelBorderColors[result.level] || 'border-[#d2d2d7]/40 dark:border-[#38383a]/60'}`}>
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{result.fileName}</h2>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">{result.fileName}</h2>
+                <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-1">
                   {result.fileType.toUpperCase()} &middot; {formatFileSize(result.fileSize)} &middot; {result.textLength.toLocaleString()} characters extracted
                 </p>
               </div>
               <div className="flex items-center gap-3">
-                <span className={`px-3 py-1 rounded-full text-sm font-medium ${levelColors[result.level] || 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300'}`}>
+                <span className={`px-3 py-1 rounded-full text-sm font-medium ${levelColors[result.level] || 'bg-[#f5f5f7] text-[#1d1d1f] dark:bg-[#2c2c2e] dark:text-[#a1a1a6]'}`}>
                   {result.level.toUpperCase()}
                 </span>
-                <span className="text-2xl font-bold text-gray-900 dark:text-white">{result.score}</span>
-                <span className="text-sm text-gray-500 dark:text-gray-400">/100</span>
+                <span className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">{result.score}</span>
+                <span className="text-sm text-[#6e6e73] dark:text-[#86868b]">/100</span>
               </div>
             </div>
-            <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">{result.explanation}</p>
+            <p className="mt-3 text-sm text-[#6e6e73] dark:text-[#86868b]">{result.explanation}</p>
           </div>
 
           {/* Stats Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-              <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Entities Found</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-white mt-1">{result.entitiesFound}</p>
+            <div className="bg-white dark:bg-[#1c1c1e] border border-[#d2d2d7]/40 dark:border-[#38383a]/60 rounded-lg p-4">
+              <p className="text-xs text-[#6e6e73] dark:text-[#86868b] uppercase tracking-wide">Entities Found</p>
+              <p className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7] mt-1">{result.entitiesFound}</p>
             </div>
-            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-              <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Entities Redacted</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-white mt-1">{result.entitiesRedacted}</p>
+            <div className="bg-white dark:bg-[#1c1c1e] border border-[#d2d2d7]/40 dark:border-[#38383a]/60 rounded-lg p-4">
+              <p className="text-xs text-[#6e6e73] dark:text-[#86868b] uppercase tracking-wide">Entities Redacted</p>
+              <p className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7] mt-1">{result.entitiesRedacted}</p>
             </div>
-            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-              <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Entity Score</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-white mt-1">{result.breakdown.entityScore}</p>
+            <div className="bg-white dark:bg-[#1c1c1e] border border-[#d2d2d7]/40 dark:border-[#38383a]/60 rounded-lg p-4">
+              <p className="text-xs text-[#6e6e73] dark:text-[#86868b] uppercase tracking-wide">Entity Score</p>
+              <p className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7] mt-1">{result.breakdown.entityScore}</p>
             </div>
-            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-              <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Legal Boost</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-white mt-1">{result.breakdown.legalBoost}</p>
+            <div className="bg-white dark:bg-[#1c1c1e] border border-[#d2d2d7]/40 dark:border-[#38383a]/60 rounded-lg p-4">
+              <p className="text-xs text-[#6e6e73] dark:text-[#86868b] uppercase tracking-wide">Legal Boost</p>
+              <p className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7] mt-1">{result.breakdown.legalBoost}</p>
             </div>
           </div>
 
           {/* Score Breakdown */}
-          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-6">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">Score Breakdown</h3>
+          <div className="bg-white dark:bg-[#1c1c1e] border border-[#d2d2d7]/40 dark:border-[#38383a]/60 rounded-xl p-6">
+            <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Score Breakdown</h3>
             <div className="space-y-3">
               {[
                 { label: 'Entity Detection', value: result.breakdown.entityScore, max: 70, color: 'bg-blue-500' },
@@ -252,11 +252,11 @@ export default function ScanPage() {
                 { label: 'Legal Boost', value: result.breakdown.legalBoost, max: 25, color: 'bg-red-500' },
               ].map((item) => (
                 <div key={item.label}>
-                  <div className="flex justify-between text-xs text-gray-600 dark:text-gray-400 mb-1">
+                  <div className="flex justify-between text-xs text-[#6e6e73] dark:text-[#86868b] mb-1">
                     <span>{item.label}</span>
                     <span>{item.value} / {item.max}</span>
                   </div>
-                  <div className="h-2 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+                  <div className="h-2 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded-full overflow-hidden">
                     <div
                       className={`h-full ${item.color} rounded-full transition-all`}
                       style={{ width: `${Math.min(100, (item.value / item.max) * 100)}%` }}
@@ -269,13 +269,13 @@ export default function ScanPage() {
 
           {/* Entity Groups */}
           {Object.keys(entityGroups).length > 0 && (
-            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-6">
-              <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">Detected Entity Types</h3>
+            <div className="bg-white dark:bg-[#1c1c1e] border border-[#d2d2d7]/40 dark:border-[#38383a]/60 rounded-xl p-6">
+              <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Detected Entity Types</h3>
               <div className="flex flex-wrap gap-2">
                 {Object.entries(entityGroups)
                   .sort((a, b) => b[1] - a[1])
                   .map(([type, count]) => (
-                    <span key={type} className="px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full text-xs font-medium">
+                    <span key={type} className="px-3 py-1 bg-[#f5f5f7] dark:bg-[#2c2c2e] text-[#424245] dark:text-[#a1a1a6] rounded-full text-xs font-medium">
                       {type.replace(/_/g, ' ')} ({count})
                     </span>
                   ))}
@@ -285,31 +285,31 @@ export default function ScanPage() {
 
           {/* Entity Table */}
           {result.entities.length > 0 && (
-            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
-              <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-                <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Detected Entities</h3>
+            <div className="bg-white dark:bg-[#1c1c1e] border border-[#d2d2d7]/40 dark:border-[#38383a]/60 rounded-xl overflow-hidden">
+              <div className="p-4 border-b border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+                <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">Detected Entities</h3>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
-                  <thead className="bg-gray-50 dark:bg-gray-900">
+                  <thead className="bg-[#f5f5f7] dark:bg-[#141414]">
                     <tr>
-                      <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Type</th>
-                      <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Matched Text</th>
-                      <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Confidence</th>
+                      <th className="text-left px-4 py-2 text-xs font-medium text-[#6e6e73] dark:text-[#86868b] uppercase">Type</th>
+                      <th className="text-left px-4 py-2 text-xs font-medium text-[#6e6e73] dark:text-[#86868b] uppercase">Matched Text</th>
+                      <th className="text-left px-4 py-2 text-xs font-medium text-[#6e6e73] dark:text-[#86868b] uppercase">Confidence</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                  <tbody className="divide-y divide-[#d2d2d7]/40 dark:divide-[#38383a]/60">
                     {result.entities.slice(0, 50).map((entity, i) => (
-                      <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                      <tr key={i} className="hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e]/50">
                         <td className="px-4 py-2">
                           <span className="px-2 py-0.5 bg-iron-50 text-iron-700 dark:bg-iron-900/30 dark:text-iron-300 rounded text-xs font-medium">
                             {entity.type.replace(/_/g, ' ')}
                           </span>
                         </td>
-                        <td className="px-4 py-2 text-gray-700 dark:text-gray-300 font-mono text-xs max-w-xs truncate" title={entity.text}>
+                        <td className="px-4 py-2 text-[#424245] dark:text-[#a1a1a6] font-mono text-xs max-w-xs truncate" title={entity.text}>
                           {entity.text.length > 60 ? entity.text.slice(0, 60) + '...' : entity.text}
                         </td>
-                        <td className="px-4 py-2 text-gray-500 dark:text-gray-400">
+                        <td className="px-4 py-2 text-[#6e6e73] dark:text-[#86868b]">
                           {(entity.confidence * 100).toFixed(0)}%
                         </td>
                       </tr>
@@ -317,7 +317,7 @@ export default function ScanPage() {
                   </tbody>
                 </table>
                 {result.entities.length > 50 && (
-                  <p className="p-4 text-xs text-gray-500 dark:text-gray-400 text-center">
+                  <p className="p-4 text-xs text-[#6e6e73] dark:text-[#86868b] text-center">
                     Showing first 50 of {result.entities.length} entities
                   </p>
                 )}
@@ -326,9 +326,9 @@ export default function ScanPage() {
           )}
 
           {/* Redacted Text Preview + Download */}
-          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
-            <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Redacted Document</h3>
+          <div className="bg-white dark:bg-[#1c1c1e] border border-[#d2d2d7]/40 dark:border-[#38383a]/60 rounded-xl overflow-hidden">
+            <div className="p-4 border-b border-[#d2d2d7]/40 dark:border-[#38383a]/60 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">Redacted Document</h3>
               <button
                 onClick={handleDownloadRedacted}
                 className="px-3 py-1.5 bg-iron-600 text-white rounded-lg text-xs font-medium hover:bg-iron-700 transition-colors flex items-center gap-1.5"
@@ -339,7 +339,7 @@ export default function ScanPage() {
                 Download Redacted
               </button>
             </div>
-            <pre className="p-4 text-xs text-gray-700 dark:text-gray-300 font-mono whitespace-pre-wrap max-h-96 overflow-y-auto bg-gray-50 dark:bg-gray-900">
+            <pre className="p-4 text-xs text-[#424245] dark:text-[#a1a1a6] font-mono whitespace-pre-wrap max-h-96 overflow-y-auto bg-[#f5f5f7] dark:bg-[#141414]">
               {result.redactedText.length > 5000
                 ? result.redactedText.slice(0, 5000) + '\n\n--- Preview truncated (download for full version) ---'
                 : result.redactedText}
