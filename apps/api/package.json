@@ -32,7 +32,7 @@
     "tsx": "^4.19.0",
     "uuid": "^10.0.0",
     "xlsx": "^0.18.5",
-    "zod": "^3.23.0",
+    "zod": "^4.3.6",
     "@hono/node-server": "^1.19.9"
   },
   "devDependencies": {
