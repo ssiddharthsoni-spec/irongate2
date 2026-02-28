@@ -9,6 +9,15 @@ import * as vscode from 'vscode';
 import { Scanner } from './scanner';
 import { ApiClient } from './api-client';
 
+function getNonce(): string {
+  let text = '';
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  for (let i = 0; i < 32; i++) {
+    text += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return text;
+}
+
 export class SidebarProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
   private scanner: Scanner;
@@ -57,12 +66,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const config = vscode.workspace.getConfiguration('irongate');
     const mode = config.get<string>('mode', 'audit');
     const firmId = config.get<string>('firmId', '');
+    const nonce = getNonce();
 
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
   <style>
     body {
       font-family: var(--vscode-font-family);
@@ -183,7 +194,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     </div>
   </div>
 
-  <script>
+  <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     function scanFile() { vscode.postMessage({ type: 'scanFile' }); }
     function toggleMode() { vscode.postMessage({ type: 'toggleMode' }); }

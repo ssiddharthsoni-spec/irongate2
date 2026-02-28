@@ -83,7 +83,10 @@ async function checkRedis(redisClient: any, key: string): Promise<{ count: numbe
   pipeline.pexpire(rKey, WINDOW_MS);
 
   const results = await pipeline.exec();
-  const count = results[2][1] as number;
+  if (!results || results[2][0]) {
+    throw results?.[2]?.[0] || new Error('Redis pipeline error');
+  }
+  const count = (results[2][1] as number) || 0;
 
   return {
     count,

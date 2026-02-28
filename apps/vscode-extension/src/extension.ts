@@ -15,6 +15,7 @@ import { LmInterceptor } from './lm-interceptor';
 let scanner: Scanner;
 let apiClient: ApiClient;
 let heartbeatInterval: NodeJS.Timeout | undefined;
+let activeDecorationType: vscode.TextEditorDecorationType | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
   const config = vscode.workspace.getConfiguration('irongate');
@@ -109,8 +110,11 @@ async function scanCurrentFile(): Promise<void> {
     return;
   }
 
-  // Highlight detected entities
-  const decorationType = vscode.window.createTextEditorDecorationType({
+  // Dispose previous decorations to prevent leak
+  if (activeDecorationType) {
+    activeDecorationType.dispose();
+  }
+  activeDecorationType = vscode.window.createTextEditorDecorationType({
     backgroundColor: 'rgba(255, 100, 100, 0.2)',
     border: '1px solid rgba(255, 100, 100, 0.4)',
     borderRadius: '3px',
@@ -125,7 +129,7 @@ async function scanCurrentFile(): Promise<void> {
     };
   });
 
-  editor.setDecorations(decorationType, decorations);
+  editor.setDecorations(activeDecorationType, decorations);
 
   vscode.window.showInformationMessage(
     `Iron Gate: Found ${result.entities.length} sensitive entities (Score: ${result.score}/${result.level})`
@@ -157,8 +161,6 @@ function toggleMode(): void {
 }
 
 async function hashText(text: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(text);
   const crypto = await import('crypto');
-  return crypto.createHash('sha256').update(data).digest('hex');
+  return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
 }

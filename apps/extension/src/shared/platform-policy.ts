@@ -52,10 +52,21 @@ export function checkPlatformPolicy(
   };
 }
 
+/** Escape HTML special characters to prevent XSS from admin-configurable values */
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /**
  * Identify which AI platform a URL belongs to.
  */
 function identifyPlatform(url: string): string | null {
+  try {
   const patterns: [string, string][] = [
     ['chatgpt', 'chat.openai.com'],
     ['chatgpt', 'chatgpt.com'],
@@ -75,6 +86,9 @@ function identifyPlatform(url: string): string | null {
     if (hostname.includes(domain)) return id;
   }
   return null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -97,8 +111,8 @@ export function generateBlockOverlay(decision: PlatformDecision): string {
           Platform Not Approved
         </h2>
         <p style="color: #555; line-height: 1.6; margin-bottom: 24px;">
-          Your firm has not approved <strong>${decision.platformName}</strong> for AI usage.
-          ${decision.blockReason ? `<br><br>${decision.blockReason}` : ''}
+          Your firm has not approved <strong>${escapeHtml(decision.platformName)}</strong> for AI usage.
+          ${decision.blockReason ? `<br><br>${escapeHtml(decision.blockReason)}` : ''}
         </p>
         <p style="color: #888; font-size: 14px;">
           Contact your IT administrator to request access.
@@ -127,7 +141,7 @@ export function generateJustificationModal(decision: PlatformDecision): string {
           Justification Required
         </h3>
         <p style="color: #555; margin-bottom: 16px;">
-          Please provide a reason for using <strong>${decision.platformName}</strong>:
+          Please provide a reason for using <strong>${escapeHtml(decision.platformName)}</strong>:
         </p>
         <textarea id="ig-justify-input" style="
           width: 100%; min-height: 80px; padding: 12px;

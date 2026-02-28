@@ -183,7 +183,7 @@ eventsRoutes.post('/', async (c) => {
 
     return c.json({
       eventId: inserted.id,
-      actionRequired: 'pass' as const,
+      actionRequired: parsed.action,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

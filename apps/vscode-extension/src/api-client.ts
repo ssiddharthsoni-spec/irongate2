@@ -21,6 +21,8 @@ interface EventPayload {
   captureMethod: string;
 }
 
+const MAX_QUEUE_SIZE = 500;
+
 export class ApiClient {
   private config: ApiConfig;
   private eventQueue: EventPayload[] = [];
@@ -59,17 +61,23 @@ export class ApiClient {
           'X-API-Key': this.config.apiKey,
           'X-Firm-ID': this.config.firmId,
         },
-        body: JSON.stringify({ events }),
+        body: JSON.stringify({ events, batchId: `vscode-${Date.now()}` }),
         signal: AbortSignal.timeout(10000),
       });
 
       if (!response.ok) {
-        // Re-queue events on failure
+        // Re-queue events on failure (cap to prevent unbounded growth)
         this.eventQueue.unshift(...events);
+        if (this.eventQueue.length > MAX_QUEUE_SIZE) {
+          this.eventQueue.length = MAX_QUEUE_SIZE;
+        }
       }
     } catch {
-      // Re-queue on network error
+      // Re-queue on network error (cap to prevent unbounded growth)
       this.eventQueue.unshift(...events);
+      if (this.eventQueue.length > MAX_QUEUE_SIZE) {
+        this.eventQueue.length = MAX_QUEUE_SIZE;
+      }
     }
   }
 

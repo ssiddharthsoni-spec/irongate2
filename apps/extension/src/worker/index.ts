@@ -506,13 +506,23 @@ async function handleMessage(
       const { entityType, entityText, isCorrect, feedbackType, correctedType } = message.payload;
       igLog('Entity feedback:', entityType, '—', feedbackType);
 
+      // Hash the entity text before sending — raw PII must never leave the browser
+      let entityHash = '';
+      if (entityText) {
+        const data = new TextEncoder().encode(entityText);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        entityHash = Array.from(new Uint8Array(hashBuffer))
+          .map((b: number) => b.toString(16).padStart(2, '0'))
+          .join('');
+      }
+
       try {
         await apiRequest({
           method: 'POST',
           path: '/feedback',
           body: {
             entityType,
-            entityText,
+            entityHash,
             isCorrect,
             feedbackType,
             correctedType,

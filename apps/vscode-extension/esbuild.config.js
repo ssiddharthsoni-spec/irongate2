@@ -1,8 +1,8 @@
-const { build } = require('esbuild');
+const esbuild = require('esbuild');
 
 const isWatch = process.argv.includes('--watch');
 
-build({
+const buildOptions = {
   entryPoints: ['src/extension.ts'],
   bundle: true,
   outfile: 'dist/extension.js',
@@ -12,7 +12,16 @@ build({
   target: 'node18',
   sourcemap: true,
   minify: !isWatch,
-  ...(isWatch ? { watch: true } : {}),
-}).then(() => {
-  console.log(isWatch ? 'Watching for changes...' : 'Build complete');
-}).catch(() => process.exit(1));
+};
+
+if (isWatch) {
+  // Use context API for watch mode (esbuild >= 0.17)
+  esbuild.context(buildOptions).then((ctx) => {
+    ctx.watch();
+    console.log('Watching for changes...');
+  }).catch(() => process.exit(1));
+} else {
+  esbuild.build(buildOptions).then(() => {
+    console.log('Build complete');
+  }).catch(() => process.exit(1));
+}

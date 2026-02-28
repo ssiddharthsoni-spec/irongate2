@@ -107,6 +107,7 @@ app.use(
     },
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization', 'X-Firm-ID', 'X-Admin-Key-1', 'X-Admin-Key-2', 'X-Admin-Justification', 'x-api-key'],
+    credentials: true,
   })
 );
 
@@ -114,15 +115,13 @@ app.use(
 app.get('/health', async (c) => {
   const health: Record<string, unknown> = {
     status: 'ok',
-    version: '0.3.0',
+    version: '0.1.0',
     timestamp: new Date().toISOString(),
   };
 
   // Deep health check with ?deep=true
   if (c.req.query('deep') === 'true') {
     try {
-      const { sql } = await import('drizzle-orm');
-      const { db } = await import('./db/client');
       await db.execute(sql`SELECT 1`);
       health.database = 'connected';
     } catch (e) {
@@ -139,7 +138,7 @@ app.get('/health', async (c) => {
 app.get('/v1/health', async (c) => {
   return c.json({
     status: 'ok',
-    version: '0.3.0',
+    version: '0.1.0',
     timestamp: new Date().toISOString(),
   });
 });
@@ -163,14 +162,14 @@ app.get('/health/metrics', async (c) => {
 
   // Add BullMQ queue metrics if available
   try {
-    const { coOccurrencesQueue, webhooksQueue, siemQueue, inferenceQueue } = await import('./jobs/queues');
+    const { getCoOccurrencesQueue, getWebhooksQueue, getSiemQueue, getInferenceQueue } = await import('./jobs/queues');
     const queueMetrics: Record<string, unknown> = {};
 
     for (const [name, queue] of Object.entries({
-      'co-occurrences': coOccurrencesQueue,
-      webhooks: webhooksQueue,
-      siem: siemQueue,
-      inference: inferenceQueue,
+      'co-occurrences': getCoOccurrencesQueue(),
+      webhooks: getWebhooksQueue(),
+      siem: getSiemQueue(),
+      inference: getInferenceQueue(),
     })) {
       if (queue) {
         const counts = await queue.getJobCounts('active', 'waiting', 'completed', 'failed');
@@ -230,8 +229,8 @@ app.route('/v1/alerts', alertRoutes);
 app.route('/v1/api-keys', apiKeyRoutes);
 app.route('/v1/compliance', complianceRoutes);
 app.route('/v1/user', userDataRoutes);
-app.route('/v1/auth', logoutRoutes);
 app.route('/v1/heartbeat', heartbeatRoutes);
+app.route('/v1/logout', logoutRoutes);
 
 // 404 handler
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
@@ -349,9 +348,18 @@ import('@hono/node-server').then(({ serve }) => {
   const shutdown = async (signal: string) => {
     logger.info(`${signal} received — shutting down gracefully`);
 
-    // 1. Stop accepting new connections
-    server.close(() => {
-      logger.info('HTTP server closed');
+    // Force exit after timeout to prevent hanging
+    setTimeout(() => {
+      logger.warn('Graceful shutdown timed out — forcing exit');
+      process.exit(1);
+    }, 10_000).unref();
+
+    // 1. Stop accepting new connections and drain in-flight requests
+    await new Promise<void>((resolve) => {
+      server.close(() => {
+        logger.info('HTTP server closed');
+        resolve();
+      });
     });
 
     // 2. Close BullMQ workers (let in-flight jobs finish)
@@ -372,12 +380,6 @@ import('@hono/node-server').then(({ serve }) => {
     if (SentryMod) {
       await SentryMod.close(2000);
     }
-
-    // 5. Exit after a timeout to prevent hanging
-    setTimeout(() => {
-      logger.warn('Graceful shutdown timed out — forcing exit');
-      process.exit(1);
-    }, 10_000).unref();
 
     process.exit(0);
   };

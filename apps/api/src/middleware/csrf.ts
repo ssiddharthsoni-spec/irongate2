@@ -43,10 +43,21 @@ export const csrfProtectionMiddleware = createMiddleware(async (c, next) => {
 
   const origin = c.req.header('Origin');
 
-  // Chrome extension origins are trusted
+  // Chrome extension origins — validate against allowed extension IDs
   if (origin?.startsWith('chrome-extension://')) {
-    await next();
-    return;
+    const extId = origin.replace('chrome-extension://', '');
+    const allowedIds = (process.env.ALLOWED_EXTENSION_IDS || process.env.CHROME_EXTENSION_ID || '')
+      .split(',').map((id: string) => id.trim()).filter(Boolean);
+    if (allowedIds.length > 0 && allowedIds.includes(extId)) {
+      await next();
+      return;
+    }
+    if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') {
+      await next();
+      return;
+    }
+    logger.warn('CSRF: request from unregistered extension', { origin });
+    return c.json({ error: 'Forbidden: unregistered extension origin' }, 403);
   }
 
   // No origin header on state-changing request from browser — suspicious

@@ -9,6 +9,8 @@ import { logger } from '../lib/logger';
 // TTL Cache — entries auto-expire to prevent stale auth data
 // ---------------------------------------------------------------------------
 
+const MAX_CACHE_ENTRIES = 5_000;
+
 class TTLMap<K, V> {
   private map = new Map<K, { value: V; expiresAt: number }>();
   constructor(private ttlMs: number) {}
@@ -24,6 +26,19 @@ class TTLMap<K, V> {
   }
 
   set(key: K, value: V): void {
+    // Evict expired entries if map grows too large
+    if (this.map.size >= MAX_CACHE_ENTRIES) {
+      const now = Date.now();
+      for (const [k, v] of this.map) {
+        if (now > v.expiresAt) this.map.delete(k);
+      }
+      // If still too large after expiry sweep, drop oldest 20%
+      if (this.map.size >= MAX_CACHE_ENTRIES) {
+        const keys = Array.from(this.map.keys());
+        const toDelete = Math.floor(keys.length * 0.2);
+        for (let i = 0; i < toDelete; i++) this.map.delete(keys[i]);
+      }
+    }
     this.map.set(key, { value, expiresAt: Date.now() + this.ttlMs });
   }
 

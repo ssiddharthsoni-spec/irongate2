@@ -25,7 +25,7 @@ feedbackRoutes.post('/', async (c) => {
 
   const parsed = feedbackSchema.parse(body);
 
-  // Generate entityHash from entityText if not provided
+  // Generate entityHash from entityText if not provided (hash PII server-side)
   let entityHash = parsed.entityHash || '';
   if (!entityHash && parsed.entityText) {
     const data = new TextEncoder().encode(parsed.entityText);
@@ -34,9 +34,11 @@ feedbackRoutes.post('/', async (c) => {
       .map((b) => b.toString(16).padStart(2, '0'))
       .join('');
   }
+  if (!entityHash) {
+    entityHash = 'unknown';
+  }
 
-  // Use a sentinel UUID when no eventId is provided (e.g., extension feedback)
-  const eventId = parsed.eventId || '00000000-0000-0000-0000-000000000000';
+  const eventId = parsed.eventId ?? null;
 
   const [inserted] = await db.insert(feedback).values({
     eventId,

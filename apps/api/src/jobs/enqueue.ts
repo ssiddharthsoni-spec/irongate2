@@ -3,10 +3,10 @@
 // so the system degrades gracefully instead of breaking.
 
 import {
-  coOccurrencesQueue,
-  webhooksQueue,
-  siemQueue,
-  inferenceQueue,
+  getCoOccurrencesQueue,
+  getWebhooksQueue,
+  getSiemQueue,
+  getInferenceQueue,
   type CoOccurrenceJobData,
   type WebhookJobData,
   type SIEMJobData,
@@ -19,8 +19,9 @@ import { analyzePatterns } from '../services/inference-engine';
 import { logger } from '../lib/logger';
 
 export async function enqueueCoOccurrences(data: CoOccurrenceJobData): Promise<void> {
-  if (coOccurrencesQueue) {
-    await coOccurrencesQueue.add('record', data);
+  const queue = getCoOccurrencesQueue();
+  if (queue) {
+    await queue.add('record', data);
   } else {
     recordCoOccurrences(data.firmId, data.entities as any, data.sensitivityScore).catch((err) =>
       logger.warn('co-occurrence fallback failed', { error: err instanceof Error ? err.message : String(err) }),
@@ -29,8 +30,9 @@ export async function enqueueCoOccurrences(data: CoOccurrenceJobData): Promise<v
 }
 
 export async function enqueueWebhook(data: WebhookJobData): Promise<void> {
-  if (webhooksQueue) {
-    await webhooksQueue.add('dispatch', data);
+  const queue = getWebhooksQueue();
+  if (queue) {
+    await queue.add('dispatch', data);
   } else {
     webhookDispatch(data.firmId, data.eventType, data.payload).catch((err) =>
       logger.warn('webhook fallback failed', { error: err instanceof Error ? err.message : String(err) }),
@@ -39,8 +41,9 @@ export async function enqueueWebhook(data: WebhookJobData): Promise<void> {
 }
 
 export async function enqueueSIEM(data: SIEMJobData): Promise<void> {
-  if (siemQueue) {
-    await siemQueue.add('forward', data);
+  const queue = getSiemQueue();
+  if (queue) {
+    await queue.add('forward', data);
   } else {
     siemForward(data.firmId, data.event).catch((err) =>
       logger.warn('siem fallback failed', { error: err instanceof Error ? err.message : String(err) }),
@@ -49,9 +52,10 @@ export async function enqueueSIEM(data: SIEMJobData): Promise<void> {
 }
 
 export async function enqueueInference(data: InferenceJobData): Promise<void> {
-  if (inferenceQueue) {
+  const queue = getInferenceQueue();
+  if (queue) {
     // Use firmId as jobId — BullMQ deduplicates so concurrent triggers don't stack
-    await inferenceQueue.add('analyze', data, { jobId: `inference:${data.firmId}` });
+    await queue.add('analyze', data, { jobId: `inference:${data.firmId}` });
   } else {
     analyzePatterns(data.firmId).catch((err) =>
       logger.warn('inference fallback failed', { error: err instanceof Error ? err.message : String(err) }),

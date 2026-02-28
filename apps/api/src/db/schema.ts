@@ -87,7 +87,7 @@ export const events = pgTable('events', {
 // --- Feedback ---
 export const feedback = pgTable('feedback', {
   id: uuid('id').primaryKey().defaultRandom(),
-  eventId: uuid('event_id').notNull().references(() => events.id),
+  eventId: uuid('event_id').references(() => events.id),
   firmId: uuid('firm_id').notNull().references(() => firms.id),
   userId: uuid('user_id').notNull().references(() => users.id),
   entityType: varchar('entity_type', { length: 50 }).notNull(),

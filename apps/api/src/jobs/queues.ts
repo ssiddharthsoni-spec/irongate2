@@ -4,40 +4,65 @@
 import { Queue } from 'bullmq';
 import { getRedisClient } from '../lib/redis';
 
-const connection = getRedisClient() ?? undefined;
+// --- Lazy queue instances (created on first access, not at import time) ---
+// This avoids the race condition where module-load-time getRedisClient()
+// sets _attempted=true before REDIS_URL is available.
 
-// --- Queue instances (null-safe: only created if Redis is available) ---
+let _coOccurrencesQueue: Queue | null | undefined;
+let _webhooksQueue: Queue | null | undefined;
+let _siemQueue: Queue | null | undefined;
+let _inferenceQueue: Queue | null | undefined;
 
-export const coOccurrencesQueue = connection
-  ? new Queue('ig:co-occurrences', {
-      connection,
+function getConnection() {
+  return getRedisClient() ?? undefined;
+}
+
+function lazyQueue(
+  cached: Queue | null | undefined,
+  name: string,
+  opts: object
+): Queue | null {
+  if (cached !== undefined) return cached;
+  const connection = getConnection();
+  return connection ? new Queue(name, { connection, ...opts }) : null;
+}
+
+export function getCoOccurrencesQueue(): Queue | null {
+  if (_coOccurrencesQueue === undefined) {
+    _coOccurrencesQueue = lazyQueue(_coOccurrencesQueue, 'ig:co-occurrences', {
       defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 1000 } },
-    })
-  : null;
+    });
+  }
+  return _coOccurrencesQueue;
+}
 
-export const webhooksQueue = connection
-  ? new Queue('ig:webhooks', {
-      connection,
+export function getWebhooksQueue(): Queue | null {
+  if (_webhooksQueue === undefined) {
+    _webhooksQueue = lazyQueue(_webhooksQueue, 'ig:webhooks', {
       defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
-    })
-  : null;
+    });
+  }
+  return _webhooksQueue;
+}
 
-export const siemQueue = connection
-  ? new Queue('ig:siem', {
-      connection,
+export function getSiemQueue(): Queue | null {
+  if (_siemQueue === undefined) {
+    _siemQueue = lazyQueue(_siemQueue, 'ig:siem', {
       defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
-    })
-  : null;
+    });
+  }
+  return _siemQueue;
+}
 
-export const inferenceQueue = connection
-  ? new Queue('ig:inference', {
-      connection,
-      defaultJobOptions: {
-        attempts: 2,
-        backoff: { type: 'exponential', delay: 5000 },
-      },
-    })
-  : null;
+export function getInferenceQueue(): Queue | null {
+  if (_inferenceQueue === undefined) {
+    _inferenceQueue = lazyQueue(_inferenceQueue, 'ig:inference', {
+      defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 5000 } },
+    });
+  }
+  return _inferenceQueue;
+}
+
 
 // --- Type-safe job data interfaces ---
 

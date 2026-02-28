@@ -7,20 +7,20 @@ interface TeamMember {
   id: string;
   email: string;
   name: string;
-  role: 'admin' | 'editor' | 'viewer';
+  role: 'admin' | 'user' | 'viewer';
   status: 'active' | 'pending';
   lastActive?: string;
 }
 
 const ROLES = [
   { value: 'admin', label: 'Admin', description: 'Full access to all settings' },
-  { value: 'editor', label: 'Editor', description: 'Can view and manage events' },
+  { value: 'user', label: 'User', description: 'Can view and manage events' },
   { value: 'viewer', label: 'Viewer', description: 'Read-only access' },
 ];
 
 const DEMO_MEMBERS: TeamMember[] = [
   { id: '1', email: 'sarah.chen@firm.com', name: 'Sarah Chen', role: 'admin', status: 'active', lastActive: '2026-02-20T14:30:00Z' },
-  { id: '2', email: 'james.wilson@firm.com', name: 'James Wilson', role: 'editor', status: 'active', lastActive: '2026-02-19T09:15:00Z' },
+  { id: '2', email: 'james.wilson@firm.com', name: 'James Wilson', role: 'user', status: 'active', lastActive: '2026-02-19T09:15:00Z' },
   { id: '3', email: 'maria.garcia@firm.com', name: 'Maria Garcia', role: 'viewer', status: 'active', lastActive: '2026-02-18T16:45:00Z' },
   { id: '4', email: 'alex.kumar@firm.com', name: 'Alex Kumar', role: 'viewer', status: 'pending' },
 ];
@@ -31,7 +31,7 @@ export default function TeamSettingsPage() {
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState<'admin' | 'editor' | 'viewer'>('viewer');
+  const [inviteRole, setInviteRole] = useState<'admin' | 'user' | 'viewer'>('viewer');
   const [inviting, setInviting] = useState(false);
   const [inviteMessage, setInviteMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -91,7 +91,7 @@ export default function TeamSettingsPage() {
     }
   }
 
-  async function handleRoleChange(memberId: string, newRole: 'admin' | 'editor' | 'viewer') {
+  async function handleRoleChange(memberId: string, newRole: 'admin' | 'user' | 'viewer') {
     try {
       await apiFetch(`/admin/users/${memberId}/role`, {
         method: 'PUT',
@@ -100,7 +100,7 @@ export default function TeamSettingsPage() {
     } catch {
       // Continue with local update in demo mode
     }
-    setMembers(members.map((m) => (m.id === memberId ? { ...m, role: newRole } : m)));
+    setMembers((prev) => prev.map((m) => (m.id === memberId ? { ...m, role: newRole } : m)));
   }
 
   async function handleRemove(memberId: string) {
@@ -110,7 +110,7 @@ export default function TeamSettingsPage() {
     } catch {
       // Continue with local removal in demo mode
     }
-    setMembers(members.filter((m) => m.id !== memberId));
+    setMembers((prev) => prev.filter((m) => m.id !== memberId));
     setConfirmRemoveId(null);
     setRemovingId(null);
   }
@@ -119,7 +119,7 @@ export default function TeamSettingsPage() {
     switch (role) {
       case 'admin':
         return 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400';
-      case 'editor':
+      case 'user':
         return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400';
       default:
         return 'bg-[#f5f5f7] text-[#424245] dark:bg-[#2c2c2e] dark:text-[#a1a1a6]';
@@ -168,7 +168,7 @@ export default function TeamSettingsPage() {
           />
           <select
             value={inviteRole}
-            onChange={(e) => setInviteRole(e.target.value as 'admin' | 'editor' | 'viewer')}
+            onChange={(e) => setInviteRole(e.target.value as 'admin' | 'user' | 'viewer')}
             className="px-3 py-2 border border-[#d2d2d7] dark:border-[#38383a] rounded-lg text-sm bg-white dark:bg-[#2c2c2e] text-[#1d1d1f] dark:text-[#f5f5f7] focus:ring-2 focus:ring-iron-500 focus:border-iron-500 outline-none transition-colors"
             aria-label="Invite role"
           >
@@ -250,7 +250,7 @@ export default function TeamSettingsPage() {
                 {/* Role selector */}
                 <select
                   value={member.role}
-                  onChange={(e) => handleRoleChange(member.id, e.target.value as 'admin' | 'editor' | 'viewer')}
+                  onChange={(e) => handleRoleChange(member.id, e.target.value as 'admin' | 'user' | 'viewer')}
                   className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border-0 focus:ring-2 focus:ring-iron-500 outline-none transition-colors cursor-pointer ${getRoleBadgeClass(member.role)}`}
                   aria-label={`Change role for ${member.name || member.email}`}
                 >

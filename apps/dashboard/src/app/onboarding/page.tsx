@@ -294,6 +294,8 @@ export default function OnboardingPage() {
                   navigator.clipboard.writeText(generatedApiKey).then(() => {
                     setApiKeyCopied(true);
                     setTimeout(() => setApiKeyCopied(false), 3000);
+                  }).catch(() => {
+                    // Clipboard API unavailable (non-HTTPS or no focus)
                   });
                 }
               }}
@@ -1040,6 +1042,8 @@ function EnterprisePolicyCard({ apiKey, firmName }: { apiKey: string; firmName: 
     navigator.clipboard.writeText(policyJson).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 3000);
+    }).catch(() => {
+      // Clipboard API unavailable (non-HTTPS or no focus)
     });
   }
 

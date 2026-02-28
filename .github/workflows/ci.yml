@@ -8,7 +8,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
@@ -113,6 +113,29 @@ jobs:
           path: apps/extension/dist/
           retention-days: 14
 
+  build-vscode-extension:
+    name: Build VS Code Extension
+    runs-on: ubuntu-latest
+    needs: [build-packages]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build VS Code extension
+        run: cd apps/vscode-extension && pnpm build
+
   test-api:
     name: Test API
     runs-on: ubuntu-latest
@@ -180,7 +203,13 @@ jobs:
         run: pip install pytest
 
       - name: Run detection tests
-        run: python -m pytest apps/detection/ -v --tb=short --no-header -q 2>&1 || echo "No tests collected yet — skipping"
+        run: |
+          python -m pytest apps/detection/ -v --tb=short --no-header -q; EXIT=$?
+          if [ $EXIT -eq 5 ]; then
+            echo "No tests collected yet — skipping"
+            exit 0
+          fi
+          exit $EXIT
 
   # ── Security Scanning ────────────────────────────────────────────────────
 
@@ -205,7 +234,6 @@ jobs:
 
       - name: Run dependency audit
         run: pnpm audit --audit-level=critical
-        continue-on-error: true
 
   dependency-review:
     name: Dependency Review
@@ -225,7 +253,7 @@ jobs:
   deploy-api:
     name: Deploy API
     runs-on: ubuntu-latest
-    needs: [lint, build-packages, test-api, test-extension]
+    needs: [lint, build-packages, test-api, test-extension, security]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
       - name: Checkout
@@ -243,7 +271,11 @@ jobs:
         run: |
           echo "Waiting 30s for deployment to stabilize..."
           sleep 30
-          API_URL="${API_HEALTH_URL:-https://irongate-api.onrender.com}"
+          if [ -z "$API_HEALTH_URL" ]; then
+            echo "WARNING: API_HEALTH_URL secret not set — skipping health check"
+            exit 0
+          fi
+          API_URL="$API_HEALTH_URL"
           for i in 1 2 3 4 5; do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/health" || echo "000")
             if [ "$STATUS" = "200" ]; then

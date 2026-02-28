@@ -7,8 +7,8 @@ import { logger } from '../lib/logger';
 
 export const logoutRoutes = new Hono<AppEnv>();
 
-// POST /v1/auth/logout — Revoke the current JWT and clear caches
-logoutRoutes.post('/logout', async (c) => {
+// POST /v1/logout — Revoke the current JWT and clear caches
+logoutRoutes.post('/', async (c) => {
   const authHeader = c.req.header('Authorization');
   if (!authHeader?.startsWith('Bearer ')) {
     return c.json({ error: 'No token to revoke' }, 400);
