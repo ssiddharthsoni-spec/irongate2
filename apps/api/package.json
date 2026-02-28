@@ -18,7 +18,7 @@
     "@iron-gate/config": "workspace:*",
     "@iron-gate/crypto": "workspace:*",
     "@iron-gate/types": "workspace:*",
-    "@neondatabase/serverless": "^0.10.0",
+    "@neondatabase/serverless": "^1.0.2",
     "bullmq": "^5.70.1",
     "drizzle-orm": "^0.38.0",
     "hono": "^4.6.0",
