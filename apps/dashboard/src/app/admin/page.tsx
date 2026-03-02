@@ -7,8 +7,7 @@ export default function AdminPage() {
   const { apiFetch } = useApiClient();
   const [firmName, setFirmName] = useState('');
   const [industry, setIndustry] = useState('general');
-  const [mode, setMode] = useState<'audit' | 'proxy'>('audit');
-  const [thresholds, setThresholds] = useState({ warn: 40, block: 70, proxy: 50 });
+  const [mode] = useState<'proxy'>('proxy');
 
   // Loading / feedback states
   const [loading, setLoading] = useState(true);
@@ -36,20 +35,7 @@ export default function AdminPage() {
         if (data.firmName) setFirmName(data.firmName);
         if (data.industry) setIndustry(data.industry);
 
-        // Initialize mode from API response
-        if (data.mode === 'audit' || data.mode === 'proxy') {
-          setMode(data.mode);
-        }
-
-        // Initialize thresholds from API response
-        if (data.config?.thresholds) {
-          const t = data.config.thresholds;
-          setThresholds({
-            warn: t.passthrough ?? 25,
-            block: t.cloudMasked ?? 75,
-            proxy: t.cloudMasked ?? 75,
-          });
-        }
+        // Mode is always proxy — no need to initialize from API
       } catch (err) {
         console.error('Failed to load firm config:', err);
         // Keep default local state if API is unavailable
@@ -75,12 +61,6 @@ export default function AdminPage() {
           firmName,
           industry,
           mode,
-          config: {
-            thresholds: {
-              passthrough: thresholds.warn,
-              cloudMasked: thresholds.block,
-            },
-          },
         }),
       });
 
@@ -216,94 +196,37 @@ export default function AdminPage() {
         </div>
       </div>
 
-      {/* Mode Selection */}
-      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border dark:border-[#38383a]/60 mb-6">
-        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Operation Mode</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <button
-            onClick={() => setMode('audit')}
-            className={`p-4 rounded-lg border-2 text-left ${
-              mode === 'audit' ? 'border-iron-500 bg-iron-50 dark:bg-iron-900/20' : 'border-[#d2d2d7]/40 dark:border-[#38383a]/60'
-            }`}
-          >
-            <p className="font-medium dark:text-white">Audit Mode</p>
-            <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-1">Monitor only. No interference with AI tool usage.</p>
-          </button>
-          <button
-            onClick={() => setMode('proxy')}
-            className={`p-4 rounded-lg border-2 text-left ${
-              mode === 'proxy' ? 'border-iron-500 bg-iron-50 dark:bg-iron-900/20' : 'border-[#d2d2d7]/40 dark:border-[#38383a]/60'
-            }`}
-          >
-            <p className="font-medium dark:text-white">Proxy Mode</p>
-            <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-1">Intercept and protect sensitive prompts automatically.</p>
-          </button>
-        </div>
-      </div>
-
-      {/* Thresholds */}
-      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border dark:border-[#38383a]/60 mb-6">
-        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Sensitivity Thresholds</h2>
-        <div className="space-y-4">
-          <div>
-            <label className="text-sm font-medium text-[#424245] dark:text-[#a1a1a6]">Warn Threshold: {thresholds.warn}</label>
-            <input
-              type="range" min="0" max="100"
-              value={thresholds.warn}
-              onChange={(e) => setThresholds({ ...thresholds, warn: parseInt(e.target.value) })}
-              className="w-full mt-1"
-            />
-          </div>
-          <div>
-            <label className="text-sm font-medium text-[#424245] dark:text-[#a1a1a6]">Block Threshold: {thresholds.block}</label>
-            <input
-              type="range" min="0" max="100"
-              value={thresholds.block}
-              onChange={(e) => setThresholds({ ...thresholds, block: parseInt(e.target.value) })}
-              className="w-full mt-1"
-            />
-          </div>
-          <div>
-            <label className="text-sm font-medium text-[#424245] dark:text-[#a1a1a6]">Proxy Threshold: {thresholds.proxy}</label>
-            <input
-              type="range" min="0" max="100"
-              value={thresholds.proxy}
-              onChange={(e) => setThresholds({ ...thresholds, proxy: parseInt(e.target.value) })}
-              className="w-full mt-1"
-            />
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3 mt-4">
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className={`min-h-[44px] px-4 py-2 rounded-lg text-sm text-white transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-[#1c1c1e] ${
-              saving
-                ? 'bg-iron-400 dark:bg-iron-800 cursor-not-allowed'
-                : 'bg-iron-600 hover:bg-iron-700'
-            }`}
-          >
-            {saving ? (
-              <span className="flex items-center gap-2">
-                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                Saving...
-              </span>
-            ) : (
-              'Save Settings'
-            )}
-          </button>
-
-          {saveMessage && (
-            <span
-              className={`text-sm font-medium ${
-                saveMessage.type === 'success' ? 'text-green-600' : 'text-red-600'
-              }`}
-            >
-              {saveMessage.text}
+      {/* Save Firm Details */}
+      <div className="flex items-center gap-3 mb-6">
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          className={`min-h-[44px] px-6 py-2.5 rounded-lg text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-iron-500 focus:ring-offset-2 dark:focus:ring-offset-[#1c1c1e] ${
+            saving
+              ? 'bg-iron-400 dark:bg-iron-800 cursor-not-allowed'
+              : 'bg-iron-600 hover:bg-iron-700'
+          }`}
+        >
+          {saving ? (
+            <span className="flex items-center gap-2">
+              <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              Saving...
             </span>
+          ) : (
+            'Save Settings'
           )}
-        </div>
+        </button>
+
+        {saveMessage && (
+          <span
+            className={`text-sm font-medium ${
+              saveMessage.type === 'success' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
+            }`}
+          >
+            {saveMessage.text}
+          </span>
+        )}
       </div>
 
       {/* Client/Matter Import */}

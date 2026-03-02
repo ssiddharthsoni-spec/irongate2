@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import crypto from 'crypto';
 import { db } from '../db/client';
-import { firms, users, clientMatters, weightOverrides, firmPlugins, events } from '../db/schema';
+import { firms, users, clientMatters, weightOverrides, firmPlugins, events, subscriptions } from '../db/schema';
 import { eq, and, gte, sql, desc } from 'drizzle-orm';
 import { analyzePatterns, getProposals, approveProposal, rejectProposal } from '../services/inference-engine';
 import { registerWebhook, removeWebhook, listWebhooks } from '../services/webhook-dispatcher';
@@ -73,6 +73,19 @@ adminRoutes.post('/firm', async (c) => {
 
   // Invalidate cached user so next request picks up the new firmId
   invalidateUserCache(clerkId);
+
+  // Auto-start 15-day Pro trial (no credit card required)
+  const trialEnd = new Date();
+  trialEnd.setDate(trialEnd.getDate() + 15);
+
+  await db.insert(subscriptions).values({
+    firmId: newFirm.id,
+    stripeCustomerId: `trial_${newFirm.id}`,
+    tier: 'pro',
+    status: 'trialing',
+    currentPeriodStart: new Date(),
+    currentPeriodEnd: trialEnd,
+  });
 
   return c.json(newFirm, 201);
 });

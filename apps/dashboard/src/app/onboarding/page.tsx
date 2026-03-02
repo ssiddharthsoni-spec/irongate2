@@ -1,19 +1,8 @@
 'use client';
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useApiClient } from '../../lib/api';
-
-const INDUSTRIES = [
-  'Legal',
-  'Healthcare',
-  'Finance',
-  'Manufacturing',
-  'Technology',
-  'Consulting',
-] as const;
-
-const FIRM_SIZES = ['1-50', '51-200', '201-500', '500+'] as const;
 
 interface TeamMember {
   email: string;
@@ -21,18 +10,13 @@ interface TeamMember {
 }
 
 interface OnboardingState {
-  // Step 1
-  firmName: string;
-  industry: string;
-  firmSize: string;
-  // Step 2 — proxy mode is the only mode (audit disabled)
-  protectionMode: 'proxy';
-  // Step 4
+  orgName: string;
   teamMembers: TeamMember[];
 }
 
-const TOTAL_STEPS = 5;
+const TOTAL_STEPS = 4;
 const STORAGE_KEY = 'iron-gate-onboarding';
+const STEP_LABELS = ['Welcome', 'Demo', 'Extension', 'Done'];
 
 function loadSavedState(): { step: number; state: OnboardingState } | null {
   try {
@@ -51,10 +35,7 @@ function saveState(step: number, state: OnboardingState) {
 }
 
 const DEFAULT_STATE: OnboardingState = {
-  firmName: '',
-  industry: '',
-  firmSize: '',
-  protectionMode: 'proxy',
+  orgName: '',
   teamMembers: [{ email: '', role: 'user' }],
 };
 
@@ -79,7 +60,6 @@ export default function OnboardingPage() {
       try {
         const res = await apiFetch('/admin/firm');
         if (!cancelled && res.ok) {
-          // User already belongs to a firm — no need to onboard again
           router.replace('/');
           return;
         }
@@ -113,23 +93,16 @@ export default function OnboardingPage() {
     []
   );
 
-  // ----- Validation per step -----
   function canProceed(): boolean {
     switch (currentStep) {
       case 1:
-        return state.firmName.trim().length > 0 && state.industry !== '' && state.firmSize !== '';
-      case 2:
-        return true; // always valid -- defaults are fine
-      case 3:
-        return true; // informational step
-      case 4:
-        return true; // skip is allowed
+        return state.orgName.trim().length > 0;
       default:
         return true;
     }
   }
 
-  // ----- API call to create firm -----
+  // Create firm + auto-start trial (called after Step 1)
   async function createFirm() {
     setIsSubmitting(true);
     setSubmitError(null);
@@ -138,11 +111,9 @@ export default function OnboardingPage() {
       const response = await apiFetch('/admin/firm', {
         method: 'POST',
         body: JSON.stringify({
-          firmName: state.firmName,
-          industry: state.industry,
-          firmSize: state.firmSize,
+          firmName: state.orgName,
           protectionMode: 'proxy',
-          teamMembers: state.teamMembers.filter((m) => m.email.trim() !== ''),
+          teamMembers: [],
         }),
       });
 
@@ -151,7 +122,7 @@ export default function OnboardingPage() {
       }
 
       setFirmCreated(true);
-      setCurrentStep(5);
+      setCurrentStep(2);
 
       // Auto-generate an API key for the Chrome extension
       try {
@@ -169,22 +140,19 @@ export default function OnboardingPage() {
         setApiKeyError('Auto-generation failed. Create one manually in Settings > API Keys.');
       }
     } catch (err: any) {
-      // If API is unavailable, still proceed to step 5 so the user isn't blocked
       console.warn('Firm creation API call failed:', err.message);
       setSubmitError(
         'Could not connect to the server. Your settings have been saved locally — they\'ll sync when the server is available.'
       );
       setFirmCreated(false);
-      setCurrentStep(5);
+      setCurrentStep(2); // still advance so user isn't blocked
     } finally {
       setIsSubmitting(false);
     }
   }
 
-  // ----- Step navigation -----
   function handleNext() {
-    if (currentStep === 4) {
-      // Step 4 -> attempt API call, then go to step 5
+    if (currentStep === 1) {
       createFirm();
       return;
     }
@@ -194,20 +162,12 @@ export default function OnboardingPage() {
   }
 
   function handleBack() {
-    if (currentStep > 1) {
+    if (currentStep > 1 && currentStep !== 2) {
+      // Can't go back to step 1 after firm creation
       setCurrentStep((s) => s - 1);
     }
   }
 
-  function handleSkipInvite() {
-    // Skip team invites, go straight to API call
-    updateState('teamMembers', []);
-    createFirm();
-  }
-
-  // ----- Render -----
-
-  // While checking if user already belongs to a firm, show loading
   if (checkingFirm) {
     return (
       <div className="min-h-screen bg-[#f5f5f7] dark:bg-[#141414] flex items-center justify-center">
@@ -226,7 +186,7 @@ export default function OnboardingPage() {
           </div>
           <div>
             <h1 className="font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Iron Gate</h1>
-            <p className="text-xs text-[#6e6e73] dark:text-[#86868b]">Setup Wizard</p>
+            <p className="text-xs text-[#6e6e73] dark:text-[#86868b]">Get started in 2 minutes</p>
           </div>
         </div>
       </div>
@@ -264,7 +224,7 @@ export default function OnboardingPage() {
                         isCurrent ? 'text-iron-700 dark:text-iron-300' : isCompleted ? 'text-[#424245] dark:text-[#a1a1a6]' : 'text-[#86868b] dark:text-[#636366]'
                       }`}
                     >
-                      {['Your Firm', 'Protection', 'Extension', 'Co-Admins', 'Done'][i]}
+                      {STEP_LABELS[i]}
                     </span>
                   </div>
                   {step < TOTAL_STEPS && (
@@ -285,26 +245,15 @@ export default function OnboardingPage() {
       <div className="flex-1 flex items-start justify-center px-8 py-10">
         <div className="w-full max-w-2xl">
           {currentStep === 1 && (
-            <StepWelcome state={state} updateState={updateState} />
+            <StepWelcome state={state} updateState={updateState} isSubmitting={isSubmitting} />
           )}
-          {currentStep === 2 && (
-            <StepProtection state={state} updateState={updateState} />
-          )}
+          {currentStep === 2 && <StepDemo />}
           {currentStep === 3 && <StepExtension />}
           {currentStep === 4 && (
-            <StepTeam
-              state={state}
-              updateState={updateState}
-              onSkip={handleSkipInvite}
-            />
-          )}
-          {currentStep === 5 && (
             <StepComplete
               state={state}
               firmCreated={firmCreated}
               submitError={submitError}
-              onRetry={createFirm}
-              isSubmitting={isSubmitting}
               onGoToDashboard={() => { sessionStorage.removeItem(STORAGE_KEY); router.push('/dashboard'); }}
               generatedApiKey={generatedApiKey}
               apiKeyError={apiKeyError}
@@ -314,23 +263,23 @@ export default function OnboardingPage() {
                   navigator.clipboard.writeText(generatedApiKey).then(() => {
                     setApiKeyCopied(true);
                     setTimeout(() => setApiKeyCopied(false), 3000);
-                  }).catch(() => {
-                    // Clipboard API unavailable (non-HTTPS or no focus)
-                  });
+                  }).catch(() => {});
                 }
               }}
+              teamMembers={state.teamMembers}
+              onUpdateTeamMembers={(members) => updateState('teamMembers', members)}
             />
           )}
 
           {/* Navigation buttons */}
-          {currentStep < 5 && (
+          {currentStep < 4 && (
             <div className="flex items-center justify-between mt-8">
               <button
                 type="button"
                 onClick={handleBack}
-                disabled={currentStep === 1}
+                disabled={currentStep <= 2}
                 className={`px-5 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                  currentStep === 1
+                  currentStep <= 2
                     ? 'text-[#d2d2d7] dark:text-[#38383a] cursor-not-allowed'
                     : 'text-[#424245] dark:text-[#a1a1a6] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e]'
                 }`}
@@ -349,8 +298,8 @@ export default function OnboardingPage() {
               >
                 {isSubmitting
                   ? 'Setting up...'
-                  : currentStep === 4
-                    ? 'Complete Setup'
+                  : currentStep === 1
+                    ? 'Start Trial'
                     : 'Continue'}
               </button>
             </div>
@@ -362,144 +311,265 @@ export default function OnboardingPage() {
 }
 
 // ============================================================================
-// Step 1: Welcome to Iron Gate
+// Step 1: Welcome + Trial
 // ============================================================================
 function StepWelcome({
   state,
   updateState,
+  isSubmitting,
 }: {
   state: OnboardingState;
   updateState: <K extends keyof OnboardingState>(key: K, value: OnboardingState[K]) => void;
+  isSubmitting: boolean;
 }) {
   return (
     <div>
       <div className="mb-8">
         <h2 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Welcome to Iron Gate</h2>
         <p className="text-[#6e6e73] dark:text-[#86868b] mt-1">
-          Let&apos;s set up AI governance for your organization. This only takes a few minutes.
+          Your 15-day Pro trial starts now — no credit card required.
         </p>
       </div>
 
-      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 space-y-5">
-        {/* Firm name */}
-        <div>
-          <label htmlFor="firmName" className="block text-sm font-medium text-[#424245] dark:text-[#a1a1a6] mb-1.5">
-            Firm Name
-          </label>
-          <input
-            id="firmName"
-            type="text"
-            value={state.firmName}
-            onChange={(e) => updateState('firmName', e.target.value)}
-            placeholder="e.g. Sterling & Associates LLP"
-            className="w-full px-4 py-2.5 border border-[#d2d2d7] dark:border-[#38383a] rounded-lg text-sm text-[#1d1d1f] dark:text-[#f5f5f7] bg-white dark:bg-[#2c2c2e] placeholder:text-[#86868b] dark:placeholder:text-[#636366] focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 transition-shadow"
-          />
-        </div>
-
-        {/* Industry */}
-        <div>
-          <label htmlFor="industry" className="block text-sm font-medium text-[#424245] dark:text-[#a1a1a6] mb-1.5">
-            Industry
-          </label>
-          <select
-            id="industry"
-            value={state.industry}
-            onChange={(e) => updateState('industry', e.target.value)}
-            className="w-full px-4 py-2.5 border border-[#d2d2d7] dark:border-[#38383a] rounded-lg text-sm text-[#1d1d1f] dark:text-[#f5f5f7] focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 transition-shadow bg-white dark:bg-[#2c2c2e]"
-          >
-            <option value="" disabled>
-              Select your industry
-            </option>
-            {INDUSTRIES.map((ind) => (
-              <option key={ind} value={ind}>
-                {ind}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Firm size */}
-        <div>
-          <label className="block text-sm font-medium text-[#424245] dark:text-[#a1a1a6] mb-2">
-            Firm Size (employees)
-          </label>
-          <div className="grid grid-cols-4 gap-3">
-            {FIRM_SIZES.map((size) => (
-              <button
-                key={size}
-                type="button"
-                onClick={() => updateState('firmSize', size)}
-                className={`px-4 py-2.5 rounded-lg text-sm font-medium border transition-colors ${
-                  state.firmSize === size
-                    ? 'border-iron-600 bg-iron-50 text-iron-700'
-                    : 'border-[#d2d2d7]/40 bg-white text-[#424245] hover:bg-[#f5f5f7]'
-                }`}
-              >
-                {size}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================================
-// Step 2: Protection Overview (proxy mode is the only mode)
-// ============================================================================
-function StepProtection(_props: {
-  state: OnboardingState;
-  updateState: <K extends keyof OnboardingState>(key: K, value: OnboardingState[K]) => void;
-}) {
-  return (
-    <div>
-      <div className="mb-8">
-        <h2 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">How Iron Gate Protects Your Data</h2>
-        <p className="text-[#6e6e73] dark:text-[#86868b] mt-1">
-          Iron Gate automatically intercepts and protects sensitive data before it reaches any AI service.
-        </p>
-      </div>
-
-      {/* Active protection card */}
-      <div className="rounded-xl p-6 border-2 border-iron-600 bg-iron-50 dark:bg-iron-900/20 shadow-sm">
-        <div className="flex items-center gap-3 mb-4">
+      {/* Trial badge */}
+      <div className="bg-iron-50 dark:bg-iron-900/20 rounded-xl p-5 border-2 border-iron-200 dark:border-iron-700 mb-6">
+        <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg bg-iron-600 flex items-center justify-center flex-shrink-0">
-            <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
-            </svg>
+            <span className="text-white text-sm font-bold">PRO</span>
           </div>
-          <div>
-            <p className="text-sm font-semibold text-iron-800 dark:text-iron-200">Active Protection</p>
-            <p className="text-xs text-iron-600 dark:text-iron-400">Enabled by default</p>
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-iron-800 dark:text-iron-200">15-day Pro Trial</p>
+            <p className="text-xs text-iron-600 dark:text-iron-400">Full access. Cancel anytime. No card needed.</p>
           </div>
-          <div className="ml-auto w-6 h-6 bg-iron-600 rounded-full flex items-center justify-center">
-            <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
-            </svg>
+          <div className="flex-shrink-0 px-3 py-1 bg-iron-600 text-white text-xs font-semibold rounded-full">
+            FREE
           </div>
         </div>
+      </div>
 
-        <div className="space-y-3">
+      {/* Org name input */}
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 mb-6">
+        <label htmlFor="orgName" className="block text-sm font-medium text-[#424245] dark:text-[#a1a1a6] mb-1.5">
+          Organization Name
+        </label>
+        <input
+          id="orgName"
+          type="text"
+          value={state.orgName}
+          onChange={(e) => updateState('orgName', e.target.value)}
+          placeholder="e.g. Sterling & Associates LLP"
+          disabled={isSubmitting}
+          className="w-full px-4 py-2.5 border border-[#d2d2d7] dark:border-[#38383a] rounded-lg text-sm text-[#1d1d1f] dark:text-[#f5f5f7] bg-white dark:bg-[#2c2c2e] placeholder:text-[#86868b] dark:placeholder:text-[#636366] focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 transition-shadow disabled:opacity-50"
+        />
+      </div>
+
+      {/* What Pro includes */}
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+        <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">What&apos;s included in Pro</h3>
+        <div className="grid grid-cols-2 gap-3">
           {[
-            { icon: '1', text: 'Scans every prompt and file upload for sensitive data (SSNs, names, financials, and 27 entity types)' },
-            { icon: '2', text: 'Replaces real PII with realistic pseudonyms before it reaches the AI' },
-            { icon: '3', text: 'Restores original values in the AI response — so employees see useful, accurate output' },
-          ].map((item) => (
-            <div key={item.icon} className="flex items-start gap-3">
-              <span className="flex-shrink-0 w-6 h-6 bg-iron-100 dark:bg-iron-800/40 text-iron-700 dark:text-iron-300 rounded-full flex items-center justify-center text-xs font-semibold">
-                {item.icon}
-              </span>
-              <p className="text-sm text-[#424245] dark:text-[#a1a1a6] leading-relaxed">{item.text}</p>
+            { label: '10,000 prompts/mo', icon: '~' },
+            { label: '27+ entity types', icon: '#' },
+            { label: 'Full dashboard analytics', icon: '=' },
+            { label: 'Unlimited team members', icon: '+' },
+          ].map((feature) => (
+            <div key={feature.label} className="flex items-center gap-2.5 py-2">
+              <div className="w-6 h-6 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center flex-shrink-0">
+                <svg className="w-3.5 h-3.5 text-green-600 dark:text-green-400" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                </svg>
+              </div>
+              <span className="text-sm text-[#424245] dark:text-[#a1a1a6]">{feature.label}</span>
             </div>
           ))}
         </div>
       </div>
+    </div>
+  );
+}
 
-      {/* Fine-tuning note */}
+// ============================================================================
+// Step 2: Interactive Demo
+// ============================================================================
+
+const DEMO_PROMPT = 'Draft an NDA between John Smith (SSN: 123-45-6789) and Acme Corp for the Project Falcon acquisition. Contact: john.smith@acme.com, phone 555-867-5309.';
+
+const DEMO_ENTITIES = [
+  { type: 'PERSON', text: 'John Smith', start: 26, end: 36, color: 'bg-blue-200 dark:bg-blue-800/50', textColor: 'text-blue-700 dark:text-blue-300' },
+  { type: 'SSN', text: '123-45-6789', start: 43, end: 54, color: 'bg-red-200 dark:bg-red-800/50', textColor: 'text-red-700 dark:text-red-300' },
+  { type: 'ORG', text: 'Acme Corp', start: 60, end: 69, color: 'bg-purple-200 dark:bg-purple-800/50', textColor: 'text-purple-700 dark:text-purple-300' },
+  { type: 'EMAIL', text: 'john.smith@acme.com', start: 115, end: 134, color: 'bg-amber-200 dark:bg-amber-800/50', textColor: 'text-amber-700 dark:text-amber-300' },
+  { type: 'PHONE', text: '555-867-5309', start: 142, end: 154, color: 'bg-teal-200 dark:bg-teal-800/50', textColor: 'text-teal-700 dark:text-teal-300' },
+];
+
+const DEMO_PSEUDONYMIZED = 'Draft an NDA between Robert Chen (SSN: 987-65-4321) and Vertex Inc for the Project Falcon acquisition. Contact: r.chen@vertex.io, phone 555-123-0042.';
+
+function StepDemo() {
+  const [phase, setPhase] = useState<'idle' | 'scanning' | 'detected' | 'pseudonymized'>('idle');
+  const [scanProgress, setScanProgress] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval>>(undefined);
+
+  function runDemo() {
+    setPhase('scanning');
+    setScanProgress(0);
+
+    // Simulate scan progress
+    let progress = 0;
+    timerRef.current = setInterval(() => {
+      progress += 8;
+      setScanProgress(Math.min(progress, 100));
+      if (progress >= 100) {
+        clearInterval(timerRef.current);
+        setPhase('detected');
+        setTimeout(() => setPhase('pseudonymized'), 1500);
+      }
+    }, 50);
+  }
+
+  function resetDemo() {
+    if (timerRef.current) clearInterval(timerRef.current);
+    setPhase('idle');
+    setScanProgress(0);
+  }
+
+  useEffect(() => {
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, []);
+
+  // Build highlighted prompt text
+  function renderHighlightedPrompt() {
+    const parts: React.ReactNode[] = [];
+    let cursor = 0;
+
+    for (const entity of DEMO_ENTITIES) {
+      if (cursor < entity.start) {
+        parts.push(<span key={`t-${cursor}`}>{DEMO_PROMPT.slice(cursor, entity.start)}</span>);
+      }
+      parts.push(
+        <span key={`e-${entity.start}`} className={`${entity.color} rounded px-0.5 py-0.5 font-medium`}>
+          {entity.text}
+          <span className={`ml-1 text-[10px] font-bold uppercase ${entity.textColor}`}>{entity.type}</span>
+        </span>
+      );
+      cursor = entity.end;
+    }
+    if (cursor < DEMO_PROMPT.length) {
+      parts.push(<span key={`t-${cursor}`}>{DEMO_PROMPT.slice(cursor)}</span>);
+    }
+    return parts;
+  }
+
+  return (
+    <div>
+      <div className="mb-8">
+        <h2 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">See Iron Gate in Action</h2>
+        <p className="text-[#6e6e73] dark:text-[#86868b] mt-1">
+          Watch how Iron Gate detects and protects sensitive data before it reaches the AI.
+        </p>
+      </div>
+
+      {/* Demo area */}
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 overflow-hidden">
+        {/* Prompt section */}
+        <div className="p-6 border-b border-[#d2d2d7]/30 dark:border-[#38383a]/60">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-xs font-semibold uppercase tracking-wide text-[#86868b]">Sample Prompt</span>
+            {phase !== 'idle' && (
+              <button type="button" onClick={resetDemo} className="text-xs text-iron-600 hover:text-iron-700 underline ml-auto">
+                Reset
+              </button>
+            )}
+          </div>
+          <div className="text-sm leading-relaxed text-[#1d1d1f] dark:text-[#f5f5f7]">
+            {phase === 'detected' || phase === 'pseudonymized'
+              ? renderHighlightedPrompt()
+              : DEMO_PROMPT
+            }
+          </div>
+        </div>
+
+        {/* Scan button / progress */}
+        {phase === 'idle' && (
+          <div className="p-6 text-center">
+            <button
+              type="button"
+              onClick={runDemo}
+              className="inline-flex items-center gap-2 px-6 py-3 bg-iron-600 text-white font-semibold rounded-xl hover:bg-iron-700 transition-colors shadow-lg shadow-iron-600/20"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
+              </svg>
+              Scan for Sensitive Data
+            </button>
+            <p className="text-xs text-[#86868b] mt-3">Click to see what Iron Gate detects in this prompt</p>
+          </div>
+        )}
+
+        {phase === 'scanning' && (
+          <div className="p-6">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-5 h-5 border-2 border-iron-200 border-t-iron-600 rounded-full animate-spin flex-shrink-0" />
+              <span className="text-sm font-medium text-iron-700 dark:text-iron-300">Scanning for sensitive data...</span>
+            </div>
+            <div className="h-2 bg-iron-100 dark:bg-iron-900/30 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-iron-600 rounded-full transition-all duration-100"
+                style={{ width: `${scanProgress}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Detected entities */}
+        {(phase === 'detected' || phase === 'pseudonymized') && (
+          <div className="p-6 border-b border-[#d2d2d7]/30 dark:border-[#38383a]/60">
+            <div className="flex items-center gap-2 mb-3">
+              <svg className="w-4 h-4 text-red-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+              </svg>
+              <span className="text-sm font-semibold text-red-700 dark:text-red-300">
+                {DEMO_ENTITIES.length} sensitive entities detected
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {DEMO_ENTITIES.map((entity) => (
+                <span
+                  key={entity.type}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${entity.color} ${entity.textColor}`}
+                >
+                  {entity.type}
+                  <span className="opacity-60">&#183;</span>
+                  <span className="font-normal opacity-80">{entity.text}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Pseudonymized version */}
+        {phase === 'pseudonymized' && (
+          <div className="p-6 bg-green-50/50 dark:bg-green-900/10">
+            <div className="flex items-center gap-2 mb-3">
+              <svg className="w-4 h-4 text-green-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
+              </svg>
+              <span className="text-sm font-semibold text-green-700 dark:text-green-300">Protected — sent to AI</span>
+            </div>
+            <p className="text-sm leading-relaxed text-[#424245] dark:text-[#a1a1a6]">
+              {DEMO_PSEUDONYMIZED}
+            </p>
+            <p className="text-xs text-green-600 dark:text-green-400 mt-3 font-medium">
+              Real data never leaves your organization. The AI sees only realistic pseudonyms.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Explanation */}
       <div className="mt-6 p-4 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded-lg">
-        <p className="text-xs text-[#6e6e73] dark:text-[#86868b]">
-          <strong>Advanced settings</strong> like sensitivity thresholds, entity toggles, and allowlists can be configured later in <strong>Admin &rarr; Settings &rarr; Protection</strong>.
+        <p className="text-xs text-[#6e6e73] dark:text-[#86868b] leading-relaxed">
+          This is what Iron Gate does for every prompt your team sends — automatically, invisibly. The AI response is
+          de-pseudonymized before your team sees it, so they get accurate, useful output with zero workflow changes.
         </p>
       </div>
     </div>
@@ -507,7 +577,7 @@ function StepProtection(_props: {
 }
 
 // ============================================================================
-// Step 3: Deploy the Extension
+// Step 3: Install Extension
 // ============================================================================
 function StepExtension() {
   const extensionZipUrl = '/iron-gate-extension-v0.2.2.zip';
@@ -517,17 +587,11 @@ function StepExtension() {
       <div className="mb-8">
         <h2 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Install the Extension</h2>
         <p className="text-[#6e6e73] dark:text-[#86868b] mt-1">
-          The Chrome extension protects sensitive data in real-time before it reaches AI services.
+          The Chrome extension protects your team&apos;s prompts in real-time.
         </p>
       </div>
 
-      {/* Quick Setup (Testing) */}
-      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 space-y-6 mb-6">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wide text-iron-600 bg-iron-50 px-2.5 py-1 rounded-full">Quick Setup</span>
-          <span className="text-xs text-[#86868b]">For testing and individual use</span>
-        </div>
-
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 space-y-6">
         {/* Download button */}
         <div className="text-center py-2">
           <a
@@ -545,24 +609,16 @@ function StepExtension() {
         <div>
           <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-3">After downloading:</h3>
           <ol className="space-y-3">
-            <li className="flex items-start gap-3">
-              <span className="flex-shrink-0 w-6 h-6 bg-iron-100 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 rounded-full flex items-center justify-center text-xs font-semibold">1</span>
-              <p className="text-sm text-[#424245] dark:text-[#a1a1a6]">
-                <strong>Unzip</strong> the downloaded file to a folder on your computer.
-              </p>
-            </li>
-            <li className="flex items-start gap-3">
-              <span className="flex-shrink-0 w-6 h-6 bg-iron-100 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 rounded-full flex items-center justify-center text-xs font-semibold">2</span>
-              <p className="text-sm text-[#424245] dark:text-[#a1a1a6]">
-                Open <strong>chrome://extensions</strong>, enable <strong>Developer mode</strong> (top-right toggle).
-              </p>
-            </li>
-            <li className="flex items-start gap-3">
-              <span className="flex-shrink-0 w-6 h-6 bg-iron-100 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 rounded-full flex items-center justify-center text-xs font-semibold">3</span>
-              <p className="text-sm text-[#424245] dark:text-[#a1a1a6]">
-                Click <strong>&ldquo;Load unpacked&rdquo;</strong> and select the unzipped folder.
-              </p>
-            </li>
+            {[
+              { num: '1', text: <><strong>Unzip</strong> the downloaded file to a folder on your computer.</> },
+              { num: '2', text: <>Open <strong>chrome://extensions</strong>, enable <strong>Developer mode</strong> (top-right toggle).</> },
+              { num: '3', text: <>Click <strong>&ldquo;Load unpacked&rdquo;</strong> and select the unzipped folder.</> },
+            ].map((step) => (
+              <li key={step.num} className="flex items-start gap-3">
+                <span className="flex-shrink-0 w-6 h-6 bg-iron-100 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 rounded-full flex items-center justify-center text-xs font-semibold">{step.num}</span>
+                <p className="text-sm text-[#424245] dark:text-[#a1a1a6]">{step.text}</p>
+              </li>
+            ))}
             <li className="flex items-start gap-3">
               <span className="flex-shrink-0 w-6 h-6 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-full flex items-center justify-center">
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
@@ -576,238 +632,78 @@ function StepExtension() {
           </ol>
         </div>
 
-        {/* Auto-config note */}
+        {/* Note */}
         <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
           <div className="flex gap-3">
             <svg className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
             </svg>
             <div>
-              <p className="text-sm font-medium text-green-800 dark:text-green-300">Automatic for your team</p>
+              <p className="text-sm font-medium text-green-800 dark:text-green-300">Works automatically for your team</p>
               <p className="text-xs text-green-700 dark:text-green-400 mt-1 leading-relaxed">
-                An API key will be generated on the next screen. For enterprise deployments, you&apos;ll configure it once in your managed policy — your team members never need to see or enter it.
+                For enterprise-wide deployment via Chrome managed policies, visit <strong>Settings &rarr; Deployment</strong> after setup.
               </p>
             </div>
           </div>
         </div>
       </div>
-
-      {/* Enterprise Deployment */}
-      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 space-y-5">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wide text-purple-600 bg-purple-50 px-2.5 py-1 rounded-full">Enterprise</span>
-          <span className="text-xs text-[#86868b]">For organization-wide deployment</span>
-        </div>
-
-        <p className="text-sm text-[#424245] dark:text-[#a1a1a6] leading-relaxed">
-          Deploy Iron Gate across your entire organization using Chrome Enterprise policies. No manual setup required per user.
-        </p>
-
-        <ol className="space-y-4">
-          <li className="flex items-start gap-3">
-            <span className="flex-shrink-0 w-6 h-6 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-full flex items-center justify-center text-xs font-semibold">1</span>
-            <div>
-              <p className="text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">Publish to Chrome Web Store</p>
-              <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mt-0.5">
-                Upload the extension ZIP to the Chrome Web Store Developer Dashboard. Set visibility to <strong>Unlisted</strong> so only your organization can install it.
-              </p>
-            </div>
-          </li>
-          <li className="flex items-start gap-3">
-            <span className="flex-shrink-0 w-6 h-6 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-full flex items-center justify-center text-xs font-semibold">2</span>
-            <div>
-              <p className="text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">Configure in Google Admin Console</p>
-              <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mt-0.5">
-                Go to <strong>admin.google.com</strong> &rarr; Devices &rarr; Chrome &rarr; Apps &amp; Extensions. Add the extension by ID and set to <strong>Force Install</strong>.
-              </p>
-            </div>
-          </li>
-          <li className="flex items-start gap-3">
-            <span className="flex-shrink-0 w-6 h-6 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-full flex items-center justify-center text-xs font-semibold">3</span>
-            <div>
-              <p className="text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">Set Managed Configuration</p>
-              <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mt-0.5">
-                Under the extension&apos;s managed configuration, paste your firm&apos;s policy JSON (provided on the final screen). This auto-configures the API key, firm ID, and mode for every user.
-              </p>
-            </div>
-          </li>
-          <li className="flex items-start gap-3">
-            <span className="flex-shrink-0 w-6 h-6 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-full flex items-center justify-center">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
-              </svg>
-            </span>
-            <p className="text-sm text-[#424245] dark:text-[#a1a1a6]">
-              <strong>Done!</strong> Every enrolled Chrome browser auto-installs Iron Gate. No user action needed.
-            </p>
-          </li>
-        </ol>
-
-        <div className="p-3 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded-lg">
-          <p className="text-xs text-[#6e6e73] dark:text-[#86868b]">
-            <strong>Also supported:</strong> Mac MDM (Jamf) via Chrome browser management profile, and Windows Group Policy via Chrome ADMX templates.
-          </p>
-        </div>
-      </div>
     </div>
   );
 }
 
 // ============================================================================
-// Step 4: Invite Your Team
-// ============================================================================
-function StepTeam({
-  state,
-  updateState,
-  onSkip,
-}: {
-  state: OnboardingState;
-  updateState: <K extends keyof OnboardingState>(key: K, value: OnboardingState[K]) => void;
-  onSkip: () => void;
-}) {
-  function addMember() {
-    updateState('teamMembers', [...state.teamMembers, { email: '', role: 'user' }]);
-  }
-
-  function updateMember(index: number, field: keyof TeamMember, value: string) {
-    const updated = [...state.teamMembers];
-    updated[index] = { ...updated[index], [field]: value };
-    updateState('teamMembers', updated);
-  }
-
-  function removeMember(index: number) {
-    if (state.teamMembers.length <= 1) return;
-    const updated = state.teamMembers.filter((_, i) => i !== index);
-    updateState('teamMembers', updated);
-  }
-
-  return (
-    <div>
-      <div className="mb-8">
-        <h2 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Invite Co-Admins</h2>
-        <p className="text-[#6e6e73] dark:text-[#86868b] mt-1">
-          Add other administrators who will manage Iron Gate policies and monitor activity. Regular employees don&apos;t need accounts — the extension is deployed to them automatically.
-        </p>
-      </div>
-
-      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
-        <div className="space-y-3">
-          {state.teamMembers.map((member, index) => (
-            <div key={index} className="flex items-center gap-3">
-              <div className="flex-1">
-                <input
-                  type="email"
-                  placeholder="colleague@yourfirm.com"
-                  value={member.email}
-                  onChange={(e) => updateMember(index, 'email', e.target.value)}
-                  className="w-full px-4 py-2.5 border border-[#d2d2d7] dark:border-[#38383a] rounded-lg text-sm text-[#1d1d1f] dark:text-[#f5f5f7] bg-white dark:bg-[#2c2c2e] placeholder:text-[#86868b] dark:placeholder:text-[#636366] focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500 transition-shadow"
-                />
-              </div>
-              <select
-                value={member.role}
-                onChange={(e) => updateMember(index, 'role', e.target.value)}
-                className="px-3 py-2.5 border border-[#d2d2d7] rounded-lg text-sm text-[#424245] dark:text-[#a1a1a6] bg-white focus:outline-none focus:ring-2 focus:ring-iron-500 focus:border-iron-500"
-              >
-                <option value="user">User</option>
-                <option value="admin">Admin</option>
-              </select>
-              <button
-                type="button"
-                onClick={() => removeMember(index)}
-                disabled={state.teamMembers.length <= 1}
-                className={`p-2 rounded-lg transition-colors ${
-                  state.teamMembers.length <= 1
-                    ? 'text-[#d2d2d7] cursor-not-allowed'
-                    : 'text-[#86868b] hover:text-red-500 hover:bg-red-50'
-                }`}
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
-                </svg>
-              </button>
-            </div>
-          ))}
-        </div>
-
-        <button
-          type="button"
-          onClick={addMember}
-          className="mt-4 flex items-center gap-2 text-sm font-medium text-iron-600 hover:text-iron-700 transition-colors"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-          </svg>
-          Add another
-        </button>
-      </div>
-
-      {/* Skip option */}
-      <div className="mt-4 text-center">
-        <button
-          type="button"
-          onClick={onSkip}
-          className="text-sm text-[#6e6e73] hover:text-[#424245] transition-colors underline underline-offset-2"
-        >
-          Skip — I&apos;m the only admin for now
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================================
-// Step 5: You're All Set!
+// Step 4: You're All Set
 // ============================================================================
 function StepComplete({
   state,
   firmCreated,
   submitError,
-  onRetry: _onRetry,
-  isSubmitting,
   onGoToDashboard,
   generatedApiKey,
   apiKeyError,
   apiKeyCopied,
   onCopyApiKey,
+  teamMembers,
+  onUpdateTeamMembers,
 }: {
   state: OnboardingState;
   firmCreated: boolean;
   submitError: string | null;
-  onRetry: () => void;
-  isSubmitting: boolean;
   onGoToDashboard: () => void;
   generatedApiKey: string | null;
   apiKeyError: string | null;
   apiKeyCopied: boolean;
   onCopyApiKey: () => void;
+  teamMembers: TeamMember[];
+  onUpdateTeamMembers: (members: TeamMember[]) => void;
 }) {
-  // Note: even if API failed, we show the success screen with a warning banner
-  // so the user is never blocked from proceeding to the dashboard.
-
-  // Loading state while creating
-  if (!firmCreated && isSubmitting) {
-    return (
-      <div className="text-center py-16">
-        <div className="w-12 h-12 border-4 border-iron-200 border-t-iron-600 rounded-full animate-spin mx-auto mb-4" />
-        <p className="text-sm text-[#6e6e73]">Setting up your organization...</p>
-      </div>
-    );
-  }
-
-  const invitedCount = state.teamMembers.filter((m) => m.email.trim() !== '').length;
+  const [showInvite, setShowInvite] = useState(false);
 
   return (
     <div>
       <div className="mb-8 text-center">
-        <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg className="w-8 h-8 text-green-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+        <div className="w-16 h-16 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
+          <svg className="w-8 h-8 text-green-600 dark:text-green-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
           </svg>
         </div>
-        <h2 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">You&apos;re All Set!</h2>
+        <h2 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">You&apos;re Protected</h2>
         <p className="text-[#6e6e73] dark:text-[#86868b] mt-2">
-          Iron Gate is configured and ready to protect your organization.
+          Iron Gate is ready to protect {state.orgName || 'your organization'}.
         </p>
+      </div>
+
+      {/* Trial countdown */}
+      <div className="bg-iron-50 dark:bg-iron-900/20 rounded-xl p-5 border border-iron-200 dark:border-iron-700 mb-6">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-iron-600 flex items-center justify-center flex-shrink-0">
+            <span className="text-white text-sm font-bold">PRO</span>
+          </div>
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-iron-800 dark:text-iron-200">15 days remaining in your Pro trial</p>
+            <p className="text-xs text-iron-600 dark:text-iron-400">10,000 prompts/mo &middot; 27+ entity types &middot; Full analytics</p>
+          </div>
+        </div>
       </div>
 
       {/* Server connectivity warning (non-blocking) */}
@@ -820,48 +716,28 @@ function StepComplete({
             <div>
               <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Server not reachable</p>
               <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
-                Your settings are saved. They&apos;ll sync automatically when the server is available. You can still explore the dashboard with demo data.
+                Settings saved locally. They&apos;ll sync when the server is available.
               </p>
             </div>
           </div>
         </div>
       )}
 
-      {/* Configuration summary */}
-      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 mb-6">
-        <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Configuration Summary</h3>
-        <div className="space-y-3">
-          <SummaryRow label="Firm" value={state.firmName} />
-          <SummaryRow label="Industry" value={state.industry} />
-          <SummaryRow label="Size" value={`${state.firmSize} employees`} />
-          <SummaryRow label="Protection Mode" value={state.protectionMode === 'proxy' ? 'Protect (Active Redaction)' : 'Audit (Monitor Only)'} />
-          <SummaryRow
-            label="Team Invites"
-            value={invitedCount > 0 ? `${invitedCount} member${invitedCount > 1 ? 's' : ''} invited` : 'None (skipped)'}
-          />
-        </div>
-      </div>
-
-      {/* API Key Card — Admin only */}
+      {/* API Key */}
       {generatedApiKey && (
-        <div className="bg-iron-50 dark:bg-iron-900/20 rounded-xl p-6 border-2 border-iron-300 dark:border-iron-700 mb-6">
+        <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 mb-6">
           <div className="flex items-center gap-2 mb-3">
             <svg className="w-5 h-5 text-iron-600 dark:text-iron-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z" />
             </svg>
-            <h3 className="text-sm font-bold text-iron-800 dark:text-iron-300">Organization API Key</h3>
-            <span className="text-[10px] font-semibold uppercase tracking-wide bg-iron-100 dark:bg-iron-800/40 text-iron-700 dark:text-iron-300 px-2 py-0.5 rounded-full">Admin Only</span>
+            <h3 className="text-sm font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Your API Key</h3>
           </div>
-          <p className="text-xs text-iron-700 dark:text-iron-400 mb-3">
-            This key connects your organization to Iron Gate. Use the Enterprise Policy JSON below to deploy it automatically — your team members will never need to see or enter this key.
-          </p>
           <div className="flex items-center gap-2">
-            <code
-              className="flex-1 px-4 py-3 bg-white dark:bg-[#1c1c1e] border border-iron-300 dark:border-iron-600 rounded-lg text-sm font-mono text-[#1d1d1f] dark:text-[#f5f5f7] select-all break-all"
-            >
+            <code className="flex-1 px-4 py-3 bg-[#f5f5f7] dark:bg-[#2c2c2e] border border-[#d2d2d7] dark:border-[#38383a] rounded-lg text-sm font-mono text-[#1d1d1f] dark:text-[#f5f5f7] select-all break-all">
               {generatedApiKey}
             </code>
             <button
+              type="button"
               onClick={onCopyApiKey}
               className={`flex-shrink-0 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
                 apiKeyCopied
@@ -872,150 +748,98 @@ function StepComplete({
               {apiKeyCopied ? 'Copied!' : 'Copy'}
             </button>
           </div>
-          <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mt-3">
-            You can also find this key later in <strong>Settings &rarr; API Keys</strong>.
+          <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mt-2">
+            Also available in Settings &rarr; API Keys.
           </p>
         </div>
       )}
 
       {apiKeyError && !generatedApiKey && (
         <div className="bg-amber-50 dark:bg-amber-900/20 rounded-xl p-4 border border-amber-200 dark:border-amber-700 mb-6">
-          <p className="text-sm text-amber-700 dark:text-amber-400">
-            {apiKeyError}
-          </p>
+          <p className="text-sm text-amber-700 dark:text-amber-400">{apiKeyError}</p>
         </div>
-      )}
-
-      {/* Enterprise Policy JSON */}
-      {generatedApiKey && (
-        <EnterprisePolicyCard apiKey={generatedApiKey} firmName={state.firmName} />
       )}
 
       {/* Go to Dashboard button */}
       <button
+        type="button"
         onClick={onGoToDashboard}
-        className="w-full px-6 py-3 bg-iron-600 text-white rounded-lg text-sm font-semibold hover:bg-iron-700 transition-colors mb-6"
+        className="w-full px-6 py-3 bg-iron-600 text-white rounded-xl text-sm font-semibold hover:bg-iron-700 transition-colors mb-6"
       >
         Go to Dashboard
       </button>
 
-      {/* Quick links */}
-      <div className="grid grid-cols-3 gap-3">
-        <QuickLink
-          href="/events"
-          title="View Events"
-          description="Monitor AI interactions"
-          icon={
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 0 1 0 3.75H5.625a1.875 1.875 0 0 1 0-3.75Z" />
-            </svg>
-          }
-        />
-        <QuickLink
-          href="/admin"
-          title="Configure Policies"
-          description="Fine-tune your rules"
-          icon={
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75" />
-            </svg>
-          }
-        />
-        <QuickLink
-          href="/reports"
-          title="Read Reports"
-          description="Review compliance data"
-          icon={
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
-            </svg>
-          }
-        />
-      </div>
-    </div>
-  );
-}
-
-function EnterprisePolicyCard({ apiKey, firmName }: { apiKey: string; firmName: string }) {
-  const [copied, setCopied] = React.useState(false);
-
-  const policyJson = JSON.stringify(
-    {
-      apiKey,
-      firmMode: 'proxy',
-      firmName,
-    },
-    null,
-    2,
-  );
-
-  function handleCopy() {
-    navigator.clipboard.writeText(policyJson).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 3000);
-    }).catch(() => {
-      // Clipboard API unavailable (non-HTTPS or no focus)
-    });
-  }
-
-  return (
-    <div className="bg-purple-50 dark:bg-purple-900/20 rounded-xl p-6 border border-purple-200 dark:border-purple-700 mb-6">
-      <div className="flex items-center gap-2 mb-3">
-        <svg className="w-5 h-5 text-purple-600 dark:text-purple-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3.75 0h.008v.008h-.008v-.008Zm0 3h.008v.008h-.008v-.008Zm0 3h.008v.008h-.008v-.008Z" />
-        </svg>
-        <h3 className="text-sm font-bold text-purple-800 dark:text-purple-300">Enterprise Policy JSON</h3>
-      </div>
-      <p className="text-xs text-purple-700 dark:text-purple-400 mb-3">
-        Use this JSON in Google Admin Console (Managed Configuration) to auto-configure Iron Gate for all users in your organization.
-      </p>
-      <div className="relative">
-        <pre className="px-4 py-3 bg-white dark:bg-[#1c1c1e] border border-purple-200 dark:border-purple-600 rounded-lg text-xs font-mono text-[#1d1d1f] dark:text-[#f5f5f7] overflow-x-auto select-all">
-          {policyJson}
-        </pre>
+      {/* Collapsible team invite */}
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 overflow-hidden">
         <button
-          onClick={handleCopy}
-          className={`absolute top-2 right-2 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-            copied
-              ? 'bg-green-600 text-white'
-              : 'bg-purple-600 hover:bg-purple-700 text-white'
-          }`}
+          type="button"
+          onClick={() => setShowInvite(!showInvite)}
+          className="w-full flex items-center justify-between p-4 text-sm font-medium text-[#424245] dark:text-[#a1a1a6] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] transition-colors"
         >
-          {copied ? 'Copied!' : 'Copy'}
+          <span>Invite team members (optional)</span>
+          <svg
+            className={`w-4 h-4 transition-transform ${showInvite ? 'rotate-180' : ''}`}
+            fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+          </svg>
         </button>
+        {showInvite && (
+          <div className="px-4 pb-4 space-y-3">
+            {teamMembers.map((member, index) => (
+              <div key={index} className="flex items-center gap-2">
+                <input
+                  type="email"
+                  placeholder="colleague@yourfirm.com"
+                  value={member.email}
+                  onChange={(e) => {
+                    const updated = [...teamMembers];
+                    updated[index] = { ...updated[index], email: e.target.value };
+                    onUpdateTeamMembers(updated);
+                  }}
+                  className="flex-1 px-3 py-2 border border-[#d2d2d7] dark:border-[#38383a] rounded-lg text-sm text-[#1d1d1f] dark:text-[#f5f5f7] bg-white dark:bg-[#2c2c2e] placeholder:text-[#86868b] focus:outline-none focus:ring-2 focus:ring-iron-500 transition-shadow"
+                />
+                {teamMembers.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => onUpdateTeamMembers(teamMembers.filter((_, i) => i !== index))}
+                    className="p-1.5 text-[#86868b] hover:text-red-500 transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => onUpdateTeamMembers([...teamMembers, { email: '', role: 'user' }])}
+              className="text-xs font-medium text-iron-600 hover:text-iron-700 transition-colors"
+            >
+              + Add another
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Quick links */}
+      <div className="grid grid-cols-3 gap-3 mt-6">
+        {[
+          { href: '/dashboard', title: 'Dashboard', description: 'View activity' },
+          { href: '/admin', title: 'Settings', description: 'Configure policies' },
+          { href: '/events', title: 'Events', description: 'Monitor prompts' },
+        ].map((link) => (
+          <a
+            key={link.href}
+            href={link.href}
+            className="block p-4 bg-white dark:bg-[#1c1c1e] rounded-xl border border-[#d2d2d7]/40 dark:border-[#38383a]/60 hover:border-iron-300 dark:hover:border-iron-600 hover:shadow-sm transition-all text-center"
+          >
+            <p className="text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">{link.title}</p>
+            <p className="text-xs text-[#6e6e73] dark:text-[#86868b]">{link.description}</p>
+          </a>
+        ))}
       </div>
     </div>
-  );
-}
-
-function SummaryRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between py-2 border-b border-[#f5f5f7] dark:border-[#38383a]/60 last:border-0">
-      <span className="text-sm text-[#6e6e73] dark:text-[#86868b]">{label}</span>
-      <span className="text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">{value}</span>
-    </div>
-  );
-}
-
-function QuickLink({
-  href,
-  title,
-  description,
-  icon,
-}: {
-  href: string;
-  title: string;
-  description: string;
-  icon: React.ReactNode;
-}) {
-  return (
-    <a
-      href={href}
-      className="block p-4 bg-white dark:bg-[#1c1c1e] rounded-xl border border-[#d2d2d7]/40 dark:border-[#38383a]/60 hover:border-iron-300 dark:hover:border-iron-600 hover:shadow-sm transition-all group"
-    >
-      <div className="text-[#86868b] group-hover:text-iron-600 transition-colors mb-2">{icon}</div>
-      <p className="text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">{title}</p>
-      <p className="text-xs text-[#6e6e73] dark:text-[#86868b]">{description}</p>
-    </a>
   );
 }

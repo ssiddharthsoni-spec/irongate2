@@ -68,10 +68,23 @@ billingRoutes.get('/', async (c) => {
     });
   }
 
+  // Lazy trial expiry — downgrade to free if trial period has ended
+  let effectiveTier = subscription.tier;
+  let effectiveStatus = subscription.status;
+  if (subscription.status === 'trialing' && subscription.currentPeriodEnd) {
+    if (new Date(subscription.currentPeriodEnd) < new Date()) {
+      await db.update(subscriptions)
+        .set({ tier: 'free', status: 'active', updatedAt: new Date() })
+        .where(eq(subscriptions.id, subscription.id));
+      effectiveTier = 'free';
+      effectiveStatus = 'active';
+    }
+  }
+
   return c.json({
     subscription: {
-      tier: subscription.tier,
-      status: subscription.status,
+      tier: effectiveTier,
+      status: effectiveStatus,
       stripeCustomerId: subscription.stripeCustomerId,
       stripeSubscriptionId: subscription.stripeSubscriptionId,
       stripePriceId: subscription.stripePriceId,
@@ -126,19 +139,26 @@ billingRoutes.post('/checkout', async (c) => {
 
   let customerId = subscription?.stripeCustomerId;
 
-  if (!customerId) {
+  if (!customerId || customerId.startsWith('trial_')) {
     const customer = await stripe.customers.create({
       metadata: { firmId },
     });
     customerId = customer.id;
 
-    // Create a free-tier subscription record for the firm
-    await db.insert(subscriptions).values({
-      firmId,
-      stripeCustomerId: customerId,
-      tier: 'free',
-      status: 'active',
-    });
+    if (subscription) {
+      // Update existing trial subscription with real Stripe customer
+      await db.update(subscriptions)
+        .set({ stripeCustomerId: customerId })
+        .where(eq(subscriptions.firmId, firmId));
+    } else {
+      // Create a free-tier subscription record for the firm
+      await db.insert(subscriptions).values({
+        firmId,
+        stripeCustomerId: customerId,
+        tier: 'free',
+        status: 'active',
+      });
+    }
   }
 
   const dashboardUrl = process.env.DASHBOARD_URL || 'https://irongate-dashboard.vercel.app';
@@ -147,7 +167,7 @@ billingRoutes.post('/checkout', async (c) => {
     customer: customerId,
     mode: 'subscription',
     line_items: [{ price: priceId, quantity: 1 }],
-    subscription_data: { trial_period_days: 10 },
+    subscription_data: { trial_period_days: 15 },
     success_url: `${dashboardUrl}/admin?billing=success`,
     cancel_url: `${dashboardUrl}/admin?billing=canceled`,
     metadata: { firmId, tier, cycle },
