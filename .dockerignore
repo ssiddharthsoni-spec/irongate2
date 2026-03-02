@@ -3,10 +3,15 @@ node_modules
 *.md
 docs
 demo
-apps/extension
-apps/dashboard
-apps/detection
 .env
 .env.local
 .turbo
 dist
+
+# Exclude heavy app sources from API Docker build, but keep package.json
+# files so pnpm --frozen-lockfile can resolve the full workspace lockfile
+apps/extension/**
+!apps/extension/package.json
+apps/dashboard/**
+!apps/dashboard/package.json
+apps/detection

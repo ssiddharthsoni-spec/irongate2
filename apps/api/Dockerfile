@@ -8,14 +8,18 @@ WORKDIR /app
 # Copy root workspace files
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 
-# Copy ALL workspace package manifests (pnpm --frozen-lockfile needs every
-# member referenced in the lockfile, even if the API doesn't depend on them)
+# Copy ALL workspace package.json files — pnpm --frozen-lockfile validates
+# every importer in the lockfile, even ones the API doesn't depend on
 COPY packages/types/package.json packages/types/package.json
 COPY packages/config/package.json packages/config/package.json
 COPY packages/crypto/package.json packages/crypto/package.json
 COPY packages/proto/package.json packages/proto/package.json
 COPY packages/plugin-sdk/package.json packages/plugin-sdk/package.json
 COPY apps/api/package.json apps/api/package.json
+COPY apps/dashboard/package.json apps/dashboard/package.json
+COPY apps/extension/package.json apps/extension/package.json
+COPY apps/gateway/package.json apps/gateway/package.json
+COPY apps/vscode-extension/package.json apps/vscode-extension/package.json
 
 # Install all dependencies
 RUN pnpm install --frozen-lockfile
