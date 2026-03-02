@@ -10,8 +10,8 @@ import './globals.css';
 export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
-  title: 'Iron Gate — AI Governance Dashboard',
-  description: 'Monitor and protect AI tool usage across your organization',
+  title: 'Iron Gate — AI Data Governance',
+  description: 'Protect sensitive data in every AI interaction — without slowing your team down.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

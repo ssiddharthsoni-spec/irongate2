@@ -49,8 +49,8 @@ export default function LandingPage() {
             </h1>
 
             <p className="mt-6 text-base md:text-lg text-[#6e6e73] dark:text-[#86868b] leading-relaxed max-w-2xl mx-auto">
-              The governance layer that detects sensitive data in every AI prompt,
-              blocks it before it leaves your network, and gives you complete visibility.
+              Detect and protect sensitive data in every AI prompt — without
+              slowing your team down. Full visibility, zero productivity loss.
             </p>
 
             <div className="mt-8 flex flex-wrap justify-center gap-3">
@@ -58,7 +58,7 @@ export default function LandingPage() {
                 href="/sign-up"
                 className="group px-6 py-3 bg-iron-600 hover:bg-iron-700 text-white font-semibold rounded-xl text-sm transition-all shadow-lg shadow-iron-600/20 flex items-center gap-2"
               >
-                Set Up Your Organization
+                Start 10-Day Free Trial
                 <svg className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
                 </svg>
@@ -78,9 +78,9 @@ export default function LandingPage() {
       <section className="max-w-7xl mx-auto px-6 md:px-12 pb-16 md:pb-24">
         <div className="text-center mb-10">
           <p className="text-xs font-semibold uppercase tracking-widest text-iron-600 dark:text-iron-400 mb-2">See It In Action</p>
-          <h2 className="text-2xl md:text-3xl font-bold tracking-tight">The full round-trip, protected</h2>
+          <h2 className="text-2xl md:text-3xl font-bold tracking-tight">What the AI actually sees</h2>
           <p className="mt-3 text-sm text-[#6e6e73] dark:text-[#86868b] max-w-xl mx-auto">
-            Iron Gate pseudonymizes sensitive data before the AI sees it, then restores the real values in the response. Useful output — zero data exposure.
+            Iron Gate replaces sensitive entities with realistic fake values before the AI sees them. The response is useful — with zero real data.
           </p>
         </div>
 
@@ -362,7 +362,7 @@ export default function LandingPage() {
               ))}
             </ul>
             <Link href="/sign-up" className="block w-full text-center px-5 py-2.5 rounded-lg text-sm font-semibold border border-[#d2d2d7]/60 dark:border-[#38383a]/60 text-[#424245] dark:text-[#a1a1a6] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] transition-colors">
-              Get Started Free
+              Start Free
             </Link>
           </div>
 
@@ -428,7 +428,7 @@ export default function LandingPage() {
                 href="/sign-up"
                 className="group px-6 py-3 bg-white text-iron-700 font-semibold rounded-xl text-sm hover:bg-iron-50 transition-all shadow-lg flex items-center gap-2"
               >
-                Get Started Free
+                Start 10-Day Free Trial
                 <svg className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
                 </svg>

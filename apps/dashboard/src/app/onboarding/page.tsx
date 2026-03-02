@@ -25,11 +25,8 @@ interface OnboardingState {
   firmName: string;
   industry: string;
   firmSize: string;
-  // Step 2
-  protectionMode: 'audit' | 'proxy';
-  warnThreshold: number;
-  blockThreshold: number;
-  proxyThreshold: number;
+  // Step 2 — proxy mode is the only mode (audit disabled)
+  protectionMode: 'proxy';
   // Step 4
   teamMembers: TeamMember[];
 }
@@ -58,9 +55,6 @@ const DEFAULT_STATE: OnboardingState = {
   industry: '',
   firmSize: '',
   protectionMode: 'proxy',
-  warnThreshold: 30,
-  blockThreshold: 60,
-  proxyThreshold: 80,
   teamMembers: [{ email: '', role: 'user' }],
 };
 
@@ -147,12 +141,7 @@ export default function OnboardingPage() {
           firmName: state.firmName,
           industry: state.industry,
           firmSize: state.firmSize,
-          protectionMode: state.protectionMode,
-          thresholds: {
-            warn: state.warnThreshold,
-            block: state.blockThreshold,
-            proxy: state.proxyThreshold,
-          },
+          protectionMode: 'proxy',
           teamMembers: state.teamMembers.filter((m) => m.email.trim() !== ''),
         }),
       });
@@ -275,7 +264,7 @@ export default function OnboardingPage() {
                         isCurrent ? 'text-iron-700 dark:text-iron-300' : isCompleted ? 'text-[#424245] dark:text-[#a1a1a6]' : 'text-[#86868b] dark:text-[#636366]'
                       }`}
                     >
-                      {['Welcome', 'Protection', 'Extension', 'Co-Admins', 'Done'][i]}
+                      {['Your Firm', 'Protection', 'Extension', 'Co-Admins', 'Done'][i]}
                     </span>
                   </div>
                   {step < TOTAL_STEPS && (
@@ -457,11 +446,10 @@ function StepWelcome({
 }
 
 // ============================================================================
-// Step 2: Configure Protection
+// Step 2: Protection Overview (proxy mode is the only mode)
 // ============================================================================
 function StepProtection({
   state,
-  updateState,
 }: {
   state: OnboardingState;
   updateState: <K extends keyof OnboardingState>(key: K, value: OnboardingState[K]) => void;
@@ -469,93 +457,51 @@ function StepProtection({
   return (
     <div>
       <div className="mb-8">
-        <h2 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Choose Protection Mode</h2>
+        <h2 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">How Iron Gate Protects Your Data</h2>
         <p className="text-[#6e6e73] dark:text-[#86868b] mt-1">
-          How should Iron Gate handle sensitive data in AI prompts? You can change this anytime in Admin settings.
+          Iron Gate automatically intercepts and protects sensitive data before it reaches any AI service.
         </p>
       </div>
 
-      <div className="grid gap-4">
-        {/* Protect Mode */}
-        <button
-          type="button"
-          onClick={() => updateState('protectionMode', 'proxy')}
-          className={`text-left rounded-xl p-6 border-2 transition-all ${
-            state.protectionMode === 'proxy'
-              ? 'border-iron-600 bg-iron-50 dark:bg-iron-900/20 shadow-sm'
-              : 'border-[#d2d2d7]/40 dark:border-[#38383a]/60 bg-white dark:bg-[#1c1c1e] hover:border-[#d2d2d7] dark:hover:border-[#48484a]'
-          }`}
-        >
-          <div className="flex items-center gap-3 mb-3">
-            <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
-              state.protectionMode === 'proxy' ? 'bg-iron-600' : 'bg-[#e5e5ea] dark:bg-[#38383a]'
-            }`}>
-              <svg className={`w-5 h-5 ${state.protectionMode === 'proxy' ? 'text-white' : 'text-[#86868b]'}`} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
-              </svg>
-            </div>
-            <div>
-              <p className={`text-sm font-semibold ${state.protectionMode === 'proxy' ? 'text-iron-800 dark:text-iron-200' : 'text-[#1d1d1f] dark:text-[#f5f5f7]'}`}>
-                Protect Mode
-              </p>
-              <p className="text-xs text-[#86868b]">Recommended</p>
-            </div>
-            {state.protectionMode === 'proxy' && (
-              <div className="ml-auto w-6 h-6 bg-iron-600 rounded-full flex items-center justify-center">
-                <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
-                </svg>
-              </div>
-            )}
+      {/* Active protection card */}
+      <div className="rounded-xl p-6 border-2 border-iron-600 bg-iron-50 dark:bg-iron-900/20 shadow-sm">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-lg bg-iron-600 flex items-center justify-center flex-shrink-0">
+            <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
+            </svg>
           </div>
-          <p className="text-sm text-[#424245] dark:text-[#a1a1a6] leading-relaxed">
-            Sensitive data is <strong>automatically redacted</strong> before it reaches AI services. Names, SSNs, and other PII are replaced with pseudonyms in real-time.
-          </p>
-        </button>
+          <div>
+            <p className="text-sm font-semibold text-iron-800 dark:text-iron-200">Active Protection</p>
+            <p className="text-xs text-iron-600 dark:text-iron-400">Enabled by default</p>
+          </div>
+          <div className="ml-auto w-6 h-6 bg-iron-600 rounded-full flex items-center justify-center">
+            <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+            </svg>
+          </div>
+        </div>
 
-        {/* Audit Mode */}
-        <button
-          type="button"
-          onClick={() => updateState('protectionMode', 'audit')}
-          className={`text-left rounded-xl p-6 border-2 transition-all ${
-            state.protectionMode === 'audit'
-              ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20 shadow-sm'
-              : 'border-[#d2d2d7]/40 dark:border-[#38383a]/60 bg-white dark:bg-[#1c1c1e] hover:border-[#d2d2d7] dark:hover:border-[#48484a]'
-          }`}
-        >
-          <div className="flex items-center gap-3 mb-3">
-            <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
-              state.protectionMode === 'audit' ? 'bg-amber-500' : 'bg-[#e5e5ea] dark:bg-[#38383a]'
-            }`}>
-              <svg className={`w-5 h-5 ${state.protectionMode === 'audit' ? 'text-white' : 'text-[#86868b]'}`} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-              </svg>
+        <div className="space-y-3">
+          {[
+            { icon: '1', text: 'Scans every prompt and file upload for sensitive data (SSNs, names, financials, and 27 entity types)' },
+            { icon: '2', text: 'Replaces real PII with realistic pseudonyms before it reaches the AI' },
+            { icon: '3', text: 'Restores original values in the AI response — so employees see useful, accurate output' },
+          ].map((item) => (
+            <div key={item.icon} className="flex items-start gap-3">
+              <span className="flex-shrink-0 w-6 h-6 bg-iron-100 dark:bg-iron-800/40 text-iron-700 dark:text-iron-300 rounded-full flex items-center justify-center text-xs font-semibold">
+                {item.icon}
+              </span>
+              <p className="text-sm text-[#424245] dark:text-[#a1a1a6] leading-relaxed">{item.text}</p>
             </div>
-            <div>
-              <p className={`text-sm font-semibold ${state.protectionMode === 'audit' ? 'text-amber-800 dark:text-amber-200' : 'text-[#1d1d1f] dark:text-[#f5f5f7]'}`}>
-                Audit Mode
-              </p>
-              <p className="text-xs text-[#86868b]">Monitor only</p>
-            </div>
-            {state.protectionMode === 'audit' && (
-              <div className="ml-auto w-6 h-6 bg-amber-500 rounded-full flex items-center justify-center">
-                <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
-                </svg>
-              </div>
-            )}
-          </div>
-          <p className="text-sm text-[#424245] dark:text-[#a1a1a6] leading-relaxed">
-            Monitor and log AI usage <strong>without blocking anything</strong>. Useful for understanding usage patterns before enforcing policies. Data passes through unmodified.
-          </p>
-        </button>
+          ))}
+        </div>
       </div>
 
       {/* Fine-tuning note */}
       <div className="mt-6 p-4 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded-lg">
         <p className="text-xs text-[#6e6e73] dark:text-[#86868b]">
-          <strong>Advanced settings</strong> like sensitivity thresholds and per-tool rules can be configured later in <strong>Admin &rarr; Settings</strong>.
+          <strong>Advanced settings</strong> like sensitivity thresholds, entity toggles, and allowlists can be configured later in <strong>Admin &rarr; Settings &rarr; Protection</strong>.
         </p>
       </div>
     </div>
