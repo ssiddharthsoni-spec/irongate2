@@ -18,6 +18,14 @@ function CheckIcon({ className = 'w-4 h-4' }: { className?: string }) {
   );
 }
 
+function ArrowRightIcon({ className = 'w-4 h-4' }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+    </svg>
+  );
+}
+
 export default function LandingPage() {
   return (
     <div className="min-h-screen bg-[#fafafa] dark:bg-[#0a0a0a] text-[#1d1d1f] dark:text-[#f5f5f7] overflow-x-hidden antialiased">
@@ -26,7 +34,7 @@ export default function LandingPage() {
       <LandingNav />
 
       {/* ════════════════ HERO ════════════════ */}
-      <section className="relative pt-32 pb-16 md:pt-44 md:pb-24">
+      <section className="relative pt-32 pb-20 md:pt-44 md:pb-28">
         <div className="absolute top-20 -left-32 w-96 h-96 bg-iron-400/8 dark:bg-iron-600/8 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute top-40 -right-32 w-80 h-80 bg-purple-400/6 dark:bg-purple-600/6 rounded-full blur-3xl pointer-events-none" />
 
@@ -37,109 +45,109 @@ export default function LandingPage() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
                 <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500" />
               </span>
-              Monitoring 10 AI tools including ChatGPT, Claude, Gemini &amp; Copilot
+              Works with ChatGPT, Claude, Gemini, Copilot &amp; 6 more
             </div>
 
-            <h1 className="text-4xl md:text-6xl font-bold leading-[1.1] tracking-tight">
-              Your employees use AI.
+            <h1 className="text-4xl md:text-6xl font-bold leading-[1.08] tracking-tight">
+              Let your team use AI.
               <br />
               <span className="bg-gradient-to-r from-iron-600 to-iron-500 dark:from-iron-400 dark:to-iron-300 bg-clip-text text-transparent">
-                Iron Gate keeps it safe.
+                We&apos;ll keep the data safe.
               </span>
             </h1>
 
             <p className="mt-6 text-base md:text-lg text-[#6e6e73] dark:text-[#86868b] leading-relaxed max-w-2xl mx-auto">
-              Detect and protect sensitive data in every AI prompt — without
-              slowing your team down. Full visibility, zero productivity loss.
+              Iron Gate sits invisibly between your employees and AI tools &mdash;
+              scanning every prompt, replacing sensitive data with safe stand-ins,
+              and restoring originals in the response. Full productivity, zero data leakage.
             </p>
 
-            <div className="mt-8 flex flex-wrap justify-center gap-3">
+            <div className="mt-10 flex flex-wrap justify-center gap-3">
               <Link
                 href="/sign-up"
                 className="group px-6 py-3 bg-iron-600 hover:bg-iron-700 text-white font-semibold rounded-xl text-sm transition-all shadow-lg shadow-iron-600/20 flex items-center gap-2"
               >
-                Start 10-Day Free Trial
-                <svg className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
-                </svg>
+                Start Free Trial
+                <ArrowRightIcon className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
               </Link>
               <Link
                 href="/demo"
                 className="px-6 py-3 bg-white dark:bg-[#1c1c1e] text-[#1d1d1f] dark:text-[#f5f5f7] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] font-semibold rounded-xl text-sm transition-colors border border-[#d2d2d7]/60 dark:border-[#38383a]/60"
               >
-                Try Live Demo
+                See Live Demo
               </Link>
             </div>
           </div>
         </div>
       </section>
 
-      {/* ════════════════ BEFORE / AFTER / RESPONSE ════════════════ */}
-      <section className="max-w-7xl mx-auto px-6 md:px-12 pb-16 md:pb-24">
-        <div className="text-center mb-10">
-          <p className="text-xs font-semibold uppercase tracking-widest text-iron-600 dark:text-iron-400 mb-2">See It In Action</p>
-          <h2 className="text-2xl md:text-3xl font-bold tracking-tight">What the AI actually sees</h2>
-          <p className="mt-3 text-sm text-[#6e6e73] dark:text-[#86868b] max-w-xl mx-auto">
-            Iron Gate replaces sensitive entities with realistic fake values before the AI sees them. The response is useful — with zero real data.
+      {/* ════════════════ THE ROUND-TRIP (3 steps) ════════════════ */}
+      <section className="max-w-7xl mx-auto px-6 md:px-12 pb-24 md:pb-32">
+        <div className="text-center mb-12">
+          <p className="text-xs font-semibold uppercase tracking-widest text-iron-600 dark:text-iron-400 mb-3">See It In Action</p>
+          <h2 className="text-2xl md:text-3xl font-bold tracking-tight">The full round-trip, in three steps</h2>
+          <p className="mt-3 text-sm text-[#6e6e73] dark:text-[#86868b] max-w-xl mx-auto leading-relaxed">
+            Your team types naturally. Iron Gate swaps sensitive data before the AI sees it,
+            then restores real values in the response. No workflow changes needed.
           </p>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-4 max-w-6xl mx-auto">
+        <div className="grid md:grid-cols-3 gap-5 max-w-6xl mx-auto">
           {/* Step 1: What the employee typed */}
-          <div className="rounded-xl border border-red-200/80 dark:border-red-900/40 overflow-hidden bg-white dark:bg-[#1c1c1e]">
-            <div className="px-4 py-2.5 flex items-center gap-2 border-b border-red-200/60 dark:border-red-900/30 bg-red-50/50 dark:bg-red-950/20">
-              <svg className="w-3.5 h-3.5 text-red-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" /></svg>
-              <span className="text-xs font-semibold text-red-700 dark:text-red-400">What the employee typed</span>
+          <div className="rounded-2xl border border-red-200/80 dark:border-red-900/40 overflow-hidden bg-white dark:bg-[#1c1c1e]">
+            <div className="px-5 py-3 flex items-center gap-3 border-b border-red-200/60 dark:border-red-900/30 bg-red-50/60 dark:bg-red-950/20">
+              <span className="w-6 h-6 rounded-full bg-red-500 text-white text-[11px] font-bold flex items-center justify-center flex-shrink-0">1</span>
+              <span className="text-xs font-semibold text-red-700 dark:text-red-400">Employee types a prompt</span>
             </div>
-            <div className="p-4 text-[13px] text-[#424245] dark:text-[#a1a1a6] leading-relaxed font-mono">
-              Draft a memo about the <span className="bg-red-100/80 dark:bg-red-900/20 text-red-700 dark:text-red-300 px-1 rounded font-semibold">Johnson v. Acme Corp</span> case. My client <span className="bg-red-100/80 dark:bg-red-900/20 text-red-700 dark:text-red-300 px-1 rounded font-semibold">Robert Johnson</span> (SSN: <span className="bg-red-100/80 dark:bg-red-900/20 text-red-700 dark:text-red-300 px-1 rounded font-semibold">423-55-8901</span>) is seeking <span className="bg-red-100/80 dark:bg-red-900/20 text-red-700 dark:text-red-300 px-1 rounded font-semibold">$4.2M</span> in a <span className="bg-red-100/80 dark:bg-red-900/20 text-red-700 dark:text-red-300 px-1 rounded font-semibold">privileged attorney-client communication</span>.
+            <div className="p-5 text-[13px] text-[#424245] dark:text-[#a1a1a6] leading-[1.7] font-mono">
+              Draft a memo about the <span className="bg-red-100/80 dark:bg-red-900/20 text-red-700 dark:text-red-300 px-1 rounded font-semibold">Johnson v. Acme Corp</span> case. My client <span className="bg-red-100/80 dark:bg-red-900/20 text-red-700 dark:text-red-300 px-1 rounded font-semibold">Robert Johnson</span> (SSN: <span className="bg-red-100/80 dark:bg-red-900/20 text-red-700 dark:text-red-300 px-1 rounded font-semibold">423-55-8901</span>) is seeking <span className="bg-red-100/80 dark:bg-red-900/20 text-red-700 dark:text-red-300 px-1 rounded font-semibold">$4.2M</span> in damages.
             </div>
           </div>
 
           {/* Step 2: What the AI receives */}
-          <div className="rounded-xl border border-green-200/80 dark:border-green-900/40 overflow-hidden bg-white dark:bg-[#1c1c1e]">
-            <div className="px-4 py-2.5 flex items-center gap-2 border-b border-green-200/60 dark:border-green-900/30 bg-green-50/50 dark:bg-green-950/20">
-              <svg className="w-3.5 h-3.5 text-green-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
-              <span className="text-xs font-semibold text-green-700 dark:text-green-400">What the AI receives</span>
+          <div className="rounded-2xl border border-green-200/80 dark:border-green-900/40 overflow-hidden bg-white dark:bg-[#1c1c1e]">
+            <div className="px-5 py-3 flex items-center gap-3 border-b border-green-200/60 dark:border-green-900/30 bg-green-50/60 dark:bg-green-950/20">
+              <span className="w-6 h-6 rounded-full bg-green-500 text-white text-[11px] font-bold flex items-center justify-center flex-shrink-0">2</span>
+              <span className="text-xs font-semibold text-green-700 dark:text-green-400">AI receives safe version</span>
             </div>
-            <div className="p-4 text-[13px] text-[#424245] dark:text-[#a1a1a6] leading-relaxed font-mono">
-              Draft a memo about the <span className="bg-green-100/80 dark:bg-green-900/20 text-green-700 dark:text-green-300 px-1 rounded font-semibold">Doe v. Beta Inc</span> case. My client <span className="bg-green-100/80 dark:bg-green-900/20 text-green-700 dark:text-green-300 px-1 rounded font-semibold">John Doe</span> (SSN: <span className="bg-green-100/80 dark:bg-green-900/20 text-green-700 dark:text-green-300 px-1 rounded font-semibold">***-**-****</span>) is seeking <span className="bg-green-100/80 dark:bg-green-900/20 text-green-700 dark:text-green-300 px-1 rounded font-semibold">$[REDACTED]</span> in a <span className="bg-green-100/80 dark:bg-green-900/20 text-green-700 dark:text-green-300 px-1 rounded font-semibold">confidential discussion</span>.
+            <div className="p-5 text-[13px] text-[#424245] dark:text-[#a1a1a6] leading-[1.7] font-mono">
+              Draft a memo about the <span className="bg-green-100/80 dark:bg-green-900/20 text-green-700 dark:text-green-300 px-1 rounded font-semibold">Doe v. Beta Inc</span> case. My client <span className="bg-green-100/80 dark:bg-green-900/20 text-green-700 dark:text-green-300 px-1 rounded font-semibold">John Doe</span> (SSN: <span className="bg-green-100/80 dark:bg-green-900/20 text-green-700 dark:text-green-300 px-1 rounded font-semibold">***-**-****</span>) is seeking <span className="bg-green-100/80 dark:bg-green-900/20 text-green-700 dark:text-green-300 px-1 rounded font-semibold">$[REDACTED]</span> in damages.
             </div>
           </div>
 
           {/* Step 3: What the employee gets back */}
-          <div className="rounded-xl border border-blue-200/80 dark:border-blue-900/40 overflow-hidden bg-white dark:bg-[#1c1c1e]">
-            <div className="px-4 py-2.5 flex items-center gap-2 border-b border-blue-200/60 dark:border-blue-900/30 bg-blue-50/50 dark:bg-blue-950/20">
-              <svg className="w-3.5 h-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" /></svg>
-              <span className="text-xs font-semibold text-blue-700 dark:text-blue-400">What the employee gets back</span>
+          <div className="rounded-2xl border border-blue-200/80 dark:border-blue-900/40 overflow-hidden bg-white dark:bg-[#1c1c1e]">
+            <div className="px-5 py-3 flex items-center gap-3 border-b border-blue-200/60 dark:border-blue-900/30 bg-blue-50/60 dark:bg-blue-950/20">
+              <span className="w-6 h-6 rounded-full bg-blue-500 text-white text-[11px] font-bold flex items-center justify-center flex-shrink-0">3</span>
+              <span className="text-xs font-semibold text-blue-700 dark:text-blue-400">Employee sees real response</span>
             </div>
-            <div className="p-4 text-[13px] text-[#424245] dark:text-[#a1a1a6] leading-relaxed font-mono">
-              <span className="text-[11px] uppercase tracking-wide text-blue-500 dark:text-blue-400 font-semibold block mb-2">AI Response (de-pseudonymized)</span>
+            <div className="p-5 text-[13px] text-[#424245] dark:text-[#a1a1a6] leading-[1.7] font-mono">
+              <span className="text-[11px] uppercase tracking-wide text-blue-500 dark:text-blue-400 font-semibold block mb-2">AI Response (originals restored)</span>
               Re: <span className="bg-blue-100/80 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 px-1 rounded font-semibold">Johnson v. Acme Corp</span><br /><br />
-              This memo summarizes the claims of <span className="bg-blue-100/80 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 px-1 rounded font-semibold">Robert Johnson</span> seeking damages of <span className="bg-blue-100/80 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 px-1 rounded font-semibold">$4.2M</span>. Under the applicable statute of limitations&hellip;
+              This memo summarizes the claims of <span className="bg-blue-100/80 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 px-1 rounded font-semibold">Robert Johnson</span> seeking damages of <span className="bg-blue-100/80 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 px-1 rounded font-semibold">$4.2M</span>. Under the applicable statute&hellip;
             </div>
           </div>
         </div>
 
-        {/* Flow arrows (visible on md+) */}
-        <div className="hidden md:flex items-center justify-center gap-2 mt-4 text-[11px] text-[#86868b] dark:text-[#636366]">
-          <span className="px-2.5 py-1 rounded-full bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 font-semibold">1. Intercept</span>
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" /></svg>
-          <span className="px-2.5 py-1 rounded-full bg-green-50 dark:bg-green-950/20 text-green-600 dark:text-green-400 font-semibold">2. Pseudonymize</span>
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" /></svg>
-          <span className="px-2.5 py-1 rounded-full bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 font-semibold">3. Restore</span>
+        {/* Flow pills */}
+        <div className="hidden md:flex items-center justify-center gap-3 mt-6 text-[11px] text-[#86868b] dark:text-[#636366]">
+          <span className="px-3 py-1 rounded-full bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 font-semibold">Intercept</span>
+          <ArrowRightIcon className="w-3.5 h-3.5" />
+          <span className="px-3 py-1 rounded-full bg-green-50 dark:bg-green-950/20 text-green-600 dark:text-green-400 font-semibold">Pseudonymize</span>
+          <ArrowRightIcon className="w-3.5 h-3.5" />
+          <span className="px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 font-semibold">Restore</span>
         </div>
       </section>
 
       {/* ════════════════ STATS BAR ════════════════ */}
       <section className="border-y border-[#d2d2d7]/30 dark:border-[#38383a]/40 bg-white dark:bg-[#1c1c1e]">
-        <div className="max-w-7xl mx-auto px-6 md:px-12 py-10">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
+        <div className="max-w-7xl mx-auto px-6 md:px-12 py-12">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-10">
             {[
               { value: '27', label: 'Entity types detected', sub: 'SSNs, names, financials & more' },
-              { value: '10', label: 'AI tools monitored', sub: 'ChatGPT, Claude, Gemini, Copilot & more' },
-              { value: 'AES-256', label: 'Encryption at rest', sub: 'Per-firm encryption keys' },
-              { value: 'Real-time', label: 'Detection speed', sub: 'Inline with every prompt' },
+              { value: '10+', label: 'AI tools supported', sub: 'ChatGPT, Claude, Gemini, Copilot' },
+              { value: '<200ms', label: 'Avg. intercept speed', sub: 'Feels instant to end users' },
+              { value: 'Zero', label: 'Workflow changes', sub: 'Employees don\u2019t notice it\u2019s there' },
             ].map((stat) => (
               <div key={stat.label} className="text-center md:text-left">
                 <p className="text-2xl md:text-3xl font-bold tracking-tight">{stat.value}</p>
@@ -152,23 +160,23 @@ export default function LandingPage() {
       </section>
 
       {/* ════════════════ HOW IT WORKS ════════════════ */}
-      <section id="how-it-works" className="max-w-7xl mx-auto px-6 md:px-12 py-20 md:py-28">
-        <div className="text-center mb-14">
-          <p className="text-xs font-semibold uppercase tracking-widest text-iron-600 dark:text-iron-400 mb-2">How It Works</p>
+      <section id="how-it-works" className="max-w-7xl mx-auto px-6 md:px-12 py-24 md:py-32">
+        <div className="text-center mb-16">
+          <p className="text-xs font-semibold uppercase tracking-widest text-iron-600 dark:text-iron-400 mb-3">How It Works</p>
           <h2 className="text-2xl md:text-4xl font-bold tracking-tight">Three steps. Zero friction.</h2>
-          <p className="mt-3 text-sm text-[#6e6e73] dark:text-[#86868b] max-w-lg mx-auto">
-            Iron Gate operates as an invisible layer between your employees and AI tools.
+          <p className="mt-3 text-sm text-[#6e6e73] dark:text-[#86868b] max-w-lg mx-auto leading-relaxed">
+            Iron Gate runs as an invisible layer &mdash; your employees keep using AI the way they already do.
           </p>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-5">
+        <div className="grid md:grid-cols-3 gap-6">
           {[
-            { step: '01', title: 'Install', desc: 'Deploy the Chrome extension. Monitors 10 AI tools including ChatGPT, Claude, Gemini, and Copilot.', color: 'from-iron-500 to-iron-600' },
-            { step: '02', title: 'Detect & Protect', desc: 'Every prompt is scanned for sensitive data. Iron Gate can warn, block, or pseudonymize it before it reaches the AI.', color: 'from-iron-600 to-purple-500' },
-            { step: '03', title: 'Monitor', desc: 'See every AI interaction, what was detected, and what action was taken — all in real time.', color: 'from-purple-500 to-pink-500' },
+            { step: '01', title: 'Install the extension', desc: 'Deploy the Chrome extension to your team. It monitors ChatGPT, Claude, Gemini, Copilot, and 6 more AI tools automatically.', color: 'from-iron-500 to-iron-600' },
+            { step: '02', title: 'Employees keep working', desc: 'No training needed. Every prompt and file upload is scanned in real time. Sensitive data is swapped out before it leaves the browser.', color: 'from-iron-600 to-purple-500' },
+            { step: '03', title: 'You get full visibility', desc: 'See every AI interaction across your org &mdash; what was sent, what was detected, and what action was taken. All in real time.', color: 'from-purple-500 to-pink-500' },
           ].map((item) => (
-            <div key={item.step} className="bg-white dark:bg-[#1c1c1e] rounded-2xl p-7 border border-[#d2d2d7]/40 dark:border-[#38383a]/40 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-md">
-              <div className={`inline-flex w-9 h-9 rounded-lg bg-gradient-to-br ${item.color} items-center justify-center mb-4`}>
+            <div key={item.step} className="bg-white dark:bg-[#1c1c1e] rounded-2xl p-8 border border-[#d2d2d7]/40 dark:border-[#38383a]/40 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-md">
+              <div className={`inline-flex w-10 h-10 rounded-xl bg-gradient-to-br ${item.color} items-center justify-center mb-5`}>
                 <span className="text-white text-xs font-bold">{item.step}</span>
               </div>
               <h3 className="text-base font-bold mb-2">{item.title}</h3>
@@ -180,10 +188,13 @@ export default function LandingPage() {
 
       {/* ════════════════ FEATURES ════════════════ */}
       <section id="features" className="bg-white dark:bg-[#1c1c1e] border-y border-[#d2d2d7]/30 dark:border-[#38383a]/40">
-        <div className="max-w-7xl mx-auto px-6 md:px-12 py-20 md:py-28">
-          <div className="text-center mb-14">
-            <p className="text-xs font-semibold uppercase tracking-widest text-iron-600 dark:text-iron-400 mb-2">Platform</p>
-            <h2 className="text-2xl md:text-4xl font-bold tracking-tight">Everything you need to govern AI</h2>
+        <div className="max-w-7xl mx-auto px-6 md:px-12 py-24 md:py-32">
+          <div className="text-center mb-16">
+            <p className="text-xs font-semibold uppercase tracking-widest text-iron-600 dark:text-iron-400 mb-3">Platform</p>
+            <h2 className="text-2xl md:text-4xl font-bold tracking-tight">AI productivity with guardrails built in</h2>
+            <p className="mt-3 text-sm text-[#6e6e73] dark:text-[#86868b] max-w-lg mx-auto leading-relaxed">
+              Everything your security team needs &mdash; nothing your employees notice.
+            </p>
           </div>
 
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -191,43 +202,43 @@ export default function LandingPage() {
               {
                 icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" /></svg>,
                 title: 'Real-Time Entity Detection',
-                desc: 'Regex + NLP pipeline identifies SSNs, client names, case numbers, and 27 entity types inline with every prompt.',
+                desc: 'Identifies SSNs, client names, case numbers, and 27 entity types inline with every prompt. Employees never wait.',
                 tag: 'Core',
               },
               {
                 icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" /></svg>,
                 title: 'Pre-Send Interception',
-                desc: 'Intercepts prompts and file uploads in the browser before they reach ChatGPT, Claude, Gemini, or any supported AI tool.',
+                desc: 'Catches prompts and file uploads in the browser before they reach any AI tool. Nothing sensitive ever leaves.',
                 tag: 'Core',
               },
               {
                 icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" /></svg>,
                 title: 'Smart Pseudonymization',
-                desc: 'Sensitive entities are swapped with realistic fake values. The AI still gives useful responses — with zero real PII.',
+                desc: 'Sensitive data is replaced with realistic fakes. The AI gives useful answers &mdash; your employees stay productive, your data stays private.',
                 tag: 'Proxy',
               },
               {
                 icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m5.231 13.481L15 17.25m-4.5-15H5.625c-.621 0-1.125.504-1.125 1.125v16.5c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Zm3.75 11.625a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" /></svg>,
                 title: 'Document Scanning',
-                desc: 'Scans PDF, DOCX, XLSX, CSV, TXT, PPTX, and more before they reach AI tools. Blocks risky uploads automatically.',
+                desc: 'Scans PDF, DOCX, XLSX, and more before uploads. High-risk files are flagged or blocked automatically.',
                 tag: 'Files',
               },
               {
                 icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" /></svg>,
                 title: 'Executive Dashboard',
-                desc: 'Full visibility into AI tool usage, data exposure, trust scores, and organizational risk in real time.',
+                desc: 'Full visibility into AI usage across your org &mdash; data exposure, trust scores, and risk trends in real time.',
                 tag: 'Analytics',
               },
               {
                 icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" /></svg>,
                 title: 'Tamper-Proof Audit Trail',
-                desc: 'Every interaction is logged in a hash-chained trail with SHA-256. Verify integrity at any time for compliance.',
+                desc: 'Every interaction is hash-chained with SHA-256. Verify integrity at any time for compliance or legal review.',
                 tag: 'Compliance',
               },
             ].map((f) => (
-              <div key={f.title} className="bg-[#fafafa] dark:bg-[#141414] rounded-xl p-6 border border-[#d2d2d7]/30 dark:border-[#38383a]/30 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-sm group">
+              <div key={f.title} className="bg-[#fafafa] dark:bg-[#141414] rounded-2xl p-6 border border-[#d2d2d7]/30 dark:border-[#38383a]/30 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-sm group">
                 <div className="flex items-start justify-between mb-4">
-                  <div className="w-10 h-10 rounded-lg bg-iron-50 dark:bg-iron-900/20 flex items-center justify-center text-iron-600 dark:text-iron-400">
+                  <div className="w-10 h-10 rounded-xl bg-iron-50 dark:bg-iron-900/20 flex items-center justify-center text-iron-600 dark:text-iron-400">
                     {f.icon}
                   </div>
                   <span className="text-[10px] font-semibold uppercase tracking-wider text-[#86868b] dark:text-[#636366] px-2 py-0.5 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded">{f.tag}</span>
@@ -241,16 +252,16 @@ export default function LandingPage() {
       </section>
 
       {/* ════════════════ INDUSTRIES ════════════════ */}
-      <section id="industries" className="max-w-7xl mx-auto px-6 md:px-12 py-20 md:py-28">
-        <div className="text-center mb-14">
-          <p className="text-xs font-semibold uppercase tracking-widest text-iron-600 dark:text-iron-400 mb-2">Industries</p>
-          <h2 className="text-2xl md:text-4xl font-bold tracking-tight">Built for regulated industries</h2>
-          <p className="mt-3 text-sm text-[#6e6e73] dark:text-[#86868b] max-w-lg mx-auto">
-            Entity detectors tuned for the data types and compliance requirements that matter most in your industry.
+      <section id="industries" className="max-w-7xl mx-auto px-6 md:px-12 py-24 md:py-32">
+        <div className="text-center mb-16">
+          <p className="text-xs font-semibold uppercase tracking-widest text-iron-600 dark:text-iron-400 mb-3">Industries</p>
+          <h2 className="text-2xl md:text-4xl font-bold tracking-tight">Built for teams that handle sensitive data</h2>
+          <p className="mt-3 text-sm text-[#6e6e73] dark:text-[#86868b] max-w-lg mx-auto leading-relaxed">
+            Custom entity detectors tuned for the data types and compliance requirements in your industry.
           </p>
         </div>
 
-        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5">
           {[
             {
               icon: <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 3v17.25m0 0c-1.472 0-2.882.265-4.185.75M12 20.25c1.472 0 2.882.265 4.185.75M18.75 4.97A48.416 48.416 0 0 0 12 4.5c-2.291 0-4.545.16-6.75.47m13.5 0c1.01.143 2.01.317 3 .52m-3-.52 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.988 5.988 0 0 1-2.031.352 5.988 5.988 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L18.75 4.97Zm-16.5.52c.99-.203 1.99-.377 3-.52m0 0 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.989 5.989 0 0 1-2.031.352 5.989 5.989 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L5.25 4.97Z" /></svg>,
@@ -277,8 +288,8 @@ export default function LandingPage() {
               color: 'text-purple-600 dark:text-purple-400',
             },
           ].map((ind) => (
-            <div key={ind.title} className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 border border-[#d2d2d7]/40 dark:border-[#38383a]/40 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-sm">
-              <div className={`w-10 h-10 rounded-lg bg-[#f5f5f7] dark:bg-[#2c2c2e] ${ind.color} flex items-center justify-center mb-4`}>
+            <div key={ind.title} className="bg-white dark:bg-[#1c1c1e] rounded-2xl p-6 border border-[#d2d2d7]/40 dark:border-[#38383a]/40 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-sm">
+              <div className={`w-10 h-10 rounded-xl bg-[#f5f5f7] dark:bg-[#2c2c2e] ${ind.color} flex items-center justify-center mb-4`}>
                 {ind.icon}
               </div>
               <h3 className="text-sm font-bold mb-1.5">{ind.title}</h3>
@@ -290,16 +301,16 @@ export default function LandingPage() {
 
       {/* ════════════════ SECURITY ════════════════ */}
       <section id="security" className="bg-white dark:bg-[#1c1c1e] border-y border-[#d2d2d7]/30 dark:border-[#38383a]/40">
-        <div className="max-w-7xl mx-auto px-6 md:px-12 py-20 md:py-28">
-          <div className="text-center mb-14">
-            <p className="text-xs font-semibold uppercase tracking-widest text-iron-600 dark:text-iron-400 mb-2">Security</p>
+        <div className="max-w-7xl mx-auto px-6 md:px-12 py-24 md:py-32">
+          <div className="text-center mb-16">
+            <p className="text-xs font-semibold uppercase tracking-widest text-iron-600 dark:text-iron-400 mb-3">Security</p>
             <h2 className="text-2xl md:text-4xl font-bold tracking-tight">Enterprise-grade security, built in</h2>
-            <p className="mt-3 text-sm text-[#6e6e73] dark:text-[#86868b] max-w-lg mx-auto">
+            <p className="mt-3 text-sm text-[#6e6e73] dark:text-[#86868b] max-w-lg mx-auto leading-relaxed">
               Zero-knowledge architecture. Entity values are hashed client-side, data is encrypted per-firm, and every event is hash-chained for tamper detection.
             </p>
           </div>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5">
             {[
               {
                 title: 'Zero-Knowledge Architecture',
@@ -322,8 +333,8 @@ export default function LandingPage() {
                 icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" /></svg>,
               },
             ].map((item) => (
-              <div key={item.title} className="bg-[#fafafa] dark:bg-[#141414] rounded-xl p-6 border border-[#d2d2d7]/30 dark:border-[#38383a]/30">
-                <div className="w-10 h-10 rounded-lg bg-iron-50 dark:bg-iron-900/20 flex items-center justify-center text-iron-600 dark:text-iron-400 mb-4">
+              <div key={item.title} className="bg-[#fafafa] dark:bg-[#141414] rounded-2xl p-6 border border-[#d2d2d7]/30 dark:border-[#38383a]/30">
+                <div className="w-10 h-10 rounded-xl bg-iron-50 dark:bg-iron-900/20 flex items-center justify-center text-iron-600 dark:text-iron-400 mb-4">
                   {item.icon}
                 </div>
                 <h3 className="text-sm font-bold mb-1.5">{item.title}</h3>
@@ -335,77 +346,77 @@ export default function LandingPage() {
       </section>
 
       {/* ════════════════ PRICING ════════════════ */}
-      <section id="pricing" className="max-w-7xl mx-auto px-6 md:px-12 py-20 md:py-28">
-        <div className="text-center mb-14">
-          <p className="text-xs font-semibold uppercase tracking-widest text-iron-600 dark:text-iron-400 mb-2">Pricing</p>
+      <section id="pricing" className="max-w-7xl mx-auto px-6 md:px-12 py-24 md:py-32">
+        <div className="text-center mb-16">
+          <p className="text-xs font-semibold uppercase tracking-widest text-iron-600 dark:text-iron-400 mb-3">Pricing</p>
           <h2 className="text-2xl md:text-4xl font-bold tracking-tight">Simple, transparent pricing</h2>
-          <p className="mt-3 text-sm text-[#6e6e73] dark:text-[#86868b] max-w-lg mx-auto">
-            Start free. Scale as your team grows.
+          <p className="mt-3 text-sm text-[#6e6e73] dark:text-[#86868b] max-w-lg mx-auto leading-relaxed">
+            Start free. Upgrade when your team grows.
           </p>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-5 max-w-4xl mx-auto">
+        <div className="grid md:grid-cols-3 gap-6 max-w-4xl mx-auto">
           {/* Starter */}
-          <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-7 border border-[#d2d2d7]/40 dark:border-[#38383a]/40 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-sm">
+          <div className="bg-white dark:bg-[#1c1c1e] rounded-2xl p-8 border border-[#d2d2d7]/40 dark:border-[#38383a]/40 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-sm">
             <h3 className="text-base font-bold mb-1">Starter</h3>
-            <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-5">For small teams getting started</p>
-            <div className="mb-5">
+            <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-6">For small teams getting started</p>
+            <div className="mb-6">
               <span className="text-3xl font-bold">$0</span>
               <span className="text-[#6e6e73] dark:text-[#86868b] text-sm">/month</span>
             </div>
-            <ul className="space-y-2.5 mb-7">
-              {['Up to 5 users', '500 interactions/month', 'Real-time entity detection', 'Basic dashboard', 'Email support'].map((f) => (
-                <li key={f} className="flex items-center gap-2 text-sm text-[#424245] dark:text-[#a1a1a6]">
+            <ul className="space-y-3 mb-8">
+              {['Up to 5 users', '500 interactions/month', 'Real-time detection', 'Basic dashboard', 'Email support'].map((f) => (
+                <li key={f} className="flex items-center gap-2.5 text-sm text-[#424245] dark:text-[#a1a1a6]">
                   <CheckIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
                   {f}
                 </li>
               ))}
             </ul>
-            <Link href="/sign-up" className="block w-full text-center px-5 py-2.5 rounded-lg text-sm font-semibold border border-[#d2d2d7]/60 dark:border-[#38383a]/60 text-[#424245] dark:text-[#a1a1a6] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] transition-colors">
+            <Link href="/sign-up" className="block w-full text-center px-5 py-2.5 rounded-xl text-sm font-semibold border border-[#d2d2d7]/60 dark:border-[#38383a]/60 text-[#424245] dark:text-[#a1a1a6] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] transition-colors">
               Start Free
             </Link>
           </div>
 
           {/* Pro */}
-          <div className="relative bg-white dark:bg-[#1c1c1e] rounded-xl p-7 border-2 border-iron-500 shadow-lg shadow-iron-500/8">
+          <div className="relative bg-white dark:bg-[#1c1c1e] rounded-2xl p-8 border-2 border-iron-500 shadow-lg shadow-iron-500/8">
             <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 px-3 py-0.5 bg-iron-600 text-white text-[10px] font-bold rounded-full uppercase tracking-wide">
               Most Popular
             </div>
             <h3 className="text-base font-bold mb-1">Pro</h3>
-            <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-5">For growing organizations</p>
-            <div className="mb-5">
+            <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-6">For growing organizations</p>
+            <div className="mb-6">
               <span className="text-3xl font-bold">$29</span>
               <span className="text-[#6e6e73] dark:text-[#86868b] text-sm">/user/month</span>
             </div>
-            <ul className="space-y-2.5 mb-7">
+            <ul className="space-y-3 mb-8">
               {['Unlimited users', '10,000 interactions/month', 'Smart pseudonymization', 'Document scanning', 'Tamper-proof audit trail', 'Priority support'].map((f) => (
-                <li key={f} className="flex items-center gap-2 text-sm text-[#424245] dark:text-[#a1a1a6]">
+                <li key={f} className="flex items-center gap-2.5 text-sm text-[#424245] dark:text-[#a1a1a6]">
                   <CheckIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
                   {f}
                 </li>
               ))}
             </ul>
-            <Link href="/sign-up" className="block w-full text-center px-5 py-2.5 rounded-lg text-sm font-semibold bg-iron-600 text-white hover:bg-iron-700 transition-colors">
-              Start 10-Day Free Trial
+            <Link href="/sign-up" className="block w-full text-center px-5 py-2.5 rounded-xl text-sm font-semibold bg-iron-600 text-white hover:bg-iron-700 transition-colors">
+              Start Free Trial
             </Link>
           </div>
 
           {/* Enterprise */}
-          <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-7 border border-[#d2d2d7]/40 dark:border-[#38383a]/40 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-sm">
+          <div className="bg-white dark:bg-[#1c1c1e] rounded-2xl p-8 border border-[#d2d2d7]/40 dark:border-[#38383a]/40 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-sm">
             <h3 className="text-base font-bold mb-1">Enterprise</h3>
-            <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-5">For regulated industries</p>
-            <div className="mb-5">
+            <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-6">For regulated industries</p>
+            <div className="mb-6">
               <span className="text-3xl font-bold">Custom</span>
             </div>
-            <ul className="space-y-2.5 mb-7">
-              {['Everything in Pro', 'Unlimited interactions', 'Custom entity detectors', 'Dedicated account manager', 'SLA & BAA available', 'Enterprise deployment support'].map((f) => (
-                <li key={f} className="flex items-center gap-2 text-sm text-[#424245] dark:text-[#a1a1a6]">
+            <ul className="space-y-3 mb-8">
+              {['Everything in Pro', 'Unlimited interactions', 'Custom entity detectors', 'Dedicated account manager', 'SLA & BAA available', 'Enterprise deployment'].map((f) => (
+                <li key={f} className="flex items-center gap-2.5 text-sm text-[#424245] dark:text-[#a1a1a6]">
                   <CheckIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
                   {f}
                 </li>
               ))}
             </ul>
-            <Link href="/sign-up" className="block w-full text-center px-5 py-2.5 rounded-lg text-sm font-semibold border border-[#d2d2d7]/60 dark:border-[#38383a]/60 text-[#424245] dark:text-[#a1a1a6] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] transition-colors">
+            <Link href="/sign-up" className="block w-full text-center px-5 py-2.5 rounded-xl text-sm font-semibold border border-[#d2d2d7]/60 dark:border-[#38383a]/60 text-[#424245] dark:text-[#a1a1a6] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] transition-colors">
               Contact Sales
             </Link>
           </div>
@@ -413,31 +424,29 @@ export default function LandingPage() {
       </section>
 
       {/* ════════════════ CTA ════════════════ */}
-      <section className="max-w-7xl mx-auto px-6 md:px-12 pb-20 md:pb-28">
-        <div className="relative rounded-2xl overflow-hidden">
+      <section className="max-w-7xl mx-auto px-6 md:px-12 pb-24 md:pb-32">
+        <div className="relative rounded-3xl overflow-hidden">
           <div className="absolute inset-0 bg-gradient-to-br from-iron-600 via-iron-700 to-purple-700" />
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(255,255,255,0.08),transparent_60%)]" />
 
-          <div className="relative px-8 py-14 md:px-16 md:py-20 text-center text-white">
-            <h2 className="text-2xl md:text-4xl font-bold tracking-tight mb-4">Start protecting your firm today</h2>
-            <p className="text-iron-100/70 max-w-lg mx-auto mb-8 text-sm md:text-base">
-              Install the Chrome extension, connect your team, and start monitoring AI interactions in minutes.
+          <div className="relative px-8 py-16 md:px-16 md:py-20 text-center text-white">
+            <h2 className="text-2xl md:text-4xl font-bold tracking-tight mb-4">Unlock AI for your team &mdash; safely</h2>
+            <p className="text-iron-100/70 max-w-lg mx-auto mb-10 text-sm md:text-base leading-relaxed">
+              Install the Chrome extension, connect your team, and your employees start using AI productively &mdash; with every prompt protected.
             </p>
             <div className="flex flex-wrap justify-center gap-3">
               <Link
                 href="/sign-up"
                 className="group px-6 py-3 bg-white text-iron-700 font-semibold rounded-xl text-sm hover:bg-iron-50 transition-all shadow-lg flex items-center gap-2"
               >
-                Start 10-Day Free Trial
-                <svg className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
-                </svg>
+                Start Free Trial
+                <ArrowRightIcon className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
               </Link>
               <Link
                 href="/demo"
                 className="px-6 py-3 bg-white/10 hover:bg-white/15 text-white font-semibold rounded-xl text-sm transition-all border border-white/20"
               >
-                Try Live Demo
+                See Live Demo
               </Link>
             </div>
           </div>
@@ -446,15 +455,15 @@ export default function LandingPage() {
 
       {/* ════════════════ FOOTER ════════════════ */}
       <footer className="border-t border-[#d2d2d7]/30 dark:border-[#38383a]/40">
-        <div className="max-w-7xl mx-auto px-6 md:px-12 py-8">
+        <div className="max-w-7xl mx-auto px-6 md:px-12 py-10">
           <div className="flex flex-col md:flex-row items-center justify-between gap-6">
             <div className="flex items-center gap-2.5">
-              <div className="w-7 h-7 bg-iron-600 rounded-md flex items-center justify-center">
+              <div className="w-7 h-7 bg-iron-600 rounded-lg flex items-center justify-center">
                 <ShieldCheckIcon className="w-3.5 h-3.5 text-white" />
               </div>
               <div>
                 <p className="text-sm font-semibold">Iron Gate</p>
-                <p className="text-[11px] text-[#86868b] dark:text-[#636366]">Enterprise AI Governance</p>
+                <p className="text-[11px] text-[#86868b] dark:text-[#636366]">Safe AI for every team</p>
               </div>
             </div>
 
