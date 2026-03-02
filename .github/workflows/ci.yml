@@ -269,6 +269,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lint, build-packages, test-api, test-extension, security]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
