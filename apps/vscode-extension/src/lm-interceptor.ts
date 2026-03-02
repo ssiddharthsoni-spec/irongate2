@@ -40,7 +40,7 @@ export class LmInterceptor implements vscode.Disposable {
 
   private registerChatParticipant(): void {
     // Register as a chat participant to intercept LM API calls
-    const participant = vscode.chat.createChatParticipant('irongate.monitor', async (request, context, stream, token) => {
+    const participant = vscode.chat.createChatParticipant('irongate.monitor', async (request, _context, stream, _token) => {
       const text = request.prompt;
       const result = this.scanner.scan(text);
 

@@ -189,7 +189,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check for test files
+        id: check-tests
+        run: |
+          if find apps/detection -name "test_*.py" -o -name "*_test.py" | grep -q .; then
+            echo "has_tests=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No test files found — skipping heavy dependency install"
+            echo "has_tests=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Setup Python
+        if: steps.check-tests.outputs.has_tests == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -197,12 +208,15 @@ jobs:
           cache-dependency-path: apps/detection/requirements.txt
 
       - name: Install Python dependencies
+        if: steps.check-tests.outputs.has_tests == 'true'
         run: pip install -r apps/detection/requirements.txt
 
       - name: Install test dependencies
+        if: steps.check-tests.outputs.has_tests == 'true'
         run: pip install pytest
 
       - name: Run detection tests
+        if: steps.check-tests.outputs.has_tests == 'true'
         run: |
           python -m pytest apps/detection/ -v --tb=short --no-header -q; EXIT=$?
           if [ $EXIT -eq 5 ]; then

@@ -8,17 +8,19 @@ WORKDIR /app
 # Copy root workspace files
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 
-# Copy workspace package manifests (needed for pnpm install)
+# Copy ALL workspace package manifests (pnpm --frozen-lockfile needs every
+# member referenced in the lockfile, even if the API doesn't depend on them)
 COPY packages/types/package.json packages/types/package.json
 COPY packages/config/package.json packages/config/package.json
 COPY packages/crypto/package.json packages/crypto/package.json
 COPY packages/proto/package.json packages/proto/package.json
+COPY packages/plugin-sdk/package.json packages/plugin-sdk/package.json
 COPY apps/api/package.json apps/api/package.json
 
 # Install all dependencies
 RUN pnpm install --frozen-lockfile
 
-# Copy source code
+# Copy source code (only packages the API actually imports)
 COPY packages/types/ packages/types/
 COPY packages/config/ packages/config/
 COPY packages/crypto/ packages/crypto/

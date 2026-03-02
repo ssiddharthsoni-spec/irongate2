@@ -448,9 +448,7 @@ function StepWelcome({
 // ============================================================================
 // Step 2: Protection Overview (proxy mode is the only mode)
 // ============================================================================
-function StepProtection({
-  state,
-}: {
+function StepProtection(_props: {
   state: OnboardingState;
   updateState: <K extends keyof OnboardingState>(key: K, value: OnboardingState[K]) => void;
 }) {
