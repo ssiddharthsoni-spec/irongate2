@@ -87,7 +87,7 @@ export async function getBoostMultiplier(
 
   // Check cache (keyed by firmId — co-occurrence data changes rarely)
   const cached = boostCache.get(firmId);
-  let rows: typeof cached extends { rows: infer R } ? R : never;
+  let rows: { entityAHash: string; entityBHash: string; coOccurrenceCount: number; avgContextScore: number }[];
 
   if (cached && Date.now() - cached.loadedAt < BOOST_CACHE_TTL) {
     rows = cached.rows;
@@ -140,6 +140,11 @@ export async function getBoostMultiplier(
     boost: Math.min(25, totalBoost),
     reasons,
   };
+}
+
+/** Clear the in-memory boost cache (used by integration tests). */
+export function clearBoostCache() {
+  boostCache.clear();
 }
 
 /**

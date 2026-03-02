@@ -139,7 +139,8 @@ describe.runIf(DB)('Integration: Sensitivity Graph', () => {
     });
 
     it('should return a boost after sufficient co-occurrences', async () => {
-      const { recordCoOccurrences, getBoostMultiplier } = await import('../../src/services/sensitivity-graph');
+      const { recordCoOccurrences, getBoostMultiplier, clearBoostCache } = await import('../../src/services/sensitivity-graph');
+      clearBoostCache();
 
       const entities = [
         { type: 'PERSON', textHash: await sha256('John Smith'), start: 0, end: 10, confidence: 0.95, source: 'ner' },
