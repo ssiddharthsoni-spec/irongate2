@@ -2,7 +2,23 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { useUser } from '@clerk/nextjs';
 import { useApiClient } from '../../lib/api';
+
+/** Derive a human-readable org name from an email domain.
+ *  e.g. "john@sterling-law.com" → "Sterling Law"
+ *  Skips common free-mail domains. */
+function orgNameFromEmail(email: string | undefined): string {
+  if (!email) return '';
+  const domain = email.split('@')[1];
+  if (!domain) return '';
+  const base = domain.split('.')[0];
+  const freemail = ['gmail', 'yahoo', 'hotmail', 'outlook', 'icloud', 'aol', 'protonmail', 'zoho', 'mail', 'live', 'msn', 'yandex'];
+  if (freemail.includes(base.toLowerCase())) return '';
+  return base
+    .replace(/[-_]/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 interface TeamMember {
   email: string;
@@ -45,6 +61,7 @@ const DEFAULT_STATE: OnboardingState = {
 export default function OnboardingPage() {
   const router = useRouter();
   const { apiFetch } = useApiClient();
+  const { user, isLoaded: isUserLoaded } = useUser();
   const [currentStep, setCurrentStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -52,6 +69,18 @@ export default function OnboardingPage() {
   const [checkingFirm, setCheckingFirm] = useState(true);
 
   const [state, setState] = useState<OnboardingState>(DEFAULT_STATE);
+
+  // Auto-detect org name from email domain
+  useEffect(() => {
+    if (!isUserLoaded || !user) return;
+    // Only auto-fill if user hasn't typed anything yet
+    if (state.orgName) return;
+    const email = user.primaryEmailAddress?.emailAddress;
+    const suggested = orgNameFromEmail(email);
+    if (suggested) {
+      setState((prev) => ({ ...prev, orgName: suggested }));
+    }
+  }, [isUserLoaded, user]); // intentionally excluding state.orgName to only run on mount
 
   // If the user already belongs to a firm (invited by admin), skip onboarding
   useEffect(() => {

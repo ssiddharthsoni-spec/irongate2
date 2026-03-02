@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import { useUser } from '@clerk/nextjs';
 import { useApiClient } from '../../lib/api';
 
@@ -188,6 +189,9 @@ export default function DashboardPage() {
           </button>
         </div>
       </div>
+
+      {/* Getting Started Checklist */}
+      <GettingStartedChecklist />
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
@@ -403,6 +407,157 @@ export default function DashboardPage() {
             )}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+const CHECKLIST_STORAGE_KEY = 'iron-gate-checklist-dismissed';
+
+function GettingStartedChecklist() {
+  const [dismissed, setDismissed] = useState(true); // default hidden to avoid flash
+  const { apiFetch } = useApiClient();
+  const [completedSteps, setCompletedSteps] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    // Check if checklist was dismissed
+    try {
+      const wasDismissed = localStorage.getItem(CHECKLIST_STORAGE_KEY);
+      if (!wasDismissed) setDismissed(false);
+    } catch {
+      setDismissed(false);
+    }
+
+    // Check completion of each step
+    async function checkProgress() {
+      const done = new Set<string>();
+
+      // Check if API keys exist
+      try {
+        const keysRes = await apiFetch('/api-keys');
+        if (keysRes.ok) {
+          const keysData = await keysRes.json();
+          if (Array.isArray(keysData) && keysData.length > 0) done.add('api-key');
+        }
+      } catch { /* ignore */ }
+
+      // Check if team members were invited
+      try {
+        const usersRes = await apiFetch('/admin/users');
+        if (usersRes.ok) {
+          const usersData = await usersRes.json();
+          const users = usersData.users || usersData || [];
+          if (Array.isArray(users) && users.length > 1) done.add('invite-team');
+        }
+      } catch { /* ignore */ }
+
+      setCompletedSteps(done);
+    }
+    checkProgress();
+  }, [apiFetch]);
+
+  function handleDismiss() {
+    setDismissed(true);
+    try { localStorage.setItem(CHECKLIST_STORAGE_KEY, '1'); } catch { /* ignore */ }
+  }
+
+  if (dismissed) return null;
+
+  const steps = [
+    {
+      id: 'extension',
+      title: 'Install the Chrome extension',
+      description: 'Protect your team\'s AI prompts in real-time',
+      href: '/install',
+      done: false, // can't detect client-side
+    },
+    {
+      id: 'api-key',
+      title: 'Create an API key',
+      description: 'Connect the extension to your workspace',
+      href: '/settings/api-keys',
+      done: completedSteps.has('api-key'),
+    },
+    {
+      id: 'protection',
+      title: 'Configure protection rules',
+      description: 'Set which entity types to detect and block',
+      href: '/settings/protection',
+      done: false,
+    },
+    {
+      id: 'invite-team',
+      title: 'Invite your team',
+      description: 'Add colleagues to your Iron Gate workspace',
+      href: '/settings/team',
+      done: completedSteps.has('invite-team'),
+    },
+  ];
+
+  const completedCount = steps.filter((s) => s.done).length;
+  const progress = Math.round((completedCount / steps.length) * 100);
+
+  return (
+    <div className="mb-6 bg-white dark:bg-[#1c1c1e] rounded-xl shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 overflow-hidden">
+      <div className="px-6 py-4 flex items-center justify-between border-b border-[#d2d2d7]/30 dark:border-[#38383a]/60">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-iron-100 dark:bg-iron-900/30 flex items-center justify-center">
+            <svg className="w-4 h-4 text-iron-600 dark:text-iron-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+            </svg>
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">Getting started</h3>
+            <p className="text-xs text-[#6e6e73] dark:text-[#86868b]">{completedCount} of {steps.length} complete</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          {/* Progress bar */}
+          <div className="w-24 h-1.5 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded-full overflow-hidden hidden sm:block">
+            <div
+              className="h-full bg-iron-600 rounded-full transition-all"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={handleDismiss}
+            className="p-1 text-[#86868b] hover:text-[#424245] dark:hover:text-[#a1a1a6] transition-colors"
+            aria-label="Dismiss checklist"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div className="divide-y divide-[#d2d2d7]/30 dark:divide-[#38383a]/60">
+        {steps.map((step) => (
+          <Link
+            key={step.id}
+            href={step.href}
+            className="flex items-center gap-3 px-6 py-3 hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] transition-colors group"
+          >
+            <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 ${
+              step.done
+                ? 'bg-green-500'
+                : 'border-2 border-[#d2d2d7] dark:border-[#38383a] group-hover:border-iron-400'
+            }`}>
+              {step.done && (
+                <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                </svg>
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className={`text-sm font-medium ${step.done ? 'text-[#86868b] line-through' : 'text-[#1d1d1f] dark:text-[#f5f5f7]'}`}>{step.title}</p>
+              <p className="text-xs text-[#6e6e73] dark:text-[#86868b]">{step.description}</p>
+            </div>
+            <svg className="w-4 h-4 text-[#d2d2d7] dark:text-[#38383a] group-hover:text-[#86868b] flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+            </svg>
+          </Link>
+        ))}
       </div>
     </div>
   );
