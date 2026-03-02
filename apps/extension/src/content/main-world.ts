@@ -3835,6 +3835,12 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
 
   let domInterceptBusy = false;
 
+  // Track the last pseudonymized output to prevent double-pseudonymization.
+  // When we write pseudo text to the input, the platform or a re-submit may
+  // re-read it — without this guard, percentages like "22%" get double-shifted
+  // (22%→18%→15%), causing visible flickering.
+  let _lastPseudoOutput: string | null = null;
+
   /**
    * Detect entities, pseudonymize, and report to content script.
    * Returns the pseudonymization result, or null if no entities / not in proxy mode.
@@ -3842,6 +3848,14 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
   function adapterDomPseudonymize(text: string, source: string) {
     if (mode !== 'proxy') return null;
     if (!text || text.length < 10) return null;
+
+    // Guard against double-pseudonymization: if the text we're about to
+    // pseudonymize is the same text we previously wrote to the input,
+    // it's already been pseudonymized — skip.
+    if (_lastPseudoOutput && text === _lastPseudoOutput) {
+      igLog(`${adapterName} DOM: skipping double-pseudo — input matches last pseudonymized output`);
+      return null;
+    }
 
     const regexEntities = detectWithRegex(text);
     const secrets = scanForSecrets(text);
@@ -3933,6 +3947,7 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
     e.preventDefault();
     e.stopImmediatePropagation();
 
+    _lastPseudoOutput = result.maskedText;
     const writeOk = activeAdapter!.writeInput(inputEl, result.maskedText);
     igLog(`${adapterName} DOM: writeInput result=${writeOk}`);
 
@@ -3949,7 +3964,7 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
         }));
         igLog(`${adapterName} DOM: submitted via Enter re-dispatch`);
       }
-      setTimeout(() => { domInterceptBusy = false; }, 300);
+      setTimeout(() => { domInterceptBusy = false; _lastPseudoOutput = null; }, 300);
     }, 100);
   }, true);
 
@@ -3967,6 +3982,7 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
           }));
           return;
         }
+        _lastPseudoOutput = result.maskedText;
         activeAdapter!.writeInput(inputEl, result.maskedText);
       }
     }
@@ -4035,6 +4051,7 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
               setTimeout(() => { domInterceptBusy = true; btn.click(); setTimeout(() => { domInterceptBusy = false; }, 300); }, 100);
               return;
             }
+            _lastPseudoOutput = result.maskedText;
             activeAdapter!.writeInput(inputEl, result.maskedText);
           }
         }
@@ -4059,6 +4076,7 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
     e.preventDefault();
     e.stopImmediatePropagation();
 
+    _lastPseudoOutput = result.maskedText;
     activeAdapter!.writeInput(inputEl, result.maskedText);
 
     setTimeout(() => {
