@@ -17,7 +17,6 @@ const ENTITY_TYPES = [
 ];
 
 const DEMO_CONFIG = {
-  thresholds: { warn: 30, block: 70, proxy: 50 },
   entityToggles: Object.fromEntries(ENTITY_TYPES.map((e) => [e.key, true])),
   allowlist: ['Acme Corp', 'internal-project-alpha'],
   blocklist: ['confidential-client-x', 'Project Nightfall'],
@@ -26,7 +25,6 @@ const DEMO_CONFIG = {
 export default function ProtectionSettingsPage() {
   const { apiFetch } = useApiClient();
 
-  const [thresholds, setThresholds] = useState({ warn: 30, block: 70, proxy: 50 });
   const [entityToggles, setEntityToggles] = useState<Record<string, boolean>>(
     Object.fromEntries(ENTITY_TYPES.map((e) => [e.key, true]))
   );
@@ -46,19 +44,10 @@ export default function ProtectionSettingsPage() {
         const response = await apiFetch('/admin/firm');
         if (!response.ok) throw new Error(`Server responded with ${response.status}`);
         const data = await response.json();
-        if (data.config?.thresholds) {
-          const t = data.config.thresholds;
-          setThresholds({
-            warn: t.warn ?? t.passthrough ?? 30,
-            block: t.block ?? t.cloudMasked ?? 70,
-            proxy: t.proxy ?? 50,
-          });
-        }
         if (data.config?.entityToggles) setEntityToggles(data.config.entityToggles);
         if (data.config?.allowlist) setAllowlist(data.config.allowlist);
         if (data.config?.blocklist) setBlocklist(data.config.blocklist);
       } catch {
-        setThresholds(DEMO_CONFIG.thresholds);
         setEntityToggles(DEMO_CONFIG.entityToggles);
         setAllowlist(DEMO_CONFIG.allowlist);
         setBlocklist(DEMO_CONFIG.blocklist);
@@ -105,13 +94,6 @@ export default function ProtectionSettingsPage() {
         method: 'PUT',
         body: JSON.stringify({
           config: {
-            thresholds: {
-              passthrough: thresholds.warn,
-              cloudMasked: thresholds.block,
-              warn: thresholds.warn,
-              block: thresholds.block,
-              proxy: thresholds.proxy,
-            },
             entityToggles,
             allowlist,
             blocklist,
@@ -146,64 +128,6 @@ export default function ProtectionSettingsPage() {
 
   return (
     <div className="space-y-6 max-w-2xl">
-      {/* Sensitivity Thresholds */}
-      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
-        <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-1">Sensitivity Thresholds</h2>
-        <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mb-5">
-          Configure risk score thresholds that trigger each protection action.
-        </p>
-        <div className="space-y-5">
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-sm font-medium text-[#424245] dark:text-[#a1a1a6]">Warn Threshold</label>
-              <span className="text-sm font-semibold text-yellow-600 dark:text-yellow-400 tabular-nums">{thresholds.warn}</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={thresholds.warn}
-              onChange={(e) => setThresholds({ ...thresholds, warn: parseInt(e.target.value) })}
-              className="w-full accent-yellow-500"
-              aria-label="Warn threshold"
-            />
-            <p className="text-xs text-[#86868b] dark:text-[#636366] mt-1">Events above this score will trigger a warning.</p>
-          </div>
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-sm font-medium text-[#424245] dark:text-[#a1a1a6]">Block Threshold</label>
-              <span className="text-sm font-semibold text-red-600 dark:text-red-400 tabular-nums">{thresholds.block}</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={thresholds.block}
-              onChange={(e) => setThresholds({ ...thresholds, block: parseInt(e.target.value) })}
-              className="w-full accent-red-500"
-              aria-label="Block threshold"
-            />
-            <p className="text-xs text-[#86868b] dark:text-[#636366] mt-1">Events above this score will be blocked entirely.</p>
-          </div>
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-sm font-medium text-[#424245] dark:text-[#a1a1a6]">Proxy Threshold</label>
-              <span className="text-sm font-semibold text-iron-600 dark:text-iron-400 tabular-nums">{thresholds.proxy}</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={thresholds.proxy}
-              onChange={(e) => setThresholds({ ...thresholds, proxy: parseInt(e.target.value) })}
-              className="w-full accent-iron-500"
-              aria-label="Proxy threshold"
-            />
-            <p className="text-xs text-[#86868b] dark:text-[#636366] mt-1">Events above this score will be routed through the protection proxy.</p>
-          </div>
-        </div>
-      </div>
-
       {/* Entity Type Toggles */}
       <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
         <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-1">Entity Detection</h2>
