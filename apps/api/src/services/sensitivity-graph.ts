@@ -7,7 +7,7 @@
 
 import { db } from '../db/client';
 import { entityCoOccurrences, sensitivityPatterns } from '../db/schema';
-import { eq, sql, and, desc } from 'drizzle-orm';
+import { eq, sql, and, desc, inArray } from 'drizzle-orm';
 import { sha256 } from '@iron-gate/crypto';
 import type { DetectedEntity } from '@iron-gate/types';
 import { logger } from '../lib/logger';
@@ -61,21 +61,44 @@ export async function recordCoOccurrences(
 /**
  * Get boost multiplier based on entity co-occurrence history.
  * Returns a multiplier (1.0 = no boost, up to 1.5 for very frequent patterns).
+ * Results are cached per firm for 30 seconds.
  */
+const boostCache = new Map<string, { rows: { entityAHash: string; entityBHash: string; coOccurrenceCount: number; avgContextScore: number }[]; loadedAt: number }>();
+const BOOST_CACHE_TTL = 30_000; // 30 seconds
+let boostTableExists = true; // optimistic; set to false if query fails with table not found
+
 export async function getBoostMultiplier(
   firmId: string,
   entities: any[],
 ): Promise<{ boost: number; reasons: string[] }> {
-  if (entities.length < 2) return { boost: 0, reasons: [] };
+  if (entities.length < 2 || !boostTableExists) return { boost: 0, reasons: [] };
 
   const pairs = await generatePairs(entities);
-  let totalBoost = 0;
-  const reasons: string[] = [];
+  if (pairs.length === 0) return { boost: 0, reasons: [] };
 
+  // Build a lookup map: "hashA:hashB" → [typeA, typeB]
+  const pairTypes = new Map<string, [string, string]>();
+  const allHashes = new Set<string>();
   for (const [a, b] of pairs) {
+    pairTypes.set(`${a.hash}:${b.hash}`, [a.type, b.type]);
+    allHashes.add(a.hash);
+    allHashes.add(b.hash);
+  }
+
+  // Check cache (keyed by firmId — co-occurrence data changes rarely)
+  const cached = boostCache.get(firmId);
+  let rows: typeof cached extends { rows: infer R } ? R : never;
+
+  if (cached && Date.now() - cached.loadedAt < BOOST_CACHE_TTL) {
+    rows = cached.rows;
+  } else {
+    // Single bulk query
     try {
-      const [existing] = await db
+      const hashArr = [...allHashes];
+      rows = await db
         .select({
+          entityAHash: entityCoOccurrences.entityAHash,
+          entityBHash: entityCoOccurrences.entityBHash,
           coOccurrenceCount: entityCoOccurrences.coOccurrenceCount,
           avgContextScore: entityCoOccurrences.avgContextScore,
         })
@@ -83,21 +106,33 @@ export async function getBoostMultiplier(
         .where(
           and(
             eq(entityCoOccurrences.firmId, firmId),
-            eq(entityCoOccurrences.entityAHash, a.hash),
-            eq(entityCoOccurrences.entityBHash, b.hash),
+            inArray(entityCoOccurrences.entityAHash, hashArr),
+            inArray(entityCoOccurrences.entityBHash, hashArr),
           ),
-        )
-        .limit(1);
+        );
+      boostCache.set(firmId, { rows, loadedAt: Date.now() });
+    } catch (err: any) {
+      // If table doesn't exist, stop trying for this process lifetime
+      if (err.message?.includes('does not exist') || err.message?.includes('relation')) {
+        boostTableExists = false;
+      }
+      return { boost: 0, reasons: [] };
+    }
+  }
 
-      if (existing && existing.coOccurrenceCount >= 5 && existing.avgContextScore > 50) {
-        const pairBoost = Math.min(15, existing.coOccurrenceCount * 0.5);
-        totalBoost += pairBoost;
+  let totalBoost = 0;
+  const reasons: string[] = [];
+
+  for (const row of rows) {
+    if (row.coOccurrenceCount >= 5 && row.avgContextScore > 50) {
+      const pairBoost = Math.min(15, row.coOccurrenceCount * 0.5);
+      totalBoost += pairBoost;
+      const types = pairTypes.get(`${row.entityAHash}:${row.entityBHash}`);
+      if (types) {
         reasons.push(
-          `${a.type}+${b.type} seen ${existing.coOccurrenceCount}x in sensitive contexts`,
+          `${types[0]}+${types[1]} seen ${row.coOccurrenceCount}x in sensitive contexts`,
         );
       }
-    } catch {
-      // Silently continue on lookup failure
     }
   }
 

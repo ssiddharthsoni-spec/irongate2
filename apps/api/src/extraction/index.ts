@@ -1,10 +1,19 @@
-import * as pdfParseModule from 'pdf-parse';
-const pdfParse = (pdfParseModule as any).default || pdfParseModule;
 import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 
 const MAX_TEXT_LENGTH = 500_000;
+
+// Lazy-loaded pdfjs-dist (import is cached after first call)
+let pdfjsPromise: Promise<typeof import('pdfjs-dist/legacy/build/pdf.mjs')> | null = null;
+function getPdfjs() {
+  if (!pdfjsPromise) {
+    pdfjsPromise = import('pdfjs-dist/legacy/build/pdf.mjs');
+  }
+  return pdfjsPromise;
+}
+// Pre-warm: trigger the import immediately so it's cached before the first scan
+void getPdfjs().catch(() => {});
 
 /**
  * Extract plain text from a document buffer based on file extension.
@@ -53,8 +62,22 @@ export async function extractText(buffer: Buffer, extension: string): Promise<st
 
 async function extractFromPdf(buffer: Buffer): Promise<string> {
   try {
-    const data = await pdfParse(buffer);
-    return data.text;
+    const pdfjsLib = await getPdfjs();
+    const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer) });
+    const doc = await loadingTask.promise;
+
+    const pages: string[] = [];
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      const content = await page.getTextContent();
+      const pageText = content.items
+        .map((item: any) => item.str ?? '')
+        .join(' ');
+      if (pageText.trim()) pages.push(pageText);
+    }
+
+    await doc.destroy();
+    return pages.join('\n\n');
   } catch (err: any) {
     if (err.message?.includes('encrypt') || err.message?.includes('password')) {
       throw new Error('This document appears to be password-protected. Please upload an unprotected version.');

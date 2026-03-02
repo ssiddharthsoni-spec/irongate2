@@ -1,6 +1,7 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
+import TrialBanner from './TrialBanner';
 
 export function MainContentInner({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -15,6 +16,7 @@ export function MainContentInner({ children }: { children: React.ReactNode }) {
 
   return (
     <main className={isFullWidth ? '' : 'md:ml-[240px] ml-0 p-8 animate-fadeIn'}>
+      {!isFullWidth && <TrialBanner />}
       {children}
     </main>
   );

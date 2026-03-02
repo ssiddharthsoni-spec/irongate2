@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import LandingNav from '@/components/LandingNav';
 
 /* ── Reusable icon components ─────────────────────────────────────────── */
 function ShieldCheckIcon({ className = 'w-6 h-6' }: { className?: string }) {
@@ -22,28 +23,7 @@ export default function LandingPage() {
     <div className="min-h-screen bg-[#fafafa] dark:bg-[#0a0a0a] text-[#1d1d1f] dark:text-[#f5f5f7] overflow-x-hidden antialiased">
 
       {/* ════════════════ NAV ════════════════ */}
-      <nav className="fixed top-0 left-0 right-0 z-50 bg-[#fafafa]/80 dark:bg-[#0a0a0a]/80 backdrop-blur-xl border-b border-[#d2d2d7]/30 dark:border-[#38383a]/40">
-        <div className="flex items-center justify-between px-6 md:px-12 py-3 max-w-7xl mx-auto">
-          <Link href="/" className="flex items-center gap-2.5">
-            <div className="w-8 h-8 bg-iron-600 rounded-lg flex items-center justify-center">
-              <ShieldCheckIcon className="w-4.5 h-4.5 text-white" />
-            </div>
-            <span className="text-base font-bold tracking-tight">Iron Gate</span>
-          </Link>
-          <div className="flex items-center gap-6">
-            <a href="#features" className="hidden md:block text-sm text-[#6e6e73] dark:text-[#86868b] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7] transition-colors">Features</a>
-            <a href="#how-it-works" className="hidden md:block text-sm text-[#6e6e73] dark:text-[#86868b] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7] transition-colors">How It Works</a>
-            <a href="#security" className="hidden md:block text-sm text-[#6e6e73] dark:text-[#86868b] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7] transition-colors">Security</a>
-            <a href="#pricing" className="hidden md:block text-sm text-[#6e6e73] dark:text-[#86868b] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7] transition-colors">Pricing</a>
-            <Link href="/sign-in" className="text-sm font-medium text-[#6e6e73] dark:text-[#86868b] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7] transition-colors">
-              Sign In
-            </Link>
-            <Link href="/sign-up" className="px-4 py-2 bg-[#1d1d1f] dark:bg-[#f5f5f7] hover:bg-[#424245] dark:hover:bg-[#d2d2d7] text-white dark:text-[#1d1d1f] text-sm font-semibold rounded-lg transition-colors">
-              Get Started
-            </Link>
-          </div>
-        </div>
-      </nav>
+      <LandingNav />
 
       {/* ════════════════ HERO ════════════════ */}
       <section className="relative pt-32 pb-16 md:pt-44 md:pb-24">
@@ -78,7 +58,7 @@ export default function LandingPage() {
                 href="/sign-up"
                 className="group px-6 py-3 bg-iron-600 hover:bg-iron-700 text-white font-semibold rounded-xl text-sm transition-all shadow-lg shadow-iron-600/20 flex items-center gap-2"
               >
-                Get Started Free
+                Set Up Your Organization
                 <svg className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
                 </svg>
@@ -406,7 +386,7 @@ export default function LandingPage() {
               ))}
             </ul>
             <Link href="/sign-up" className="block w-full text-center px-5 py-2.5 rounded-lg text-sm font-semibold bg-iron-600 text-white hover:bg-iron-700 transition-colors">
-              Start Pro Trial
+              Start 10-Day Free Trial
             </Link>
           </div>
 

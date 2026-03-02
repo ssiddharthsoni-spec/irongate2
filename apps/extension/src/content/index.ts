@@ -126,7 +126,7 @@ function tryScriptTagInjection(): void {
         igLog('Fallback <script> tag injection succeeded');
         script.remove();
         chrome.storage.local.get('firmMode', (result) => {
-          const savedMode = result.firmMode === 'proxy' ? 'proxy' : 'audit';
+          const savedMode = result.firmMode === 'audit' ? 'audit' : 'proxy';
           syncModeToMainWorld(savedMode);
         });
       };
@@ -179,13 +179,17 @@ window.addEventListener('message', (event) => {
         },
         (response) => {
           if (chrome.runtime.lastError) {
-            igLog('File upload relay error:', chrome.runtime.lastError.message);
+            console.warn('[Iron Gate] File scan relay error:', chrome.runtime.lastError.message);
             return;
           }
-          // If high/critical, the sidepanel will show the Document Inspector automatically
-          // via the FILE_SCAN_RESULT message from the service worker.
-          if (response && !response.error && (response.level === 'high' || response.level === 'critical')) {
-            igLog(`File scan result: ${response.level} (score: ${response.score})`);
+          if (response?.error) {
+            console.warn(`[Iron Gate] File scan failed for "${fileName}":`, response.error);
+          } else if (response?.score !== undefined) {
+            console.log(`[Iron Gate] File scan complete: "${fileName}" → score=${response.score}, level=${response.level}, entities=${response.entitiesFound}`);
+          } else if (response?.metadataOnly) {
+            igLog(`File metadata noted (awaiting full content): ${fileName}`);
+          } else {
+            igLog('File scan response:', response);
           }
         }
       );
@@ -222,11 +226,10 @@ window.addEventListener('message', (event) => {
 
   // MAIN world is requesting the current mode (it loaded before us)
   if (event.data?.type === 'IRON_GATE_REQUEST_MODE') {
-    chrome.storage.local.get('firmMode', (result) => {
-      const savedMode = result.firmMode === 'proxy' ? 'proxy' : 'audit';
+    resolveMode().then((savedMode) => {
       syncModeToMainWorld(savedMode);
       igLog('Responded to MAIN world mode request:', savedMode);
-    });
+    }).catch(() => {});
     return;
   }
 
@@ -317,6 +320,50 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         igLog('Mode switched to:', message.payload.mode);
         sendResponse({ ok: true });
         break;
+      case 'FILE_SCAN_RESULT': {
+        const p = message.payload;
+        if (p && toasts) {
+          const lvl = p.level;
+          if (lvl === 'critical' || lvl === 'high') {
+            toasts.show({
+              type: 'warning',
+              title: `${lvl === 'critical' ? 'Critical' : 'High'} Risk Document`,
+              message: `"${p.fileName}" contains ${p.entitiesFound} sensitive ${p.entitiesFound === 1 ? 'entity' : 'entities'} (score: ${p.score}). This file may expose confidential data to the AI.`,
+              duration: 8000,
+            });
+          } else if (lvl === 'medium') {
+            toasts.show({
+              type: 'warning',
+              title: 'Sensitive Document Detected',
+              message: `"${p.fileName}" contains ${p.entitiesFound} sensitive ${p.entitiesFound === 1 ? 'entity' : 'entities'}. Review the Document Inspector in the side panel.`,
+              duration: 5000,
+            });
+          } else if (lvl === 'error') {
+            toasts.show({
+              type: 'warning',
+              title: 'Document Scan Failed',
+              message: p.explanation || `Could not scan "${p.fileName}".`,
+              duration: 5000,
+            });
+          } else if (lvl === 'low' && p.entitiesFound > 0) {
+            toasts.show({
+              type: 'shield',
+              title: 'Document Scanned',
+              message: `"${p.fileName}" — ${p.entitiesFound} ${p.entitiesFound === 1 ? 'entity' : 'entities'} found, low risk.`,
+              duration: 3500,
+            });
+          }
+        }
+        // Relay scan result to MAIN world so fetch/DOM interceptors can gate on it
+        if (p) {
+          window.postMessage({
+            type: 'IRON_GATE_FILE_SCAN_RESULT',
+            payload: p,
+          }, window.location.origin);
+        }
+        sendResponse({ ok: true });
+        break;
+      }
       default:
         sendResponse({ ok: false, error: 'Unknown message type' });
     }

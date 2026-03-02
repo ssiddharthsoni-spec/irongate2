@@ -90,44 +90,58 @@ export const authMiddleware = createMiddleware(async (c, next) => {
       return;
     }
 
-    // Look up API key in database
-    const [keyRecord] = await db
-      .select({
-        id: apiKeys.id,
-        firmId: apiKeys.firmId,
-        createdBy: apiKeys.createdBy,
-        revokedAt: apiKeys.revokedAt,
-        expiresAt: apiKeys.expiresAt,
-      })
-      .from(apiKeys)
-      .where(and(eq(apiKeys.keyHash, keyHash), isNull(apiKeys.revokedAt)))
-      .limit(1);
+    // Look up API key in database (wrapped in try-catch for resilience —
+    // if the api_keys table doesn't exist yet, fall through to other auth methods)
+    try {
+      const [keyRecord] = await db
+        .select({
+          id: apiKeys.id,
+          firmId: apiKeys.firmId,
+          createdBy: apiKeys.createdBy,
+          revokedAt: apiKeys.revokedAt,
+          expiresAt: apiKeys.expiresAt,
+        })
+        .from(apiKeys)
+        .where(and(eq(apiKeys.keyHash, keyHash), isNull(apiKeys.revokedAt)))
+        .limit(1);
 
-    if (keyRecord) {
-      // Check if key has expired
-      if (keyRecord.expiresAt && new Date(keyRecord.expiresAt) < new Date()) {
-        return c.json({ error: 'Unauthorized: API key has expired' }, 401);
+      if (keyRecord) {
+        // Check if key has expired
+        if (keyRecord.expiresAt && new Date(keyRecord.expiresAt) < new Date()) {
+          return c.json({ error: 'Unauthorized: API key has expired' }, 401);
+        }
+
+        // Look up the creating user's role
+        const [creator] = await db
+          .select({ role: users.role })
+          .from(users)
+          .where(eq(users.id, keyRecord.createdBy))
+          .limit(1);
+        const role = creator?.role || 'user';
+
+        apiKeyCache.set(keyHash, { firmId: keyRecord.firmId, userId: keyRecord.createdBy, role });
+        c.set('userId', keyRecord.createdBy);
+        c.set('clerkId', 'api-key');
+        c.set('firmId', keyRecord.firmId);
+        c.set('userRole', (role as 'admin' | 'user') || 'user');
+        db.update(apiKeys).set({ lastUsedAt: new Date() }).where(eq(apiKeys.id, keyRecord.id)).catch(err => logger.warn('Failed to update API key lastUsedAt', { error: err instanceof Error ? err.message : String(err) }));
+        await next();
+        return;
       }
 
-      // Look up the creating user's role
-      const [creator] = await db
-        .select({ role: users.role })
-        .from(users)
-        .where(eq(users.id, keyRecord.createdBy))
-        .limit(1);
-      const role = creator?.role || 'user';
-
-      apiKeyCache.set(keyHash, { firmId: keyRecord.firmId, userId: keyRecord.createdBy, role });
-      c.set('userId', keyRecord.createdBy);
-      c.set('clerkId', 'api-key');
-      c.set('firmId', keyRecord.firmId);
-      c.set('userRole', (role as 'admin' | 'user') || 'user');
-      db.update(apiKeys).set({ lastUsedAt: new Date() }).where(eq(apiKeys.id, keyRecord.id)).catch(err => logger.warn('Failed to update API key lastUsedAt', { error: err instanceof Error ? err.message : String(err) }));
-      await next();
-      return;
+      // In dev mode, fall through to dev auth instead of rejecting
+      if (process.env.NODE_ENV === 'development' && process.env.IRON_GATE_DEV_AUTH === 'true') {
+        logger.warn('API key not found in DB, falling through to dev auth');
+      } else {
+        return c.json({ error: 'Unauthorized: Invalid API key' }, 401);
+      }
+    } catch (dbError) {
+      // Database error (e.g., api_keys table doesn't exist) — log and fall through
+      // to dev auth or JWT auth instead of crashing with 500
+      logger.warn('API key lookup failed (DB error), falling through to other auth methods', {
+        error: dbError instanceof Error ? dbError.message : String(dbError),
+      });
     }
-
-    return c.json({ error: 'Unauthorized: Invalid API key' }, 401);
   }
 
   // ── Dev Mode (requires explicit opt-in via IRON_GATE_DEV_AUTH=true) ────
@@ -142,24 +156,33 @@ export const authMiddleware = createMiddleware(async (c, next) => {
       return;
     }
 
-    const rows = await db
-      .select({ id: users.id, clerkId: users.clerkId, firmId: users.firmId, role: users.role })
-      .from(users)
-      .where(eq(users.clerkId, 'dev-clerk-id'))
-      .limit(1);
+    try {
+      const rows = await db
+        .select({ id: users.id, clerkId: users.clerkId, firmId: users.firmId, role: users.role })
+        .from(users)
+        .where(eq(users.clerkId, 'dev-clerk-id'))
+        .limit(1);
 
-    if (rows.length > 0) {
-      userCache.set('dev-clerk-id', { userId: rows[0].id, firmId: rows[0].firmId, role: rows[0].role || 'admin' });
-      c.set('userId', rows[0].id);
-      c.set('clerkId', 'dev-clerk-id');
-      c.set('firmId', rows[0].firmId);
-      c.set('userRole', (rows[0].role as 'admin' | 'user') || 'admin');
-    } else {
-      c.set('userId', 'dev-user-id');
-      c.set('clerkId', 'dev-clerk-id');
-      c.set('firmId', process.env.DEFAULT_FIRM_ID || 'dev-firm-id');
-      c.set('userRole', 'admin');
+      if (rows.length > 0) {
+        userCache.set('dev-clerk-id', { userId: rows[0].id, firmId: rows[0].firmId, role: rows[0].role || 'admin' });
+        c.set('userId', rows[0].id);
+        c.set('clerkId', 'dev-clerk-id');
+        c.set('firmId', rows[0].firmId);
+        c.set('userRole', (rows[0].role as 'admin' | 'user') || 'admin');
+        await next();
+        return;
+      }
+    } catch (dbError) {
+      logger.warn('Dev auth user lookup failed (DB error), using fallback dev identity', {
+        error: dbError instanceof Error ? dbError.message : String(dbError),
+      });
     }
+
+    // Fallback: no DB user found or DB error — use hardcoded dev identity
+    c.set('userId', 'dev-user-id');
+    c.set('clerkId', 'dev-clerk-id');
+    c.set('firmId', process.env.DEFAULT_FIRM_ID || 'dev-firm-id');
+    c.set('userRole', 'admin');
     await next();
     return;
   }

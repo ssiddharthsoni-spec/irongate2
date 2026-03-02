@@ -1884,6 +1884,441 @@ async function getBodyString(input: RequestInfo | URL, init?: RequestInit): Prom
 
 const _processedFileKeys = new Set<string>();
 
+// ─── File Scan Gate — State & Overlay ─────────────────────────────────────
+// Tracks pending file scans and gates the submit action when a high-risk
+// document is detected. The content script relays FILE_SCAN_RESULT from the
+// service worker via postMessage; we listen for those results here.
+
+interface PendingFileScan {
+  status: 'scanning' | 'complete';
+  fileName: string;
+  result?: { score: number; level: string; entities: Array<{ type: string; count: number }>; explanation: string; entitiesFound: number };
+  startedAt: number;
+}
+
+const pendingFileScans = new Map<string, PendingFileScan>();
+
+// ─── Scanning Indicator (ghost loading) ──────────────────────────────────
+// Shows a small floating pill when a file is detected and being scanned.
+const SCAN_INDICATOR_HOST_ID = 'iron-gate-scan-indicator';
+
+function showScanIndicator(fileName: string): void {
+  // Remove existing indicator if any
+  const existing = document.getElementById(SCAN_INDICATOR_HOST_ID);
+  if (existing) existing.remove();
+
+  const host = document.createElement('div');
+  host.id = SCAN_INDICATOR_HOST_ID;
+  host.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:2147483646;pointer-events:none;';
+  const shadow = host.attachShadow({ mode: 'closed' });
+
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes igScanSlideUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes igScanPulse { 0%,100% { opacity:0.6; } 50% { opacity:1; } }
+    @keyframes igScanSpin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+    @keyframes igScanFadeOut { from { opacity:1; } to { opacity:0; transform:translateY(-8px); } }
+  `;
+  shadow.appendChild(style);
+
+  const pill = document.createElement('div');
+  pill.style.cssText = 'display:inline-flex;align-items:center;gap:10px;background:#1e293b;color:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:13px;font-weight:500;padding:10px 18px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.25);animation:igScanSlideUp 0.25s ease-out;';
+
+  // Spinner
+  const spinner = document.createElement('div');
+  spinner.style.cssText = 'width:16px;height:16px;border:2px solid #475569;border-top-color:#60a5fa;border-radius:50%;animation:igScanSpin 0.8s linear infinite;flex-shrink:0;';
+
+  // Shield icon (Iron Gate brand)
+  const shield = document.createElement('span');
+  shield.textContent = '\u{1F6E1}';
+  shield.style.cssText = 'font-size:14px;animation:igScanPulse 1.5s ease-in-out infinite;';
+
+  // Text
+  const text = document.createElement('span');
+  const truncatedName = fileName.length > 30 ? fileName.substring(0, 27) + '...' : fileName;
+  text.textContent = `Scanning ${truncatedName}`;
+  text.style.cssText = 'white-space:nowrap;';
+
+  pill.appendChild(shield);
+  pill.appendChild(spinner);
+  pill.appendChild(text);
+  shadow.appendChild(pill);
+  document.body.appendChild(host);
+
+  // Store references for updating
+  (host as any).__igPill = pill;
+  (host as any).__igText = text;
+  (host as any).__igSpinner = spinner;
+}
+
+function updateScanIndicator(level: string, score: number, fileName: string): void {
+  const host = document.getElementById(SCAN_INDICATOR_HOST_ID);
+  if (!host) return;
+
+  const pill = (host as any).__igPill as HTMLElement;
+  const text = (host as any).__igText as HTMLElement;
+  const spinner = (host as any).__igSpinner as HTMLElement;
+  if (!pill || !text) return;
+
+  // Remove spinner
+  if (spinner) spinner.remove();
+
+  const levelConfig: Record<string, { bg: string; icon: string; label: string }> = {
+    low: { bg: '#166534', icon: '\u2714\uFE0F', label: 'Clean' },
+    medium: { bg: '#854d0e', icon: '\u26A0\uFE0F', label: 'Medium Risk' },
+    high: { bg: '#9a3412', icon: '\u26A0\uFE0F', label: 'High Risk' },
+    critical: { bg: '#991b1b', icon: '\u26D4', label: 'Critical Risk' },
+  };
+  const config = levelConfig[level] || levelConfig.low;
+
+  pill.style.background = config.bg;
+  text.textContent = `${config.icon} ${config.label} — ${score}`;
+
+  // Auto-dismiss after 3 seconds
+  setTimeout(() => {
+    pill.style.animation = 'igScanFadeOut 0.3s ease-out forwards';
+    setTimeout(() => host.remove(), 350);
+  }, 3000);
+}
+
+function dismissScanIndicator(): void {
+  const host = document.getElementById(SCAN_INDICATOR_HOST_ID);
+  if (host) {
+    const pill = (host as any).__igPill as HTMLElement;
+    if (pill) pill.style.animation = 'igScanFadeOut 0.3s ease-out forwards';
+    setTimeout(() => host.remove(), 350);
+  }
+}
+
+// Register a file scan when a file is detected (called from _readFileToBase64AndPost)
+function registerPendingFileScan(fileName: string, fileKey: string): void {
+  pendingFileScans.set(fileKey, { status: 'scanning', fileName, startedAt: Date.now() });
+  igLog(`File scan registered: ${fileName} (key: ${fileKey})`);
+  showScanIndicator(fileName);
+}
+
+// Listen for scan results relayed from content script
+window.addEventListener('message', (event) => {
+  if (event.source !== window) return;
+  if (event.data?.type !== 'IRON_GATE_FILE_SCAN_RESULT') return;
+  const p = event.data.payload;
+  if (!p || !p.fileName) return;
+
+  igLog(`File scan result received: ${p.fileName} — level=${p.level}, score=${p.score}`);
+
+  // Update the scanning indicator with the result
+  updateScanIndicator(p.level ?? 'low', p.score ?? 0, p.fileName ?? '');
+
+  // Match by fileName (best-effort — the scan result payload includes fileName)
+  let matched = false;
+  for (const [key, scan] of pendingFileScans) {
+    if (scan.fileName === p.fileName && scan.status === 'scanning') {
+      pendingFileScans.set(key, {
+        ...scan,
+        status: 'complete',
+        result: {
+          score: p.score ?? 0,
+          level: p.level ?? 'low',
+          entities: p.entities ?? [],
+          explanation: p.explanation ?? '',
+          entitiesFound: p.entitiesFound ?? 0,
+        },
+      });
+      matched = true;
+      break;
+    }
+  }
+  if (!matched) {
+    // Result arrived but we don't have a pending entry (e.g., from prototype patches)
+    // Create one so the gate can still check it
+    const fallbackKey = `result:${p.fileName}:${Date.now()}`;
+    pendingFileScans.set(fallbackKey, {
+      status: 'complete',
+      fileName: p.fileName,
+      startedAt: Date.now(),
+      result: {
+        score: p.score ?? 0,
+        level: p.level ?? 'low',
+        entities: p.entities ?? [],
+        explanation: p.explanation ?? '',
+        entitiesFound: p.entitiesFound ?? 0,
+      },
+    });
+  }
+});
+
+// Clean up old scans on URL change
+window.addEventListener('popstate', () => { pendingFileScans.clear(); dismissScanIndicator(); });
+window.addEventListener('hashchange', () => { pendingFileScans.clear(); dismissScanIndicator(); });
+
+// ─── Inline Document Block Overlay ────────────────────────────────────────
+// Shown in MAIN world (page context) when a high-risk document is detected.
+// Built inline (not imported) because MAIN world can't import content script modules.
+
+const DOC_OVERLAY_HOST_ID = 'iron-gate-doc-block-overlay';
+
+function _formatEntityTypeName(type: string): string {
+  return type.toLowerCase().replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function showDocumentBlockOverlay(options: {
+  fileName: string;
+  score: number;
+  level: string;
+  entities: Array<{ type: string; count: number }>;
+  explanation: string;
+}): Promise<'allow' | 'block'> {
+  // Remove any existing overlay
+  const existing = document.getElementById(DOC_OVERLAY_HOST_ID);
+  if (existing) existing.remove();
+
+  return new Promise<'allow' | 'block'>((resolve) => {
+    const { fileName, score, level, entities, explanation } = options;
+
+    const levelColors: Record<string, { bg: string; text: string; border: string }> = {
+      low: { bg: '#dcfce7', text: '#166534', border: '#22c55e' },
+      medium: { bg: '#fef9c3', text: '#854d0e', border: '#eab308' },
+      high: { bg: '#fed7aa', text: '#9a3412', border: '#f97316' },
+      critical: { bg: '#fecaca', text: '#991b1b', border: '#ef4444' },
+    };
+    const colors = levelColors[level] || levelColors.high;
+    const levelIcons: Record<string, string> = { low: '\u2714', medium: '\u26A0', high: '\u26A0', critical: '\u26D4' };
+    const icon = levelIcons[level] || '\u26A0';
+    const levelLabels: Record<string, string> = { low: 'Low Risk', medium: 'Medium Risk', high: 'High Risk', critical: 'Critical Risk' };
+
+    const host = document.createElement('div');
+    host.id = DOC_OVERLAY_HOST_ID;
+    host.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:2147483647;';
+    const shadow = host.attachShadow({ mode: 'closed' });
+
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes igDocFadeIn { from { opacity: 0; } to { opacity: 1; } }
+      @keyframes igDocSlideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+      * { box-sizing: border-box; }
+    `;
+    shadow.appendChild(style);
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;animation:igDocFadeIn 0.2s ease-out;`;
+
+    const card = document.createElement('div');
+    card.style.cssText = `background:#fff;border-radius:16px;box-shadow:0 25px 50px rgba(0,0,0,0.3);max-width:520px;width:90vw;max-height:85vh;overflow-y:auto;animation:igDocSlideUp 0.25s ease-out;`;
+
+    // Header
+    const header = document.createElement('div');
+    header.style.cssText = `background:${colors.bg};border-bottom:2px solid ${colors.border};border-radius:16px 16px 0 0;padding:24px;text-align:center;`;
+    header.innerHTML = `
+      <div style="font-size:36px;margin-bottom:8px;">${icon}</div>
+      <div style="font-size:20px;font-weight:700;color:${colors.text};margin-bottom:4px;">Sensitive Document Detected</div>
+      <div style="font-size:14px;color:${colors.text};opacity:0.8;margin-bottom:12px;">${fileName}</div>
+      <div style="display:inline-flex;align-items:center;gap:8px;background:${colors.text};color:#fff;font-size:14px;font-weight:600;padding:6px 16px;border-radius:20px;">
+        <span style="font-size:22px;font-weight:800;">${score}</span>
+        <span>${levelLabels[level] || 'Unknown'}</span>
+      </div>
+    `;
+
+    // Body
+    const body = document.createElement('div');
+    body.style.cssText = 'padding:24px;';
+
+    if (explanation) {
+      const explEl = document.createElement('p');
+      explEl.style.cssText = 'font-size:14px;line-height:1.6;color:#374151;margin:0 0 20px 0;';
+      explEl.textContent = explanation;
+      body.appendChild(explEl);
+    }
+
+    // Warning message
+    const warning = document.createElement('div');
+    warning.style.cssText = 'font-size:13px;color:#92400e;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:12px;margin-bottom:20px;line-height:1.5;';
+    warning.textContent = 'This document contains sensitive information that may be exposed to the AI model. Consider removing confidential data before sending.';
+    body.appendChild(warning);
+
+    // Override reason
+    const overrideSection = document.createElement('div');
+    overrideSection.style.cssText = 'margin-bottom:20px;';
+
+    const overrideLabel = document.createElement('label');
+    overrideLabel.style.cssText = 'display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:6px;';
+    overrideLabel.textContent = 'Override Reason (required to proceed)';
+
+    const overrideInput = document.createElement('textarea');
+    overrideInput.style.cssText = 'width:100%;min-height:72px;padding:10px 12px;font-size:14px;font-family:inherit;color:#1f2937;background:#f9fafb;border:1px solid #d1d5db;border-radius:8px;resize:vertical;outline:none;box-sizing:border-box;';
+    overrideInput.placeholder = 'Explain why this document should be sent despite the sensitivity score...';
+
+    const overrideHint = document.createElement('div');
+    overrideHint.style.cssText = 'font-size:12px;color:#9ca3af;margin-top:4px;';
+    overrideHint.textContent = 'This will be logged for compliance review.';
+
+    overrideSection.appendChild(overrideLabel);
+    overrideSection.appendChild(overrideInput);
+    overrideSection.appendChild(overrideHint);
+    body.appendChild(overrideSection);
+
+    // Error message (hidden)
+    const errorMsg = document.createElement('div');
+    errorMsg.style.cssText = 'display:none;font-size:13px;color:#dc2626;margin-bottom:16px;padding:8px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;';
+    errorMsg.textContent = 'Please provide an override reason before proceeding.';
+    body.appendChild(errorMsg);
+
+    // Buttons
+    const footer = document.createElement('div');
+    footer.style.cssText = 'display:flex;justify-content:flex-end;gap:12px;';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.style.cssText = 'padding:10px 24px;font-size:14px;font-weight:600;font-family:inherit;color:#374151;background:#fff;border:1px solid #d1d5db;border-radius:8px;cursor:pointer;';
+    cancelBtn.textContent = 'Cancel Send';
+    cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = '#f3f4f6'; });
+    cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = '#fff'; });
+
+    const sendBtn = document.createElement('button');
+    sendBtn.style.cssText = 'padding:10px 24px;font-size:14px;font-weight:600;font-family:inherit;color:#fff;background:#dc2626;border:none;border-radius:8px;cursor:pointer;';
+    sendBtn.textContent = 'Send Anyway';
+    sendBtn.addEventListener('mouseenter', () => { sendBtn.style.background = '#b91c1c'; });
+    sendBtn.addEventListener('mouseleave', () => { sendBtn.style.background = '#dc2626'; });
+
+    footer.appendChild(cancelBtn);
+    footer.appendChild(sendBtn);
+    body.appendChild(footer);
+
+    card.appendChild(header);
+    card.appendChild(body);
+    overlay.appendChild(card);
+    shadow.appendChild(overlay);
+    document.body.appendChild(host);
+
+    function cleanup() {
+      document.removeEventListener('keydown', onEsc, { capture: true } as EventListenerOptions);
+      host.remove();
+    }
+    function onEsc(e: KeyboardEvent) {
+      if (e.key === 'Escape') { cleanup(); resolve('block'); }
+    }
+    document.addEventListener('keydown', onEsc, { capture: true });
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) { cleanup(); resolve('block'); } });
+
+    cancelBtn.addEventListener('click', () => { cleanup(); resolve('block'); });
+    sendBtn.addEventListener('click', () => {
+      const reason = overrideInput.value.trim();
+      if (!reason) {
+        errorMsg.style.display = 'block';
+        overrideInput.style.borderColor = '#dc2626';
+        overrideInput.focus();
+        return;
+      }
+      cleanup();
+      // Post override event for audit logging
+      window.postMessage({
+        type: 'IRON_GATE_DOC_OVERRIDE',
+        fileName: options.fileName,
+        score: options.score,
+        level: options.level,
+        overrideReason: reason,
+      }, window.location.origin);
+      resolve('allow');
+    });
+
+    overrideInput.addEventListener('input', () => {
+      if (overrideInput.value.trim()) {
+        errorMsg.style.display = 'none';
+        overrideInput.style.borderColor = '#d1d5db';
+      }
+    });
+
+    requestAnimationFrame(() => overrideInput.focus());
+  });
+}
+
+// ─── File Upload Gate ─────────────────────────────────────────────────────
+// Called before submit (both fetch interceptor and DOM pre-submit) to check
+// if any recently uploaded files have high-risk scan results.
+
+const FILE_SCAN_GATE_WINDOW = 120_000; // consider scans from last 2 minutes
+const FILE_SCAN_WAIT_TIMEOUT = 15_000; // max wait for pending scan
+
+async function checkFileUploadGate(): Promise<'allow' | 'block'> {
+  const now = Date.now();
+
+  // Clean up old entries
+  for (const [key, scan] of pendingFileScans) {
+    if (now - scan.startedAt > FILE_SCAN_GATE_WINDOW) {
+      pendingFileScans.delete(key);
+    }
+  }
+
+  if (pendingFileScans.size === 0) return 'allow';
+
+  // Check if any scans are still pending — wait for them
+  const pendingEntries = Array.from(pendingFileScans.entries()).filter(([, s]) => s.status === 'scanning');
+  if (pendingEntries.length > 0) {
+    igLog(`Waiting for ${pendingEntries.length} file scan(s) to complete...`);
+
+    // Wait up to FILE_SCAN_WAIT_TIMEOUT for all pending scans
+    const waitStart = Date.now();
+    while (Date.now() - waitStart < FILE_SCAN_WAIT_TIMEOUT) {
+      await new Promise(r => setTimeout(r, 500));
+      const stillPending = Array.from(pendingFileScans.values()).some(s => s.status === 'scanning');
+      if (!stillPending) break;
+    }
+  }
+
+  // Now check completed results — find the highest-risk file
+  let highestScore = 0;
+  let highestScan: PendingFileScan | null = null;
+
+  for (const [, scan] of pendingFileScans) {
+    if (scan.status === 'complete' && scan.result) {
+      if (scan.result.score > highestScore) {
+        highestScore = scan.result.score;
+        highestScan = scan;
+      }
+    }
+  }
+
+  // Gate on HIGH (61+) or CRITICAL (86+) scores
+  if (highestScan && highestScan.result && highestScore >= 61) {
+    igLog(`File gate triggered: ${highestScan.fileName} scored ${highestScore} (${highestScan.result.level})`);
+
+    // Dismiss the scan indicator before showing block overlay
+    dismissScanIndicator();
+
+    const decision = await showDocumentBlockOverlay({
+      fileName: highestScan.fileName,
+      score: highestScan.result.score,
+      level: highestScan.result.level,
+      entities: highestScan.result.entities || [],
+      explanation: highestScan.result.explanation || `This document contains sensitive information with a risk score of ${highestScore}.`,
+    });
+
+    // Clear the scans after the decision so they don't re-trigger
+    pendingFileScans.clear();
+
+    return decision;
+  }
+
+  return 'allow';
+}
+
+/**
+ * Synchronous file gate check for WebSocket.send (which can't be async).
+ * Returns true if a high-risk document scan has completed (score >= 61).
+ * Does NOT wait for pending scans — use the async checkFileUploadGate() for that.
+ */
+function hasHighRiskFileScanSync(): boolean {
+  const now = Date.now();
+  for (const [key, scan] of pendingFileScans) {
+    if (now - scan.startedAt > FILE_SCAN_GATE_WINDOW) {
+      pendingFileScans.delete(key);
+      continue;
+    }
+    if (scan.status === 'complete' && scan.result && scan.result.score >= 61) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1917,6 +2352,9 @@ function _readFileToBase64AndPost(file: File, source: string): void {
     setTimeout(() => _processedFileKeys.delete(fileKey), 30_000);
 
     igLog(`File detected via ${source}: ${file.name} (${file.size} bytes)`);
+
+    // Register this file for the submit gate
+    registerPendingFileScan(file.name, fileKey);
 
     _pristineBlobArrayBuffer.call(file).then((buf: ArrayBuffer) => {
       const bytes = new Uint8Array(buf);
@@ -1955,6 +2393,9 @@ function detectFilesInFormData(formData: FormData, url: string): void {
       setTimeout(() => _processedFileKeys.delete(fileKey), 30_000);
 
       igLog(`File detected in FormData: ${value.name} (${value.size} bytes) → ${url.substring(0, 80)}`);
+
+      // Register for the submit gate
+      registerPendingFileScan(value.name, fileKey);
 
       // Read file async and postMessage to content script (don't block the fetch)
       const file = value;
@@ -2046,24 +2487,22 @@ const patchedFetch = async function patchedFetch(
   // Handle BOTH patterns:
   //   fetch(url, { body })    → body is in init
   //   fetch(new Request(...)) → body is in the Request object
-  const bodyRef = init?.body ?? (input instanceof Request ? input.body : null);
+  // ─── File Upload Detection (runs before LLM endpoint check) ──────────
+  // IMPORTANT: All detection is deferred via setTimeout(0) so it NEVER
+  // interferes with the actual fetch — the browser sends the request first,
+  // and we scan the file asynchronously afterwards.
+  const bodyRef = init?.body ?? null;
   if (bodyRef instanceof FormData) {
-    detectFilesInFormData(bodyRef, url);
+    setTimeout(() => detectFilesInFormData(bodyRef, url), 0);
   }
-  // Detect file metadata in JSON bodies (e.g., ChatGPT's POST /backend-api/files)
-  if (bodyRef && typeof bodyRef === 'string') {
-    detectFileMetadataInJson(bodyRef, url);
+  if (bodyRef instanceof File) {
+    // ChatGPT uploads files via fetch(presignedUrl, { method: 'PUT', body: file })
+    const fileRef = bodyRef;
+    setTimeout(() => _readFileToBase64AndPost(fileRef, 'fetch body (File)'), 0);
   }
-  // For Request objects, clone and read the body text for metadata detection
-  if (!init?.body && input instanceof Request && !input.bodyUsed && isFileUploadEndpoint(url)) {
-    try {
-      const cloned = input.clone();
-      cloned.text().then((text) => {
-        if (text && text.length > 0) {
-          detectFileMetadataInJson(text, url);
-        }
-      }).catch(() => {});
-    } catch { /* ignore */ }
+  if (bodyRef && typeof bodyRef === 'string' && isFileUploadEndpoint(url)) {
+    const bodySnapshot = bodyRef;
+    setTimeout(() => detectFileMetadataInJson(bodySnapshot, url), 0);
   }
 
   if (!adapterIsLLMEndpoint(url, activeAdapter)) {
@@ -2119,6 +2558,16 @@ const patchedFetch = async function patchedFetch(
   if (shouldSkipFetchProxy(url, activeAdapter)) {
     console.log(`%c[Iron Gate WIRE] SKIPPED — fetch proxy disabled for this adapter`, 'color: #999');
     return originalFetch.call(window, input, init);
+  }
+
+  // ── File Upload Gate — block send if a high-risk document was uploaded ────
+  const fileGateDecision = await checkFileUploadGate();
+  if (fileGateDecision === 'block') {
+    igLog('File upload gate BLOCKED — returning empty response');
+    return new Response(JSON.stringify({ blocked: true, reason: 'Document sensitivity gate' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 
   // ── PROXY MODE: Pseudonymize before sending ──────────────────────────────
@@ -2179,23 +2628,26 @@ const patchedFetch = async function patchedFetch(
             try {
               const parsed = JSON.parse(bodyString);
               if (parsed?.messages && Array.isArray(parsed.messages)) {
-                // Set user message to pseudonymized text ONLY (no notice)
+                // Replace only the text parts in the last message — preserve
+                // non-string parts (file references, image pointers, etc.)
+                // which ChatGPT's backend requires for file-attached messages.
                 const lastIdx = parsed.messages.length - 1;
-                if (parsed.messages[lastIdx]?.content?.parts) {
-                  parsed.messages[lastIdx].content.parts = [pseudoResult.maskedText];
-                }
-                // Inject notice as a system message — ChatGPT does not render
-                // system messages in the chat UI, so the user won't see it.
-                parsed.messages.unshift({
-                  id: 'ig-sys-' + Date.now().toString(36),
-                  author: { role: 'system' },
-                  content: {
-                    content_type: 'text',
-                    parts: [deIdNotice]
+                const parts = parsed.messages[lastIdx]?.content?.parts;
+                if (Array.isArray(parts)) {
+                  let textReplaced = false;
+                  for (let i = 0; i < parts.length; i++) {
+                    if (typeof parts[i] === 'string') {
+                      parts[i] = textReplaced ? '' : pseudoResult.maskedText;
+                      textReplaced = true;
+                    }
                   }
-                });
+                  if (!textReplaced) {
+                    // No string parts found — prepend as new text part
+                    parts.unshift(pseudoResult.maskedText);
+                  }
+                }
                 modifiedBody = JSON.stringify(parsed);
-                igLog('ChatGPT: injected notice as system message (invisible in UI)');
+                igLog('ChatGPT: replaced text parts with pseudonymized version (preserved file refs)');
               }
             } catch (e) {
               igLog('ChatGPT JSON parse failed, falling back to string replacement:', e);
@@ -2293,10 +2745,10 @@ const patchedFetch = async function patchedFetch(
               `(${url.substring(0, 60)})`
             );
 
-            // If ChatGPT rejected our system-message format (4xx), retry with
-            // notice prepended to user message text instead.
-            if (!modifiedResponse.ok && isChatGPT && modifiedResponse.status >= 400 && modifiedResponse.status < 500) {
-              console.warn(`[Iron Gate MAIN] ChatGPT rejected system message format (${modifiedResponse.status}) — retrying with notice in user text`);
+            // If ChatGPT rejected the modified body (4xx or 5xx), retry with
+            // a simple string replacement as fallback.
+            if (!modifiedResponse.ok && isChatGPT && modifiedResponse.status >= 400) {
+              console.warn(`[Iron Gate MAIN] ChatGPT rejected modified body (${modifiedResponse.status}) — retrying with simple replacement`);
               try {
                 const noticeWrapped = '[' + deIdNotice + ']\n\n';
                 const fallbackMasked = noticeWrapped + pseudoResult.maskedText;
@@ -2348,42 +2800,47 @@ const patchedFetch = async function patchedFetch(
   }
 
   // ── AUDIT MODE: Detect and score but don't modify ────────────────────────
+  // IMPORTANT: Run analysis ASYNC (fire-and-forget) so the fetch is NOT delayed.
+  // The original request is returned immediately; entity detection + reporting
+  // happens in the background.
   if (mode === 'audit') {
     console.log(`%c[Iron Gate WIRE] 👁️ AUDIT MODE — request passes through UNMODIFIED (original text goes to LLM)`, 'color: #6699ff; font-weight: bold');
-    try {
-      const promptText = activeAdapter?.extractPrompt(bodyString) ?? extractPrompt(bodyString);
-      if (promptText && promptText.length >= 10) {
-        const regexEntities = detectWithRegex(promptText);
-        const secrets = scanForSecrets(promptText);
-        const allEntities = [...regexEntities, ...secrets];
+    const _auditBody = bodyString;
+    (async () => {
+      try {
+        const promptText = activeAdapter?.extractPrompt(_auditBody) ?? extractPrompt(_auditBody);
+        if (promptText && promptText.length >= 10) {
+          const regexEntities = detectWithRegex(promptText);
+          const secrets = scanForSecrets(promptText);
+          const allEntities = [...regexEntities, ...secrets];
 
-        if (allEntities.length > 0) {
-          const { level, score } = quickScore(allEntities);
-          const pseudoResult = pseudonymizeLocal(promptText, allEntities);
+          if (allEntities.length > 0) {
+            const { level, score } = quickScore(allEntities);
 
-          igLog(`AUDIT: Detected ${allEntities.length} entities (${level}, score=${score}). Types: ${allEntities.map(e => e.type).join(', ')}`);
+            igLog(`AUDIT: Detected ${allEntities.length} entities (${level}, score=${score}). Types: ${allEntities.map(e => e.type).join(', ')}`);
 
-          const _aph = await igHash(promptText);
-          const _ame = await minimizeEntitiesForTransit(allEntities);
-          window.postMessage({
-            type: 'IRON_GATE_AUDIT',
-            promptHash: _aph,
-            promptLength: promptText.length,
-            maskedPrompt: pseudoResult.maskedText,
-            mappings: pseudoResult.mappings,
-            entityCount: allEntities.length,
-            level,
-            score,
-            entities: _ame,
-          }, window.location.origin);
+            const _aph = await igHash(promptText);
+            const _ame = await minimizeEntitiesForTransit(allEntities);
+            window.postMessage({
+              type: 'IRON_GATE_AUDIT',
+              promptHash: _aph,
+              promptLength: promptText.length,
+              maskedPrompt: '', // Don't pseudonymize in audit — unnecessary overhead
+              mappings: [],
+              entityCount: allEntities.length,
+              level,
+              score,
+              entities: _ame,
+            }, window.location.origin);
+          }
         }
+      } catch {
+        // Don't break anything
       }
-    } catch {
-      // Don't break the original request
-    }
+    })();
   }
 
-  // Pass through to original fetch
+  // Pass through to original fetch — no delay
   return originalFetch.call(window, input, init);
 }
 
@@ -2597,11 +3054,15 @@ XMLHttpRequest.prototype.send = function(body?: any) {
     igLog(`XHR POST: ${url.substring(0, 120)} | body: ${bodyType}`);
   }
 
-  // ─── File Upload Detection in XHR ──────────────────────────────────────
+  // ─── File Upload Detection in XHR (deferred to avoid blocking) ─────────
   if (body instanceof FormData) {
-    detectFilesInFormData(body, url);
-  } else if (body && typeof body === 'string') {
-    detectFileMetadataInJson(body, url);
+    setTimeout(() => detectFilesInFormData(body, url), 0);
+  } else if (body instanceof File) {
+    const fileRef = body;
+    setTimeout(() => _readFileToBase64AndPost(fileRef, 'XHR body (File)'), 0);
+  } else if (body && typeof body === 'string' && isFileUploadEndpoint(url)) {
+    const bodySnapshot = body;
+    setTimeout(() => detectFileMetadataInJson(bodySnapshot, url), 0);
   }
 
   // Convert non-string bodies to string for processing
@@ -2882,6 +3343,11 @@ function _walkPseudoSignalR(obj: any): { value: any; changed: boolean } {
 // Patch WebSocket.prototype.send for Copilot SignalR pseudonymization.
 const _origWsSend = OriginalWebSocket.prototype.send;
 OriginalWebSocket.prototype.send = function(this: WebSocket, data: string | ArrayBufferLike | Blob | ArrayBufferView) {
+  // File upload gate — block WS frames if a high-risk document was detected
+  if (hasHighRiskFileScanSync() && activeAdapter?.isWsEndpoint?.(this.url)) {
+    igLog('WS.prototype.send BLOCKED — high-risk document detected');
+    return;
+  }
   if (mode === 'proxy' && pendingCopilotPseudo &&
       activeAdapter?.id === 'copilot' && activeAdapter.isWsEndpoint?.(this.url)) {
     if (typeof data === 'string') {
@@ -2922,6 +3388,11 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
 
     const originalSend = ws.send.bind(ws);
     ws.send = function(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
+      // File upload gate — block WS frames if a high-risk document was detected
+      if (hasHighRiskFileScanSync()) {
+        igLog('WS instance send BLOCKED — high-risk document detected');
+        return;
+      }
       // ── Decode binary WebSocket data (ChatGPT 5.2 uses binary frames) ──
       let wasBinary = false;
       let originalBinaryFormat: 'arraybuffer' | 'view' | null = null;
@@ -3421,7 +3892,6 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
   // ── Enter key interception (capture phase — runs before platform handlers) ──
   document.addEventListener('keydown', function (e: KeyboardEvent) {
     if (domInterceptBusy) return;
-    if (mode !== 'proxy') return;
     if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
 
     const inputEl = activeAdapter!.findInput();
@@ -3431,20 +3901,35 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
     const text = activeAdapter!.readInput(inputEl);
     if (!text || text.length < 10) return;
 
+    // Always gate on file uploads (regardless of proxy/audit mode)
+    if (pendingFileScans.size > 0) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      igLog(`${adapterName} DOM: Enter blocked — checking file upload gate`);
+      checkFileUploadGate().then((decision) => {
+        if (decision === 'block') {
+          igLog(`${adapterName} DOM: File gate BLOCKED send`);
+          return;
+        }
+        // Gate passed — proceed with pseudonymization and submit
+        _domEnterSubmit(inputEl as HTMLElement, text);
+      });
+      return;
+    }
+
+    if (mode !== 'proxy') return;
+
     igLog(`${adapterName} DOM: Enter pressed, text=${text.length} chars`);
 
     const result = adapterDomPseudonymize(text, 'Enter');
     if (!result) return;
 
     if (isDomCaptureWire) {
-      // Copilot-style: queue pseudo for WS.prototype.send, let Enter propagate
       setPendingCopilotPseudo({ original: text, maskedText: result.maskedText });
       igLog(`${adapterName}: Queued pseudo for WS interception`);
-      // Do NOT preventDefault — let the platform handle Enter normally
       return;
     }
 
-    // DOM pre-submit: prevent default, write pseudo text, re-submit
     e.preventDefault();
     e.stopImmediatePropagation();
 
@@ -3468,10 +3953,41 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
     }, 100);
   }, true);
 
+  // Helper: re-run pseudonymization and submit after file gate passes
+  function _domEnterSubmit(inputEl: HTMLElement, text: string) {
+    if (mode === 'proxy') {
+      const result = adapterDomPseudonymize(text, 'Enter');
+      if (result) {
+        if (isDomCaptureWire) {
+          setPendingCopilotPseudo({ original: text, maskedText: result.maskedText });
+          // Simulate Enter to let the platform submit
+          inputEl.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
+            bubbles: true, cancelable: true,
+          }));
+          return;
+        }
+        activeAdapter!.writeInput(inputEl, result.maskedText);
+      }
+    }
+    setTimeout(() => {
+      domInterceptBusy = true;
+      const sendBtn = activeAdapter!.findSubmitButton();
+      if (sendBtn) {
+        sendBtn.click();
+      } else {
+        inputEl.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
+          bubbles: true, cancelable: true,
+        }));
+      }
+      setTimeout(() => { domInterceptBusy = false; }, 300);
+    }, 100);
+  }
+
   // ── Send button click interception (capture phase) ──
   document.addEventListener('click', function (e: MouseEvent) {
     if (domInterceptBusy) return;
-    if (mode !== 'proxy') return;
 
     const target = e.target as HTMLElement;
     const btn = target.closest('button');
@@ -3487,12 +4003,10 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
       btn.type === 'submit';
 
     if (!isSendButton) {
-      // Check proximity to input — could be an icon button near the textarea
       const inputEl = activeAdapter!.findInput();
       if (!inputEl) return;
       const parent = inputEl.closest('form') || inputEl.parentElement?.parentElement?.parentElement;
       if (!parent || !parent.contains(btn)) return;
-      // Must have an SVG icon to be considered a send button
       if (!btn.querySelector('svg')) return;
     }
 
@@ -3502,19 +4016,46 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
     const text = activeAdapter!.readInput(inputEl);
     if (!text || text.length < 10) return;
 
+    // Check file upload gate (regardless of proxy/audit mode)
+    if (pendingFileScans.size > 0) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      igLog(`${adapterName} DOM: Click blocked — checking file upload gate`);
+      checkFileUploadGate().then((decision) => {
+        if (decision === 'block') {
+          igLog(`${adapterName} DOM: File gate BLOCKED send`);
+          return;
+        }
+        // Gate passed — proceed with pseudonymization and re-click
+        if (mode === 'proxy') {
+          const result = adapterDomPseudonymize(text, 'SendBtn');
+          if (result) {
+            if (isDomCaptureWire) {
+              setPendingCopilotPseudo({ original: text, maskedText: result.maskedText });
+              setTimeout(() => { domInterceptBusy = true; btn.click(); setTimeout(() => { domInterceptBusy = false; }, 300); }, 100);
+              return;
+            }
+            activeAdapter!.writeInput(inputEl, result.maskedText);
+          }
+        }
+        setTimeout(() => { domInterceptBusy = true; btn.click(); setTimeout(() => { domInterceptBusy = false; }, 300); }, 100);
+      });
+      return;
+    }
+
+    if (mode !== 'proxy') return;
+
     igLog(`${adapterName} DOM: Send button clicked, text=${text.length} chars`);
 
     const result = adapterDomPseudonymize(text, 'SendBtn');
     if (!result) return;
 
     if (isDomCaptureWire) {
-      // Copilot-style: queue pseudo for WS.prototype.send, let click propagate
       setPendingCopilotPseudo({ original: text, maskedText: result.maskedText });
       igLog(`${adapterName}: Queued pseudo for WS interception`);
       return;
     }
 
-    // DOM pre-submit: prevent default, write pseudo text, re-submit
     e.preventDefault();
     e.stopImmediatePropagation();
 

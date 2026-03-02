@@ -20,7 +20,7 @@ export interface ResolvedConfig {
 
 import { loadApiKey } from './api-key-store';
 
-const DEFAULT_API_URL = 'https://irongate-api.onrender.com/v1';
+const DEFAULT_API_URL = 'http://localhost:3000/v1';
 
 /**
  * Read managed storage values. Returns null if no managed policies exist.
@@ -62,7 +62,7 @@ export async function resolveConfig(): Promise<ResolvedConfig> {
   if (managed?.apiKey) {
     return {
       apiKey: managed.apiKey,
-      apiUrl: managed.apiUrl || local.apiBaseUrl || DEFAULT_API_URL,
+      apiUrl: managed.apiUrl || DEFAULT_API_URL,
       firmMode: (managed.firmMode === 'audit' ? 'audit' : 'proxy'),
       firmId: managed.firmId || local.connectionState?.firmId || null,
       firmName: managed.firmName || local.connectionState?.firmName || null,
@@ -72,7 +72,7 @@ export async function resolveConfig(): Promise<ResolvedConfig> {
 
   return {
     apiKey: local._decryptedApiKey || '',
-    apiUrl: local.apiBaseUrl || DEFAULT_API_URL,
+    apiUrl: DEFAULT_API_URL,
     firmMode: local.firmMode === 'audit' ? 'audit' : 'proxy',
     firmId: local.connectionState?.firmId || null,
     firmName: local.connectionState?.firmName || null,

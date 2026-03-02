@@ -49,24 +49,24 @@ documentRoutes.post('/scan', async (c) => {
       return c.json({ error: 'Could not extract any text from this document. It may be a scanned/image-based PDF.' }, 400);
     }
 
-    // 4. Run firm-aware detection pipeline (plugins, client-matters, secrets)
+    // 4. Run detection + hash prompt in parallel (both only need extractedText)
     const firmId = c.get('firmId');
-    const detectedEntities = await detectFirmAware(extractedText, { firmId });
+    const [detectedEntities, promptHash] = await Promise.all([
+      detectFirmAware(extractedText, { firmId }),
+      hashText(extractedText),
+    ]);
 
-    // 5. Score sensitivity (with graph boost, weight overrides, etc.)
-    const scoreResult = await scoreFirmAware(extractedText, detectedEntities, { firmId });
-
-    // 6. Pseudonymize (redact)
+    // 5. Score + pseudonymize in parallel (both need detectedEntities)
     const sessionId = uuidv4();
     const userId = c.get('userId');
     const pseudonymizer = new Pseudonymizer(sessionId, firmId);
-    const pseudonymResult = pseudonymizer.pseudonymize(extractedText, detectedEntities);
+    const [scoreResult, pseudonymResult] = await Promise.all([
+      scoreFirmAware(extractedText, detectedEntities, { firmId }),
+      Promise.resolve(pseudonymizer.pseudonymize(extractedText, detectedEntities)),
+    ]);
 
-    // 7. Log to audit chain for cryptographic trail
-    const promptHash = await hashText(extractedText);
-
-    // Data minimization: strip raw entity text, store only hashes + lengths
-    const minimizedEntities = await Promise.all(
+    // 6. Fire-and-forget audit chain append — don't block the response
+    const auditPromise = Promise.all(
       detectedEntities.map(async (e) => ({
         type: e.type,
         textHash: await hashText(e.text),
@@ -76,30 +76,37 @@ documentRoutes.post('/scan', async (c) => {
         source: e.source,
         length: e.text.length,
       })),
-    );
-
-    const inserted = await appendEvent({
-      firmId,
-      userId,
-      aiToolId: 'document:scan',
-      promptHash,
-      promptLength: extractedText.length,
-      sensitivityScore: scoreResult.score,
-      sensitivityLevel: scoreResult.level,
-      entities: minimizedEntities,
-      action: 'pass',
-      captureMethod: 'upload',
-      sessionId,
-      metadata: {
-        fileName,
-        fileType: extension,
-        fileSize: file.size,
-        textLength: extractedText.length,
-        entitiesFound: detectedEntities.length,
-      },
+    ).then((minimizedEntities) =>
+      appendEvent({
+        firmId,
+        userId,
+        aiToolId: 'document:scan',
+        promptHash,
+        promptLength: extractedText.length,
+        sensitivityScore: scoreResult.score,
+        sensitivityLevel: scoreResult.level,
+        entities: minimizedEntities,
+        action: 'pass',
+        captureMethod: 'upload',
+        sessionId,
+        metadata: {
+          fileName,
+          fileType: extension,
+          fileSize: file.size,
+          textLength: extractedText.length,
+          entitiesFound: detectedEntities.length,
+        },
+      }),
+    ).catch((auditErr) => {
+      logger.warn('Audit chain append failed', {
+        error: auditErr instanceof Error ? auditErr.message : String(auditErr),
+      });
     });
 
-    // 8. Return results — entity types and positions only, not raw PII text
+    // Don't await — let it run in the background
+    void auditPromise;
+
+    // 7. Return results immediately
     return c.json({
       fileName,
       fileType: extension,
@@ -118,9 +125,10 @@ documentRoutes.post('/scan', async (c) => {
       level: scoreResult.level,
       breakdown: scoreResult.breakdown,
       explanation: scoreResult.explanation,
+      originalText: extractedText,
       redactedText: pseudonymResult.maskedText,
       entitiesRedacted: pseudonymResult.entitiesReplaced,
-      eventId: inserted.id,
+      eventId: null,
     });
   } catch (error) {
     logger.error('Document scan failed', { error: error instanceof Error ? error.message : String(error) });

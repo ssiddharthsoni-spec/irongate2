@@ -31,9 +31,9 @@ const PLANS: Plan[] = [
   {
     id: 'pro',
     name: 'Pro',
-    price: '$49',
-    period: '/month',
-    features: ['Up to 5,000 prompts/month', '10 team members', 'Advanced entity detection', 'Slack + email alerts', '90-day data retention', 'API access'],
+    price: '$29',
+    period: '/user/month',
+    features: ['Up to 10,000 interactions/month', '10 team members', 'Advanced entity detection', 'Slack + email alerts', '90-day data retention', 'API access'],
     highlighted: true,
   },
   {
@@ -41,7 +41,7 @@ const PLANS: Plan[] = [
     name: 'Business',
     price: '$199',
     period: '/month',
-    features: ['Up to 50,000 prompts/month', 'Unlimited team members', 'All entity types', 'Custom webhooks', '180-day data retention', 'Priority support', 'Executive Lens'],
+    features: ['Up to 100,000 interactions/month', 'Unlimited team members', 'All entity types', 'Custom webhooks', '1-year data retention', 'Priority support', 'Executive Lens'],
   },
   {
     id: 'enterprise',
@@ -53,16 +53,16 @@ const PLANS: Plan[] = [
 ];
 
 const DEMO_INVOICES: Invoice[] = [
-  { id: 'inv_001', date: '2026-02-01', amount: '$49.00', status: 'paid', description: 'Pro Plan - February 2026' },
-  { id: 'inv_002', date: '2026-01-01', amount: '$49.00', status: 'paid', description: 'Pro Plan - January 2026' },
-  { id: 'inv_003', date: '2025-12-01', amount: '$49.00', status: 'paid', description: 'Pro Plan - December 2025' },
-  { id: 'inv_004', date: '2025-11-01', amount: '$49.00', status: 'paid', description: 'Pro Plan - November 2025' },
+  { id: 'inv_001', date: '2026-02-01', amount: '$29.00', status: 'paid', description: 'Pro Plan - February 2026' },
+  { id: 'inv_002', date: '2026-01-01', amount: '$29.00', status: 'paid', description: 'Pro Plan - January 2026' },
+  { id: 'inv_003', date: '2025-12-01', amount: '$29.00', status: 'paid', description: 'Pro Plan - December 2025' },
+  { id: 'inv_004', date: '2025-11-01', amount: '$29.00', status: 'paid', description: 'Pro Plan - November 2025' },
 ];
 
 const DEMO_USAGE = {
   plan: 'pro',
   promptsUsed: 2847,
-  promptsLimit: 5000,
+  promptsLimit: 10000,
   entitiesDetected: 14283,
   usersCount: 6,
   usersLimit: 10,
@@ -72,6 +72,8 @@ export default function BillingPage() {
   const { apiFetch } = useApiClient();
 
   const [currentPlan, setCurrentPlan] = useState('pro');
+  const [subscriptionStatus, setSubscriptionStatus] = useState<string>('active');
+  const [trialEnd, setTrialEnd] = useState<string | null>(null);
   const [usage, setUsage] = useState(DEMO_USAGE);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
@@ -85,7 +87,13 @@ export default function BillingPage() {
         const response = await apiFetch('/billing');
         if (!response.ok) throw new Error(`Server responded with ${response.status}`);
         const data = await response.json();
-        if (data.plan) setCurrentPlan(data.plan);
+        if (data.subscription) {
+          setCurrentPlan(data.subscription.tier || 'free');
+          setSubscriptionStatus(data.subscription.status || 'active');
+          setTrialEnd(data.subscription.currentPeriodEnd || null);
+        } else if (data.plan) {
+          setCurrentPlan(data.plan);
+        }
         if (data.usage) setUsage(data.usage);
         if (data.invoices) setInvoices(data.invoices);
       } catch {
@@ -108,7 +116,7 @@ export default function BillingPage() {
       setUpgrading(planId);
       const response = await apiFetch('/billing/checkout', {
         method: 'POST',
-        body: JSON.stringify({ planId }),
+        body: JSON.stringify({ tier: planId, cycle: 'monthly' }),
       });
       if (!response.ok) throw new Error(`Server responded with ${response.status}`);
       const data = await response.json();
@@ -188,8 +196,45 @@ export default function BillingPage() {
   const promptPct = getUsagePercentage(usage.promptsUsed, usage.promptsLimit);
   const userPct = getUsagePercentage(usage.usersCount, usage.usersLimit);
 
+  const isTrialing = subscriptionStatus === 'trialing';
+  const trialDaysLeft = trialEnd
+    ? Math.max(0, Math.ceil((new Date(trialEnd).getTime() - Date.now()) / 86400_000))
+    : 0;
+
   return (
     <div className="space-y-6 max-w-4xl">
+      {/* Trial banner */}
+      {isTrialing && (
+        <div className="px-4 py-3 rounded-xl bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800/40 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-yellow-100 dark:bg-yellow-900/30 flex items-center justify-center flex-shrink-0">
+              <svg className="w-4 h-4 text-yellow-600 dark:text-yellow-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-yellow-800 dark:text-yellow-300">
+                {trialDaysLeft > 0
+                  ? `${trialDaysLeft} day${trialDaysLeft !== 1 ? 's' : ''} left in your free trial`
+                  : 'Your free trial has ended'}
+              </p>
+              <p className="text-xs text-yellow-700/70 dark:text-yellow-400/70">
+                {trialDaysLeft > 0
+                  ? 'Add a payment method to continue after your trial ends.'
+                  : 'Upgrade now to keep using Pro features.'}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleManageBilling}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-yellow-600 hover:bg-yellow-700 text-white transition-colors flex-shrink-0"
+          >
+            {trialDaysLeft > 0 ? 'Add Payment Method' : 'Upgrade Now'}
+          </button>
+        </div>
+      )}
+
       {/* Current Plan & Usage */}
       <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
         <div className="flex items-center justify-between mb-6">
@@ -199,6 +244,11 @@ export default function BillingPage() {
               <span className="inline-flex px-3 py-1 rounded-full text-sm font-semibold bg-iron-100 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300">
                 {currentPlanObj?.name || 'Free'}
               </span>
+              {isTrialing && (
+                <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400">
+                  Trial
+                </span>
+              )}
               <span className="text-sm text-[#6e6e73] dark:text-[#86868b]">
                 {currentPlanObj?.price}{currentPlanObj?.period}
               </span>

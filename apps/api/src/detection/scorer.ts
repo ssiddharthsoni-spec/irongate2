@@ -125,8 +125,12 @@ export async function scoreFirmAware(
   entities: DetectedEntity[],
   options: ScoreFirmAwareOptions,
 ): Promise<ScoreResult> {
-  // 1. Load firm weight overrides
-  const overrides = await loadWeightOverrides(options.firmId);
+  // 1. Load firm weight overrides + sensitivity graph boost in parallel
+  const [overrides, boostResult] = await Promise.all([
+    loadWeightOverrides(options.firmId),
+    getBoostMultiplier(options.firmId, entities).catch(() => ({ boost: 0, reasons: [] as string[] })),
+  ]);
+
   const effectiveWeights = { ...ENTITY_WEIGHTS };
   for (const [entityType, multiplier] of overrides) {
     if (effectiveWeights[entityType] !== undefined) {
@@ -141,15 +145,8 @@ export async function scoreFirmAware(
   const legalBoost = computeLegalBoost(text);
 
   // 3. Sensitivity graph boost (MOAT feature)
-  let graphBoost = 0;
-  let graphReasons: string[] = [];
-  try {
-    const boost = await getBoostMultiplier(options.firmId, entities);
-    graphBoost = boost.boost;
-    graphReasons = boost.reasons;
-  } catch {
-    // Non-critical — continue without boost
-  }
+  const graphBoost = boostResult.boost;
+  const graphReasons = boostResult.reasons;
 
   // 4. Document type multiplier
   let documentMultiplier = 1.0;

@@ -9,7 +9,7 @@
   <p align="center">
     <a href="#"><img src="https://img.shields.io/badge/build-passing-brightgreen" alt="Build Status" /></a>
     <a href="#license"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License" /></a>
-    <a href="#"><img src="https://img.shields.io/badge/version-0.1.0-orange" alt="Version" /></a>
+    <a href="#"><img src="https://img.shields.io/badge/version-0.2.2-orange" alt="Version" /></a>
     <a href="#"><img src="https://img.shields.io/badge/TypeScript-5.7-blue" alt="TypeScript" /></a>
     <a href="#"><img src="https://img.shields.io/badge/Python-3.11-blue" alt="Python" /></a>
   </p>
@@ -265,8 +265,8 @@ iron-gate/
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-org/iron-gate.git
-cd iron-gate
+git clone https://github.com/ssiddharthsoni-spec/irongate2.git
+cd irongate2
 
 # 2. Run the automated setup script
 chmod +x scripts/dev-setup.sh

@@ -74,8 +74,29 @@ export default function OnboardingPage() {
   const [generatedApiKey, setGeneratedApiKey] = useState<string | null>(null);
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
   const [apiKeyCopied, setApiKeyCopied] = useState(false);
+  const [checkingFirm, setCheckingFirm] = useState(true);
 
   const [state, setState] = useState<OnboardingState>(DEFAULT_STATE);
+
+  // If the user already belongs to a firm (invited by admin), skip onboarding
+  useEffect(() => {
+    let cancelled = false;
+    async function checkFirm() {
+      try {
+        const res = await apiFetch('/admin/firm');
+        if (!cancelled && res.ok) {
+          // User already belongs to a firm — no need to onboard again
+          router.replace('/');
+          return;
+        }
+      } catch {
+        // No firm or API unavailable — continue with onboarding
+      }
+      if (!cancelled) setCheckingFirm(false);
+    }
+    checkFirm();
+    return () => { cancelled = true; };
+  }, [apiFetch, router]);
 
   // Restore saved state on mount
   useEffect(() => {
@@ -196,6 +217,16 @@ export default function OnboardingPage() {
   }
 
   // ----- Render -----
+
+  // While checking if user already belongs to a firm, show loading
+  if (checkingFirm) {
+    return (
+      <div className="min-h-screen bg-[#f5f5f7] dark:bg-[#141414] flex items-center justify-center">
+        <div className="w-10 h-10 border-4 border-iron-200 border-t-iron-600 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#f5f5f7] dark:bg-[#141414] flex flex-col">
       {/* Top bar */}
@@ -244,7 +275,7 @@ export default function OnboardingPage() {
                         isCurrent ? 'text-iron-700 dark:text-iron-300' : isCompleted ? 'text-[#424245] dark:text-[#a1a1a6]' : 'text-[#86868b] dark:text-[#636366]'
                       }`}
                     >
-                      {['Welcome', 'Protection', 'Extension', 'Team', 'Done'][i]}
+                      {['Welcome', 'Protection', 'Extension', 'Co-Admins', 'Done'][i]}
                     </span>
                   </div>
                   {step < TOTAL_STEPS && (
@@ -438,156 +469,95 @@ function StepProtection({
   return (
     <div>
       <div className="mb-8">
-        <h2 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Configure Protection</h2>
+        <h2 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Choose Protection Mode</h2>
         <p className="text-[#6e6e73] dark:text-[#86868b] mt-1">
-          Fine-tune how Iron Gate protects AI interactions at your firm.
+          How should Iron Gate handle sensitive data in AI prompts? You can change this anytime in Admin settings.
         </p>
       </div>
 
-      {/* Protection mode info */}
-      <div className="bg-iron-50 dark:bg-iron-900/20 rounded-xl p-5 border border-iron-200 dark:border-iron-800 mb-6">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-iron-600 rounded-lg flex items-center justify-center flex-shrink-0">
-            <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
-            </svg>
+      <div className="grid gap-4">
+        {/* Protect Mode */}
+        <button
+          type="button"
+          onClick={() => updateState('protectionMode', 'proxy')}
+          className={`text-left rounded-xl p-6 border-2 transition-all ${
+            state.protectionMode === 'proxy'
+              ? 'border-iron-600 bg-iron-50 dark:bg-iron-900/20 shadow-sm'
+              : 'border-[#d2d2d7]/40 dark:border-[#38383a]/60 bg-white dark:bg-[#1c1c1e] hover:border-[#d2d2d7] dark:hover:border-[#48484a]'
+          }`}
+        >
+          <div className="flex items-center gap-3 mb-3">
+            <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
+              state.protectionMode === 'proxy' ? 'bg-iron-600' : 'bg-[#e5e5ea] dark:bg-[#38383a]'
+            }`}>
+              <svg className={`w-5 h-5 ${state.protectionMode === 'proxy' ? 'text-white' : 'text-[#86868b]'}`} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
+              </svg>
+            </div>
+            <div>
+              <p className={`text-sm font-semibold ${state.protectionMode === 'proxy' ? 'text-iron-800 dark:text-iron-200' : 'text-[#1d1d1f] dark:text-[#f5f5f7]'}`}>
+                Protect Mode
+              </p>
+              <p className="text-xs text-[#86868b]">Recommended</p>
+            </div>
+            {state.protectionMode === 'proxy' && (
+              <div className="ml-auto w-6 h-6 bg-iron-600 rounded-full flex items-center justify-center">
+                <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                </svg>
+              </div>
+            )}
           </div>
-          <div>
-            <p className="text-sm font-semibold text-iron-800 dark:text-iron-200">Protect Mode Active</p>
-            <p className="text-xs text-iron-600 dark:text-iron-400 mt-0.5">
-              Sensitive data is automatically redacted before reaching AI services. Your prompts are protected in real-time.
-            </p>
+          <p className="text-sm text-[#424245] dark:text-[#a1a1a6] leading-relaxed">
+            Sensitive data is <strong>automatically redacted</strong> before it reaches AI services. Names, SSNs, and other PII are replaced with pseudonyms in real-time.
+          </p>
+        </button>
+
+        {/* Audit Mode */}
+        <button
+          type="button"
+          onClick={() => updateState('protectionMode', 'audit')}
+          className={`text-left rounded-xl p-6 border-2 transition-all ${
+            state.protectionMode === 'audit'
+              ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20 shadow-sm'
+              : 'border-[#d2d2d7]/40 dark:border-[#38383a]/60 bg-white dark:bg-[#1c1c1e] hover:border-[#d2d2d7] dark:hover:border-[#48484a]'
+          }`}
+        >
+          <div className="flex items-center gap-3 mb-3">
+            <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
+              state.protectionMode === 'audit' ? 'bg-amber-500' : 'bg-[#e5e5ea] dark:bg-[#38383a]'
+            }`}>
+              <svg className={`w-5 h-5 ${state.protectionMode === 'audit' ? 'text-white' : 'text-[#86868b]'}`} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+              </svg>
+            </div>
+            <div>
+              <p className={`text-sm font-semibold ${state.protectionMode === 'audit' ? 'text-amber-800 dark:text-amber-200' : 'text-[#1d1d1f] dark:text-[#f5f5f7]'}`}>
+                Audit Mode
+              </p>
+              <p className="text-xs text-[#86868b]">Monitor only</p>
+            </div>
+            {state.protectionMode === 'audit' && (
+              <div className="ml-auto w-6 h-6 bg-amber-500 rounded-full flex items-center justify-center">
+                <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                </svg>
+              </div>
+            )}
           </div>
-        </div>
+          <p className="text-sm text-[#424245] dark:text-[#a1a1a6] leading-relaxed">
+            Monitor and log AI usage <strong>without blocking anything</strong>. Useful for understanding usage patterns before enforcing policies. Data passes through unmodified.
+          </p>
+        </button>
       </div>
 
-      {/* Sensitivity thresholds */}
-      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
-        <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-1">Sensitivity Thresholds</h3>
-        <p className="text-xs text-[#6e6e73] mb-5">
-          Set the sensitivity score thresholds that trigger each action level. Scores range from 0 (safe) to 100 (critical).
+      {/* Fine-tuning note */}
+      <div className="mt-6 p-4 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded-lg">
+        <p className="text-xs text-[#6e6e73] dark:text-[#86868b]">
+          <strong>Advanced settings</strong> like sensitivity thresholds and per-tool rules can be configured later in <strong>Admin &rarr; Settings</strong>.
         </p>
-
-        <ThresholdSlider
-          label="Warn"
-          description="Flag interaction for review"
-          value={state.warnThreshold}
-          onChange={(v) => updateState('warnThreshold', v)}
-          color="bg-yellow-400"
-          dotColor="bg-yellow-500"
-        />
-        <ThresholdSlider
-          label="Block"
-          description="Prevent submission to AI service"
-          value={state.blockThreshold}
-          onChange={(v) => updateState('blockThreshold', v)}
-          color="bg-orange-400"
-          dotColor="bg-orange-500"
-        />
-        <ThresholdSlider
-          label="Proxy"
-          description="Route through Iron Gate proxy for redaction"
-          value={state.proxyThreshold}
-          onChange={(v) => updateState('proxyThreshold', v)}
-          color="bg-red-400"
-          dotColor="bg-red-500"
-        />
-
-        {/* Visual threshold bar */}
-        <div className="mt-5 pt-4 border-t border-[#d2d2d7]/30">
-          <p className="text-xs font-medium text-[#6e6e73] mb-2">Threshold Preview</p>
-          <div className="relative h-6 bg-[#f5f5f7] rounded-full overflow-hidden">
-            <div
-              className="absolute top-0 left-0 h-full bg-green-200 transition-all"
-              style={{ width: `${state.warnThreshold}%` }}
-            />
-            <div
-              className="absolute top-0 h-full bg-yellow-200 transition-all"
-              style={{ left: `${state.warnThreshold}%`, width: `${state.blockThreshold - state.warnThreshold}%` }}
-            />
-            <div
-              className="absolute top-0 h-full bg-orange-200 transition-all"
-              style={{ left: `${state.blockThreshold}%`, width: `${state.proxyThreshold - state.blockThreshold}%` }}
-            />
-            <div
-              className="absolute top-0 h-full bg-red-200 transition-all"
-              style={{ left: `${state.proxyThreshold}%`, width: `${100 - state.proxyThreshold}%` }}
-            />
-
-            {/* Labels */}
-            <span className="absolute left-1 top-0.5 text-[10px] font-medium text-green-700">Safe</span>
-            <span
-              className="absolute top-0.5 text-[10px] font-medium text-yellow-700"
-              style={{ left: `${state.warnThreshold + 1}%` }}
-            >
-              Warn
-            </span>
-            <span
-              className="absolute top-0.5 text-[10px] font-medium text-orange-700"
-              style={{ left: `${state.blockThreshold + 1}%` }}
-            >
-              Block
-            </span>
-            <span
-              className="absolute top-0.5 text-[10px] font-medium text-red-700"
-              style={{ left: `${state.proxyThreshold + 1}%` }}
-            >
-              Proxy
-            </span>
-          </div>
-          <div className="flex justify-between mt-1 text-[10px] text-[#86868b]">
-            <span>0</span>
-            <span>25</span>
-            <span>50</span>
-            <span>75</span>
-            <span>100</span>
-          </div>
-        </div>
       </div>
-    </div>
-  );
-}
-
-function ThresholdSlider({
-  label,
-  description,
-  value,
-  onChange,
-  color,
-  dotColor,
-}: {
-  label: string;
-  description: string;
-  value: number;
-  onChange: (v: number) => void;
-  color: string;
-  dotColor: string;
-}) {
-  return (
-    <div className="mb-4 last:mb-0">
-      <div className="flex items-center justify-between mb-1.5">
-        <div className="flex items-center gap-2">
-          <div className={`w-2.5 h-2.5 rounded-full ${dotColor}`} />
-          <span className="text-sm font-medium text-[#424245] dark:text-[#a1a1a6]">{label}</span>
-          <span className="text-xs text-[#86868b]">{description}</span>
-        </div>
-        <span className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] tabular-nums w-8 text-right">
-          {value}
-        </span>
-      </div>
-      <input
-        type="range"
-        min={0}
-        max={100}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full h-2 rounded-full appearance-none cursor-pointer accent-iron-600"
-        style={{
-          background: `linear-gradient(to right, ${
-            color === 'bg-yellow-400' ? '#facc15' : color === 'bg-orange-400' ? '#fb923c' : '#f87171'
-          } ${value}%, #e5e7eb ${value}%)`,
-        }}
-      />
     </div>
   );
 }
@@ -662,16 +632,16 @@ function StepExtension() {
           </ol>
         </div>
 
-        {/* API key note */}
-        <div className="p-4 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
+        {/* Auto-config note */}
+        <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
           <div className="flex gap-3">
-            <svg className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z" />
+            <svg className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
             </svg>
             <div>
-              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">API Key</p>
-              <p className="text-xs text-amber-700 dark:text-amber-400 mt-1 leading-relaxed">
-                You&apos;ll receive an API key on the final screen. Paste it into the extension side panel to connect.
+              <p className="text-sm font-medium text-green-800 dark:text-green-300">Automatic for your team</p>
+              <p className="text-xs text-green-700 dark:text-green-400 mt-1 leading-relaxed">
+                An API key will be generated on the next screen. For enterprise deployments, you&apos;ll configure it once in your managed policy — your team members never need to see or enter it.
               </p>
             </div>
           </div>
@@ -770,9 +740,9 @@ function StepTeam({
   return (
     <div>
       <div className="mb-8">
-        <h2 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Invite Your Team</h2>
+        <h2 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Invite Co-Admins</h2>
         <p className="text-[#6e6e73] dark:text-[#86868b] mt-1">
-          Add team members who will use the Iron Gate dashboard. You can always invite more later.
+          Add other administrators who will manage Iron Gate policies and monitor activity. Regular employees don&apos;t need accounts — the extension is deployed to them automatically.
         </p>
       </div>
 
@@ -834,7 +804,7 @@ function StepTeam({
           onClick={onSkip}
           className="text-sm text-[#6e6e73] hover:text-[#424245] transition-colors underline underline-offset-2"
         >
-          Skip for now -- I&apos;ll invite people later
+          Skip — I&apos;m the only admin for now
         </button>
       </div>
     </div>
@@ -920,11 +890,7 @@ function StepComplete({
           <SummaryRow label="Firm" value={state.firmName} />
           <SummaryRow label="Industry" value={state.industry} />
           <SummaryRow label="Size" value={`${state.firmSize} employees`} />
-          <SummaryRow label="Protection Mode" value="Protect (Active Redaction)" />
-          <SummaryRow
-            label="Thresholds"
-            value={`Warn: ${state.warnThreshold} | Block: ${state.blockThreshold} | Proxy: ${state.proxyThreshold}`}
-          />
+          <SummaryRow label="Protection Mode" value={state.protectionMode === 'proxy' ? 'Protect (Active Redaction)' : 'Audit (Monitor Only)'} />
           <SummaryRow
             label="Team Invites"
             value={invitedCount > 0 ? `${invitedCount} member${invitedCount > 1 ? 's' : ''} invited` : 'None (skipped)'}
@@ -932,21 +898,22 @@ function StepComplete({
         </div>
       </div>
 
-      {/* API Key Card */}
+      {/* API Key Card — Admin only */}
       {generatedApiKey && (
-        <div className="bg-amber-50 dark:bg-amber-900/20 rounded-xl p-6 border-2 border-amber-300 dark:border-amber-700 mb-6">
+        <div className="bg-iron-50 dark:bg-iron-900/20 rounded-xl p-6 border-2 border-iron-300 dark:border-iron-700 mb-6">
           <div className="flex items-center gap-2 mb-3">
-            <svg className="w-5 h-5 text-amber-600 dark:text-amber-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+            <svg className="w-5 h-5 text-iron-600 dark:text-iron-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z" />
             </svg>
-            <h3 className="text-sm font-bold text-amber-800 dark:text-amber-300">Your API Key</h3>
+            <h3 className="text-sm font-bold text-iron-800 dark:text-iron-300">Organization API Key</h3>
+            <span className="text-[10px] font-semibold uppercase tracking-wide bg-iron-100 dark:bg-iron-800/40 text-iron-700 dark:text-iron-300 px-2 py-0.5 rounded-full">Admin Only</span>
           </div>
-          <p className="text-xs text-amber-700 dark:text-amber-400 mb-3">
-            Share this key with your team. They&apos;ll paste it into the Chrome extension to connect to your organization.
+          <p className="text-xs text-iron-700 dark:text-iron-400 mb-3">
+            This key connects your organization to Iron Gate. Use the Enterprise Policy JSON below to deploy it automatically — your team members will never need to see or enter this key.
           </p>
           <div className="flex items-center gap-2">
             <code
-              className="flex-1 px-4 py-3 bg-white dark:bg-[#1c1c1e] border border-amber-300 dark:border-amber-600 rounded-lg text-sm font-mono text-[#1d1d1f] dark:text-[#f5f5f7] select-all break-all"
+              className="flex-1 px-4 py-3 bg-white dark:bg-[#1c1c1e] border border-iron-300 dark:border-iron-600 rounded-lg text-sm font-mono text-[#1d1d1f] dark:text-[#f5f5f7] select-all break-all"
             >
               {generatedApiKey}
             </code>
@@ -955,14 +922,14 @@ function StepComplete({
               className={`flex-shrink-0 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
                 apiKeyCopied
                   ? 'bg-green-600 text-white'
-                  : 'bg-amber-600 hover:bg-amber-700 text-white'
+                  : 'bg-iron-600 hover:bg-iron-700 text-white'
               }`}
             >
               {apiKeyCopied ? 'Copied!' : 'Copy'}
             </button>
           </div>
-          <p className="text-xs text-red-600 dark:text-red-400 font-medium mt-3">
-            Copy this key now — it will not be shown again.
+          <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mt-3">
+            You can also find this key later in <strong>Settings &rarr; API Keys</strong>.
           </p>
         </div>
       )}

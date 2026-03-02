@@ -410,22 +410,59 @@ async function handleMessage(
     }
 
     case 'FILE_UPLOAD_DETECTED': {
-      const { fileName, fileBase64, fileType, aiToolId } = message.payload;
-      igLog('File upload detected:', fileName, 'on', aiToolId);
+      const { fileName, fileBase64, fileType, aiToolId, metadataOnly } = message.payload;
+      igLog('File upload detected:', fileName, 'on', aiToolId, metadataOnly ? '(metadata only)' : `(${fileBase64?.length || 0} chars base64)`);
+
+      // Metadata-only events (e.g., ChatGPT /backend-api/files JSON) have no file content to scan.
+      // Log them but skip analysis — the actual file bytes will arrive via FileReader/Blob patches.
+      if (metadataOnly || !fileBase64) {
+        igLog('Skipping analysis — no file content (metadata-only event)');
+        return { ok: true, metadataOnly: true };
+      }
 
       try {
         const result = await analyzeFile(fileName, fileBase64, fileType);
 
-        // Broadcast scan result to sidepanel and all tabs
-        chrome.runtime.sendMessage({
-          type: 'FILE_SCAN_RESULT',
-          payload: { ...result, aiToolId },
-        }).catch(() => {});
+        // Broadcast scan result to sidepanel AND content scripts on all tabs
+        const scanResult = { type: 'FILE_SCAN_RESULT', payload: { ...result, aiToolId } };
+        chrome.runtime.sendMessage(scanResult).catch(() => {});
+        // Also send to the tab that uploaded the file
+        if (sender.tab?.id) {
+          chrome.tabs.sendMessage(sender.tab.id, scanResult).catch(() => {});
+        }
 
         return result;
       } catch (error) {
-        console.warn('[Iron Gate] File analysis error:', error);
-        return { error: 'File analysis failed' };
+        const errMsg = error instanceof Error ? error.message : String(error);
+        console.warn('[Iron Gate] File analysis error:', errMsg);
+
+        // Notify sidepanel AND content script so both show the error
+        const errorResult = {
+          type: 'FILE_SCAN_RESULT',
+          payload: {
+            fileName,
+            fileType,
+            fileSize: 0,
+            textLength: 0,
+            score: 0,
+            level: 'error',
+            entitiesFound: 0,
+            explanation: `Scan failed: ${errMsg}`,
+            entities: [],
+            breakdown: {},
+            redactedText: '',
+            entitiesRedacted: 0,
+            eventId: '',
+            aiToolId,
+            error: errMsg,
+          },
+        };
+        chrome.runtime.sendMessage(errorResult).catch(() => {});
+        if (sender.tab?.id) {
+          chrome.tabs.sendMessage(sender.tab.id, errorResult).catch(() => {});
+        }
+
+        return { error: errMsg };
       }
     }
 
@@ -892,6 +929,8 @@ async function reinjectAllTabs(): Promise<void> {
 chrome.runtime.onInstalled.addListener((details) => {
   igLog('onInstalled:', details.reason);
   if (details.reason === 'install' || details.reason === 'update') {
+    // Clear stale API URL on update so new default is used
+    chrome.storage.local.remove('apiBaseUrl');
     reinjectAllTabs();
   }
 });

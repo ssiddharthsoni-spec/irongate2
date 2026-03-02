@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useUser } from '@clerk/nextjs';
+import { useUser, useClerk } from '@clerk/nextjs';
 import { ThemeToggle } from './ThemeToggle';
 
 const navItems = [
@@ -44,6 +44,33 @@ const navItems = [
     ),
   },
   {
+    href: '/compliance',
+    label: 'Compliance',
+    icon: (
+      <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
+      </svg>
+    ),
+  },
+  {
+    href: '/trust-score',
+    label: 'Trust Score',
+    icon: (
+      <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" />
+      </svg>
+    ),
+  },
+  {
+    href: '/admin',
+    label: 'Admin',
+    icon: (
+      <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12a7.5 7.5 0 0 0 15 0m-15 0a7.5 7.5 0 1 1 15 0m-15 0H3m16.5 0H21m-1.5 0H12m-8.457 3.077 1.41-.513m14.095-5.13 1.41-.513M5.106 17.785l1.15-.964m11.49-9.642 1.149-.964M7.501 19.795l.75-1.3m7.5-12.99.75-1.3m-6.063 16.658.26-1.477m2.605-14.772.26-1.477m0 17.726-.26-1.477M10.698 4.614l-.26-1.477M16.5 19.794l-.75-1.299M7.5 4.205 12 12m6.894 5.785-1.149-.964M6.256 7.178l-1.15-.964m15.352 8.864-1.41-.513M4.954 9.435l-1.41-.514M12.002 12l-3.75 6.495" />
+      </svg>
+    ),
+  },
+  {
     href: '/settings',
     label: 'Settings',
     icon: (
@@ -59,6 +86,7 @@ export default function Sidebar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const { user, isLoaded: isUserLoaded } = useUser();
+  const { signOut } = useClerk();
 
   // Hide sidebar on public pages (landing, demo, onboarding, install, legal, auth)
   const isLanding = pathname === '/';
@@ -67,7 +95,8 @@ export default function Sidebar() {
   const isLegal = pathname === '/privacy' || pathname === '/terms';
   const isInstall = pathname === '/install';
   const isAuth = pathname.startsWith('/sign-in') || pathname.startsWith('/sign-up');
-  if (isLanding || isDemo || isOnboarding || isLegal || isInstall || isAuth) return null;
+  const isUninstallSurvey = pathname === '/uninstall-survey';
+  if (isLanding || isDemo || isOnboarding || isLegal || isInstall || isAuth || isUninstallSurvey) return null;
 
   const displayName = isUserLoaded && user
     ? user.fullName || user.firstName || user.emailAddresses?.[0]?.emailAddress?.split('@')[0] || 'User'
@@ -160,7 +189,46 @@ export default function Sidebar() {
               <p className="text-[12px] font-medium text-[#1d1d1f] dark:text-[#f5f5f7] truncate">{displayName}</p>
               <p className="text-[11px] text-[#86868b] truncate">{displayEmail}</p>
             </div>
+            <button
+              type="button"
+              onClick={() => signOut({ redirectUrl: '/' })}
+              className="p-1.5 rounded-md text-[#aeaeb2] hover:text-red-500 dark:text-[#636366] dark:hover:text-red-400 hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] transition-colors"
+              aria-label="Sign out"
+              title="Sign out"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3 0 3-3m0 0-3-3m3 3H9" />
+              </svg>
+            </button>
           </div>
+
+          {/* Admin sub-pages */}
+          {pathname.startsWith('/admin') && (
+            <div className="px-3 py-2 space-y-0.5">
+              <p className="text-[10px] font-semibold text-[#aeaeb2] dark:text-[#636366] uppercase tracking-wider mb-1">Admin</p>
+              {[
+                { href: '/admin', label: 'Settings' },
+                { href: '/admin/analytics', label: 'Analytics' },
+                { href: '/admin/users', label: 'Users' },
+                { href: '/admin/matters', label: 'Matters' },
+                { href: '/admin/plugins', label: 'Plugins' },
+                { href: '/admin/weights', label: 'Weights' },
+                { href: '/admin/webhooks', label: 'Webhooks' },
+              ].map((sub) => (
+                <Link
+                  key={sub.href}
+                  href={sub.href}
+                  className={`block text-[12px] px-2 py-1 rounded-md ${
+                    pathname === sub.href
+                      ? 'bg-[#f5f5f7] dark:bg-[#2c2c2e] text-iron-600 dark:text-iron-300 font-medium'
+                      : 'text-[#86868b] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e]'
+                  }`}
+                >
+                  {sub.label}
+                </Link>
+              ))}
+            </div>
+          )}
 
           {/* Settings sub-pages */}
           {pathname.startsWith('/settings') && (
@@ -170,6 +238,9 @@ export default function Sidebar() {
                 { href: '/settings', label: 'General' },
                 { href: '/settings/team', label: 'Team' },
                 { href: '/settings/api-keys', label: 'API Keys' },
+                { href: '/settings/billing', label: 'Billing' },
+                { href: '/settings/protection', label: 'Protection' },
+                { href: '/settings/notifications', label: 'Notifications' },
               ].map((sub) => (
                 <Link
                   key={sub.href}

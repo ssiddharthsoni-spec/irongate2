@@ -2,8 +2,8 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import crypto from 'crypto';
 import { db } from '../db/client';
-import { firms, users, clientMatters, weightOverrides, firmPlugins } from '../db/schema';
-import { eq, and } from 'drizzle-orm';
+import { firms, users, clientMatters, weightOverrides, firmPlugins, events } from '../db/schema';
+import { eq, and, gte, sql, desc } from 'drizzle-orm';
 import { analyzePatterns, getProposals, approveProposal, rejectProposal } from '../services/inference-engine';
 import { registerWebhook, removeWebhook, listWebhooks } from '../services/webhook-dispatcher';
 import { invalidateCache } from '../services/plugin-loader';
@@ -438,4 +438,87 @@ adminRoutes.post('/recalculate-weights', async (c) => {
   const firmId = c.get('firmId');
   const results = await processFeedback(firmId);
   return c.json({ processed: results.length, stats: results });
+});
+
+// ---------------------------------------------------------------------------
+// Analytics (User activity & login tracking)
+// ---------------------------------------------------------------------------
+
+// GET /v1/admin/analytics — User activity overview
+adminRoutes.get('/analytics', async (c) => {
+  const firmId = c.get('firmId');
+  const now = new Date();
+  const fiveMinAgo = new Date(now.getTime() - 5 * 60 * 1000);
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+  const [userStats, firmUsers, signupTrend, totalInteractions, userEventCounts] = await Promise.all([
+    // Aggregate user counts
+    db.select({
+      totalUsers: sql<number>`count(*)`,
+      activeNow: sql<number>`count(*) filter (where ${users.updatedAt} >= ${fiveMinAgo})`,
+      activeToday: sql<number>`count(*) filter (where ${users.updatedAt} >= ${todayStart})`,
+    }).from(users).where(eq(users.firmId, firmId)),
+
+    // Per-user details
+    db.select({
+      id: users.id,
+      displayName: users.displayName,
+      email: users.email,
+      role: users.role,
+      updatedAt: users.updatedAt,
+      createdAt: users.createdAt,
+    }).from(users).where(eq(users.firmId, firmId)).orderBy(desc(users.updatedAt)),
+
+    // Signup trend (last 30 days)
+    db.select({
+      date: sql<string>`date_trunc('day', ${users.createdAt})::date::text`,
+      count: sql<number>`count(*)`,
+    }).from(users)
+      .where(and(eq(users.firmId, firmId), gte(users.createdAt, thirtyDaysAgo)))
+      .groupBy(sql`date_trunc('day', ${users.createdAt})`)
+      .orderBy(sql`date_trunc('day', ${users.createdAt})`),
+
+    // Total interaction count
+    db.select({
+      total: sql<number>`count(*)`,
+    }).from(events).where(eq(events.firmId, firmId)),
+
+    // Per-user interaction counts
+    db.select({
+      userId: events.userId,
+      interactions: sql<number>`count(*)`,
+    }).from(events)
+      .where(eq(events.firmId, firmId))
+      .groupBy(events.userId),
+  ]);
+
+  const eventCountMap = new Map(
+    userEventCounts.map(u => [u.userId, Number(u.interactions)])
+  );
+
+  const usersWithStatus = firmUsers.map(u => ({
+    id: u.id,
+    name: u.displayName || u.email.split('@')[0],
+    email: u.email,
+    role: u.role,
+    lastActive: u.updatedAt?.toISOString() || null,
+    interactions: eventCountMap.get(u.id) || 0,
+    status: (u.updatedAt && u.updatedAt >= fiveMinAgo ? 'online' : 'offline') as 'online' | 'offline',
+    createdAt: u.createdAt.toISOString(),
+  }));
+
+  return c.json({
+    summary: {
+      totalUsers: Number(userStats[0]?.totalUsers || 0),
+      activeNow: Number(userStats[0]?.activeNow || 0),
+      activeToday: Number(userStats[0]?.activeToday || 0),
+      totalInteractions: Number(totalInteractions[0]?.total || 0),
+    },
+    users: usersWithStatus,
+    signupTrend: signupTrend.map(d => ({
+      date: d.date,
+      count: Number(d.count),
+    })),
+  });
 });

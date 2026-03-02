@@ -100,7 +100,10 @@ app.use(
         const extId = origin.replace('chrome-extension://', '');
         const allowedIds = (process.env.ALLOWED_EXTENSION_IDS || process.env.CHROME_EXTENSION_ID || '')
           .split(',').map((id: string) => id.trim()).filter(Boolean);
-        if (allowedIds.length === 0) return null;
+        // In development, allow all extensions when no IDs are configured
+        if (allowedIds.length === 0) {
+          return process.env.NODE_ENV === 'development' ? origin : null;
+        }
         return allowedIds.includes(extId) ? origin : null;
       }
       return allowedOrigins.includes(origin) ? origin : null;

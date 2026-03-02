@@ -51,6 +51,7 @@ interface DocumentScanData {
     length: number;
   }>;
   breakdown: Record<string, number>;
+  originalText: string;
   redactedText: string;
   entitiesRedacted: number;
 }
@@ -76,9 +77,10 @@ export function App() {
   // Document Inspector state
   const [docScanData, setDocScanData] = useState<DocumentScanData | null>(null);
   const [docInspectorOpen, setDocInspectorOpen] = useState(true);
-  const [docInspectorView, setDocInspectorView] = useState<'overview' | 'entities' | 'redacted'>('overview');
+  const [docInspectorView, setDocInspectorView] = useState<'overview' | 'entities' | 'original' | 'redacted'>('overview');
 
   const [copiedSafe, setCopiedSafe] = useState(false);
+  const [copiedDocSafe, setCopiedDocSafe] = useState(false);
 
   const handleCopySafe = useCallback(async () => {
     if (!inspectorData?.maskedPrompt) return;
@@ -100,6 +102,26 @@ export function App() {
       setTimeout(() => setCopiedSafe(false), 2000);
     }
   }, [inspectorData?.maskedPrompt]);
+
+  const handleCopyDocSafe = useCallback(async () => {
+    if (!docScanData?.redactedText) return;
+    try {
+      await navigator.clipboard.writeText(docScanData.redactedText);
+      setCopiedDocSafe(true);
+      setTimeout(() => setCopiedDocSafe(false), 2000);
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = docScanData.redactedText;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      setCopiedDocSafe(true);
+      setTimeout(() => setCopiedDocSafe(false), 2000);
+    }
+  }, [docScanData?.redactedText]);
 
   // Connection / settings state
   const [apiUrl, setApiUrl] = useState(DEFAULT_API_URL);
@@ -156,7 +178,14 @@ export function App() {
       // Individual mode: load from local storage
       // API key is encrypted — use loadApiKey() instead of direct chrome.storage.local read
       loadApiKey().then(key => {
-        if (key) { setApiKeyDraft(key); setApiKeySaved(true); }
+        if (key) {
+          setApiKeyDraft(key);
+          setApiKeySaved(true);
+          // If API key exists, user already completed setup — mark as connected
+          // This prevents the setup wizard from reappearing on every extension reload
+          setConnection(prev => prev.connected ? prev : { connected: true, firmId: prev.firmId, firmName: prev.firmName });
+          chrome.storage.local.set({ connectionState: { connected: true, firmId: null, firmName: null } });
+        }
       }).catch(() => {});
       chrome.storage.local.get(['apiBaseUrl', 'connectionState', 'firmMode', 'recentActivity', 'lastScore'], (result) => {
         if (result.apiBaseUrl) { setApiUrl(result.apiBaseUrl); setApiUrlDraft(result.apiBaseUrl); }
@@ -510,6 +539,7 @@ export function App() {
           explanation: p.explanation || '',
           entities: p.entities || [],
           breakdown: p.breakdown || {},
+          originalText: p.originalText || '',
           redactedText: p.redactedText || '',
           entitiesRedacted: p.entitiesRedacted || 0,
         });
@@ -771,7 +801,7 @@ export function App() {
         {/* Footer */}
         <div className="mt-4 text-center">
           <p className="text-xs text-gray-400">
-            Iron Gate v0.2.1
+            Iron Gate v{chrome.runtime.getManifest().version}
           </p>
         </div>
       </div>
@@ -980,8 +1010,8 @@ export function App() {
             </svg>
           </button>
 
-          {/* Copy Safe Version — prominent button */}
-          {inspectorData?.maskedPrompt && (
+          {/* Copy Safe Version — prominent button (only in proxy mode where data is actually protected) */}
+          {inspectorData?.maskedPrompt && mode === 'proxy' && (
             <div className="px-3 py-2 border-t bg-green-50">
               <button
                 onClick={handleCopySafe}
@@ -1010,6 +1040,33 @@ export function App() {
               </button>
               <p className="text-[10px] text-green-600 text-center mt-1">
                 All sensitive data replaced with pseudonyms — safe for external sharing
+              </p>
+            </div>
+          )}
+
+          {/* Audit mode warning — data was NOT protected */}
+          {inspectorData?.maskedPrompt && mode === 'audit' && (
+            <div className="px-3 py-2 border-t bg-amber-50">
+              <div className="flex items-center gap-2 justify-center py-1.5">
+                <svg className="h-4 w-4 text-amber-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                </svg>
+                <p className="text-[10px] text-amber-700 font-medium">
+                  Audit mode — original data was sent to the AI unmodified
+                </p>
+              </div>
+              <button
+                onClick={handleCopySafe}
+                className={`w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                  copiedSafe
+                    ? 'bg-amber-600 text-white'
+                    : 'bg-amber-100 text-amber-800 hover:bg-amber-200 active:scale-[0.98]'
+                }`}
+              >
+                {copiedSafe ? 'Copied!' : 'Copy Pseudonymized Version'}
+              </button>
+              <p className="text-[10px] text-amber-600 text-center mt-1">
+                Switch to Protect mode to block sensitive data before it reaches the AI
               </p>
             </div>
           )}
@@ -1253,14 +1310,20 @@ export function App() {
                           ? 'text-risk-high'
                           : docScanData.level === 'medium'
                           ? 'text-risk-medium'
+                          : docScanData.level === 'error'
+                          ? 'text-red-500'
                           : 'text-risk-low'
                       }`}
                     >
-                      {docScanData.score}
+                      {docScanData.level === 'error' ? '!' : docScanData.score}
                     </span>
                     <div>
-                      <div className="text-xs font-medium capitalize">{docScanData.level} Risk</div>
-                      <div className="text-[10px] text-gray-500">{docScanData.entitiesFound} entities found</div>
+                      <div className="text-xs font-medium capitalize">
+                        {docScanData.level === 'error' ? 'Scan Failed' : `${docScanData.level} Risk`}
+                      </div>
+                      <div className="text-[10px] text-gray-500">
+                        {docScanData.level === 'error' ? docScanData.explanation : `${docScanData.entitiesFound} entities found`}
+                      </div>
                     </div>
                   </div>
                   <div className="text-right">
@@ -1298,6 +1361,16 @@ export function App() {
                   Entities ({docScanData.entitiesFound})
                 </button>
                 <button
+                  onClick={() => setDocInspectorView('original')}
+                  className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
+                    docInspectorView === 'original'
+                      ? 'text-iron-700 border-b-2 border-iron-600 bg-iron-50'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Original
+                </button>
+                <button
                   onClick={() => setDocInspectorView('redacted')}
                   className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
                     docInspectorView === 'redacted'
@@ -1305,7 +1378,7 @@ export function App() {
                       : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  Redacted
+                  Safe Version
                 </button>
               </div>
 
@@ -1414,17 +1487,67 @@ export function App() {
                   </div>
                 )}
 
-                {docInspectorView === 'redacted' && (
+                {docInspectorView === 'original' && (
                   <div>
-                    <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1.5">
-                      Pseudonymized document text
-                    </p>
-                    {docScanData.redactedText ? (
-                      <pre className="text-xs text-gray-700 whitespace-pre-wrap break-words bg-green-50 border border-green-100 rounded-md p-2.5 leading-relaxed font-mono">
-                        {docScanData.redactedText}
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-[10px] text-gray-400 uppercase tracking-wide">
+                        Original extracted text — contains real PII
+                      </p>
+                      <span className="text-[10px] text-red-500 bg-red-50 rounded px-1.5 py-0.5 font-medium">
+                        Sensitive
+                      </span>
+                    </div>
+                    {docScanData.originalText ? (
+                      <pre className="text-xs text-gray-700 whitespace-pre-wrap break-words bg-red-50 border border-red-100 rounded-md p-2.5 leading-relaxed font-mono max-h-48 overflow-y-auto">
+                        {docScanData.originalText}
                       </pre>
                     ) : (
-                      <p className="text-xs text-gray-400 italic">No redacted text available.</p>
+                      <p className="text-xs text-gray-400 italic">Original text not available.</p>
+                    )}
+                    <p className="text-[10px] text-gray-400 text-center mt-1.5">
+                      Compare with the Safe Version tab to see what was pseudonymized
+                    </p>
+                  </div>
+                )}
+
+                {docInspectorView === 'redacted' && (
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-[10px] text-gray-400 uppercase tracking-wide">
+                        Safe to share — all PII replaced with pseudonyms
+                      </p>
+                    </div>
+                    {docScanData.redactedText ? (
+                      <>
+                        <pre className="text-xs text-gray-700 whitespace-pre-wrap break-words bg-green-50 border border-green-100 rounded-md p-2.5 leading-relaxed font-mono max-h-48 overflow-y-auto">
+                          {docScanData.redactedText}
+                        </pre>
+                        <button
+                          onClick={handleCopyDocSafe}
+                          className={`mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
+                            copiedDocSafe
+                              ? 'bg-green-500 text-white'
+                              : 'bg-iron-600 text-white hover:bg-iron-700 active:scale-[0.98]'
+                          }`}
+                        >
+                          {copiedDocSafe ? (
+                            <>
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
+                              Copied to Clipboard
+                            </>
+                          ) : (
+                            <>
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>
+                              Copy Safe Version
+                            </>
+                          )}
+                        </button>
+                        <p className="text-[10px] text-gray-400 text-center mt-1.5">
+                          Names, SSNs, emails, and other PII replaced with realistic pseudonyms
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-xs text-gray-400 italic">No safe version available.</p>
                     )}
                   </div>
                 )}
@@ -1486,7 +1609,7 @@ export function App() {
       {/* Footer */}
       <div className="mt-4 text-center">
         <p className="text-xs text-gray-400">
-          Iron Gate v0.2.1
+          Iron Gate v{chrome.runtime.getManifest().version}
         </p>
       </div>
     </div>

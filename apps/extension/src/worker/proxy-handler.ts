@@ -240,6 +240,7 @@ export interface FileAnalysisResult {
     length: number;
   }>;
   breakdown: Record<string, number>;
+  originalText: string;
   redactedText: string;
   entitiesRedacted: number;
   eventId: string;
@@ -279,6 +280,7 @@ export async function analyzeFile(
       length: e.length,
     })),
     breakdown: result.breakdown || {},
+    originalText: result.originalText || '',
     redactedText: result.redactedText || '',
     entitiesRedacted: result.entitiesRedacted || 0,
     eventId: result.eventId || '',

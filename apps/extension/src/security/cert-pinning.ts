@@ -25,12 +25,11 @@
  *
  * **PLACEHOLDER VALUES** — replace before production deployment.
  */
-export const PINNED_HASHES: readonly string[] = [
-  // Primary certificate pin (placeholder — replace with real hash)
-  'sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
-  // Backup certificate pin (placeholder — replace with real hash)
-  'sha256/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=',
-] as const;
+// TODO: Generate real SPKI SHA-256 hashes once production domain is live:
+//   openssl s_client -connect api.irongate.ai:443 | \
+//     openssl x509 -pubkey -noout | openssl pkey -pubin -outform der | \
+//     openssl dgst -sha256 -binary | base64
+export const PINNED_HASHES: readonly string[] = [] as const;
 
 // ─── Validation ──────────────────────────────────────────────────────────────
 
@@ -50,6 +49,11 @@ function normalizeHash(hash: string): string {
  * @returns `true` if the hash matches a pinned value, `false` otherwise.
  */
 export function validateCertificate(certHash: string): boolean {
+  // Bypass validation when no pins are configured (pre-production)
+  if (PINNED_HASHES.length === 0) {
+    return true;
+  }
+
   if (!certHash) {
     return false;
   }

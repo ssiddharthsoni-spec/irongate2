@@ -3,8 +3,8 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { randomUUID, randomBytes, timingSafeEqual } from 'node:crypto';
 import { db } from '../db/client';
-import { firms, users } from '../db/schema';
-import { eq, sql } from 'drizzle-orm';
+import { firms, users, killSwitch as killSwitchTable } from '../db/schema';
+import { eq, and, isNull, sql } from 'drizzle-orm';
 import type { AppEnv } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -126,16 +126,37 @@ securityRoutes.post('/kill-switch', async (c) => {
     killSwitchStore.delete(storeKey);
   }
 
-  // Attempt to persist to kill_switch table if it exists (graceful fallback)
+  // Persist to kill_switch table via Drizzle ORM
   try {
-    await db.execute(sql`
-      INSERT INTO kill_switch (id, enabled, scope, firm_id, activated_at)
-      VALUES (${randomUUID()}, ${parsed.enabled}, ${parsed.scope}, ${parsed.firm_id ?? null}, ${now})
-      ON CONFLICT (scope, COALESCE(firm_id, '00000000-0000-0000-0000-000000000000'))
-      DO UPDATE SET enabled = ${parsed.enabled}, activated_at = ${now}
-    `);
+    const whereCondition = parsed.firm_id
+      ? and(eq(killSwitchTable.scope, parsed.scope), eq(killSwitchTable.firmId, parsed.firm_id))
+      : and(eq(killSwitchTable.scope, parsed.scope), isNull(killSwitchTable.firmId));
+
+    const [existing] = await db
+      .select({ id: killSwitchTable.id })
+      .from(killSwitchTable)
+      .where(whereCondition)
+      .limit(1);
+
+    if (existing) {
+      await db
+        .update(killSwitchTable)
+        .set({
+          enabled: parsed.enabled,
+          activatedAt: new Date(now),
+          deactivatedAt: parsed.enabled ? null : new Date(now),
+        })
+        .where(eq(killSwitchTable.id, existing.id));
+    } else {
+      await db.insert(killSwitchTable).values({
+        enabled: parsed.enabled,
+        scope: parsed.scope,
+        firmId: parsed.firm_id ?? null,
+        activatedAt: new Date(now),
+      });
+    }
   } catch {
-    // Table may not exist — that is fine, we have the in-memory store
+    // DB persistence failed — in-memory store is the fallback
   }
 
   return c.json({

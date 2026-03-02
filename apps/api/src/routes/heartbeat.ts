@@ -8,7 +8,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { db } from '../db/client';
-import { users } from '../db/schema';
+import { users, extensionHeartbeats } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { logger } from '../lib/logger';
 import type { AppEnv } from '../types';
@@ -48,15 +48,25 @@ heartbeatRoutes.post('/', async (c) => {
   const { extensionVersion, activePlatform, mode, queueDepth, healthStatus } = parsed.data;
 
   try {
-    // Update user record with extension metadata
+    // Update user's last-seen timestamp
     await db
       .update(users)
-      .set({
-        updatedAt: new Date(),
-        // Store extension metadata in a JSON column or dedicated fields
-        // Using updatedAt as lastHeartbeat proxy since the schema doesn't have explicit heartbeat fields
-      })
+      .set({ updatedAt: new Date() })
       .where(and(eq(users.id, userId), eq(users.firmId, firmId)));
+
+    // Persist heartbeat data
+    await db.insert(extensionHeartbeats).values({
+      userId,
+      firmId,
+      extensionVersion,
+      activePlatform: activePlatform ?? null,
+      mode: mode ?? null,
+      queueDepth: queueDepth ?? null,
+      mainWorldLoaded: healthStatus?.mainWorldLoaded ?? null,
+      apiReachable: healthStatus?.apiReachable ?? null,
+      queueDraining: healthStatus?.queueDraining ?? null,
+      errorsLast5Min: healthStatus?.errorsLast5Min ?? null,
+    });
 
     logger.debug('Heartbeat received', {
       userId,

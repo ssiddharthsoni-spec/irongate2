@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Iron Gate — AI Data Protection",
-  "version": "0.2.1",
-  "description": "Detect and protect sensitive data in AI prompts. Real-time PII scanning, pseudonymization, and compliance monitoring for ChatGPT, Gemini, Claude, Copilot, and more.",
+  "name": "Iron Gate — AI Data Governance",
+  "version": "0.2.5",
+  "description": "Protect sensitive data in AI prompts. Real-time PII scanning and compliance for ChatGPT, Claude, Gemini, and more.",
   "homepage_url": "https://irongate-dashboard.vercel.app",
   "permissions": [
     "activeTab",
@@ -27,7 +27,8 @@
     "https://you.com/*",
     "https://huggingface.co/chat/*",
     "https://groq.com/*",
-    "https://irongate-api.onrender.com/*"
+    "https://irongate-api.onrender.com/*",
+    "http://localhost:3000/*"
   ],
   "background": {
     "service_worker": "src/worker/index.ts",
@@ -93,6 +94,6 @@
     "managed_schema": "managed_schema.json"
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'none'; connect-src https://irongate-api.onrender.com 'self';"
+    "extension_pages": "script-src 'self'; object-src 'none'; connect-src https://irongate-api.onrender.com http://localhost:3000 'self';"
   }
 }

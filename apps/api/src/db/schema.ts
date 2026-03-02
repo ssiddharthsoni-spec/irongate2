@@ -256,6 +256,49 @@ export const invites = pgTable('invites', {
 ]);
 
 // ============================================================================
+// Kill Switch
+// ============================================================================
+
+export const killSwitchScopeEnum = pgEnum('kill_switch_scope', ['global', 'firm']);
+
+export const killSwitch = pgTable('kill_switch', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  enabled: boolean('enabled').notNull().default(false),
+  scope: killSwitchScopeEnum('scope').notNull(),
+  firmId: uuid('firm_id').references(() => firms.id),
+  activatedAt: timestamp('activated_at').notNull().defaultNow(),
+  deactivatedAt: timestamp('deactivated_at'),
+  reason: text('reason'),
+  activatedBy: varchar('activated_by', { length: 255 }),
+}, (table) => [
+  unique('kill_switch_scope_firm_uniq').on(table.scope, table.firmId),
+  index('kill_switch_firm_idx').on(table.firmId),
+]);
+
+// ============================================================================
+// Extension Heartbeats
+// ============================================================================
+
+export const extensionHeartbeats = pgTable('extension_heartbeats', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  extensionVersion: varchar('extension_version', { length: 20 }).notNull(),
+  activePlatform: varchar('active_platform', { length: 100 }),
+  mode: varchar('mode', { length: 20 }),
+  queueDepth: integer('queue_depth'),
+  mainWorldLoaded: boolean('main_world_loaded'),
+  apiReachable: boolean('api_reachable'),
+  queueDraining: boolean('queue_draining'),
+  errorsLast5Min: integer('errors_last_5_min'),
+  receivedAt: timestamp('received_at').notNull().defaultNow(),
+}, (table) => [
+  index('heartbeats_user_idx').on(table.userId),
+  index('heartbeats_firm_idx').on(table.firmId),
+  index('heartbeats_received_idx').on(table.receivedAt),
+]);
+
+// ============================================================================
 // Stripe Billing Tables
 // ============================================================================
 

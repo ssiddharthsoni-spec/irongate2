@@ -13,13 +13,8 @@ export const tlsConfig = {
     preload: true,
   },
   pinning: {
-    // Placeholder pins — replace with actual certificate SHA-256 hashes before
-    // production deployment. The primary pin should be the leaf cert and the
-    // backup pin should be an offline-generated key for disaster recovery.
-    pins: [
-      'sha256/PLACEHOLDER_PRIMARY_CERT_PIN_REPLACE_IN_PRODUCTION',
-      'sha256/PLACEHOLDER_BACKUP_CERT_PIN_REPLACE_IN_PRODUCTION',
-    ],
+    // TODO: Replace with real certificate SHA-256 hashes once production domain is live
+    pins: [] as string[],
   },
 };
 

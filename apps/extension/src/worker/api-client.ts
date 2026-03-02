@@ -6,7 +6,7 @@
 import { resolveConfig, onManagedConfigChanged } from '../managed-config';
 import { loadApiKey } from '../api-key-store';
 
-let API_BASE_URL = 'https://irongate-api.onrender.com/v1';
+let API_BASE_URL = 'http://localhost:3000/v1';
 
 interface ApiClientConfig {
   baseUrl: string;
@@ -32,11 +32,8 @@ resolveConfig().then((resolved) => {
   if (resolved.apiUrl) { config.baseUrl = resolved.apiUrl; API_BASE_URL = resolved.apiUrl; }
   if (resolved.firmId) config.firmId = resolved.firmId;
 }).catch(() => {
-  // Fallback: load encrypted API key + base URL from local storage
+  // Fallback: load encrypted API key from local storage
   loadApiKey().then(key => { if (key) config.apiKey = key; }).catch(() => {});
-  chrome.storage.local.get(['apiBaseUrl'], (result) => {
-    if (result.apiBaseUrl) API_BASE_URL = result.apiBaseUrl;
-  });
 });
 
 // Update config when managed policy changes
