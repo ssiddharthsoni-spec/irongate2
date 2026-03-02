@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
+import { useUser } from '@clerk/nextjs';
 import { useApiClient } from '../../lib/api';
 
 // Dynamic imports for chart components — prevents SSR hydration issues with Recharts
@@ -49,6 +50,7 @@ const RISK_COLORS = {
 
 export default function DashboardPage() {
   const { apiFetch } = useApiClient();
+  const { user, isLoaded: isUserLoaded } = useUser();
   // Start with demo data immediately — no loading/error state flash
   const [data, setData] = useState<FirmOverview>(getDemoData());
   const [firmName, setFirmName] = useState<string | null>(null);
@@ -148,12 +150,14 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Header */}
+      {/* Welcome Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">{firmName || 'Your Organization'}</h1>
+          <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">
+            Welcome{isUserLoaded && user ? `, ${user.firstName || user.fullName || 'there'}` : ''}
+          </h1>
           <p className="text-sm text-[#6e6e73] dark:text-[#86868b]">
-            Iron Gate — AI Governance & Security Dashboard
+            {firmName || 'Your Organization'} &middot; AI Governance Dashboard
             {syncing && (
               <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
                 Syncing...
