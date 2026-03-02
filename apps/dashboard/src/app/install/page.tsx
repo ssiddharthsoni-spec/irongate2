@@ -1,6 +1,6 @@
 import Link from 'next/link';
 
-const EXTENSION_ZIP_URL = '/iron-gate-extension-v0.2.2.zip';
+const EXTENSION_ZIP_URL = '/api/download-extension';
 
 const SUPPORTED_TOOLS = [
   'ChatGPT',
@@ -58,6 +58,7 @@ export default function InstallPage() {
         <div className="text-center mb-16">
           <a
             href={EXTENSION_ZIP_URL}
+            download="iron-gate-extension-v0.2.2.zip"
             className="inline-flex items-center gap-3 px-8 py-4 bg-iron-600 hover:bg-iron-700 text-white font-bold rounded-xl text-lg transition-all shadow-xl shadow-iron-600/25 hover:shadow-2xl hover:shadow-iron-600/30"
           >
             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">

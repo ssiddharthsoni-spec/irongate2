@@ -232,6 +232,88 @@ dashboardRoutes.get('/overview', async (c) => {
   });
 });
 
+// GET /v1/dashboard/user-activity — Per-user entity type breakdown
+dashboardRoutes.get('/user-activity', async (c) => {
+  const firmId = c.get('firmId');
+  const daysBack = parsePeriodDays(c);
+  const since = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000);
+
+  const firmCondition = and(eq(events.firmId, firmId), gte(events.createdAt, since));
+
+  // Run all three queries in parallel
+  const [userStats, userEntities, firmUsers] = await Promise.all([
+    // Q1: Per-user aggregate stats
+    db.select({
+      userId: events.userId,
+      totalEvents: sql<number>`count(*)::int`,
+      avgScore: sql<number>`round(avg(${events.sensitivityScore})::numeric, 1)`,
+      highRiskCount: sql<number>`count(*) filter (where ${events.sensitivityScore} > 60)::int`,
+      lastActivity: sql<string>`max(${events.createdAt})::text`,
+      blocked: sql<number>`count(*) filter (where ${events.action} = 'block')::int`,
+      warned: sql<number>`count(*) filter (where ${events.action} = 'warn')::int`,
+      proxied: sql<number>`count(*) filter (where ${events.action} = 'proxy')::int`,
+    })
+      .from(events)
+      .where(firmCondition)
+      .groupBy(events.userId)
+      .orderBy(sql`count(*) desc`),
+
+    // Q2: Per-user entity type breakdown (JSONB unnest)
+    db.execute(
+      sql`SELECT e.user_id,
+                 entity->>'type' AS entity_type,
+                 COUNT(*)::int AS count
+          FROM ${events} e, jsonb_array_elements(e.entities) AS entity
+          WHERE e.firm_id = ${firmId}
+            AND e.created_at >= ${since}
+          GROUP BY e.user_id, entity->>'type'
+          ORDER BY e.user_id, count DESC`
+    ),
+
+    // Q3: User display info
+    db.select({
+      id: users.id,
+      email: users.email,
+      displayName: users.displayName,
+      role: users.role,
+    })
+      .from(users)
+      .where(eq(users.firmId, firmId)),
+  ]);
+
+  // Build lookup maps
+  const userMap = new Map(firmUsers.map((u) => [u.id, u]));
+  const entityMap = new Map<string, { type: string; count: number }[]>();
+  for (const row of userEntities as any[]) {
+    const uid = row.user_id;
+    if (!entityMap.has(uid)) entityMap.set(uid, []);
+    entityMap.get(uid)!.push({ type: row.entity_type, count: Number(row.count) });
+  }
+
+  // Merge results
+  const result = userStats.map((s) => {
+    const user = userMap.get(s.userId);
+    return {
+      userId: s.userId,
+      displayName: user?.displayName || user?.email || s.userId,
+      email: user?.email || '',
+      role: user?.role || 'user',
+      totalEvents: Number(s.totalEvents),
+      avgScore: Number(s.avgScore),
+      highRiskCount: Number(s.highRiskCount),
+      lastActivity: s.lastActivity,
+      actionBreakdown: {
+        blocked: Number(s.blocked),
+        warned: Number(s.warned),
+        proxied: Number(s.proxied),
+      },
+      entityBreakdown: entityMap.get(s.userId) || [],
+    };
+  });
+
+  return c.json({ users: result });
+});
+
 // GET /v1/dashboard/trust-score — Firm trust score with dimensions
 dashboardRoutes.get('/trust-score', async (c) => {
   const firmId = c.get('firmId');

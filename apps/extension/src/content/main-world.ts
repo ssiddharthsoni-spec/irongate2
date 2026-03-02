@@ -259,6 +259,28 @@ interface RegexPattern {
   contextual?: boolean;
 }
 
+// CamelCase words that are known products/tech terms, NOT real organizations.
+// Prevents false-positive ORGANIZATION detection and pseudonymization flicker.
+const CAMELCASE_ALLOWLIST = new Set([
+  // Iron Gate itself
+  'irongate', 'irongateai',
+  // AI tools the extension monitors
+  'chatgpt', 'openai', 'deepseek', 'copilot', 'huggingface', 'huggingchat',
+  // Common tech / product names
+  'javascript', 'typescript', 'postgresql', 'mongodb', 'mysql', 'graphql',
+  'github', 'gitlab', 'bitbucket', 'stackoverflow', 'youtube', 'linkedin',
+  'facebook', 'instagram', 'tiktok', 'snapchat', 'whatsapp', 'telegram',
+  'powerpoint', 'powerbi', 'onenote', 'onedrive', 'sharepoint', 'outlook',
+  'webpack', 'nextjs', 'nodejs', 'expressjs', 'reactjs', 'vuejs', 'angularjs',
+  'tailwindcss', 'tensorflow', 'pytorch', 'jupyter', 'colab',
+  'stackoverflow', 'codecademy', 'freecodecamp', 'leetcode', 'hackerrank',
+  'macos', 'iphone', 'ipad', 'macbook', 'airpods', 'appstore', 'playstore',
+  'dockerfile', 'kubernetes', 'localhost', 'vercel', 'netlify', 'cloudflare',
+  'datadog', 'pagerduty', 'elasticsearch', 'logstash', 'opensearch',
+  'redis', 'dynamodb', 'couchdb', 'firebase', 'supabase', 'cockroachdb',
+  'chatbot', 'midjourney', 'stablediffusion',
+]);
+
 const REGEX_PATTERNS: RegexPattern[] = [
   // Person Names — titled (Dr. John Smith, Mr. Jane Doe)
   {
@@ -540,6 +562,11 @@ function detectWithRegex(text: string): DetectedEntity[] {
           // No proper noun found — likely a false positive (e.g., "for the emergency")
           continue;
         }
+      }
+
+      // Skip known product/tech names that the CamelCase pattern over-matches
+      if (type === 'ORGANIZATION' && CAMELCASE_ALLOWLIST.has(matchText.toLowerCase())) {
+        continue;
       }
 
       const key = `${matchStart}-${matchEnd}-${type}`;
@@ -1614,6 +1641,7 @@ function startDomDepseudonymizer(): void {
 
     if (changed) {
       _domReplacing = true;
+      _domMutationCooldown = Date.now() + 500; // suppress observer re-scans for 500ms
       try {
         node.textContent = text;
       } catch {
@@ -1627,6 +1655,10 @@ function startDomDepseudonymizer(): void {
       }
     }
   }
+
+  // Cooldown timestamp — observer-triggered scans are suppressed until this time.
+  // Prevents flicker loops where: we mutate → observer fires → re-scan → mutate → …
+  let _domMutationCooldown = 0;
 
   function scanElement(el: Node): void {
     if (_domReplacing) return;
@@ -1694,6 +1726,10 @@ function startDomDepseudonymizer(): void {
   const observer = new MutationObserver(() => {
     if (_domReplacing) return;
 
+    // Skip observer-triggered scans during cooldown after our own mutations.
+    // This prevents flicker: our mutation → observer fires → re-scan → mutate → loop.
+    if (Date.now() < _domMutationCooldown) return;
+
     // If generation started, disconnect immediately to stop ALL observer callbacks
     // during React's render cycle. This is the ONLY way to prevent
     // replaceTextWithDirectives errors — deferring isn't enough.
@@ -1709,7 +1745,7 @@ function startDomDepseudonymizer(): void {
       _scanQueued = true;
       setTimeout(() => {
         _scanQueued = false;
-        if (!isCurrentlyGenerating()) {
+        if (!isCurrentlyGenerating() && Date.now() >= _domMutationCooldown) {
           try { scanChatGPTResponses(); } catch {}
         }
       }, 300);
@@ -1796,8 +1832,9 @@ function startDomDepseudonymizer(): void {
     if (Object.keys(currentReverseMap).length === 0) return;
     if (isCurrentlyGenerating()) return;
     if ((window as any).__IRON_GATE_SKIP_DEPSEUDO) return;
+    if (Date.now() < _domMutationCooldown) return;
     setTimeout(() => {
-      if (!isCurrentlyGenerating()) {
+      if (!isCurrentlyGenerating() && Date.now() >= _domMutationCooldown) {
         try { scanChatGPTResponses(); } catch {}
       }
     }, 100);

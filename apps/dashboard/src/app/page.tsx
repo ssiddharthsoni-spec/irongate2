@@ -130,7 +130,7 @@ export default function LandingPage() {
         </div>
 
         {/* Flow pills */}
-        <div className="hidden md:flex items-center justify-center gap-3 mt-6 text-[11px] text-[#86868b] dark:text-[#636366]">
+        <div className="flex items-center justify-center gap-3 mt-6 text-[11px] text-[#86868b] dark:text-[#636366]">
           <span className="px-3 py-1 rounded-full bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 font-semibold">Intercept</span>
           <ArrowRightIcon className="w-3.5 h-3.5" />
           <span className="px-3 py-1 rounded-full bg-green-50 dark:bg-green-950/20 text-green-600 dark:text-green-400 font-semibold">Pseudonymize</span>
@@ -159,32 +159,6 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ════════════════ HOW IT WORKS ════════════════ */}
-      <section id="how-it-works" className="max-w-7xl mx-auto px-6 md:px-12 py-24 md:py-32">
-        <div className="text-center mb-16">
-          <p className="text-xs font-semibold uppercase tracking-widest text-iron-600 dark:text-iron-400 mb-3">How It Works</p>
-          <h2 className="text-2xl md:text-4xl font-bold tracking-tight">Three steps. Zero friction.</h2>
-          <p className="mt-3 text-sm text-[#6e6e73] dark:text-[#86868b] max-w-lg mx-auto leading-relaxed">
-            Iron Gate runs as an invisible layer &mdash; your employees keep using AI the way they already do.
-          </p>
-        </div>
-
-        <div className="grid md:grid-cols-3 gap-6">
-          {[
-            { step: '01', title: 'Install the extension', desc: 'Deploy the Chrome extension to your team. It monitors ChatGPT, Claude, Gemini, Copilot, and 6 more AI tools automatically.', color: 'from-iron-500 to-iron-600' },
-            { step: '02', title: 'Employees keep working', desc: 'No training needed. Every prompt and file upload is scanned in real time. Sensitive data is swapped out before it leaves the browser.', color: 'from-iron-600 to-purple-500' },
-            { step: '03', title: 'You get full visibility', desc: 'See every AI interaction across your org &mdash; what was sent, what was detected, and what action was taken. All in real time.', color: 'from-purple-500 to-pink-500' },
-          ].map((item) => (
-            <div key={item.step} className="bg-white dark:bg-[#1c1c1e] rounded-2xl p-8 border border-[#d2d2d7]/40 dark:border-[#38383a]/40 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-md">
-              <div className={`inline-flex w-10 h-10 rounded-xl bg-gradient-to-br ${item.color} items-center justify-center mb-5`}>
-                <span className="text-white text-xs font-bold">{item.step}</span>
-              </div>
-              <h3 className="text-base font-bold mb-2">{item.title}</h3>
-              <p className="text-sm text-[#6e6e73] dark:text-[#86868b] leading-relaxed">{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </section>
 
       {/* ════════════════ FEATURES ════════════════ */}
       <section id="features" className="bg-white dark:bg-[#1c1c1e] border-y border-[#d2d2d7]/30 dark:border-[#38383a]/40">
@@ -230,10 +204,10 @@ export default function LandingPage() {
                 tag: 'Analytics',
               },
               {
-                icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" /></svg>,
-                title: 'Tamper-Proof Audit Trail',
-                desc: 'Every interaction is hash-chained with SHA-256. Verify integrity at any time for compliance or legal review.',
-                tag: 'Compliance',
+                icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75" /></svg>,
+                title: 'Configurable Policies',
+                desc: 'Set per-team rules: block, warn, or silently redact. Control sensitivity thresholds and choose which entity types to enforce.',
+                tag: 'Admin',
               },
             ].map((f) => (
               <div key={f.title} className="bg-[#fafafa] dark:bg-[#141414] rounded-2xl p-6 border border-[#d2d2d7]/30 dark:border-[#38383a]/30 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-sm group">
@@ -356,16 +330,16 @@ export default function LandingPage() {
         </div>
 
         <div className="grid md:grid-cols-3 gap-6 max-w-4xl mx-auto">
-          {/* Starter */}
+          {/* Pro */}
           <div className="bg-white dark:bg-[#1c1c1e] rounded-2xl p-8 border border-[#d2d2d7]/40 dark:border-[#38383a]/40 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-sm">
-            <h3 className="text-base font-bold mb-1">Starter</h3>
-            <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-6">For small teams getting started</p>
+            <h3 className="text-base font-bold mb-1">Pro</h3>
+            <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-6">For teams getting started</p>
             <div className="mb-6">
-              <span className="text-3xl font-bold">$0</span>
-              <span className="text-[#6e6e73] dark:text-[#86868b] text-sm">/month</span>
+              <span className="text-3xl font-bold">$29</span>
+              <span className="text-[#6e6e73] dark:text-[#86868b] text-sm">/user/month</span>
             </div>
             <ul className="space-y-3 mb-8">
-              {['Up to 5 users', '500 interactions/month', 'Real-time detection', 'Basic dashboard', 'Email support'].map((f) => (
+              {['10 team members', '10,000 prompts/month', 'All 27+ entity types', 'Slack + email alerts', '90-day data retention', 'API access'].map((f) => (
                 <li key={f} className="flex items-center gap-2.5 text-sm text-[#424245] dark:text-[#a1a1a6]">
                   <CheckIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
                   {f}
@@ -373,23 +347,23 @@ export default function LandingPage() {
               ))}
             </ul>
             <Link href="/sign-up" className="block w-full text-center px-5 py-2.5 rounded-xl text-sm font-semibold border border-[#d2d2d7]/60 dark:border-[#38383a]/60 text-[#424245] dark:text-[#a1a1a6] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] transition-colors">
-              Start Free
+              Start Free Trial
             </Link>
           </div>
 
-          {/* Pro */}
+          {/* Business */}
           <div className="relative bg-white dark:bg-[#1c1c1e] rounded-2xl p-8 border-2 border-iron-500 shadow-lg shadow-iron-500/8">
             <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 px-3 py-0.5 bg-iron-600 text-white text-[10px] font-bold rounded-full uppercase tracking-wide">
               Most Popular
             </div>
-            <h3 className="text-base font-bold mb-1">Pro</h3>
+            <h3 className="text-base font-bold mb-1">Business</h3>
             <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-6">For growing organizations</p>
             <div className="mb-6">
-              <span className="text-3xl font-bold">$29</span>
+              <span className="text-3xl font-bold">$49</span>
               <span className="text-[#6e6e73] dark:text-[#86868b] text-sm">/user/month</span>
             </div>
             <ul className="space-y-3 mb-8">
-              {['Unlimited users', '10,000 interactions/month', 'Smart pseudonymization', 'Document scanning', 'Tamper-proof audit trail', 'Priority support'].map((f) => (
+              {['50 team members', '50,000 prompts/month', 'Custom detection rules', 'SIEM integration', '1-year data retention', 'Priority support', 'Webhook alerts'].map((f) => (
                 <li key={f} className="flex items-center gap-2.5 text-sm text-[#424245] dark:text-[#a1a1a6]">
                   <CheckIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
                   {f}
@@ -409,18 +383,22 @@ export default function LandingPage() {
               <span className="text-3xl font-bold">Custom</span>
             </div>
             <ul className="space-y-3 mb-8">
-              {['Everything in Pro', 'Unlimited interactions', 'Custom entity detectors', 'Dedicated account manager', 'SLA & BAA available', 'Enterprise deployment'].map((f) => (
+              {['Unlimited prompts & members', 'Custom entity types & plugins', 'SSO & SCIM provisioning', 'Unlimited data retention', 'Dedicated support engineer', 'On-premise deployment', 'SLA guarantee'].map((f) => (
                 <li key={f} className="flex items-center gap-2.5 text-sm text-[#424245] dark:text-[#a1a1a6]">
                   <CheckIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
                   {f}
                 </li>
               ))}
             </ul>
-            <Link href="/sign-up" className="block w-full text-center px-5 py-2.5 rounded-xl text-sm font-semibold border border-[#d2d2d7]/60 dark:border-[#38383a]/60 text-[#424245] dark:text-[#a1a1a6] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] transition-colors">
+            <a href="mailto:sales@irongate.ai?subject=Enterprise%20Plan%20Inquiry" className="block w-full text-center px-5 py-2.5 rounded-xl text-sm font-semibold border border-[#d2d2d7]/60 dark:border-[#38383a]/60 text-[#424245] dark:text-[#a1a1a6] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] transition-colors">
               Contact Sales
-            </Link>
+            </a>
           </div>
         </div>
+
+        <p className="text-center mt-6 text-xs text-[#86868b] dark:text-[#636366]">
+          All plans include a 14-day free trial. Free tier available (500 prompts/month, 3 members).
+        </p>
       </section>
 
       {/* ════════════════ CTA ════════════════ */}

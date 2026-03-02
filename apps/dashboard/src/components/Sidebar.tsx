@@ -35,7 +35,7 @@ const navItems = [
     ),
   },
   {
-    href: '/settings/team',
+    href: '/user-activity',
     label: 'Team',
     icon: (
       <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
@@ -122,10 +122,8 @@ export default function Sidebar() {
             let isActive: boolean;
             if (item.href === '/dashboard') {
               isActive = pathname === '/dashboard';
-            } else if (item.href === '/settings/team') {
-              isActive = pathname.startsWith('/settings/team');
             } else if (item.href === '/settings') {
-              isActive = pathname.startsWith('/settings') && !pathname.startsWith('/settings/team');
+              isActive = pathname.startsWith('/settings');
             } else {
               isActive = pathname.startsWith(item.href);
             }

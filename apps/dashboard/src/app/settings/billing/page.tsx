@@ -20,16 +20,24 @@ const PLANS: Plan[] = [
     monthlyPrice: '$29',
     annualPrice: '$24',
     period: '/user/month',
-    features: ['10,000 prompts/month', '10 team members', 'Advanced entity detection', 'Slack + email alerts', '90-day data retention', 'API access'],
+    features: ['10,000 prompts/month', '10 team members', 'All 27+ entity types', 'Slack + email alerts', '90-day data retention', 'API access'],
     highlighted: true,
+  },
+  {
+    id: 'business',
+    name: 'Business',
+    monthlyPrice: '$49',
+    annualPrice: '$39',
+    period: '/user/month',
+    features: ['50,000 prompts/month', '50 team members', 'Custom detection rules', 'SIEM integration', '1-year data retention', 'Priority support', 'Webhook alerts'],
   },
   {
     id: 'enterprise',
     name: 'Enterprise',
-    monthlyPrice: '$99',
-    annualPrice: '$79',
-    period: '/user/month',
-    features: ['Unlimited prompts', 'Unlimited team members', 'All entity types + custom', 'SSO & SCIM', '1-year data retention', 'Priority support', 'On-premise option'],
+    monthlyPrice: '',
+    annualPrice: '',
+    period: '',
+    features: ['Unlimited prompts', 'Unlimited team members', 'Custom entity types & plugins', 'SSO & SCIM provisioning', 'Unlimited data retention', 'Dedicated support engineer', 'On-premise deployment', 'SLA guarantee'],
   },
 ];
 
@@ -81,8 +89,8 @@ export default function BillingPage() {
       });
       if (!response.ok) throw new Error(`Server responded with ${response.status}`);
       const data = await response.json();
-      if (data.url) {
-        window.location.href = data.url;
+      if (data.url || data.checkoutUrl) {
+        window.location.href = data.url || data.checkoutUrl;
       }
     } catch {
       setCurrentPlan(planId);
@@ -99,8 +107,8 @@ export default function BillingPage() {
       });
       if (!response.ok) throw new Error(`Server responded with ${response.status}`);
       const data = await response.json();
-      if (data.url) {
-        window.location.href = data.url;
+      if (data.url || data.portalUrl) {
+        window.location.href = data.url || data.portalUrl;
       }
     } catch {
       // Demo mode - no-op
@@ -111,14 +119,14 @@ export default function BillingPage() {
 
   if (loading) {
     return (
-      <div className="space-y-6 max-w-3xl">
+      <div className="space-y-6 max-w-4xl">
         <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
           <div className="h-6 w-40 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded animate-pulse mb-4" />
           <div className="h-20 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded-lg animate-pulse" />
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {[1, 2].map((i) => (
-            <div key={i} className="h-72 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded-xl animate-pulse" />
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-80 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded-xl animate-pulse" />
           ))}
         </div>
       </div>
@@ -135,8 +143,8 @@ export default function BillingPage() {
     : null;
 
   return (
-    <div className="space-y-6 max-w-3xl">
-      {/* Current Plan + Next Invoice — side by side like Wispr */}
+    <div className="space-y-6 max-w-4xl">
+      {/* Current Plan + Next Invoice — side by side */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {/* Current Plan Card */}
         <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
@@ -152,9 +160,9 @@ export default function BillingPage() {
             )}
           </div>
           <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mb-4">
-            {currentPlanObj
+            {currentPlanObj?.monthlyPrice
               ? `${billingCycle === 'annual' ? currentPlanObj.annualPrice : currentPlanObj.monthlyPrice}${currentPlanObj.period}`
-              : 'Free forever'}
+              : currentPlan === 'enterprise' ? 'Custom pricing' : 'Free forever'}
           </p>
           <button
             type="button"
@@ -190,7 +198,7 @@ export default function BillingPage() {
           ) : (
             <>
               <p className="text-lg font-bold text-[#1d1d1f] dark:text-[#f5f5f7] mb-2">
-                {currentPlanObj
+                {currentPlanObj?.monthlyPrice
                   ? billingCycle === 'annual' ? currentPlanObj.annualPrice : currentPlanObj.monthlyPrice
                   : '$0'}
               </p>
@@ -209,7 +217,7 @@ export default function BillingPage() {
         </div>
       </div>
 
-      {/* Choose Plan — Wispr style with Monthly/Annual toggle */}
+      {/* Choose Plan */}
       <div>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">Choose your plan</h2>
@@ -235,14 +243,15 @@ export default function BillingPage() {
               }`}
             >
               Annual
-              <span className="ml-1 text-green-600 dark:text-green-400">-17%</span>
+              <span className="ml-1 text-green-600 dark:text-green-400">Save 20%</span>
             </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {PLANS.map((plan) => {
             const isCurrent = plan.id === currentPlan;
+            const isEnterprise = plan.id === 'enterprise';
             const price = billingCycle === 'annual' ? plan.annualPrice : plan.monthlyPrice;
 
             return (
@@ -251,24 +260,37 @@ export default function BillingPage() {
                 className={`bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border-2 transition-colors ${
                   isCurrent
                     ? 'border-iron-500 dark:border-iron-400'
-                    : 'border-[#d2d2d7]/40 dark:border-[#38383a]/60'
+                    : plan.highlighted
+                      ? 'border-iron-200 dark:border-iron-800'
+                      : 'border-[#d2d2d7]/40 dark:border-[#38383a]/60'
                 }`}
               >
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-lg font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">{plan.name}</h3>
                   {isCurrent && (
                     <span className="inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold bg-iron-100 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300">
-                      Current Plan
+                      Current
+                    </span>
+                  )}
+                  {plan.highlighted && !isCurrent && (
+                    <span className="inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold bg-iron-100 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300">
+                      Popular
                     </span>
                   )}
                 </div>
-                <div className="mb-5">
-                  <span className="text-3xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">{price}</span>
-                  <span className="text-sm text-[#6e6e73] dark:text-[#86868b]">{plan.period}</span>
-                  {billingCycle === 'annual' && (
-                    <span className="ml-2 text-xs text-green-600 dark:text-green-400 font-medium">
-                      billed annually
-                    </span>
+                <div className="mb-5 min-h-[48px]">
+                  {isEnterprise ? (
+                    <span className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Custom</span>
+                  ) : (
+                    <>
+                      <span className="text-3xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">{price}</span>
+                      <span className="text-sm text-[#6e6e73] dark:text-[#86868b]">{plan.period}</span>
+                      {billingCycle === 'annual' && (
+                        <span className="ml-2 text-xs text-green-600 dark:text-green-400 font-medium">
+                          billed annually
+                        </span>
+                      )}
+                    </>
                   )}
                 </div>
                 <ul className="space-y-2 mb-6">
@@ -301,7 +323,7 @@ export default function BillingPage() {
                         <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                         Processing...
                       </span>
-                    ) : plan.id === 'enterprise' ? (
+                    ) : isEnterprise ? (
                       'Contact Sales'
                     ) : (
                       'Upgrade'
