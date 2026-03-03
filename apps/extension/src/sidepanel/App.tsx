@@ -107,18 +107,8 @@ export function App() {
     check();
   }, []);
 
-  // Show loading while checking onboarding status
-  if (onboardingCompleted === null) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="w-8 h-8 bg-iron-600 rounded-lg flex items-center justify-center animate-pulse">
-          <span className="text-white font-bold text-sm">IG</span>
-        </div>
-      </div>
-    );
-  }
-
   // Sign out: clear all user data and return to onboarding
+  // NOTE: this hook MUST be above the early return to avoid Rules of Hooks violation
   const handleSignOut = useCallback(async () => {
     // Clear API key (encrypted store)
     await saveApiKey('');
@@ -148,6 +138,17 @@ export function App() {
 
     setOnboardingCompleted(false);
   }, []);
+
+  // Show loading while checking onboarding status
+  if (onboardingCompleted === null) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="w-8 h-8 bg-iron-600 rounded-lg flex items-center justify-center animate-pulse">
+          <span className="text-white font-bold text-sm">IG</span>
+        </div>
+      </div>
+    );
+  }
 
   // Show onboarding if not completed
   if (!onboardingCompleted) {

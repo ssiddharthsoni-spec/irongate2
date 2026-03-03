@@ -17,3 +17,4 @@ __pycache__/
 playwright-report/
 .playwright-user-data/
 tests/e2e/screenshots/
+*.zip
