@@ -35,6 +35,7 @@ export default function ApiKeysPage() {
   const [creating, setCreating] = useState(false);
   const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
 
@@ -122,6 +123,19 @@ export default function ApiKeysPage() {
     }
   }
 
+  async function handleCopyInstallLink() {
+    if (newlyCreatedKey) {
+      try {
+        const installUrl = `${window.location.origin}/install?key=${encodeURIComponent(newlyCreatedKey)}`;
+        await navigator.clipboard.writeText(installUrl);
+        setLinkCopied(true);
+        setTimeout(() => setLinkCopied(false), 2000);
+      } catch {
+        // Clipboard API not available
+      }
+    }
+  }
+
   function getScopeBadgeClass(scope: string) {
     switch (scope) {
       case 'admin':
@@ -171,9 +185,26 @@ export default function ApiKeysPage() {
                   onClick={handleCopyKey}
                   className="min-h-[44px] px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 flex-shrink-0"
                 >
-                  {copied ? 'Copied!' : 'Copy'}
+                  {copied ? 'Copied!' : 'Copy Key'}
                 </button>
               </div>
+              <button
+                type="button"
+                onClick={handleCopyInstallLink}
+                className={`mt-3 w-full flex items-center justify-center gap-2 min-h-[40px] px-3 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 ${
+                  linkCopied
+                    ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 border border-green-300 dark:border-green-700'
+                    : 'bg-white dark:bg-[#1c1c1e] text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800 hover:bg-green-50 dark:hover:bg-green-900/20'
+                }`}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
+                </svg>
+                {linkCopied ? 'Install Link Copied!' : 'Copy Install Link for Team'}
+              </button>
+              <p className="text-[11px] text-green-600 dark:text-green-500 mt-1.5">
+                Share this link with your team — it includes the download, install steps, and this API key.
+              </p>
             </div>
             <button
               type="button"
