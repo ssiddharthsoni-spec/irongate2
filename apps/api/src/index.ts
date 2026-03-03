@@ -34,6 +34,7 @@ import { documentRoutes } from './routes/documents';
 import { auditRoutes } from './routes/audit';
 import { heartbeatRoutes } from './routes/heartbeat';
 import { authRoutes } from './routes/auth';
+import { extensionAuthRoutes } from './routes/extension-auth';
 import { securityRoutes } from './routes/security';
 import { billingRoutes } from './routes/billing';
 import { notificationRoutes } from './routes/notifications';
@@ -201,6 +202,7 @@ app.get('/docs', (c) => {
 
 // Auth routes (self-authenticated — must be mounted before the global auth middleware)
 app.route('/v1/auth', authRoutes);
+app.route('/v1/auth', extensionAuthRoutes);
 
 // Stripe webhook (no auth — verified via webhook signature)
 app.route('/v1/webhooks/stripe', stripeWebhookRoutes);

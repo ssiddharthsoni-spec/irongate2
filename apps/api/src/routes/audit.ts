@@ -258,8 +258,8 @@ auditRoutes.get('/export/worm', async (c) => {
 // GET /v1/audit/chain — Paginated chain entries
 auditRoutes.get('/chain', async (c) => {
   const firmId = c.get('firmId');
-  const limit = Math.min(parseInt(c.req.query('limit') || '50'), 100);
-  const offset = parseInt(c.req.query('offset') || '0');
+  const limit = Math.max(1, Math.min(parseInt(c.req.query('limit') || '50') || 50, 100));
+  const offset = Math.max(0, parseInt(c.req.query('offset') || '0') || 0);
 
   const results = await db
     .select({

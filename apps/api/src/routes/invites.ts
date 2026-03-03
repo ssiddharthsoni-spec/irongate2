@@ -35,6 +35,12 @@ inviteRoutes.post('/', async (c) => {
 
   const parsed = inviteSchema.parse(body);
 
+  // Prevent role escalation — only admins can invite as admin
+  const inviterRole = c.get('userRole');
+  if (parsed.role === 'admin' && inviterRole !== 'admin') {
+    return c.json({ error: 'Only admins can invite users with the admin role' }, 403);
+  }
+
   // Check if the email is already a member of this firm
   const [existingUser] = await db
     .select({ id: users.id })

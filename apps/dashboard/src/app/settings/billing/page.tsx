@@ -15,21 +15,29 @@ interface Plan {
 
 const PLANS: Plan[] = [
   {
+    id: 'free',
+    name: 'Basic',
+    monthlyPrice: '$0',
+    annualPrice: '$0',
+    period: '',
+    features: ['All AI platforms supported', 'Audit mode (monitor only)', 'Regex-based detection', 'Unlimited scans', 'Community support'],
+  },
+  {
     id: 'pro',
     name: 'Pro',
-    monthlyPrice: '$29',
-    annualPrice: '$24',
+    monthlyPrice: '$18',
+    annualPrice: '$15',
     period: '/user/month',
-    features: ['10,000 prompts/month', '10 team members', 'All 27+ entity types', 'Slack + email alerts', '90-day data retention', 'API access'],
+    features: ['Everything in Basic', 'ML-powered detection', 'Proxy mode (auto-redact)', 'Compliance export', 'Email support', '15-day free trial'],
     highlighted: true,
   },
   {
     id: 'business',
-    name: 'Business',
-    monthlyPrice: '$49',
-    annualPrice: '$39',
-    period: '/user/month',
-    features: ['50,000 prompts/month', '50 team members', 'Custom detection rules', 'SIEM integration', '1-year data retention', 'Priority support', 'Webhook alerts'],
+    name: 'Team',
+    monthlyPrice: '$99',
+    annualPrice: '$79',
+    period: '/month (flat)',
+    features: ['Everything in Pro', 'Up to 10 users included', 'Shared admin dashboard', 'Slack + email alerts', 'Priority support', '1-year data retention'],
   },
   {
     id: 'enterprise',
@@ -37,14 +45,14 @@ const PLANS: Plan[] = [
     monthlyPrice: '',
     annualPrice: '',
     period: '',
-    features: ['Unlimited prompts', 'Unlimited team members', 'Custom entity types & plugins', 'SSO & SCIM provisioning', 'Unlimited data retention', 'Dedicated support engineer', 'On-premise deployment', 'SLA guarantee'],
+    features: ['Everything in Team', 'Unlimited users', 'SSO & SCIM provisioning', 'Custom entity types', 'SIEM integration', 'On-premise deployment', 'SLA guarantee', 'Dedicated support engineer'],
   },
 ];
 
 export default function BillingPage() {
   const { apiFetch } = useApiClient();
 
-  const [currentPlan, setCurrentPlan] = useState('pro');
+  const [currentPlan, setCurrentPlan] = useState('free');
   const [subscriptionStatus, setSubscriptionStatus] = useState<string>('active');
   const [trialEnd, setTrialEnd] = useState<string | null>(null);
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'annual'>('monthly');
@@ -67,8 +75,8 @@ export default function BillingPage() {
           setCurrentPlan(data.plan);
         }
       } catch {
-        setCurrentPlan('pro');
-        setSubscriptionStatus('trialing');
+        setCurrentPlan('free');
+        setSubscriptionStatus('active');
       } finally {
         setLoading(false);
       }
@@ -124,8 +132,8 @@ export default function BillingPage() {
           <div className="h-6 w-40 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded animate-pulse mb-4" />
           <div className="h-20 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded-lg animate-pulse" />
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {[1, 2, 3].map((i) => (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map((i) => (
             <div key={i} className="h-80 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded-xl animate-pulse" />
           ))}
         </div>
@@ -160,9 +168,13 @@ export default function BillingPage() {
             )}
           </div>
           <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mb-4">
-            {currentPlanObj?.monthlyPrice
-              ? `${billingCycle === 'annual' ? currentPlanObj.annualPrice : currentPlanObj.monthlyPrice}${currentPlanObj.period}`
-              : currentPlan === 'enterprise' ? 'Custom pricing' : 'Free forever'}
+            {currentPlan === 'free'
+              ? 'Free forever'
+              : currentPlan === 'enterprise'
+                ? 'Custom pricing'
+                : currentPlanObj?.monthlyPrice
+                  ? `${billingCycle === 'annual' ? currentPlanObj.annualPrice : currentPlanObj.monthlyPrice}${currentPlanObj.period}`
+                  : 'Free forever'}
           </p>
           <button
             type="button"
@@ -248,9 +260,10 @@ export default function BillingPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {PLANS.map((plan) => {
             const isCurrent = plan.id === currentPlan;
+            const isBasic = plan.id === 'free';
             const isEnterprise = plan.id === 'enterprise';
             const price = billingCycle === 'annual' ? plan.annualPrice : plan.monthlyPrice;
 
@@ -281,6 +294,8 @@ export default function BillingPage() {
                 <div className="mb-5 min-h-[48px]">
                   {isEnterprise ? (
                     <span className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Custom</span>
+                  ) : isBasic ? (
+                    <span className="text-3xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Free</span>
                   ) : (
                     <>
                       <span className="text-3xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">{price}</span>
@@ -306,6 +321,10 @@ export default function BillingPage() {
                 {isCurrent ? (
                   <div className="min-h-[40px] w-full px-4 py-2 rounded-lg text-sm font-medium text-center bg-[#f5f5f7] dark:bg-[#2c2c2e] text-[#6e6e73] dark:text-[#86868b]">
                     Current Plan
+                  </div>
+                ) : isBasic ? (
+                  <div className="min-h-[40px] w-full px-4 py-2 rounded-lg text-sm font-medium text-center bg-[#f5f5f7] dark:bg-[#2c2c2e] text-[#6e6e73] dark:text-[#86868b]">
+                    Free Forever
                   </div>
                 ) : (
                   <button
@@ -339,7 +358,7 @@ export default function BillingPage() {
       {/* Free plan note */}
       <div className="p-4 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded-xl">
         <p className="text-sm text-[#6e6e73] dark:text-[#86868b]">
-          <span className="font-medium text-[#424245] dark:text-[#a1a1a6]">Free plan</span> — 500 prompts/month, 3 team members, basic entity detection. Always available after trial ends.
+          <span className="font-medium text-[#424245] dark:text-[#a1a1a6]">Basic plan</span> — Free forever with unlimited scans, regex-based detection, and audit mode across all AI platforms. Pro trial included for 15 days.
         </p>
       </div>
     </div>

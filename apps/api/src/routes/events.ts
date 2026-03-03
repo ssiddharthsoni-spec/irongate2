@@ -310,8 +310,8 @@ eventsRoutes.post('/batch', async (c) => {
 // GET /v1/events — List events with pagination and filters (uses read replica)
 eventsRoutes.get('/', async (c) => {
   const firmId = c.get('firmId');
-  const limit = Math.min(parseInt(c.req.query('limit') || '50'), 100);
-  const offset = parseInt(c.req.query('offset') || '0');
+  const limit = Math.max(1, Math.min(parseInt(c.req.query('limit') || '50') || 50, 100));
+  const offset = Math.max(0, parseInt(c.req.query('offset') || '0') || 0);
   const minScore = c.req.query('minScore');
   const aiToolId = c.req.query('aiToolId');
   const startDate = c.req.query('startDate');

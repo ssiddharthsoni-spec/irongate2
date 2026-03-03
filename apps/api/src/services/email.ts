@@ -92,8 +92,8 @@ async function sendEmail(to: string, subject: string, html: string): Promise<{ s
   const client = getResend();
 
   if (!client) {
-    logger.info('Development fallback — RESEND_API_KEY not set', { to, subject, bodyLength: html.length });
-    return { success: true, id: `dev-${Date.now()}` };
+    logger.warn('Email not sent — RESEND_API_KEY not configured', { to, subject });
+    return { success: false, error: 'Email provider not configured (RESEND_API_KEY missing)' };
   }
 
   try {

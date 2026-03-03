@@ -11,13 +11,18 @@
     "webRequest",
     "alarms",
     "scripting",
-    "webNavigation"
+    "webNavigation",
+    "notifications"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
     "https://chat.openai.com/*",
     "https://claude.ai/*",
     "https://gemini.google.com/*",
+    "https://irongate-api.onrender.com/*",
+    "http://localhost:3000/*"
+  ],
+  "optional_host_permissions": [
     "https://copilot.microsoft.com/*",
     "https://chat.deepseek.com/*",
     "https://poe.com/*",
@@ -26,9 +31,7 @@
     "https://*.perplexity.ai/*",
     "https://you.com/*",
     "https://huggingface.co/chat/*",
-    "https://groq.com/*",
-    "https://irongate-api.onrender.com/*",
-    "http://localhost:3000/*"
+    "https://groq.com/*"
   ],
   "background": {
     "service_worker": "src/worker/index.ts",
@@ -93,6 +96,12 @@
   "storage": {
     "managed_schema": "managed_schema.json"
   },
+  "web_accessible_resources": [
+    {
+      "resources": ["intelligence/model_weights.json"],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; connect-src https://irongate-api.onrender.com http://localhost:3000 'self';"
   }

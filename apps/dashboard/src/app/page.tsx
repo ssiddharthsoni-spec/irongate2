@@ -1,4 +1,6 @@
 import Link from 'next/link';
+import { auth } from '@clerk/nextjs/server';
+import { redirect } from 'next/navigation';
 import LandingNav from '@/components/LandingNav';
 
 /* ── Reusable icon components ─────────────────────────────────────────── */
@@ -26,7 +28,15 @@ function ArrowRightIcon({ className = 'w-4 h-4' }: { className?: string }) {
   );
 }
 
-export default function LandingPage() {
+export default async function LandingPage() {
+  // Server-side redirect: signed-in users go straight to dashboard
+  try {
+    const { userId } = await auth();
+    if (userId) redirect('/dashboard');
+  } catch {
+    // Auth not available — show landing page
+  }
+
   return (
     <div className="min-h-screen bg-[#fafafa] dark:bg-[#0a0a0a] text-[#1d1d1f] dark:text-[#f5f5f7] overflow-x-hidden antialiased">
 
@@ -329,17 +339,16 @@ export default function LandingPage() {
           </p>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-6 max-w-4xl mx-auto">
-          {/* Pro */}
-          <div className="bg-white dark:bg-[#1c1c1e] rounded-2xl p-8 border border-[#d2d2d7]/40 dark:border-[#38383a]/40 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-sm">
-            <h3 className="text-base font-bold mb-1">Pro</h3>
-            <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-6">For teams getting started</p>
-            <div className="mb-6">
-              <span className="text-3xl font-bold">$29</span>
-              <span className="text-[#6e6e73] dark:text-[#86868b] text-sm">/user/month</span>
+        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5 max-w-5xl mx-auto">
+          {/* Basic */}
+          <div className="bg-white dark:bg-[#1c1c1e] rounded-2xl p-7 border border-[#d2d2d7]/40 dark:border-[#38383a]/40 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-sm">
+            <h3 className="text-base font-bold mb-1">Basic</h3>
+            <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-5">For individuals</p>
+            <div className="mb-5">
+              <span className="text-3xl font-bold">Free</span>
             </div>
-            <ul className="space-y-3 mb-8">
-              {['10 team members', '10,000 prompts/month', 'All 27+ entity types', 'Slack + email alerts', '90-day data retention', 'API access'].map((f) => (
+            <ul className="space-y-2.5 mb-7">
+              {['All AI platforms', 'Audit mode', 'Regex detection', 'Unlimited scans', 'Community support'].map((f) => (
                 <li key={f} className="flex items-center gap-2.5 text-sm text-[#424245] dark:text-[#a1a1a6]">
                   <CheckIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
                   {f}
@@ -347,23 +356,23 @@ export default function LandingPage() {
               ))}
             </ul>
             <Link href="/sign-up" className="block w-full text-center px-5 py-2.5 rounded-xl text-sm font-semibold border border-[#d2d2d7]/60 dark:border-[#38383a]/60 text-[#424245] dark:text-[#a1a1a6] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] transition-colors">
-              Start Free Trial
+              Get Started
             </Link>
           </div>
 
-          {/* Business */}
-          <div className="relative bg-white dark:bg-[#1c1c1e] rounded-2xl p-8 border-2 border-iron-500 shadow-lg shadow-iron-500/8">
+          {/* Pro */}
+          <div className="relative bg-white dark:bg-[#1c1c1e] rounded-2xl p-7 border-2 border-iron-500 shadow-lg shadow-iron-500/8">
             <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 px-3 py-0.5 bg-iron-600 text-white text-[10px] font-bold rounded-full uppercase tracking-wide">
               Most Popular
             </div>
-            <h3 className="text-base font-bold mb-1">Business</h3>
-            <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-6">For growing organizations</p>
-            <div className="mb-6">
-              <span className="text-3xl font-bold">$49</span>
-              <span className="text-[#6e6e73] dark:text-[#86868b] text-sm">/user/month</span>
+            <h3 className="text-base font-bold mb-1">Pro</h3>
+            <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-5">For professionals</p>
+            <div className="mb-5">
+              <span className="text-3xl font-bold">$18</span>
+              <span className="text-[#6e6e73] dark:text-[#86868b] text-sm">/user/mo</span>
             </div>
-            <ul className="space-y-3 mb-8">
-              {['50 team members', '50,000 prompts/month', 'Custom detection rules', 'SIEM integration', '1-year data retention', 'Priority support', 'Webhook alerts'].map((f) => (
+            <ul className="space-y-2.5 mb-7">
+              {['Everything in Basic', 'ML-powered detection', 'Proxy mode (auto-redact)', 'Compliance export', 'Email support'].map((f) => (
                 <li key={f} className="flex items-center gap-2.5 text-sm text-[#424245] dark:text-[#a1a1a6]">
                   <CheckIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
                   {f}
@@ -375,15 +384,36 @@ export default function LandingPage() {
             </Link>
           </div>
 
+          {/* Team */}
+          <div className="bg-white dark:bg-[#1c1c1e] rounded-2xl p-7 border border-[#d2d2d7]/40 dark:border-[#38383a]/40 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-sm">
+            <h3 className="text-base font-bold mb-1">Team</h3>
+            <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-5">For growing teams</p>
+            <div className="mb-5">
+              <span className="text-3xl font-bold">$99</span>
+              <span className="text-[#6e6e73] dark:text-[#86868b] text-sm">/mo flat</span>
+            </div>
+            <ul className="space-y-2.5 mb-7">
+              {['Everything in Pro', 'Up to 10 users', 'Shared dashboard', 'Slack + email alerts', 'Priority support', '1-year retention'].map((f) => (
+                <li key={f} className="flex items-center gap-2.5 text-sm text-[#424245] dark:text-[#a1a1a6]">
+                  <CheckIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
+                  {f}
+                </li>
+              ))}
+            </ul>
+            <Link href="/sign-up" className="block w-full text-center px-5 py-2.5 rounded-xl text-sm font-semibold border border-[#d2d2d7]/60 dark:border-[#38383a]/60 text-[#424245] dark:text-[#a1a1a6] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] transition-colors">
+              Start Free Trial
+            </Link>
+          </div>
+
           {/* Enterprise */}
-          <div className="bg-white dark:bg-[#1c1c1e] rounded-2xl p-8 border border-[#d2d2d7]/40 dark:border-[#38383a]/40 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-sm">
+          <div className="bg-white dark:bg-[#1c1c1e] rounded-2xl p-7 border border-[#d2d2d7]/40 dark:border-[#38383a]/40 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-sm">
             <h3 className="text-base font-bold mb-1">Enterprise</h3>
-            <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-6">For regulated industries</p>
-            <div className="mb-6">
+            <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-5">For regulated industries</p>
+            <div className="mb-5">
               <span className="text-3xl font-bold">Custom</span>
             </div>
-            <ul className="space-y-3 mb-8">
-              {['Unlimited prompts & members', 'Custom entity types & plugins', 'SSO & SCIM provisioning', 'Unlimited data retention', 'Dedicated support engineer', 'On-premise deployment', 'SLA guarantee'].map((f) => (
+            <ul className="space-y-2.5 mb-7">
+              {['Everything in Team', 'Unlimited users', 'SSO & SCIM', 'SIEM integration', 'On-premise option', 'SLA guarantee', 'Dedicated engineer'].map((f) => (
                 <li key={f} className="flex items-center gap-2.5 text-sm text-[#424245] dark:text-[#a1a1a6]">
                   <CheckIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
                   {f}
@@ -397,7 +427,7 @@ export default function LandingPage() {
         </div>
 
         <p className="text-center mt-6 text-xs text-[#86868b] dark:text-[#636366]">
-          All plans include a 14-day free trial. Free tier available (500 prompts/month, 3 members).
+          All paid plans include a 15-day free Pro trial. Basic plan is free forever with unlimited scans.
         </p>
       </section>
 

@@ -1,6 +1,27 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { SensitivityScore, DetectedEntity, AIToolId } from '@iron-gate/types';
 import { loadApiKey, saveApiKey } from '../api-key-store';
+import { OnboardingOverlay } from './OnboardingOverlay';
+import { TrialBanner } from './TrialBanner';
+import { UpgradePrompt } from './UpgradePrompt';
+import { TrustPage } from './TrustPage';
+import { GhostDetection } from './GhostDetection';
+import {
+  ONBOARDING_COMPLETED,
+  SELECTED_INDUSTRIES,
+  USER_EMAIL,
+  DEVICE_ID,
+  FIRM_ID,
+  FIRM_CODE,
+  FIRM_NAME,
+  SUBSCRIPTION_TIER,
+  SUBSCRIPTION_CACHED_AT,
+  TRIAL_START_DATE,
+  TRIAL_ENDS_AT,
+  WEEKLY_SCAN_COUNT,
+  TOTAL_ENTITIES_DETECTED,
+  LAST_NOTIFICATION_DAY,
+} from '../shared/storage-keys';
 
 interface ActivityItem {
   id: string;
@@ -11,6 +32,8 @@ interface ActivityItem {
   timestamp: string;
   isDocument?: boolean;
   fileName?: string;
+  ghostLabel?: 'SENSITIVE' | 'CRITICAL';
+  ghostConfidence?: number;
 }
 
 interface EntityFeedback {
@@ -62,6 +85,80 @@ interface PromptInspectorData {
 }
 
 export function App() {
+  // Onboarding state — show new 5-screen overlay if not completed
+  const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    async function check() {
+      const result = await chrome.storage.local.get([ONBOARDING_COMPLETED]);
+      if (result[ONBOARDING_COMPLETED] === true) {
+        setOnboardingCompleted(true);
+        return;
+      }
+      // Legacy users who already have an API key — skip onboarding
+      const key = await loadApiKey();
+      if (key) {
+        await chrome.storage.local.set({ [ONBOARDING_COMPLETED]: true });
+        setOnboardingCompleted(true);
+        return;
+      }
+      setOnboardingCompleted(false);
+    }
+    check();
+  }, []);
+
+  // Show loading while checking onboarding status
+  if (onboardingCompleted === null) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="w-8 h-8 bg-iron-600 rounded-lg flex items-center justify-center animate-pulse">
+          <span className="text-white font-bold text-sm">IG</span>
+        </div>
+      </div>
+    );
+  }
+
+  // Sign out: clear all user data and return to onboarding
+  const handleSignOut = useCallback(async () => {
+    // Clear API key (encrypted store)
+    await saveApiKey('');
+
+    // Clear all extension storage keys
+    await chrome.storage.local.remove([
+      ONBOARDING_COMPLETED,
+      SELECTED_INDUSTRIES,
+      USER_EMAIL,
+      DEVICE_ID,
+      FIRM_ID,
+      FIRM_CODE,
+      FIRM_NAME,
+      SUBSCRIPTION_TIER,
+      SUBSCRIPTION_CACHED_AT,
+      TRIAL_START_DATE,
+      TRIAL_ENDS_AT,
+      WEEKLY_SCAN_COUNT,
+      TOTAL_ENTITIES_DETECTED,
+      LAST_NOTIFICATION_DAY,
+      'connectionState',
+      'apiBaseUrl',
+      'firmMode',
+      'ironGateApiKey',
+      'ironGateApiKey_enc',
+    ]);
+
+    setOnboardingCompleted(false);
+  }, []);
+
+  // Show onboarding if not completed
+  if (!onboardingCompleted) {
+    return <OnboardingOverlay onComplete={() => setOnboardingCompleted(true)} />;
+  }
+
+  return <AppMain onSignOut={handleSignOut} />;
+}
+
+function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
+  const [trustPageOpen, setTrustPageOpen] = useState(false);
   const [status, setStatus] = useState<'idle' | 'monitoring' | 'error'>('idle');
   const [currentTool, setCurrentTool] = useState<string | null>(null);
   const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([]);
@@ -272,12 +369,10 @@ export function App() {
     }
   }, [apiUrlDraft]);
 
-  // Disconnect
-  const handleDisconnect = useCallback(async () => {
-    const cleared: ConnectionState = { connected: false, firmId: null, firmName: null };
-    setConnection(cleared);
-    await chrome.storage.local.set({ connectionState: cleared });
-  }, []);
+  // Sign out — clears all state and returns to onboarding
+  const handleSignOut = useCallback(async () => {
+    await onSignOut();
+  }, [onSignOut]);
 
   // Toggle mode and notify service worker
   const handleModeToggle = useCallback(async () => {
@@ -501,6 +596,16 @@ export function App() {
             setInspectorOpen(true);
           }
         }
+      }
+
+      if (message.type === 'GHOST_DETECTION') {
+        const { label, confidence } = message.payload;
+        setRecentActivity((prev) => {
+          if (prev.length === 0) return prev;
+          const updated = [...prev];
+          updated[0] = { ...updated[0], ghostLabel: label, ghostConfidence: confidence };
+          return updated;
+        });
       }
 
       if (message.type === 'PROTECTION_STATUS') {
@@ -808,6 +913,11 @@ export function App() {
     );
   }
 
+  // -- Trust page overlay --
+  if (trustPageOpen) {
+    return <TrustPage onClose={() => setTrustPageOpen(false)} />;
+  }
+
   // -- Connected: show main UI with settings panel --
   return (
     <div className="min-h-screen bg-gray-50 p-4">
@@ -820,6 +930,7 @@ export function App() {
           <h1 className="text-lg font-semibold text-gray-900">Iron Gate</h1>
           <p className="text-xs text-gray-500">AI Governance Monitor</p>
         </div>
+        {!isManaged && <UpgradePrompt />}
         {!isManaged && (
           <button
             onClick={() => setSettingsOpen(!settingsOpen)}
@@ -849,6 +960,9 @@ export function App() {
           </div>
         </div>
       )}
+
+      {/* Trial Banner */}
+      {!isManaged && <TrialBanner />}
 
       {/* Collapsible Settings Panel */}
       {settingsOpen && !isManaged && (
@@ -940,13 +1054,21 @@ export function App() {
             </span>
           </div>
 
-          {/* Disconnect — hidden in enterprise managed mode */}
+          {/* Trust & Transparency */}
+          <button
+            onClick={() => { setTrustPageOpen(true); setSettingsOpen(false); }}
+            className="w-full mt-1 py-1.5 text-xs font-medium text-gray-600 bg-gray-50 border border-gray-200 rounded-md hover:bg-gray-100 transition-colors mb-2"
+          >
+            Trust & Transparency
+          </button>
+
+          {/* Sign Out — hidden in enterprise managed mode */}
           {!isManaged && (
             <button
-              onClick={handleDisconnect}
-              className="w-full mt-1 py-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition-colors"
+              onClick={handleSignOut}
+              className="w-full py-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition-colors"
             >
-              Disconnect
+              Sign Out
             </button>
           )}
         </div>
@@ -1569,38 +1691,46 @@ export function App() {
             </div>
           ) : (
             recentActivity.map((item) => (
-              <div key={item.id} className="px-4 py-2 flex items-center justify-between">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    {item.isDocument && (
-                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-700">
-                        DOC
+              <React.Fragment key={item.id}>
+                <div className="px-4 py-2 flex items-center justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      {item.isDocument && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-700">
+                          DOC
+                        </span>
+                      )}
+                      <span className="text-xs font-medium text-gray-600 truncate">
+                        {item.isDocument && item.fileName ? item.fileName : item.aiTool}
                       </span>
-                    )}
-                    <span className="text-xs font-medium text-gray-600 truncate">
-                      {item.isDocument && item.fileName ? item.fileName : item.aiTool}
+                    </div>
+                    <span className="text-xs text-gray-400">
+                      {item.entityCount} entities
                     </span>
                   </div>
-                  <span className="text-xs text-gray-400">
-                    {item.entityCount} entities
-                  </span>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span
+                      className={`text-sm font-semibold ${
+                        item.level === 'critical'
+                          ? 'text-risk-critical'
+                          : item.level === 'high'
+                          ? 'text-risk-high'
+                          : item.level === 'medium'
+                          ? 'text-risk-medium'
+                          : 'text-risk-low'
+                      }`}
+                    >
+                      {item.score}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span
-                    className={`text-sm font-semibold ${
-                      item.level === 'critical'
-                        ? 'text-risk-critical'
-                        : item.level === 'high'
-                        ? 'text-risk-high'
-                        : item.level === 'medium'
-                        ? 'text-risk-medium'
-                        : 'text-risk-low'
-                    }`}
-                  >
-                    {item.score}
-                  </span>
-                </div>
-              </div>
+                {item.ghostLabel && (
+                  <GhostDetection
+                    entityType={`${item.ghostLabel} content`}
+                    confidence={item.ghostConfidence ?? 0}
+                  />
+                )}
+              </React.Fragment>
             ))
           )}
         </div>

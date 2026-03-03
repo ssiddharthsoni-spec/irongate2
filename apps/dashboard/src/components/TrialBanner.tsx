@@ -70,8 +70,8 @@ export default function TrialBanner() {
             : 'text-yellow-800 dark:text-yellow-300'
         }`}>
           {isExpired
-            ? `Your ${tier === 'free' ? '' : tier.charAt(0).toUpperCase() + tier.slice(1) + ' '}trial has ended. Upgrade to continue.`
-            : `${daysLeft} day${daysLeft !== 1 ? 's' : ''} left in your ${tier.charAt(0).toUpperCase() + tier.slice(1)} free trial`}
+            ? `Your ${tier === 'free' ? '' : (tier === 'business' ? 'Team' : tier.charAt(0).toUpperCase() + tier.slice(1)) + ' '}trial has ended. Upgrade to continue.`
+            : `${daysLeft} day${daysLeft !== 1 ? 's' : ''} left in your ${tier === 'business' ? 'Team' : tier.charAt(0).toUpperCase() + tier.slice(1)} free trial`}
         </p>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">

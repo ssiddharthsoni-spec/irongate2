@@ -2609,6 +2609,17 @@ const patchedFetch = async function patchedFetch(
 
   // ── PROXY MODE: Pseudonymize before sending ──────────────────────────────
   if (mode === 'proxy') {
+    // DOM pre-submit adapters (ChatGPT, Gemini) handle pseudonymization by
+    // writing to the input BEFORE submit. The platform then builds the request
+    // with the already-pseudonymized text. Modifying the fetch body on top of
+    // that causes double-pseudonymization and 500s from the backend (ChatGPT's
+    // /backend-api/conversation rejects re-serialized JSON).
+    // → Skip fetch-level body modification for dom-presubmit adapters.
+    if (activeAdapter?.interception === 'dom-presubmit') {
+      igLog('DOM pre-submit adapter — skipping fetch body modification (DOM layer handles proxy)');
+      return originalFetch.call(window, input, init);
+    }
+
     // Prevent double pseudonymization: if this body was already proxied
     // (e.g., ChatGPT sends /prepare then /conversation with same data),
     // skip the second interception.
@@ -2804,6 +2815,11 @@ const patchedFetch = async function patchedFetch(
               } catch (retryErr) {
                 console.warn('[Iron Gate MAIN] Fallback retry also failed:', retryErr);
               }
+            }
+            if (!modifiedResponse.ok && modifiedResponse.status >= 500) {
+              console.warn(`[Iron Gate MAIN] ⚠️ Modified request got ${modifiedResponse.status} — falling back to ORIGINAL request (unprotected)`);
+              // Send the original unmodified request so the user's message goes through
+              return originalFetch.call(window, input, init);
             }
             if (!modifiedResponse.ok) {
               console.warn(`[Iron Gate MAIN] ⚠️ Modified request got ${modifiedResponse.status} — tool backend may have rejected the modified body`);

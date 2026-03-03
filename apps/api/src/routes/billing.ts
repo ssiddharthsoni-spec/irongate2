@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import Stripe from 'stripe';
 import { db } from '../db/client';
-import { subscriptions, invoices, events } from '../db/schema';
+import { subscriptions, invoices, events, users } from '../db/schema';
 import { eq, and, desc, gte, sql } from 'drizzle-orm';
 import type { AppEnv } from '../types';
 
@@ -161,16 +161,27 @@ billingRoutes.post('/checkout', async (c) => {
     }
   }
 
+  // Per-seat billing for Pro, flat rate for Team (business)
+  let quantity = 1;
+  if (tier === 'pro') {
+    const [{ seatCount }] = await db
+      .select({ seatCount: sql<number>`count(*)` })
+      .from(users)
+      .where(eq(users.firmId, firmId));
+    quantity = Math.max(1, Number(seatCount));
+  }
+  // Team (business) tier: quantity stays 1 (flat $99/month)
+
   const dashboardUrl = process.env.DASHBOARD_URL || 'https://irongate-dashboard.vercel.app';
 
   const session = await stripe.checkout.sessions.create({
     customer: customerId,
     mode: 'subscription',
-    line_items: [{ price: priceId, quantity: 1 }],
+    line_items: [{ price: priceId, quantity }],
     subscription_data: { trial_period_days: 15 },
     success_url: `${dashboardUrl}/admin?billing=success`,
     cancel_url: `${dashboardUrl}/admin?billing=canceled`,
-    metadata: { firmId, tier, cycle },
+    metadata: { firmId, tier, cycle, seats: String(quantity) },
   });
 
   return c.json({ checkoutUrl: session.url });
@@ -218,8 +229,8 @@ billingRoutes.post('/portal', async (c) => {
 billingRoutes.get('/invoices', async (c) => {
   const firmId = c.get('firmId');
 
-  const limit = Math.min(parseInt(c.req.query('limit') || '25'), 100);
-  const offset = parseInt(c.req.query('offset') || '0');
+  const limit = Math.max(1, Math.min(parseInt(c.req.query('limit') || '25') || 25, 100));
+  const offset = Math.max(0, parseInt(c.req.query('offset') || '0') || 0);
 
   const rows = await db
     .select()
@@ -277,12 +288,13 @@ billingRoutes.get('/usage', async (c) => {
 
   const tier = subscription?.tier || 'free';
 
-  // Tier limits (prompts per month)
+  // Tier limits (prompts per month) — all tiers have unlimited scans
+  // Gating is by feature (regex-only for Basic, ML for Pro+), not volume
   const tierLimits: Record<string, number> = {
-    free: 500,
-    pro: 10_000,
-    business: 100_000,
-    enterprise: -1, // unlimited
+    free: -1,      // Basic: unlimited scans, regex-only
+    pro: -1,       // Pro: unlimited scans + ML detection
+    business: -1,  // Team: unlimited scans + ML + shared dashboard
+    enterprise: -1, // Enterprise: unlimited
   };
 
   const promptCount = Number(usage?.promptCount || 0);

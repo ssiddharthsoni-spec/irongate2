@@ -56,8 +56,8 @@ export async function dispatchAlert(payload: AlertPayload): Promise<string> {
   // 3. Dispatch to enabled channels (fire-and-forget)
   const dispatches: Promise<void>[] = [];
 
-  // Email notification
-  if (notifications.emailEnabled && payload.severity !== 'info') {
+  // Email notification (check both key names for backwards compatibility)
+  if ((notifications.emailAlerts || notifications.emailEnabled) && payload.severity !== 'info') {
     dispatches.push(sendAlertEmails(payload, firm.name ?? 'Your Firm'));
   }
 

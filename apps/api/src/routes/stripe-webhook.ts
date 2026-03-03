@@ -111,8 +111,8 @@ stripeWebhookRoutes.post('/', async (c) => {
     }
   } catch (err) {
     logger.error('Error handling Stripe webhook event', { eventType: event.type, error: err instanceof Error ? err.message : String(err) });
-    // Return 200 so Stripe doesn't retry — we log the error server-side
-    return c.json({ received: true, error: 'Handler error logged.' }, 200);
+    // Return 500 so Stripe retries with exponential backoff — DB errors are transient
+    return c.json({ error: 'Internal handler error' }, 500);
   }
 
   return c.json({ received: true });

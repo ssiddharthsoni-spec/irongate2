@@ -3,6 +3,9 @@ import type { NextConfig } from 'next';
 const nextConfig: NextConfig = {
   output: 'standalone',
   transpilePackages: ['@iron-gate/types'],
+  env: {
+    NEXT_PUBLIC_APP_VERSION: require('./package.json').version,
+  },
   eslint: {
     // Linting is handled by the root eslint.config.js in CI;
     // skip during Next.js build to avoid plugin mismatch.

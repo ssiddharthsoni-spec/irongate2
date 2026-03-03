@@ -14,11 +14,18 @@ import { scanForSecrets } from './detectors/secret-scanner';
 import { resolveConfig, onManagedConfigChanged } from '../managed-config';
 import { saveApiKey, loadApiKey } from '../api-key-store';
 import { recordAttestation, getAuditLog, clearAuditLog } from './audit-trail';
+import { initTrialAlarms, handleTrialAlarm } from './trial-notifications';
+import { classifyIfPro, classifyForGhost } from '../detection/ml-classifier';
+import { isPro } from '../shared/tier-gate';
+import { TOTAL_ENTITIES_DETECTED, WEEKLY_SCAN_COUNT } from '../shared/storage-keys';
 
 // Debug logging — silent in production, enable via: chrome.storage.local.get('ironGateDebug')
 let _IG_DEBUG = false;
 try { chrome.storage.local.get('ironGateDebug', (r) => { _IG_DEBUG = !!r.ironGateDebug; }); } catch {}
 function igLog(...args: any[]) { if (_IG_DEBUG) console.log('[Iron Gate]', ...args); }
+
+// Cache last prompt text per tab for ghost detection (Basic tier only)
+const lastPromptTextByTab = new Map<number, string>();
 
 igLog('Service worker started');
 
@@ -199,10 +206,29 @@ async function handleMessage(
         })),
       ];
 
+      // ── ML classification (Pro+ only) ──
+      const mlResult = await classifyIfPro(text);
+      if (mlResult && (mlResult.label === 'SENSITIVE' || mlResult.label === 'CRITICAL')) {
+        igLog('ML classified as', mlResult.label, 'confidence:', mlResult.confidence);
+      }
+
       const sensitivityResult = computeScore(text, allEntities);
+
+      // If ML says CRITICAL but regex says low, boost the score
+      if (mlResult && mlResult.label === 'CRITICAL' && sensitivityResult.score < 60) {
+        sensitivityResult.score = Math.max(sensitivityResult.score, 60);
+        sensitivityResult.level = 'high';
+      }
 
       // Generate pseudonymized version for transparency view
       const pseudoResult = pseudonymizeLocal(text, allEntities);
+
+      // Track stats for trial banner
+      const statsData = await chrome.storage.local.get([TOTAL_ENTITIES_DETECTED, WEEKLY_SCAN_COUNT]);
+      await chrome.storage.local.set({
+        [TOTAL_ENTITIES_DETECTED]: (statsData[TOTAL_ENTITIES_DETECTED] || 0) + allEntities.length,
+        [WEEKLY_SCAN_COUNT]: (statsData[WEEKLY_SCAN_COUNT] || 0) + 1,
+      });
 
       // Queue event for API with CORRECT schema
       const promptHash = await hashText(text);
@@ -237,6 +263,13 @@ async function handleMessage(
       // fires with partial text → 2 entities → score 25, badge drops to 25.
       //
       // PROMPT_DETECTED is still valuable for API analytics (queued above).
+
+      // Cache raw text for ghost detection (used when SENSITIVITY_SCORE fires)
+      const pdTabId = sender.tab?.id;
+      if (pdTabId) {
+        lastPromptTextByTab.set(pdTabId, text);
+      }
+
       return { received: true };
     }
 
@@ -319,6 +352,25 @@ async function handleMessage(
         type: 'SENSITIVITY_SCORE',
         payload: { ...payload, tabId: ssTabId },
       }).catch(() => {});
+
+      // Ghost detection for Basic tier users (fire-and-forget)
+      const ghostTabId = ssTabId ?? sender.tab?.id;
+      if (ghostTabId && lastPromptTextByTab.has(ghostTabId)) {
+        const cachedText = lastPromptTextByTab.get(ghostTabId)!;
+        lastPromptTextByTab.delete(ghostTabId);
+        isPro().then(hasPro => {
+          if (!hasPro) {
+            classifyForGhost(cachedText).then(ghostResult => {
+              if (ghostResult && (ghostResult.label === 'SENSITIVE' || ghostResult.label === 'CRITICAL')) {
+                chrome.runtime.sendMessage({
+                  type: 'GHOST_DETECTION',
+                  payload: { label: ghostResult.label, confidence: ghostResult.confidence, tabId: ghostTabId },
+                }).catch(() => {});
+              }
+            }).catch(() => {});
+          }
+        });
+      }
 
       return { ok: true };
     }
@@ -673,6 +725,9 @@ chrome.alarms.create('sync-policies', { periodInMinutes: 15 });
 // Periodic alarm for heartbeat (every 5 minutes)
 chrome.alarms.create('heartbeat', { periodInMinutes: 5 });
 
+// Trial notification alarms
+initTrialAlarms();
+
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'flush-events') {
     igLog('Flushing event queue...');
@@ -692,6 +747,10 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       console.warn('[Iron Gate] Heartbeat failed:', err)
     );
   }
+  // Trial notification alarms
+  handleTrialAlarm(alarm.name).catch((err) =>
+    console.warn('[Iron Gate] Trial alarm handler failed:', err)
+  );
 });
 
 // Run initial policy sync on startup

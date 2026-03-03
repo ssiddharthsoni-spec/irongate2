@@ -28,6 +28,8 @@ export const firms = pgTable('firms', {
   config: jsonb('config').default({}),
   /** Hex-encoded PBKDF2 salt for per-firm AES-256-GCM key derivation */
   encryptionSalt: varchar('encryption_salt', { length: 64 }),
+  /** Shareable code for employees to join this firm from the extension */
+  enrollmentCode: varchar('enrollment_code', { length: 50 }).unique(),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

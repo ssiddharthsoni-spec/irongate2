@@ -52,8 +52,8 @@ const API_KEY_CACHE_TTL = 5 * 60_000;  // 5 minutes
 
 // Cache user lookups with TTL to avoid querying on every request
 const userCache = new TTLMap<string, { userId: string; firmId: string; role: string } | null>(USER_CACHE_TTL);
-// Cache API key lookups (hash → { firmId, userId, role }) with TTL
-const apiKeyCache = new TTLMap<string, { firmId: string; userId: string; role: string }>(API_KEY_CACHE_TTL);
+// Cache API key lookups (hash → { firmId, userId, role, scope }) with TTL
+const apiKeyCache = new TTLMap<string, { firmId: string; userId: string; role: string; scope: string }>(API_KEY_CACHE_TTL);
 
 /** Invalidate a cached user so the next request re-fetches from DB. */
 export function invalidateUserCache(clerkId: string) {
@@ -81,6 +81,11 @@ export const authMiddleware = createMiddleware(async (c, next) => {
     // Check cache first
     const cached = apiKeyCache.get(keyHash);
     if (cached) {
+      // Enforce scope on cached path too
+      const method = c.req.method.toUpperCase();
+      if (cached.scope === 'read' && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+        return c.json({ error: 'Forbidden: API key scope is read-only' }, 403);
+      }
       c.set('userId', cached.userId);
       c.set('clerkId', 'api-key');
       c.set('firmId', cached.firmId);
@@ -100,6 +105,7 @@ export const authMiddleware = createMiddleware(async (c, next) => {
           createdBy: apiKeys.createdBy,
           revokedAt: apiKeys.revokedAt,
           expiresAt: apiKeys.expiresAt,
+          scope: apiKeys.scope,
         })
         .from(apiKeys)
         .where(and(eq(apiKeys.keyHash, keyHash), isNull(apiKeys.revokedAt)))
@@ -111,6 +117,12 @@ export const authMiddleware = createMiddleware(async (c, next) => {
           return c.json({ error: 'Unauthorized: API key has expired' }, 401);
         }
 
+        // Enforce scope: read-only keys cannot make mutating requests
+        const method = c.req.method.toUpperCase();
+        if (keyRecord.scope === 'read' && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+          return c.json({ error: 'Forbidden: API key scope is read-only' }, 403);
+        }
+
         // Look up the creating user's role
         const [creator] = await db
           .select({ role: users.role })
@@ -119,7 +131,7 @@ export const authMiddleware = createMiddleware(async (c, next) => {
           .limit(1);
         const role = creator?.role || 'user';
 
-        apiKeyCache.set(keyHash, { firmId: keyRecord.firmId, userId: keyRecord.createdBy, role });
+        apiKeyCache.set(keyHash, { firmId: keyRecord.firmId, userId: keyRecord.createdBy, role, scope: keyRecord.scope });
         c.set('userId', keyRecord.createdBy);
         c.set('clerkId', 'api-key');
         c.set('firmId', keyRecord.firmId);

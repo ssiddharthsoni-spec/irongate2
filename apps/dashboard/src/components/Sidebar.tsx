@@ -210,7 +210,7 @@ export default function Sidebar() {
           <div className="flex items-center justify-between px-3 py-2 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded-lg">
             <div>
               <p className="text-[11px] font-medium text-[#6e6e73] dark:text-[#86868b]">Iron Gate</p>
-              <p className="text-[10px] text-[#aeaeb2] dark:text-[#636366]">v0.2.2</p>
+              <p className="text-[10px] text-[#aeaeb2] dark:text-[#636366]">v{process.env.NEXT_PUBLIC_APP_VERSION || '0.0.0'}</p>
             </div>
             <ThemeToggle />
           </div>

@@ -11,8 +11,8 @@ export const alertRoutes = new Hono<AppEnv>();
 // GET / — List alerts for the firm
 alertRoutes.get('/', async (c) => {
   const firmId = c.get('firmId');
-  const limit = parseInt(c.req.query('limit') || '50');
-  const offset = parseInt(c.req.query('offset') || '0');
+  const limit = Math.max(1, Math.min(parseInt(c.req.query('limit') || '50') || 50, 100));
+  const offset = Math.max(0, parseInt(c.req.query('offset') || '0') || 0);
   const severity = c.req.query('severity') as 'info' | 'warning' | 'critical' | undefined;
 
   const results = await getAlerts(firmId, { limit, offset, severity });
