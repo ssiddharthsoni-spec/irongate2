@@ -46,7 +46,12 @@ extensionAuthRoutes.post('/register-extension', async (c) => {
     return c.json({ error: 'Too many requests. Please try again later.' }, 429);
   }
 
-  const body = await c.req.json();
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
 
   const schema = z.object({
     email: z.string().email(),
@@ -55,161 +60,194 @@ extensionAuthRoutes.post('/register-extension', async (c) => {
     firmCode: z.string().optional(),
   });
 
-  const parsed = schema.parse(body);
+  const result = schema.safeParse(body);
+  if (!result.success) {
+    return c.json({ error: 'Validation error', details: result.error.errors }, 400);
+  }
+  const parsed = result.data;
 
-  // Check if user already exists with this email
-  const [existing] = await db
-    .select({
-      id: users.id,
-      firmId: users.firmId,
-    })
-    .from(users)
-    .where(eq(users.email, parsed.email))
-    .limit(1);
-
-  if (existing) {
-    // User exists — look up their subscription and generate a fresh API key
-    const [sub] = await db
-      .select({ tier: subscriptions.tier, currentPeriodEnd: subscriptions.currentPeriodEnd })
-      .from(subscriptions)
-      .where(eq(subscriptions.firmId, existing.firmId))
+  try {
+    // Check if user already exists with this email
+    const [existing] = await db
+      .select({
+        id: users.id,
+        firmId: users.firmId,
+      })
+      .from(users)
+      .where(eq(users.email, parsed.email))
       .limit(1);
 
-    const [firm] = await db
-      .select({ name: firms.name })
-      .from(firms)
-      .where(eq(firms.id, existing.firmId))
-      .limit(1);
+    if (existing) {
+      // User exists — look up their subscription and generate a fresh API key
+      const [sub] = await db
+        .select({ tier: subscriptions.tier, currentPeriodEnd: subscriptions.currentPeriodEnd })
+        .from(subscriptions)
+        .where(eq(subscriptions.firmId, existing.firmId))
+        .limit(1);
 
-    // Generate API key for this user
+      const [firm] = await db
+        .select({ name: firms.name })
+        .from(firms)
+        .where(eq(firms.id, existing.firmId))
+        .limit(1);
+
+      // Generate API key for this user
+      const { key, hash, prefix } = generateApiKey();
+      await db.insert(apiKeys).values({
+        firmId: existing.firmId,
+        name: `Extension (${parsed.email})`,
+        keyHash: hash,
+        keyPrefix: prefix,
+        scope: 'write',
+        createdBy: existing.id,
+      });
+
+      return c.json({
+        userId: existing.id,
+        firmId: existing.firmId,
+        firmName: firm?.name || '',
+        apiKey: key,
+        tier: sub?.tier || 'free',
+        trialEndsAt: sub?.currentPeriodEnd?.toISOString() || null,
+        status: 'existing',
+      });
+    }
+
+    // Determine which firm to join
+    let firmId: string;
+    let firmName: string;
+
+    if (parsed.firmCode) {
+      // Look up firm by enrollment code
+      const [firm] = await db
+        .select({ id: firms.id, name: firms.name })
+        .from(firms)
+        .where(eq(firms.enrollmentCode, parsed.firmCode))
+        .limit(1);
+
+      if (!firm) {
+        return c.json({ error: 'Invalid firm code' }, 400);
+      }
+
+      firmId = firm.id;
+      firmName = firm.name;
+    } else {
+      // Create a personal firm
+      const emailPrefix = parsed.email.split('@')[0];
+
+      // Try inserting with encryptionSalt; if the column doesn't exist yet, retry without it
+      let newFirm: { id: string; name: string };
+      try {
+        const encryptionSalt = crypto.randomBytes(16).toString('hex');
+        const [row] = await db
+          .insert(firms)
+          .values({
+            name: `${emailPrefix}'s workspace`,
+            mode: 'audit',
+            config: { industry: parsed.industry || null },
+            encryptionSalt,
+          })
+          .returning({ id: firms.id, name: firms.name });
+        newFirm = row;
+      } catch (firmErr) {
+        // Fallback: column may not exist in deployed DB yet
+        logger.warn('Firm insert with encryptionSalt failed, retrying without', {
+          error: firmErr instanceof Error ? firmErr.message : String(firmErr),
+        });
+        const [row] = await db
+          .insert(firms)
+          .values({
+            name: `${emailPrefix}'s workspace`,
+            mode: 'audit',
+            config: { industry: parsed.industry || null },
+          } as any)
+          .returning({ id: firms.id, name: firms.name });
+        newFirm = row;
+      }
+
+      firmId = newFirm.id;
+      firmName = newFirm.name;
+    }
+
+    // Create user
+    const [newUser] = await db
+      .insert(users)
+      .values({
+        clerkId: `ext_${parsed.deviceId}`,
+        firmId,
+        email: parsed.email,
+        displayName: parsed.email.split('@')[0],
+        role: parsed.firmCode ? 'user' : 'admin',
+      })
+      .returning({ id: users.id });
+
+    // Start 15-day Pro trial (only for new personal firms, not when joining existing)
+    let tier = 'free';
+    let trialEndsAt: string | null = null;
+
+    if (!parsed.firmCode) {
+      const trialEnd = new Date();
+      trialEnd.setDate(trialEnd.getDate() + 15);
+
+      await db.insert(subscriptions).values({
+        firmId,
+        stripeCustomerId: `trial_${firmId}`,
+        tier: 'pro',
+        status: 'trialing',
+        currentPeriodStart: new Date(),
+        currentPeriodEnd: trialEnd,
+      });
+
+      tier = 'pro';
+      trialEndsAt = trialEnd.toISOString();
+    } else {
+      // Check existing subscription for the firm they're joining
+      const [sub] = await db
+        .select({ tier: subscriptions.tier, currentPeriodEnd: subscriptions.currentPeriodEnd })
+        .from(subscriptions)
+        .where(eq(subscriptions.firmId, firmId))
+        .limit(1);
+
+      tier = sub?.tier || 'free';
+      trialEndsAt = sub?.currentPeriodEnd?.toISOString() || null;
+    }
+
+    // Generate API key
     const { key, hash, prefix } = generateApiKey();
     await db.insert(apiKeys).values({
-      firmId: existing.firmId,
+      firmId,
       name: `Extension (${parsed.email})`,
       keyHash: hash,
       keyPrefix: prefix,
       scope: 'write',
-      createdBy: existing.id,
+      createdBy: newUser.id,
     });
+
+    logger.info('Extension user registered', { email: parsed.email, firmId, tier });
+
+    // Send welcome email (fire-and-forget)
+    import('../services/email').then(({ sendWelcomeEmail }) => {
+      sendWelcomeEmail(parsed.email, parsed.email.split('@')[0]).catch(() => {});
+    }).catch(() => {});
 
     return c.json({
-      userId: existing.id,
-      firmId: existing.firmId,
-      firmName: firm?.name || '',
+      userId: newUser.id,
+      firmId,
+      firmName,
       apiKey: key,
-      tier: sub?.tier || 'free',
-      trialEndsAt: sub?.currentPeriodEnd?.toISOString() || null,
-      status: 'existing',
-    });
-  }
-
-  // Determine which firm to join
-  let firmId: string;
-  let firmName: string;
-
-  if (parsed.firmCode) {
-    // Look up firm by enrollment code
-    const [firm] = await db
-      .select({ id: firms.id, name: firms.name })
-      .from(firms)
-      .where(eq(firms.enrollmentCode, parsed.firmCode))
-      .limit(1);
-
-    if (!firm) {
-      return c.json({ error: 'Invalid firm code' }, 400);
-    }
-
-    firmId = firm.id;
-    firmName = firm.name;
-  } else {
-    // Create a personal firm
-    const emailPrefix = parsed.email.split('@')[0];
-    const encryptionSalt = crypto.randomBytes(16).toString('hex');
-
-    const [newFirm] = await db
-      .insert(firms)
-      .values({
-        name: `${emailPrefix}'s workspace`,
-        mode: 'audit',
-        config: { industry: parsed.industry },
-        encryptionSalt,
-      })
-      .returning();
-
-    firmId = newFirm.id;
-    firmName = newFirm.name;
-  }
-
-  // Create user
-  const [newUser] = await db
-    .insert(users)
-    .values({
-      clerkId: `ext_${parsed.deviceId}`,
-      firmId,
+      tier,
+      trialEndsAt,
+      status: 'created',
+    }, 201);
+  } catch (err) {
+    logger.error('Extension registration failed', {
+      error: err instanceof Error ? err.message : String(err),
       email: parsed.email,
-      displayName: parsed.email.split('@')[0],
-      role: parsed.firmCode ? 'user' : 'admin',
-    })
-    .returning({ id: users.id });
-
-  // Start 15-day Pro trial (only for new personal firms, not when joining existing)
-  let tier = 'free';
-  let trialEndsAt: string | null = null;
-
-  if (!parsed.firmCode) {
-    const trialEnd = new Date();
-    trialEnd.setDate(trialEnd.getDate() + 15);
-
-    await db.insert(subscriptions).values({
-      firmId,
-      stripeCustomerId: `trial_${firmId}`,
-      tier: 'pro',
-      status: 'trialing',
-      currentPeriodStart: new Date(),
-      currentPeriodEnd: trialEnd,
     });
-
-    tier = 'pro';
-    trialEndsAt = trialEnd.toISOString();
-  } else {
-    // Check existing subscription for the firm they're joining
-    const [sub] = await db
-      .select({ tier: subscriptions.tier, currentPeriodEnd: subscriptions.currentPeriodEnd })
-      .from(subscriptions)
-      .where(eq(subscriptions.firmId, firmId))
-      .limit(1);
-
-    tier = sub?.tier || 'free';
-    trialEndsAt = sub?.currentPeriodEnd?.toISOString() || null;
+    return c.json({
+      error: err instanceof Error ? err.message : 'Registration failed. Please try again.',
+    }, 500);
   }
-
-  // Generate API key
-  const { key, hash, prefix } = generateApiKey();
-  await db.insert(apiKeys).values({
-    firmId,
-    name: `Extension (${parsed.email})`,
-    keyHash: hash,
-    keyPrefix: prefix,
-    scope: 'write',
-    createdBy: newUser.id,
-  });
-
-  logger.info('Extension user registered', { email: parsed.email, firmId, tier });
-
-  // Send welcome email (fire-and-forget)
-  import('../services/email').then(({ sendWelcomeEmail }) => {
-    sendWelcomeEmail(parsed.email, parsed.email.split('@')[0]).catch(() => {});
-  }).catch(() => {});
-
-  return c.json({
-    userId: newUser.id,
-    firmId,
-    firmName,
-    apiKey: key,
-    tier,
-    trialEndsAt,
-    status: 'created',
-  }, 201);
 });
 
 // ---------------------------------------------------------------------------
