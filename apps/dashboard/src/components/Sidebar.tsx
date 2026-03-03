@@ -168,7 +168,7 @@ export default function Sidebar() {
             </div>
             <button
               type="button"
-              onClick={() => signOut({ redirectUrl: '/' })}
+              onClick={() => signOut({ redirectUrl: '/sign-in' })}
               className="p-1.5 rounded-md text-[#aeaeb2] hover:text-red-500 dark:text-[#636366] dark:hover:text-red-400 hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] transition-colors"
               aria-label="Sign out"
               title="Sign out"

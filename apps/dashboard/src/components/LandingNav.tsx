@@ -112,7 +112,7 @@ export default function LandingNav() {
                     <div className="border-t border-[#d2d2d7]/40 dark:border-[#38383a]/40 mt-1 pt-1">
                       <button
                         type="button"
-                        onClick={() => signOut({ redirectUrl: '/' })}
+                        onClick={() => signOut({ redirectUrl: '/sign-in' })}
                         className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors"
                       >
                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
