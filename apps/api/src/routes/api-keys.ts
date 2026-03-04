@@ -49,7 +49,8 @@ apiKeyRoutes.get('/', async (c) => {
 apiKeyRoutes.post('/', async (c) => {
   const firmId = c.get('firmId');
   const userId = c.get('userId');
-  const body = await c.req.json();
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
 
   const schema = z.object({
     name: z.string().min(1).max(100),

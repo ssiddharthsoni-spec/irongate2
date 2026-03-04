@@ -310,6 +310,10 @@ if (!process.env.ALLOWED_EXTENSION_IDS && !process.env.CHROME_EXTENSION_ID) {
 if (!process.env.ADMIN_KEY_1 || !process.env.ADMIN_KEY_2) {
   logger.warn('ADMIN_KEY_1/ADMIN_KEY_2 not set — kill switch endpoint will be inaccessible');
 }
+if (process.env.IRON_GATE_DEV_AUTH === 'true' && process.env.NODE_ENV === 'production') {
+  logger.error('CRITICAL: IRON_GATE_DEV_AUTH=true is set in production! Disabling dev auth.');
+  process.env.IRON_GATE_DEV_AUTH = 'false';
+}
 
 const port = parseInt(process.env.PORT || '3000');
 

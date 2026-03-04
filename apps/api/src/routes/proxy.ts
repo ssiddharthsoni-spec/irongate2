@@ -105,8 +105,9 @@ proxyRoutes.post('/analyze', async (c) => {
     const parsed = analyzeRequestSchema.parse(body);
 
     const promptText = (parsed.promptText || parsed.text)!;
-    const firmId = parsed.firmId || c.get('firmId');
-    const userId = parsed.userId || c.get('userId');
+    // Always use authenticated firm/user context — never trust client-supplied IDs
+    const firmId = c.get('firmId');
+    const userId = c.get('userId');
 
     // 1. Load firm config for thresholds
     const [firm] = await db

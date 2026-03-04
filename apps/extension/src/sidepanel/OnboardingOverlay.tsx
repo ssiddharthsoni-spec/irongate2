@@ -116,9 +116,11 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
     }
   }, [firmCode]);
 
+  const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+
   // Register
   const handleRegister = useCallback(async () => {
-    if (!email.trim() || !email.includes('@')) {
+    if (!isValidEmail(email)) {
       setRegisterError('Please enter a valid email address.');
       return;
     }
@@ -196,7 +198,10 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
       case 1: return selectedIndustries.length > 0;
       case 2: return true;
       case 3: return true;
-      case 4: return email.trim().includes('@');
+      case 4:
+        return isValidEmail(email)
+          && deviceId !== ''
+          && (firmCode.trim() === '' || firmCodeValid === true);
       default: return true;
     }
   };
@@ -256,6 +261,7 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
           </div>
 
           <button
+            type="button"
             onClick={() => setStep(2)}
             disabled={!canAdvance()}
             className="w-full py-3 px-4 text-sm font-semibold text-white bg-iron-600 rounded-lg hover:bg-iron-700 disabled:opacity-50 transition-colors mt-auto"
@@ -313,8 +319,8 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
           </div>
 
           <div className="flex gap-2 mt-auto">
-            <button onClick={() => setStep(1)} className="px-4 py-3 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Back</button>
-            <button onClick={() => setStep(3)} className="flex-1 py-3 px-4 text-sm font-semibold text-white bg-iron-600 rounded-lg hover:bg-iron-700">Continue</button>
+            <button type="button" onClick={() => setStep(1)} className="px-4 py-3 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Back</button>
+            <button type="button" onClick={() => setStep(3)} className="flex-1 py-3 px-4 text-sm font-semibold text-white bg-iron-600 rounded-lg hover:bg-iron-700">Continue</button>
           </div>
         </div>
       )}
@@ -367,8 +373,8 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
           </div>
 
           <div className="flex gap-2 mt-auto">
-            <button onClick={() => setStep(2)} className="px-4 py-3 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Back</button>
-            <button onClick={() => setStep(4)} className="flex-1 py-3 px-4 text-sm font-semibold text-white bg-iron-600 rounded-lg hover:bg-iron-700">Continue</button>
+            <button type="button" onClick={() => setStep(2)} className="px-4 py-3 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Back</button>
+            <button type="button" onClick={() => setStep(4)} className="flex-1 py-3 px-4 text-sm font-semibold text-white bg-iron-600 rounded-lg hover:bg-iron-700">Continue</button>
           </div>
         </div>
       )}
@@ -413,13 +419,13 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
                 </p>
               )}
               {firmCodeValid === false && (
-                <p className="text-xs text-red-600 mt-1">Invalid organization code</p>
+                <p role="alert" className="text-xs text-red-600 mt-1">Invalid organization code</p>
               )}
             </div>
           </div>
 
           {registerError && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-2 mb-3">
+            <div role="alert" className="bg-red-50 border border-red-200 rounded-lg p-2 mb-3">
               <p className="text-xs text-red-700">{registerError}</p>
             </div>
           )}
@@ -438,8 +444,9 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
           </div>
 
           <div className="flex gap-2 mt-auto">
-            <button onClick={() => setStep(3)} className="px-4 py-3 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Back</button>
+            <button type="button" onClick={() => setStep(3)} className="px-4 py-3 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Back</button>
             <button
+              type="button"
               onClick={handleRegister}
               disabled={registering || !canAdvance()}
               className="flex-1 py-3 px-4 text-sm font-semibold text-white bg-iron-600 rounded-lg hover:bg-iron-700 disabled:opacity-50 transition-colors"
@@ -485,12 +492,14 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
 
           <div className="flex gap-2 mb-4">
             <button
+              type="button"
               onClick={() => { chrome.tabs.create({ url: 'https://chatgpt.com' }); }}
               className="flex-1 py-2.5 px-3 text-xs font-medium bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
             >
               Open ChatGPT
             </button>
             <button
+              type="button"
               onClick={() => { chrome.tabs.create({ url: 'https://claude.ai' }); }}
               className="flex-1 py-2.5 px-3 text-xs font-medium bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
             >
@@ -499,6 +508,7 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
           </div>
 
           <button
+            type="button"
             onClick={handleFinish}
             className="w-full py-3 px-4 text-sm font-semibold text-white bg-iron-600 rounded-lg hover:bg-iron-700 transition-colors mt-auto"
           >

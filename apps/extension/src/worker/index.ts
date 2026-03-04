@@ -27,6 +27,61 @@ function igLog(...args: any[]) { if (_IG_DEBUG) console.log('[Iron Gate]', ...ar
 // Cache last prompt text per tab for ghost detection (Basic tier only)
 const lastPromptTextByTab = new Map<number, string>();
 
+// Debounce real-time broadcasts: at most once per 500ms per tab
+const lastBroadcastByTab = new Map<number, number>();
+const BROADCAST_DEBOUNCE_MS = 500;
+
+// Memory-leak guard: cap per-tab Maps so they never grow unbounded.
+// If a service worker restarts, tab-close listeners don't fire for
+// already-open tabs, so entries would accumulate forever without this.
+const MAP_HIGH_WATER = 100;
+const MAP_LOW_WATER = 50;
+
+/** Prune a Map to MAP_LOW_WATER entries when it exceeds MAP_HIGH_WATER. */
+function pruneMap<V>(map: Map<number, V>): void {
+  if (map.size <= MAP_HIGH_WATER) return;
+  const keysToDelete = Array.from(map.keys()).slice(0, map.size - MAP_LOW_WATER);
+  for (const key of keysToDelete) {
+    map.delete(key);
+  }
+}
+
+// ─── Serialized stats updater ─────────────────────────────────────────────
+// Prevents race conditions when concurrent prompts update entity/scan counts.
+// Accumulates deltas and flushes them in a single atomic read-then-write.
+let _pendingEntityDelta = 0;
+let _pendingScanDelta = 0;
+let _statsFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function incrementStats(entities: number, scans: number): void {
+  _pendingEntityDelta += entities;
+  _pendingScanDelta += scans;
+  // Debounce: flush after 200ms of no new calls (batches concurrent prompts)
+  if (_statsFlushTimer) clearTimeout(_statsFlushTimer);
+  _statsFlushTimer = setTimeout(flushStats, 200);
+}
+
+async function flushStats(): Promise<void> {
+  const entityDelta = _pendingEntityDelta;
+  const scanDelta = _pendingScanDelta;
+  _pendingEntityDelta = 0;
+  _pendingScanDelta = 0;
+  _statsFlushTimer = null;
+  if (entityDelta === 0 && scanDelta === 0) return;
+
+  try {
+    const data = await chrome.storage.local.get([TOTAL_ENTITIES_DETECTED, WEEKLY_SCAN_COUNT]);
+    await chrome.storage.local.set({
+      [TOTAL_ENTITIES_DETECTED]: (data[TOTAL_ENTITIES_DETECTED] || 0) + entityDelta,
+      [WEEKLY_SCAN_COUNT]: (data[WEEKLY_SCAN_COUNT] || 0) + scanDelta,
+    });
+  } catch {
+    // Re-add deltas on failure so they're retried on next flush
+    _pendingEntityDelta += entityDelta;
+    _pendingScanDelta += scanDelta;
+  }
+}
+
 igLog('Service worker started');
 
 // ─── Uninstall survey ───────────────────────────────────────────────────────
@@ -51,7 +106,7 @@ initAuth().then(() => {
     getToken,
   });
   igLog('Auth initialized & API client configured');
-}).catch((err) => console.warn('[Iron Gate] Startup init failed:', err));
+}).catch((err) => igLog('Startup init failed:', err));
 
 // Open side panel on extension icon click
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
@@ -71,7 +126,7 @@ resolveConfig().then((config) => {
     igLog('Individual mode. Loaded firm mode:', firmMode);
   }
 }).catch((err) => {
-  console.warn('[Iron Gate] Failed to resolve managed config:', err);
+  igLog('Failed to resolve managed config:', err);
   chrome.storage.local.get('firmMode', (result) => {
     if (result.firmMode === 'audit' || result.firmMode === 'proxy') {
       firmMode = result.firmMode;
@@ -223,12 +278,8 @@ async function handleMessage(
       // Generate pseudonymized version for transparency view
       const pseudoResult = pseudonymizeLocal(text, allEntities);
 
-      // Track stats for trial banner
-      const statsData = await chrome.storage.local.get([TOTAL_ENTITIES_DETECTED, WEEKLY_SCAN_COUNT]);
-      await chrome.storage.local.set({
-        [TOTAL_ENTITIES_DETECTED]: (statsData[TOTAL_ENTITIES_DETECTED] || 0) + allEntities.length,
-        [WEEKLY_SCAN_COUNT]: (statsData[WEEKLY_SCAN_COUNT] || 0) + 1,
-      });
+      // Track stats for trial banner (serialized to prevent race conditions)
+      incrementStats(allEntities.length, 1);
 
       // Queue event for API with CORRECT schema
       const promptHash = await hashText(text);
@@ -251,23 +302,42 @@ async function handleMessage(
         captureMethod,
       });
 
-      // ── DO NOT broadcast to badge or side panel from PROMPT_DETECTED ──
-      // The MAIN world fetch interceptor (IRON_GATE_INTERCEPTED / IRON_GATE_AUDIT)
-      // is the AUTHORITATIVE source for UI updates. It sees the complete API request
-      // body and detects ALL entities accurately.
-      //
-      // PROMPT_DETECTED comes from the capture engine's DOM observer which fires
-      // on every keystroke and may detect only a SUBSET of entities (partial typing),
-      // producing a lower score that overwrites the real score on the badge.
-      // Example: MAIN world detects 5 entities → score 65, but DOM observer later
-      // fires with partial text → 2 entities → score 25, badge drops to 25.
-      //
-      // PROMPT_DETECTED is still valuable for API analytics (queued above).
-
-      // Cache raw text for ghost detection (used when SENSITIVITY_SCORE fires)
+      // ── Broadcast real-time detection to side panel (debounced) ──
+      // This gives users live feedback as they type. The MAIN world fetch
+      // interceptor (SENSITIVITY_SCORE on submit) will overwrite with the
+      // final, authoritative result when the prompt is actually sent.
       const pdTabId = sender.tab?.id;
       if (pdTabId) {
         lastPromptTextByTab.set(pdTabId, text);
+        pruneMap(lastPromptTextByTab);
+
+        const now = Date.now();
+        const lastBroadcast = lastBroadcastByTab.get(pdTabId) || 0;
+        if (now - lastBroadcast >= BROADCAST_DEBOUNCE_MS) {
+          lastBroadcastByTab.set(pdTabId, now);
+          pruneMap(lastBroadcastByTab);
+          chrome.runtime.sendMessage({
+            type: 'SENSITIVITY_SCORE',
+            payload: {
+              score: sensitivityResult.score,
+              level: sensitivityResult.level,
+              entities: allEntities.map((e) => ({
+                type: e.type,
+                start: e.start,
+                end: e.end,
+                confidence: e.confidence,
+                source: e.source,
+              })),
+              aiToolId,
+              tabId: pdTabId,
+              maskedPrompt: pseudoResult.maskedText,
+              pseudonymMappings: pseudoResult.mappings.map(m => ({ pseudonym: m.pseudonym, type: m.type, length: m.original.length })),
+              promptHash: await hashText(text),
+              promptLength: text.length,
+              realtime: true, // Flag so UI can differentiate from submit
+            },
+          }).catch(() => {});
+        }
       }
 
       return { received: true };
@@ -485,7 +555,16 @@ async function handleMessage(
 
         return result;
       } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error);
+        const rawMsg = error instanceof Error ? error.message : String(error);
+        // Provide actionable error messages instead of raw HTTP status text
+        let errMsg = rawMsg;
+        if (rawMsg === 'Not Found' || rawMsg.includes('404')) {
+          errMsg = 'API endpoint not found — check your Iron Gate API URL in settings';
+        } else if (rawMsg.includes('401') || rawMsg.includes('Unauthorized') || rawMsg.includes('api key')) {
+          errMsg = 'Authentication failed — check your API key in Iron Gate settings';
+        } else if (rawMsg.includes('Failed to fetch') || rawMsg.includes('NetworkError') || rawMsg.includes('ERR_CONNECTION')) {
+          errMsg = 'Could not reach Iron Gate API — check your connection and API URL';
+        }
         console.warn('[Iron Gate] File analysis error:', errMsg);
 
         // Notify sidepanel AND content script so both show the error
@@ -1212,7 +1291,7 @@ function inlineFetchInterceptor() {
             promptHash: _ph,
             promptLength: promptText.length,
             maskedPrompt: maskedText,
-            mappings,
+            mappings: mappings.map(m => ({ pseudonym: m.pseudonym, type: m.type, length: m.original.length })),
             entityCount: entities.length,
             level,
           }, window.location.origin);
@@ -1243,7 +1322,7 @@ function inlineFetchInterceptor() {
           promptHash: _ph,
           promptLength: promptText.length,
           maskedPrompt: maskedText,
-          mappings,
+          mappings: mappings.map(m => ({ pseudonym: m.pseudonym, type: m.type, length: m.original.length })),
           entityCount: entities.length,
           level,
         }, window.location.origin);
@@ -1268,7 +1347,7 @@ function inlineFetchInterceptor() {
   const ok = window.fetch === patchedFetch;
   (window as any).__IRON_GATE_MAIN_WORLD = ok ? 'active-inline' : 'failed';
   (window as any).__IRON_GATE_FETCH_PATCHED = ok;
-  window.postMessage({ type: 'IRON_GATE_HEARTBEAT', version: 'inline-0.1', timestamp: Date.now(), mode }, '*');
+  window.postMessage({ type: 'IRON_GATE_HEARTBEAT', version: 'inline-0.1', timestamp: Date.now(), mode }, window.location.origin);
   if (_debug) console.log('[Iron Gate INLINE]', ok ? '✅ Inline fetch interceptor ACTIVE' : '❌ Fetch patch FAILED');
 }
 
@@ -1367,6 +1446,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 // ─── Tab Lifecycle: clean up per-tab state on close ──────────────────────────
 chrome.tabs.onRemoved.addListener((tabId) => {
   igLog('Tab closed:', tabId);
+  lastPromptTextByTab.delete(tabId);
+  lastBroadcastByTab.delete(tabId);
   removeTabState(tabId);
 });
 

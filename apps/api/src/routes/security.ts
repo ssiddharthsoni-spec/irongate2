@@ -103,7 +103,8 @@ securityRoutes.post('/kill-switch', async (c) => {
     firm_id: z.string().uuid().optional(),
   });
 
-  const body = await c.req.json();
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
   const parsed = bodySchema.parse(body);
 
   if (parsed.scope === 'firm' && !parsed.firm_id) {
@@ -233,7 +234,8 @@ securityRoutes.delete('/firm/data', async (c) => {
     reason: z.string().min(1),
   });
 
-  const body = await c.req.json();
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
   const parsed = bodySchema.parse(body);
 
   const gracePeriodHours = 24;
@@ -306,7 +308,8 @@ securityRoutes.post('/firm/rotate-keys', async (c) => {
     confirm: z.literal(true),
   });
 
-  const body = await c.req.json();
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
   bodySchema.parse(body);
 
   // Generate a new 32-byte encryption salt (hex-encoded = 64 chars)
@@ -370,7 +373,8 @@ securityRoutes.post('/firm/public-key', async (c) => {
     public_key: z.string().min(1),
   });
 
-  const body = await c.req.json();
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
   const parsed = bodySchema.parse(body);
 
   // Store the public key in the firm config

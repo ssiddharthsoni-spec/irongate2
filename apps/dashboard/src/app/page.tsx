@@ -372,7 +372,7 @@ export default async function LandingPage() {
               <span className="text-[#6e6e73] dark:text-[#86868b] text-sm">/user/mo</span>
             </div>
             <ul className="space-y-2.5 mb-7">
-              {['Everything in Basic', 'ML-powered detection', 'Proxy mode (auto-redact)', 'Compliance export', 'Email support'].map((f) => (
+              {['Everything in Basic', 'ML-powered detection', 'Proxy mode (auto-redact)', 'Compliance export', 'Email support', '15-day free trial'].map((f) => (
                 <li key={f} className="flex items-center gap-2.5 text-sm text-[#424245] dark:text-[#a1a1a6]">
                   <CheckIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
                   {f}
@@ -393,7 +393,7 @@ export default async function LandingPage() {
               <span className="text-[#6e6e73] dark:text-[#86868b] text-sm">/mo flat</span>
             </div>
             <ul className="space-y-2.5 mb-7">
-              {['Everything in Pro', 'Up to 10 users', 'Shared dashboard', 'Slack + email alerts', 'Priority support', '1-year retention'].map((f) => (
+              {['Everything in Pro', 'Up to 10 users included', 'Shared admin dashboard', 'Slack + email alerts', 'Priority support', '1-year data retention'].map((f) => (
                 <li key={f} className="flex items-center gap-2.5 text-sm text-[#424245] dark:text-[#a1a1a6]">
                   <CheckIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
                   {f}

@@ -153,12 +153,12 @@ export default function OnboardingPage() {
       setFirmCreated(true);
       setCurrentStep(2);
     } catch (err: any) {
-      console.warn('Firm creation API call failed:', err.message);
       setSubmitError(
-        'Could not connect to the server. Your settings have been saved locally.'
+        'Could not create your organization. Please check your connection and try again.'
       );
       setFirmCreated(false);
-      setCurrentStep(2); // still advance so user isn't blocked
+      // Stay on step 1 so user can retry — advancing without a firm causes
+      // downstream failures (invite calls, missing firm context, etc.)
     } finally {
       setIsSubmitting(false);
     }
@@ -233,6 +233,7 @@ export default function OnboardingPage() {
             isSubmitting={isSubmitting}
             onNext={handleNext}
             canProceed={canProceed()}
+            submitError={submitError}
           />
         )}
         {currentStep === 2 && (
@@ -265,12 +266,14 @@ function StepName({
   isSubmitting,
   onNext,
   canProceed,
+  submitError,
 }: {
   state: OnboardingState;
   updateState: <K extends keyof OnboardingState>(key: K, value: OnboardingState[K]) => void;
   isSubmitting: boolean;
   onNext: () => void;
   canProceed: boolean;
+  submitError: string | null;
 }) {
   return (
     <div className="bg-white dark:bg-[#1c1c1e] rounded-2xl p-8 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
@@ -298,6 +301,13 @@ function StepName({
         />
       </div>
 
+      {/* Error message */}
+      {submitError && (
+        <div className="mb-6 p-3 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700">
+          <p className="text-sm text-red-700 dark:text-red-400">{submitError}</p>
+        </div>
+      )}
+
       {/* Trial badge */}
       <div className="flex items-center gap-3 mb-8 p-3 bg-iron-50 dark:bg-iron-900/20 rounded-xl border border-iron-100 dark:border-iron-800">
         <div className="w-8 h-8 rounded-lg bg-iron-600 flex items-center justify-center flex-shrink-0">
@@ -324,6 +334,8 @@ function StepName({
             <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
             Creating...
           </span>
+        ) : submitError ? (
+          'Retry'
         ) : (
           'Create'
         )}

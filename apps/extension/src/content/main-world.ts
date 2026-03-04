@@ -960,6 +960,14 @@ interface PseudonymResult {
   mappings: PseudonymMapping[];
 }
 
+/**
+ * SECURITY: Strip raw PII (.original) from mappings before sending over postMessage.
+ * Only pseudonym, type, and length of original text are safe to transit.
+ */
+function sanitizeMappingsForTransit(mappings: PseudonymMapping[]): Array<{ pseudonym: string; type: string; length: number }> {
+  return mappings.map(m => ({ pseudonym: m.pseudonym, type: m.type, length: m.original.length }));
+}
+
 // Global forward map: original → fake (persists across messages in a conversation)
 let currentForwardMap: Record<string, string> = {};
 
@@ -1641,7 +1649,7 @@ function startDomDepseudonymizer(): void {
 
     if (changed) {
       _domReplacing = true;
-      _domMutationCooldown = Date.now() + 500; // suppress observer re-scans for 500ms
+      _domMutationCooldown = Date.now() + 50; // brief cooldown to skip our own microtask
       try {
         node.textContent = text;
       } catch {
@@ -1653,6 +1661,38 @@ function startDomDepseudonymizer(): void {
       if (_domReplacementCount <= 10) {
         igLog(`DOM de-pseudo: replaced text node (${text.length} chars)`);
       }
+
+      // Re-apply for several frames to override React re-renders.
+      // React may re-render from server state (which has pseudonymized text)
+      // and overwrite our replacement. By re-checking for a few animation frames,
+      // we ensure the de-pseudonymized text "sticks" without visible flicker.
+      const expectedText = text;
+      let retries = 0;
+      const reapply = () => {
+        if (retries >= 6 || !node.parentNode) return; // node removed or max retries
+        retries++;
+        if (node.textContent !== expectedText && node.textContent && node.textContent.length >= 2) {
+          // React reverted the text — re-check and re-apply
+          const current = node.textContent;
+          const hasNotice = current.includes('personally identifiable information') || current.includes('enterprise privacy tool');
+          let fixedText = hasNotice ? current.replace(NOTICE_REGEX, '').replace(NOTICE_UNBRACKET, '').replace(NOTICE_PARAPHRASE, '') : current;
+          if (Object.keys(currentReverseMap).length > 0 && !(window as any).__IRON_GATE_SKIP_DEPSEUDO) {
+            const textLower = fixedText.toLowerCase();
+            const keys = Object.keys(currentReverseMap);
+            if (keys.some(key => textLower.includes(key.toLowerCase()))) {
+              fixedText = replacePseudonyms(fixedText, currentReverseMap);
+            }
+          }
+          if (fixedText !== current) {
+            _domReplacing = true;
+            _domMutationCooldown = Date.now() + 50;
+            try { node.textContent = fixedText; } catch {}
+            _domReplacing = false;
+          }
+        }
+        requestAnimationFrame(reapply);
+      };
+      requestAnimationFrame(reapply);
     }
   }
 
@@ -1740,7 +1780,9 @@ function startDomDepseudonymizer(): void {
     }
 
     // Not streaming — debounced scan via setTimeout (NOT synchronous)
-    // Use setTimeout to get completely out of React's mutation commit phase
+    // Use setTimeout to get completely out of React's mutation commit phase.
+    // 80ms debounce balances responsiveness (preventing flicker from React
+    // re-renders that overwrite our de-pseudonymized text) with performance.
     if (!_scanQueued) {
       _scanQueued = true;
       setTimeout(() => {
@@ -1748,7 +1790,7 @@ function startDomDepseudonymizer(): void {
         if (!isCurrentlyGenerating() && Date.now() >= _domMutationCooldown) {
           try { scanChatGPTResponses(); } catch {}
         }
-      }, 300);
+      }, 80);
     }
   });
 
@@ -1759,6 +1801,7 @@ function startDomDepseudonymizer(): void {
     observer.observe(document.body, {
       childList: true,
       subtree: true,
+      characterData: true, // catch React in-place text mutations (not just node add/remove)
     });
     _observing = true;
   }
@@ -1825,7 +1868,7 @@ function startDomDepseudonymizer(): void {
   };
   startObserving();
 
-  // Periodic backstop scan — only when NOT generating, every 2s.
+  // Periodic backstop scan — only when NOT generating, every 1s.
   // Catches any pseudonyms that leak through stream-level de-pseudo
   // or appear after React re-renders.
   setInterval(() => {
@@ -1837,8 +1880,8 @@ function startDomDepseudonymizer(): void {
       if (!isCurrentlyGenerating() && Date.now() >= _domMutationCooldown) {
         try { scanChatGPTResponses(); } catch {}
       }
-    }, 100);
-  }, 2000);
+    }, 50);
+  }, 1000);
 }
 
 // Start the DOM de-pseudonymizer immediately
@@ -2303,14 +2346,40 @@ async function checkFileUploadGate(): Promise<'allow' | 'block'> {
   // Now check completed results — find the highest-risk file
   let highestScore = 0;
   let highestScan: PendingFileScan | null = null;
+  let hasErrorResult = false;
+  let errorFileName = '';
 
   for (const [, scan] of pendingFileScans) {
     if (scan.status === 'complete' && scan.result) {
+      // Detect scan errors (API unreachable, auth failure, etc.)
+      if (scan.result.level === 'error') {
+        hasErrorResult = true;
+        errorFileName = scan.fileName;
+      }
       if (scan.result.score > highestScore) {
         highestScore = scan.result.score;
         highestScan = scan;
       }
     }
+  }
+
+  // FAIL-CLOSED: If any scan failed with an error, block the submission.
+  // A security product must not allow potentially sensitive documents through
+  // just because the scanning infrastructure is unavailable.
+  if (hasErrorResult) {
+    igLog(`File gate triggered: scan error for "${errorFileName}" — blocking (fail-closed)`);
+    dismissScanIndicator();
+
+    const decision = await showDocumentBlockOverlay({
+      fileName: errorFileName,
+      score: 100,
+      level: 'critical',
+      entities: [],
+      explanation: `Document scan failed — could not verify "${errorFileName}" is safe to share. Please check your Iron Gate API connection in the extension settings and try again.`,
+    });
+
+    pendingFileScans.clear();
+    return decision;
   }
 
   // Gate on HIGH (61+) or CRITICAL (86+) scores
@@ -2588,13 +2657,37 @@ const patchedFetch = async function patchedFetch(
     igLog(`Copilot fetch: body ${bodyString.length} chars, input: ${input instanceof Request ? 'Request' : typeof input}, init: ${init ? 'yes' : 'no'}`);
   }
 
-  // ── Skip fetch proxy for platforms where DOM/WS handles interception ────────
-  // Copilot: SignalR WS handles pseudonymization via WebSocket.prototype.send
+  // ── Skip fetch BODY modification for platforms where DOM/WS handles request ──
   // Gemini: DOM pre-submit handles pseudonymization; batchexecute body is opaque
-  // The adapter registry checks both active adapter flags and cross-domain patterns.
+  // Copilot: SignalR WS handles pseudonymization via WebSocket.prototype.send
+  //
+  // BUT we still need to:
+  //   1. Run the file upload gate (block dangerous documents)
+  //   2. Wrap the RESPONSE for de-pseudonymization (the LLM response contains
+  //      pseudonyms from the dom-presubmit'd request — replace them in the stream
+  //      so the framework renders de-pseudonymized text without flicker)
   if (shouldSkipFetchProxy(url, activeAdapter)) {
-    console.log(`%c[Iron Gate WIRE] SKIPPED — fetch proxy disabled for this adapter`, 'color: #999');
-    return originalFetch.call(window, input, init);
+    // File upload gate — must run even for skipped adapters
+    if (mode === 'proxy') {
+      const skipGateDecision = await checkFileUploadGate();
+      if (skipGateDecision === 'block') {
+        igLog('File upload gate BLOCKED (skipFetchProxy adapter)');
+        return new Response(JSON.stringify({ blocked: true, reason: 'Document sensitivity gate' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    const skipResponse = await originalFetch.call(window, input, init);
+
+    // Wrap response for de-pseudonymization if reverse map has entries
+    if (mode === 'proxy' && Object.keys(currentReverseMap).length > 0 && !(window as any).__IRON_GATE_SKIP_DEPSEUDO) {
+      igLog(`De-pseudonymizing response for skipFetchProxy adapter (${Object.keys(currentReverseMap).length} mappings)`);
+      return depseudonymizeResponse(skipResponse, { ...currentReverseMap });
+    }
+
+    return skipResponse;
   }
 
   // ── File Upload Gate — block send if a high-risk document was uploaded ────
@@ -2609,12 +2702,13 @@ const patchedFetch = async function patchedFetch(
 
   // ── PROXY MODE: Pseudonymize before sending ──────────────────────────────
   if (mode === 'proxy') {
-    // DOM pre-submit adapters (ChatGPT, Gemini) handle pseudonymization by
+    // DOM pre-submit adapters (e.g., Gemini) handle pseudonymization by
     // writing to the input BEFORE submit. The platform then builds the request
     // with the already-pseudonymized text. Modifying the fetch body on top of
-    // that causes double-pseudonymization and 500s from the backend (ChatGPT's
-    // /backend-api/conversation rejects re-serialized JSON).
+    // that causes double-pseudonymization.
     // → Skip fetch-level body modification for dom-presubmit adapters.
+    // Note: ChatGPT uses 'wire' interception (fetch body modification) to
+    // prevent flicker — user message bubble shows original text from React state.
     if (activeAdapter?.interception === 'dom-presubmit') {
       igLog('DOM pre-submit adapter — skipping fetch body modification (DOM layer handles proxy)');
       return originalFetch.call(window, input, init);
@@ -2679,19 +2773,24 @@ const patchedFetch = async function patchedFetch(
                 // Replace only the text parts in the last message — preserve
                 // non-string parts (file references, image pointers, etc.)
                 // which ChatGPT's backend requires for file-attached messages.
+                //
+                // Prepend the de-identification notice (wrapped in brackets) so the
+                // LLM knows the text is pseudonymized and won't refuse it. The DOM
+                // de-pseudonymizer strips this notice from display on page reload.
+                const noticePrefix = '[' + deIdNotice + ']\n\n';
                 const lastIdx = parsed.messages.length - 1;
                 const parts = parsed.messages[lastIdx]?.content?.parts;
                 if (Array.isArray(parts)) {
                   let textReplaced = false;
                   for (let i = 0; i < parts.length; i++) {
                     if (typeof parts[i] === 'string') {
-                      parts[i] = textReplaced ? '' : pseudoResult.maskedText;
+                      parts[i] = textReplaced ? '' : (noticePrefix + pseudoResult.maskedText);
                       textReplaced = true;
                     }
                   }
                   if (!textReplaced) {
                     // No string parts found — prepend as new text part
-                    parts.unshift(pseudoResult.maskedText);
+                    parts.unshift(noticePrefix + pseudoResult.maskedText);
                   }
                 }
                 modifiedBody = JSON.stringify(parsed);
@@ -2747,7 +2846,7 @@ const patchedFetch = async function patchedFetch(
               promptHash: _ph,
               promptLength: promptText.length,
               maskedPrompt: pseudoResult.maskedText,
-              mappings: pseudoResult.mappings,
+              mappings: sanitizeMappingsForTransit(pseudoResult.mappings),
               entityCount: allEntities.length,
               level,
               score,
@@ -3181,7 +3280,7 @@ XMLHttpRequest.prototype.send = function(body?: any) {
                     promptHash: ph,
                     promptLength: promptText.length,
                     maskedPrompt: pseudoResult.maskedText,
-                    mappings: pseudoResult.mappings,
+                    mappings: sanitizeMappingsForTransit(pseudoResult.mappings),
                     entityCount: allEntities.length,
                     level,
                     score,
@@ -3238,7 +3337,7 @@ XMLHttpRequest.prototype.send = function(body?: any) {
                   promptHash: ph,
                   promptLength: promptText.length,
                   maskedPrompt: pseudoResult.maskedText,
-                  mappings: pseudoResult.mappings,
+                  mappings: sanitizeMappingsForTransit(pseudoResult.mappings),
                   entityCount: allEntities.length,
                   level,
                   score,
@@ -3654,7 +3753,7 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
                       promptHash: ph,
                       promptLength: promptText.length,
                       maskedPrompt: pseudoResult.maskedText,
-                      mappings: pseudoResult.mappings,
+                      mappings: sanitizeMappingsForTransit(pseudoResult.mappings),
                       entityCount: allEntities.length,
                       level,
                       score,
@@ -3673,7 +3772,7 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
                       promptHash: ph,
                       promptLength: promptText.length,
                       maskedPrompt: pseudoResult.maskedText,
-                      mappings: pseudoResult.mappings,
+                      mappings: sanitizeMappingsForTransit(pseudoResult.mappings),
                       entityCount: allEntities.length,
                       level,
                       score,
@@ -3727,7 +3826,7 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
                     promptHash: ph,
                     promptLength: promptText.length,
                     maskedPrompt: pseudoResult.maskedText,
-                    mappings: pseudoResult.mappings,
+                    mappings: sanitizeMappingsForTransit(pseudoResult.mappings),
                     entityCount: allEntities.length,
                     level,
                     score,
@@ -3945,7 +4044,7 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
           promptHash: ph,
           promptLength: text.length,
           maskedPrompt: pseudoResult.maskedText,
-          mappings: pseudoResult.mappings,
+          mappings: sanitizeMappingsForTransit(pseudoResult.mappings),
           entityCount: allEntities.length,
           level,
           score,

@@ -75,17 +75,7 @@ export default function TeamSettingsPage() {
       setInviteEmail('');
       setInviteMessage({ type: 'success', text: `Invitation sent to ${inviteEmail.trim()}.` });
     } catch {
-      // In demo mode, still add the member locally
-      const newMember: TeamMember = {
-        id: Date.now().toString(),
-        email: inviteEmail.trim(),
-        name: inviteEmail.trim().split('@')[0],
-        role: inviteRole,
-        status: 'pending',
-      };
-      setMembers([...members, newMember]);
-      setInviteEmail('');
-      setInviteMessage({ type: 'success', text: `Invitation sent to ${newMember.email} (demo).` });
+      setInviteMessage({ type: 'error', text: 'Failed to send invitation. Please check your connection and try again.' });
     } finally {
       setInviting(false);
     }

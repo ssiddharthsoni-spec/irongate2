@@ -132,7 +132,7 @@ function InstallPageContent() {
         <div className="text-center mb-16">
           <a
             href={EXTENSION_ZIP_URL}
-            download="iron-gate-extension-v0.2.2.zip"
+            download="iron-gate-extension-v0.2.7.zip"
             className="inline-flex items-center gap-3 px-8 py-4 bg-iron-600 hover:bg-iron-700 text-white font-bold rounded-xl text-lg transition-all shadow-xl shadow-iron-600/25 hover:shadow-2xl hover:shadow-iron-600/30"
           >
             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
@@ -141,7 +141,7 @@ function InstallPageContent() {
             Download Extension (ZIP)
           </a>
           <p className="text-sm text-[#86868b] dark:text-[#636366] mt-3">
-            v0.2.2 &middot; Chrome, Edge, Brave &middot; Manifest V3
+            v0.2.7 &middot; Chrome, Edge, Brave &middot; Manifest V3
           </p>
         </div>
 

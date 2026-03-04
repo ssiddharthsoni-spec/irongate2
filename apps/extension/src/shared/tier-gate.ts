@@ -27,41 +27,45 @@ export async function checkTier(): Promise<SubscriptionTier> {
 
   const tier = data[SUBSCRIPTION_TIER] as SubscriptionTier | undefined;
   const cachedAt = data[SUBSCRIPTION_CACHED_AT] as number | undefined;
+  const now = Date.now();
 
-  // If we have a cached tier and it's still fresh, use it
-  if (tier && cachedAt && Date.now() - cachedAt < CACHE_TTL_MS) {
-    // But check if trial has expired
-    if (tier === 'pro' && data[TRIAL_ENDS_AT]) {
-      const trialEnd = new Date(data[TRIAL_ENDS_AT]).getTime();
-      if (Date.now() > trialEnd) {
-        // Trial expired — downgrade to basic
-        await chrome.storage.local.set({
-          [SUBSCRIPTION_TIER]: 'basic',
-          [SUBSCRIPTION_CACHED_AT]: Date.now(),
-        });
-        return 'basic';
-      }
-    }
-    return tier;
-  }
-
-  // No cache or stale — check trial dates locally
+  // Always check trial expiration first — this takes priority over cache TTL
+  // so that downgrade to 'basic' happens immediately at trial expiry.
   if (data[TRIAL_ENDS_AT]) {
     const trialEnd = new Date(data[TRIAL_ENDS_AT]).getTime();
-    if (Date.now() < trialEnd) {
+    if (Number.isNaN(trialEnd)) {
+      // Invalid date stored — clear corrupted data and fall through
+      await chrome.storage.local.remove([TRIAL_ENDS_AT, TRIAL_START_DATE]);
+    } else if (now > trialEnd) {
+      // Trial expired — downgrade to basic immediately regardless of cache
+      if (tier !== 'basic') {
+        await chrome.storage.local.set({
+          [SUBSCRIPTION_TIER]: 'basic',
+          [SUBSCRIPTION_CACHED_AT]: now,
+        });
+      }
+      return 'basic';
+    }
+    // Trial is still active — grant pro and keep cache timestamp fresh
+    if (tier !== 'pro' || !cachedAt || now - cachedAt >= CACHE_TTL_MS) {
       await chrome.storage.local.set({
         [SUBSCRIPTION_TIER]: 'pro',
-        [SUBSCRIPTION_CACHED_AT]: Date.now(),
+        [SUBSCRIPTION_CACHED_AT]: now,
       });
-      return 'pro';
     }
+    return 'pro';
+  }
+
+  // No trial — use cached tier if still fresh
+  if (tier && cachedAt && now - cachedAt < CACHE_TTL_MS) {
+    return tier;
   }
 
   // Default to basic
   if (!tier) {
     await chrome.storage.local.set({
       [SUBSCRIPTION_TIER]: 'basic',
-      [SUBSCRIPTION_CACHED_AT]: Date.now(),
+      [SUBSCRIPTION_CACHED_AT]: now,
     });
   }
 
@@ -77,6 +81,7 @@ export async function isTrialActive(): Promise<boolean> {
   if (!data[TRIAL_ENDS_AT]) return false;
 
   const trialEnd = new Date(data[TRIAL_ENDS_AT]).getTime();
+  if (Number.isNaN(trialEnd)) return false;
   return Date.now() < trialEnd;
 }
 
@@ -97,6 +102,7 @@ export async function getTrialDaysRemaining(): Promise<number> {
   if (!data[TRIAL_ENDS_AT]) return -1;
 
   const trialEnd = new Date(data[TRIAL_ENDS_AT]).getTime();
+  if (Number.isNaN(trialEnd)) return -1;
   const msRemaining = trialEnd - Date.now();
 
   if (msRemaining <= 0) return 0;

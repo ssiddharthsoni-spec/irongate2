@@ -52,8 +52,8 @@ const API_KEY_CACHE_TTL = 5 * 60_000;  // 5 minutes
 
 // Cache user lookups with TTL to avoid querying on every request
 const userCache = new TTLMap<string, { userId: string; firmId: string; role: string } | null>(USER_CACHE_TTL);
-// Cache API key lookups (hash → { firmId, userId, role, scope }) with TTL
-const apiKeyCache = new TTLMap<string, { firmId: string; userId: string; role: string; scope: string }>(API_KEY_CACHE_TTL);
+// Cache API key lookups (hash → { firmId, userId, role, scope, expiresAt }) with TTL
+const apiKeyCache = new TTLMap<string, { firmId: string; userId: string; role: string; scope: string; expiresAt: Date | null }>(API_KEY_CACHE_TTL);
 
 /** Invalidate a cached user so the next request re-fetches from DB. */
 export function invalidateUserCache(clerkId: string) {
@@ -81,6 +81,11 @@ export const authMiddleware = createMiddleware(async (c, next) => {
     // Check cache first
     const cached = apiKeyCache.get(keyHash);
     if (cached) {
+      // Check if cached key has since expired
+      if (cached.expiresAt && new Date(cached.expiresAt) < new Date()) {
+        apiKeyCache.delete(keyHash);
+        return c.json({ error: 'Unauthorized: API key has expired' }, 401);
+      }
       // Enforce scope on cached path too
       const method = c.req.method.toUpperCase();
       if (cached.scope === 'read' && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
@@ -131,7 +136,7 @@ export const authMiddleware = createMiddleware(async (c, next) => {
           .limit(1);
         const role = creator?.role || 'user';
 
-        apiKeyCache.set(keyHash, { firmId: keyRecord.firmId, userId: keyRecord.createdBy, role, scope: keyRecord.scope });
+        apiKeyCache.set(keyHash, { firmId: keyRecord.firmId, userId: keyRecord.createdBy, role, scope: keyRecord.scope, expiresAt: keyRecord.expiresAt ? new Date(keyRecord.expiresAt) : null });
         c.set('userId', keyRecord.createdBy);
         c.set('clerkId', 'api-key');
         c.set('firmId', keyRecord.firmId);
@@ -157,6 +162,7 @@ export const authMiddleware = createMiddleware(async (c, next) => {
   }
 
   // ── Dev Mode (requires explicit opt-in via IRON_GATE_DEV_AUTH=true) ────
+  // SAFETY: Only activates when NODE_ENV is literally 'development'
   if (process.env.NODE_ENV === 'development' && process.env.IRON_GATE_DEV_AUTH === 'true') {
     const cached = userCache.get('dev-clerk-id');
     if (cached) {

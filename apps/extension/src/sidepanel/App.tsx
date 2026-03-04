@@ -81,7 +81,7 @@ interface DocumentScanData {
 
 interface PromptInspectorData {
   maskedPrompt: string;
-  pseudonymMappings: Array<{ original: string; pseudonym: string; type: string }>;
+  pseudonymMappings: Array<{ pseudonym: string; type: string; length: number }>;
 }
 
 export function App() {
@@ -1234,17 +1234,10 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
               <div className="p-3 max-h-64 overflow-y-auto">
                 {inspectorView === 'original' && (
                   <div>
-                    <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1.5">Original prompt (with sensitive data)</p>
-                    <pre className="text-xs text-gray-700 whitespace-pre-wrap break-words bg-red-50 border border-red-100 rounded-md p-2.5 leading-relaxed font-mono">
-                      {(() => {
-                        // Reconstruct original prompt by reversing pseudonym mappings
-                        let text = inspectorData.maskedPrompt;
-                        for (const m of inspectorData.pseudonymMappings) {
-                          text = text.split(m.pseudonym).join(m.original);
-                        }
-                        return text;
-                      })()}
-                    </pre>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1.5">Original prompt</p>
+                    <div className="text-xs text-gray-500 italic bg-red-50 border border-red-100 rounded-md p-2.5 leading-relaxed">
+                      Original text is not stored for privacy. The pseudonymized version below shows what was sent to the AI.
+                    </div>
                   </div>
                 )}
 
@@ -1279,7 +1272,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
                       <div className="space-y-1.5">
                         {inspectorData.pseudonymMappings.map((m, i) => (
                           <div key={i} className="flex items-center gap-2 text-xs bg-gray-50 rounded-md px-2.5 py-1.5 border">
-                            <span className="font-mono text-red-600 line-through">{m.original}</span>
+                            <span className="font-mono text-red-400">{m.length} chars</span>
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 text-gray-400 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
                               <path fillRule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clipRule="evenodd" />
                             </svg>

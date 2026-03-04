@@ -27,14 +27,18 @@ export function TrialBanner() {
 
       if (data[TRIAL_ENDS_AT]) {
         const endMs = new Date(data[TRIAL_ENDS_AT]).getTime();
-        const remaining = Math.ceil((endMs - Date.now()) / (1000 * 60 * 60 * 24));
-        setDaysRemaining(remaining);
+        if (!Number.isNaN(endMs)) {
+          const remaining = Math.ceil((endMs - Date.now()) / (1000 * 60 * 60 * 24));
+          setDaysRemaining(remaining);
+        }
       }
 
       if (data[TRIAL_START_DATE]) {
         const startMs = new Date(data[TRIAL_START_DATE]).getTime();
-        const elapsed = Math.floor((Date.now() - startMs) / (1000 * 60 * 60 * 24)) + 1;
-        setDayNumber(Math.min(15, elapsed));
+        if (!Number.isNaN(startMs)) {
+          const elapsed = Math.floor((Date.now() - startMs) / (1000 * 60 * 60 * 24)) + 1;
+          setDayNumber(Math.max(1, Math.min(15, elapsed)));
+        }
       }
     }
 

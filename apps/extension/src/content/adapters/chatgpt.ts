@@ -4,13 +4,14 @@ import type { SiteAdapter } from './base';
  * ChatGPT Adapter — chatgpt.com, chat.openai.com
  *
  * Transport: Fetch POST to /backend-api/conversation (auth) or /backend-anon/conversation (anon)
- *            Binary WebSocket frames (protobuf-like, ChatGPT 5.2+)
  *            SSE streaming responses
  *
- * Strategy: DOM pre-submit (primary) + Wire fallback
- * - Binary WS frames corrupt when string replacement changes byte counts
- * - ProseMirror contenteditable can be written to via execCommand
- * - DOM pre-submit ensures binary frame is BUILT with pseudonymized text
+ * Strategy: Wire (fetch body modification)
+ * - Modify the fetch request body, NOT the ProseMirror editor
+ * - The user's message bubble shows the ORIGINAL text (from React state)
+ * - Pseudonymized text is only in the HTTP body sent to OpenAI
+ * - Response stream is de-pseudonymized before React renders it
+ * - Eliminates flicker caused by DOM de-pseudonymizer fighting React re-renders
  */
 
 function jsonStringEscape(str: string): string {
@@ -29,7 +30,7 @@ export const ChatGPTAdapter: SiteAdapter = {
   hostPatterns: [/chatgpt\.com/, /chat\.openai\.com/],
 
   transport: 'fetch',
-  interception: 'dom-presubmit',
+  interception: 'wire',
 
   apiPatterns: [
     /chatgpt\.com\/backend-api\/conversation/,

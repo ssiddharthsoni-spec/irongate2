@@ -45,7 +45,7 @@ export default function LandingNav() {
       <div className="flex items-center justify-between px-6 md:px-12 py-3 max-w-7xl mx-auto">
         <Link href="/" className="flex items-center gap-2.5">
           <div className="w-8 h-8 bg-iron-600 rounded-lg flex items-center justify-center">
-            <ShieldCheckIcon className="w-4.5 h-4.5 text-white" />
+            <ShieldCheckIcon className="w-5 h-5 text-white" />
           </div>
           <span className="text-base font-bold tracking-tight">Iron Gate</span>
         </Link>

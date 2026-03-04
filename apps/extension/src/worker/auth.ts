@@ -6,6 +6,11 @@
 
 import { encrypt, decrypt, deriveKey } from '@iron-gate/crypto';
 
+// Debug logging — gated behind ironGateDebug storage flag
+let _authDebug = false;
+try { chrome.storage.local.get('ironGateDebug', (r) => { _authDebug = !!r.ironGateDebug; }); } catch {}
+function authLog(...args: any[]) { if (_authDebug) console.log('[Iron Gate Auth]', ...args); }
+
 const TOKEN_STORAGE_KEY = 'iron_gate_auth_token';
 const TOKEN_EXPIRY_KEY = 'iron_gate_token_expiry';
 const ENCRYPTION_KEY_SESSION = 'iron_gate_crypto_key';
@@ -163,13 +168,13 @@ export async function initAuth(): Promise<void> {
       userId: (stored.iron_gate_user_id as string) || null,
     };
 
-    console.log('[Iron Gate Auth] Initialized', {
+    authLog('Initialized', {
       hasToken: !!authState.token,
       firmId: authState.firmId,
       encrypted: !!encryptionKey,
     });
   } catch (error) {
-    console.warn('[Iron Gate Auth] Failed to initialize:', error);
+    authLog('Failed to initialize:', error);
   }
 }
 
@@ -188,14 +193,14 @@ export async function getToken(): Promise<string> {
   // Token exists but is expired — discard it and return empty string
   // so API returns 401, triggering re-authentication
   if (authState.token) {
-    console.warn('[Iron Gate Auth] Token expired — clearing, user needs to re-authenticate');
+    authLog('Token expired — clearing, user needs to re-authenticate');
     authState.token = '';
     authState.expiresAt = 0;
     return '';
   }
 
   // No token at all — return empty string so API returns 401
-  console.warn('[Iron Gate Auth] No token available — user needs to authenticate');
+  authLog('No token available — user needs to authenticate');
   return '';
 }
 
@@ -221,7 +226,7 @@ export async function setCredentials(credentials: {
   };
 
   await persistAuth();
-  console.log('[Iron Gate Auth] Credentials updated (AES-256-GCM encrypted)');
+  authLog('Credentials updated (AES-256-GCM encrypted)');
 }
 
 /**
@@ -250,7 +255,7 @@ export async function clearCredentials(): Promise<void> {
     // Session storage may not be available
   }
 
-  console.log('[Iron Gate Auth] Credentials cleared');
+  authLog('Credentials cleared');
 }
 
 export function getFirmId(): string | null {

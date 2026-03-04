@@ -106,14 +106,19 @@ async function checkTrialAndNotify() {
   const dayNumber = Math.floor((Date.now() - startMs) / (1000 * 60 * 60 * 24)) + 1;
   const lastNotifiedDay = data[LAST_NOTIFICATION_DAY] || 0;
 
-  // Check if trial has expired — auto-downgrade
+  // Check if trial has expired — auto-downgrade and cancel alarms
   if (trialEndsAt) {
     const endMs = new Date(trialEndsAt).getTime();
-    if (Date.now() > endMs && data[SUBSCRIPTION_TIER] !== 'basic') {
-      await chrome.storage.local.set({
-        [SUBSCRIPTION_TIER]: 'basic',
-        [SUBSCRIPTION_CACHED_AT]: Date.now(),
-      });
+    if (!Number.isNaN(endMs) && Date.now() > endMs) {
+      if (data[SUBSCRIPTION_TIER] !== 'basic') {
+        await chrome.storage.local.set({
+          [SUBSCRIPTION_TIER]: 'basic',
+          [SUBSCRIPTION_CACHED_AT]: Date.now(),
+        });
+      }
+      // Cancel trial alarm — no longer needed after expiry
+      await chrome.alarms.clear(TRIAL_CHECK_ALARM);
+      return; // No notifications for expired trials
     }
   }
 

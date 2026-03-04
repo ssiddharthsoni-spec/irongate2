@@ -9,7 +9,8 @@ export const feedbackRoutes = new Hono<AppEnv>();
 
 // POST /v1/feedback — Submit entity feedback
 feedbackRoutes.post('/', async (c) => {
-  const body = await c.req.json();
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
   const firmId = c.get('firmId');
   const userId = c.get('userId');
 

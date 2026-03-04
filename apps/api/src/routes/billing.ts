@@ -110,7 +110,8 @@ billingRoutes.post('/checkout', async (c) => {
   }
 
   const firmId = c.get('firmId');
-  const body = await c.req.json<{ tier?: string; cycle?: string }>();
+  let body: { tier?: string; cycle?: string };
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
 
   const tier = body.tier as Tier;
   const cycle = (body.cycle || 'monthly') as Cycle;
@@ -174,11 +175,18 @@ billingRoutes.post('/checkout', async (c) => {
 
   const dashboardUrl = process.env.DASHBOARD_URL || 'https://irongate-dashboard.vercel.app';
 
+  // Only offer trial if the firm hasn't already had one
+  const hasExistingTrial = subscription?.status === 'trialing' || subscription?.stripeSubscriptionId;
+  const subscriptionData: Record<string, unknown> = {};
+  if (!hasExistingTrial) {
+    subscriptionData.trial_period_days = 15;
+  }
+
   const session = await stripe.checkout.sessions.create({
     customer: customerId,
     mode: 'subscription',
     line_items: [{ price: priceId, quantity }],
-    subscription_data: { trial_period_days: 15 },
+    ...(Object.keys(subscriptionData).length > 0 && { subscription_data: subscriptionData }),
     success_url: `${dashboardUrl}/admin?billing=success`,
     cancel_url: `${dashboardUrl}/admin?billing=canceled`,
     metadata: { firmId, tier, cycle, seats: String(quantity) },

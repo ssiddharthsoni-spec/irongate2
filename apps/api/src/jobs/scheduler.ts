@@ -67,6 +67,21 @@ export function startScheduler() {
     }
   }, ONE_HOUR);
 
+  // Daily heartbeat retention — delete heartbeat records older than 30 days
+  setInterval(async () => {
+    logger.info('Running heartbeat retention cleanup');
+    try {
+      const { db } = await import('../db/client');
+      const { sql } = await import('drizzle-orm');
+      const result = await db.execute(
+        sql`DELETE FROM extension_heartbeats WHERE received_at < NOW() - INTERVAL '30 days'`,
+      );
+      logger.info('Heartbeat retention cleanup complete', { deleted: (result as any)?.rowCount ?? 0 });
+    } catch (err) {
+      logger.error('Heartbeat retention cleanup failed', { error: (err as Error).message });
+    }
+  }, ONE_DAY);
+
   // Weekly digest emails
   setInterval(async () => {
     logger.info('Running weekly digest email job');
@@ -81,6 +96,7 @@ export function startScheduler() {
     dailyRetention: '24h interval',
     trialExpiry: '24h interval',
     pseudonymExpiry: '1h interval',
+    heartbeatRetention: '24h interval (30d TTL)',
     weeklyDigest: '7d interval',
   });
 }

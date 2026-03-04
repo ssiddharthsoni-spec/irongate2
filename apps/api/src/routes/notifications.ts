@@ -61,7 +61,8 @@ notificationRoutes.get('/preferences', async (c) => {
 // ---------------------------------------------------------------------------
 notificationRoutes.put('/preferences', async (c) => {
   const firmId = c.get('firmId');
-  const body = await c.req.json();
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
 
   const preferencesSchema = z.object({
     emailAlerts: z.boolean().optional(),

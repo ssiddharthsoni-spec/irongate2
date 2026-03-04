@@ -34,6 +34,8 @@ const recentRequests = new Map<string, number[]>();
 const RAPID_WINDOW_MS = 5_000;   // 5 second window
 const RAPID_THRESHOLD = 20;       // more than 20 requests in the window
 const CLEANUP_INTERVAL = 60_000;  // prune map every 60 seconds
+const MAX_IPS_TRACKED = 10_000;   // bound total entries to prevent memory exhaustion
+const MAX_TIMESTAMPS_PER_IP = 50; // cap array size per IP
 let lastCleanup = Date.now();
 
 function pruneOldEntries() {
@@ -49,6 +51,13 @@ function pruneOldEntries() {
     } else {
       recentRequests.set(key, recent);
     }
+  }
+
+  // Hard cap: if still too many IPs after expiry sweep, drop oldest entries
+  if (recentRequests.size > MAX_IPS_TRACKED) {
+    const keys = Array.from(recentRequests.keys());
+    const toDelete = recentRequests.size - MAX_IPS_TRACKED;
+    for (let i = 0; i < toDelete; i++) recentRequests.delete(keys[i]);
   }
 }
 
@@ -85,8 +94,13 @@ function detectSuspiciousPatterns(params: {
   // 3. Rapid requests from same IP
   pruneOldEntries();
   const now = Date.now();
-  const timestamps = recentRequests.get(params.ip) || [];
+  let timestamps = recentRequests.get(params.ip) || [];
   timestamps.push(now);
+
+  // Cap array size: keep only the most recent timestamps to prevent memory bloat
+  if (timestamps.length > MAX_TIMESTAMPS_PER_IP) {
+    timestamps = timestamps.slice(-MAX_TIMESTAMPS_PER_IP);
+  }
   recentRequests.set(params.ip, timestamps);
 
   const windowStart = now - RAPID_WINDOW_MS;

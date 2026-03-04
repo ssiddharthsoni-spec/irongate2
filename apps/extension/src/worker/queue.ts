@@ -75,7 +75,7 @@ class EventQueue {
     if (this.pendingEvents.length > MAX_QUEUE_SIZE) {
       const dropped = this.pendingEvents.length - MAX_QUEUE_SIZE;
       this.pendingEvents = this.pendingEvents.slice(dropped);
-      console.warn(`[Iron Gate Queue] Dropped ${dropped} oldest events (queue full)`);
+      igLog(`Dropped ${dropped} oldest events (queue full)`);
     }
 
     // Persist to storage for offline resilience
@@ -128,7 +128,7 @@ class EventQueue {
           // No API key → log once quietly, pause queue until key is set
           if (error?.status === 401 || error?.message?.includes('No API key')) {
             if (!this.noApiKey) {
-              console.warn('[Iron Gate Queue] No API key configured — events are queued locally. Set your API key in the side panel Settings.');
+              igLog('No API key configured — events are queued locally');
               this.noApiKey = true;
             }
             break;
@@ -172,7 +172,7 @@ class EventQueue {
     try {
       await chrome.storage.local.set({ [STORAGE_KEY]: this.pendingEvents });
     } catch (error) {
-      console.warn('[Iron Gate Queue] Failed to persist to storage:', error);
+      igLog('Failed to persist to storage:', error);
     }
   }
 
@@ -189,7 +189,7 @@ class EventQueue {
         this.scheduleBatch();
       }
     } catch (error) {
-      console.warn('[Iron Gate Queue] Failed to restore from storage:', error);
+      igLog('Failed to restore from storage:', error);
     }
   }
 

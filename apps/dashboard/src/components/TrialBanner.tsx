@@ -21,6 +21,10 @@ export default function TrialBanner() {
     if (isPublic) return;
 
     let cancelled = false;
+    let retryCount = 0;
+    const MAX_RETRIES = 2;
+    const RETRY_DELAY = 3000;
+
     async function check() {
       try {
         const res = await apiFetch('/billing');
@@ -32,7 +36,11 @@ export default function TrialBanner() {
           setPeriodEnd(data.subscription.currentPeriodEnd || null);
         }
       } catch {
-        // Silently fail — banner just won't show
+        // Retry on network failure so the banner shows after transient errors
+        if (!cancelled && retryCount < MAX_RETRIES) {
+          retryCount++;
+          setTimeout(check, RETRY_DELAY);
+        }
       }
     }
     check();

@@ -29,7 +29,8 @@ adminRoutes.get('/firm', async (c) => {
 adminRoutes.post('/firm', async (c) => {
   const userId = c.get('userId');
   const clerkId = c.get('clerkId');
-  const body = await c.req.json();
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
 
   const createSchema = z.object({
     firmName: z.string().min(1).max(255),
@@ -93,7 +94,8 @@ adminRoutes.post('/firm', async (c) => {
 // PUT /v1/admin/firm — Update firm configuration
 adminRoutes.put('/firm', async (c) => {
   const firmId = c.get('firmId');
-  const body = await c.req.json();
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
 
   const updateSchema = z.object({
     name: z.string().optional(),
@@ -127,7 +129,8 @@ adminRoutes.get('/users', async (c) => {
 // POST /v1/admin/client-matters — Import client/matter data
 adminRoutes.post('/client-matters', async (c) => {
   const firmId = c.get('firmId');
-  const body = await c.req.json();
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
 
   const matterSchema = z.object({
     matters: z.array(z.object({
@@ -184,7 +187,8 @@ adminRoutes.get('/weight-overrides', async (c) => {
 // PUT /v1/admin/weight-overrides — Update or create a weight override
 adminRoutes.put('/weight-overrides', async (c) => {
   const firmId = c.get('firmId');
-  const body = await c.req.json();
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
 
   const overrideSchema = z.object({
     entityType: z.string().min(1),
@@ -247,7 +251,8 @@ adminRoutes.post('/inferred-entities/analyze', async (c) => {
 adminRoutes.put('/inferred-entities/:id', async (c) => {
   const id = c.req.param('id');
   const userId = c.get('userId');
-  const body = await c.req.json();
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
 
   const actionSchema = z.object({
     action: z.enum(['approve', 'reject']),
@@ -277,7 +282,8 @@ adminRoutes.get('/webhooks', async (c) => {
 // POST /v1/admin/webhooks — Register new webhook
 adminRoutes.post('/webhooks', async (c) => {
   const firmId = c.get('firmId');
-  const body = await c.req.json();
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
 
   const webhookSchema = z.object({
     url: z.string().url(),
@@ -285,6 +291,24 @@ adminRoutes.post('/webhooks', async (c) => {
     eventTypes: z.array(z.string()).min(1),
   });
   const parsed = webhookSchema.parse(body);
+
+  // SSRF protection: reject webhook URLs pointing to private/internal networks
+  try {
+    const urlObj = new URL(parsed.url);
+    const hostname = urlObj.hostname.toLowerCase();
+    const blockedHosts = ['localhost', '127.0.0.1', '0.0.0.0', '[::1]', 'metadata.google.internal'];
+    const blockedPrefixes = ['10.', '172.16.', '172.17.', '172.18.', '172.19.', '172.20.',
+      '172.21.', '172.22.', '172.23.', '172.24.', '172.25.', '172.26.', '172.27.',
+      '172.28.', '172.29.', '172.30.', '172.31.', '192.168.', '169.254.'];
+    if (blockedHosts.includes(hostname) || blockedPrefixes.some(p => hostname.startsWith(p))) {
+      return c.json({ error: 'Webhook URL must point to a public endpoint' }, 400);
+    }
+    if (urlObj.protocol !== 'https:') {
+      return c.json({ error: 'Webhook URL must use HTTPS' }, 400);
+    }
+  } catch {
+    return c.json({ error: 'Invalid webhook URL' }, 400);
+  }
 
   const sub = await registerWebhook(firmId, parsed.url, parsed.secret, parsed.eventTypes);
   return c.json(sub, 201);
@@ -304,7 +328,8 @@ adminRoutes.delete('/webhooks/:id', async (c) => {
 // PUT /v1/admin/siem — Configure SIEM endpoint
 adminRoutes.put('/siem', async (c) => {
   const firmId = c.get('firmId');
-  const body = await c.req.json();
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
 
   const siemSchema = z.object({
     enabled: z.boolean(),
@@ -314,6 +339,24 @@ adminRoutes.put('/siem', async (c) => {
     format: z.enum(['json', 'cef']).optional().default('json'),
   });
   const parsed = siemSchema.parse(body);
+
+  // SSRF protection: reject SIEM URLs pointing to private/internal networks
+  try {
+    const urlObj = new URL(parsed.url);
+    const hostname = urlObj.hostname.toLowerCase();
+    const blockedHosts = ['localhost', '127.0.0.1', '0.0.0.0', '[::1]', 'metadata.google.internal'];
+    const blockedPrefixes = ['10.', '172.16.', '172.17.', '172.18.', '172.19.', '172.20.',
+      '172.21.', '172.22.', '172.23.', '172.24.', '172.25.', '172.26.', '172.27.',
+      '172.28.', '172.29.', '172.30.', '172.31.', '192.168.', '169.254.'];
+    if (blockedHosts.includes(hostname) || blockedPrefixes.some(p => hostname.startsWith(p))) {
+      return c.json({ error: 'SIEM URL must point to a public endpoint' }, 400);
+    }
+    if (urlObj.protocol !== 'https:') {
+      return c.json({ error: 'SIEM URL must use HTTPS' }, 400);
+    }
+  } catch {
+    return c.json({ error: 'Invalid SIEM URL' }, 400);
+  }
 
   // Store SIEM config in firms.config.siem
   const [firm] = await db.select({ config: firms.config }).from(firms).where(eq(firms.id, firmId)).limit(1);
@@ -349,7 +392,8 @@ adminRoutes.get('/plugins', async (c) => {
 adminRoutes.post('/plugins', async (c) => {
   const firmId = c.get('firmId');
   const userId = c.get('userId');
-  const body = await c.req.json();
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
 
   const pluginSchema = z.object({
     name: z.string().min(1).max(100),
@@ -384,7 +428,8 @@ adminRoutes.post('/plugins', async (c) => {
 adminRoutes.put('/plugins/:id', async (c) => {
   const id = c.req.param('id');
   const firmId = c.get('firmId');
-  const body = await c.req.json();
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
 
   const updateSchema = z.object({
     isActive: z.boolean().optional(),

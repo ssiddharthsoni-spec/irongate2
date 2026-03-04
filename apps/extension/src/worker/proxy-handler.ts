@@ -11,6 +11,11 @@
 
 import { apiRequest, apiUploadFile, ApiError } from './api-client';
 
+// Debug logging — gated behind ironGateDebug storage flag
+let _proxyDebug = false;
+try { chrome.storage.local.get('ironGateDebug', (r) => { _proxyDebug = !!r.ironGateDebug; }); } catch {}
+function proxyLog(...args: any[]) { if (_proxyDebug) console.log('[Iron Gate Proxy]', ...args); }
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface ProxyAnalyzeResult {
@@ -69,8 +74,8 @@ export async function analyzePrompt(
     },
   });
 
-  console.log(
-    `[Iron Gate Proxy] Analysis complete — score: ${result.originalScore.score}, ` +
+  proxyLog(
+    `Analysis complete — score: ${result.originalScore.score}, ` +
     `route: ${result.recommendedRoute}, entities: ${result.entitiesFound}`
   );
 
@@ -113,8 +118,8 @@ export async function sendProxiedPrompt(
     },
   });
 
-  console.log(
-    `[Iron Gate Proxy] Response received — model: ${result.model}, ` +
+  proxyLog(
+    `Response received — model: ${result.model}, ` +
     `provider: ${result.provider}, latency: ${result.latencyMs}ms, ` +
     `tokens: ${result.tokensUsed.prompt + result.tokensUsed.completion}`
   );
@@ -152,10 +157,9 @@ export async function handleProxyFlow(
     // We never want to block the user due to our own infrastructure failure.
     const msg = error instanceof Error ? error.message : String(error);
     if (msg.includes('No API key') || msg.includes('api key')) {
-      // Expected when user hasn't configured their key yet — don't pollute error console
-      console.debug('[Iron Gate Proxy] No API key configured, skipping analysis.');
+      proxyLog('No API key configured, skipping analysis.');
     } else {
-      console.warn('[Iron Gate Proxy] Analysis failed, falling back to allow:', error);
+      proxyLog('Analysis failed, falling back to allow:', error);
     }
     return {
       action: 'allow',
@@ -169,8 +173,7 @@ export async function handleProxyFlow(
 
   // Step 2: Route decision
   if (recommendedRoute === 'passthrough') {
-    // Prompt is low-sensitivity — let the original submission proceed
-    console.log('[Iron Gate Proxy] Route: passthrough — allowing original submission');
+    proxyLog('Route: passthrough — allowing original submission');
     return {
       action: 'allow',
       score: originalScore.score,
@@ -181,7 +184,7 @@ export async function handleProxyFlow(
   }
 
   // Step 3: Proxy the prompt through our backend
-  console.log(`[Iron Gate Proxy] Route: ${recommendedRoute} — proxying through backend`);
+  proxyLog(`Route: ${recommendedRoute} — proxying through backend`);
 
   let sendResult: ProxySendResult;
   try {
@@ -189,7 +192,7 @@ export async function handleProxyFlow(
   } catch (error) {
     // If sending fails, inform the user but don't silently allow.
     // The content script should show an error state.
-    console.error('[Iron Gate Proxy] Send failed:', error);
+    proxyLog('Send failed:', error);
 
     const errorMessage =
       error instanceof ApiError
@@ -257,8 +260,8 @@ export async function analyzeFile(
 ): Promise<FileAnalysisResult> {
   const result = await apiUploadFile<any>('/documents/scan', fileName, fileBase64, fileType);
 
-  console.log(
-    `[Iron Gate] File scan complete — "${fileName}", score: ${result.score}, ` +
+  proxyLog(
+    `File scan complete — "${fileName}", score: ${result.score}, ` +
     `level: ${result.level}, entities: ${result.entitiesFound}`
   );
 

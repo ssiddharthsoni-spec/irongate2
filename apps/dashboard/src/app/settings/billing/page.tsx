@@ -59,6 +59,7 @@ export default function BillingPage() {
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState<string | null>(null);
   const [managingBilling, setManagingBilling] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchBilling() {
@@ -100,8 +101,9 @@ export default function BillingPage() {
       if (data.url || data.checkoutUrl) {
         window.location.href = data.url || data.checkoutUrl;
       }
-    } catch {
-      setCurrentPlan(planId);
+    } catch (err) {
+      setErrorMessage('Failed to start checkout. Please try again.');
+      setTimeout(() => setErrorMessage(null), 5000);
     } finally {
       setUpgrading(null);
     }
@@ -119,7 +121,8 @@ export default function BillingPage() {
         window.location.href = data.url || data.portalUrl;
       }
     } catch {
-      // Demo mode - no-op
+      setErrorMessage('Failed to open billing portal. Please try again.');
+      setTimeout(() => setErrorMessage(null), 5000);
     } finally {
       setManagingBilling(false);
     }
@@ -354,6 +357,13 @@ export default function BillingPage() {
           })}
         </div>
       </div>
+
+      {/* Error message */}
+      {errorMessage && (
+        <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl">
+          <p className="text-sm text-red-700 dark:text-red-300">{errorMessage}</p>
+        </div>
+      )}
 
       {/* Free plan note */}
       <div className="p-4 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded-xl">

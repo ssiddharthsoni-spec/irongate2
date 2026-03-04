@@ -10,6 +10,31 @@ import { logger } from '../lib/logger';
 export const stripeWebhookRoutes = new Hono();
 
 // ---------------------------------------------------------------------------
+// Idempotency — prevent duplicate processing of the same Stripe event.
+// Uses a bounded in-memory set with TTL. Stripe event IDs are unique and
+// retries send the same event ID, so this prevents double-processing.
+// ---------------------------------------------------------------------------
+const PROCESSED_EVENTS = new Map<string, number>(); // eventId → timestamp
+const IDEMPOTENCY_TTL = 60 * 60 * 1000; // 1 hour
+const IDEMPOTENCY_MAX_SIZE = 5_000;
+
+function markEventProcessed(eventId: string): boolean {
+  const now = Date.now();
+  if (PROCESSED_EVENTS.has(eventId)) return false; // already processed
+
+  PROCESSED_EVENTS.set(eventId, now);
+
+  // Periodic cleanup when map grows too large
+  if (PROCESSED_EVENTS.size > IDEMPOTENCY_MAX_SIZE) {
+    for (const [id, ts] of PROCESSED_EVENTS) {
+      if (now - ts > IDEMPOTENCY_TTL) PROCESSED_EVENTS.delete(id);
+    }
+  }
+
+  return true; // first time processing
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 function getStripe(): Stripe | null {
@@ -79,6 +104,14 @@ stripeWebhookRoutes.post('/', async (c) => {
     const message = err instanceof Error ? err.message : String(err);
     logger.error('Webhook signature verification failed', { error: message });
     return c.json({ error: 'Webhook signature verification failed.' }, 400);
+  }
+
+  // -----------------------------------------------------------------------
+  // Idempotency: skip events we've already processed (Stripe retries)
+  // -----------------------------------------------------------------------
+  if (!markEventProcessed(event.id)) {
+    logger.info('Duplicate Stripe event skipped', { eventId: event.id, eventType: event.type });
+    return c.json({ received: true, duplicate: true });
   }
 
   // -----------------------------------------------------------------------
