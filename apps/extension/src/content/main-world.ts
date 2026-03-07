@@ -1491,7 +1491,7 @@ function _scheduleMapPersist(): void {
   }, 500);
 }
 
-function addReverseMapping(map: Record<string, string>, pseudonym: string, original: string): void {
+function addReverseMapping(map: Record<string, string>, pseudonym: string, original: string, entityType?: string): void {
   // Evict oldest entries if map grows too large to prevent memory leaks
   const keys = Object.keys(map);
   if (keys.length > MAX_MAP_SIZE) {
@@ -1530,11 +1530,18 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
 
   // Multi-word name variants: LLMs often abbreviate or drop suffixes.
   // "Adatum Corporation" → also map "Adatum"
-  // "Emily Rogers" → also map "Rogers", "Emily"
   // "Meridian Capital Partners" → also map "Meridian Capital", "Meridian"
+  //
+  // IMPORTANT: Skip fragment mappings for PERSON names entirely.
+  // LLMs freely recombine first/last names (e.g., "Emily Kumar" from
+  // two different fake people) and fragment mappings produce garbled output
+  // like "Sarah Chen Michael Torres" or "Sarah Torres". The full-name
+  // mapping is sufficient for persons — if the LLM abbreviates to just
+  // a first/last name, a visible pseudonym is better than a garbled mix.
+  const isPerson = entityType === 'PERSON';
   const words = pseudonym.split(/\s+/);
   const origWords = original.split(/\s+/);
-  if (words.length >= 2) {
+  if (words.length >= 2 && !isPerson) {
     // Map the first word ONLY if:
     // 1. It's distinctive (not a common suffix or common English word)
     // 2. The corresponding original word is >= 4 chars (avoid "JP", "GE" etc.)
@@ -3006,7 +3013,7 @@ const patchedFetch = async function patchedFetch(
           // Build reverse map for de-pseudonymization (ACCUMULATE, don't replace)
           // This ensures multi-turn conversations can de-pseudonymize across requests
           for (const m of pseudoResult.mappings) {
-            addReverseMapping(currentReverseMap, m.pseudonym, m.original);
+            addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
           }
           // Log the full reverse map for diagnostics
           const mapEntries = Object.entries(currentReverseMap);
@@ -3528,7 +3535,7 @@ XMLHttpRequest.prototype.send = function(body?: any) {
 
             // Accumulate mappings (don't overwrite)
             for (const m of pseudoResult.mappings) {
-              addReverseMapping(currentReverseMap, m.pseudonym, m.original);
+              addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
             }
             const xhrReverseMap = { ...currentReverseMap };
 
@@ -3739,7 +3746,7 @@ function _walkPseudoSignalR(obj: any): { value: any; changed: boolean } {
     if (all.length > 0) {
       const result = pseudonymizeLocal(obj, all);
       if (result.maskedText !== obj) {
-        for (const m of result.mappings) addReverseMapping(currentReverseMap, m.pseudonym, m.original);
+        for (const m of result.mappings) addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
         return { value: result.maskedText, changed: true };
       }
     }
@@ -3924,7 +3931,7 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
               const pseudoResult = pseudonymizeLocal(promptText, allEntities);
 
               for (const m of pseudoResult.mappings) {
-                addReverseMapping(currentReverseMap, m.pseudonym, m.original);
+                addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
               }
 
               let modifiedData: string | null = null;
@@ -4288,7 +4295,7 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
     const pseudoResult = pseudonymizeLocal(text, allEntities);
 
     for (const m of pseudoResult.mappings) {
-      addReverseMapping(currentReverseMap, m.pseudonym, m.original);
+      addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
     }
 
     // ════════════════════════════════════════════════════════════
