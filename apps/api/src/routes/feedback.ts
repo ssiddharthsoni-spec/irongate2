@@ -1,8 +1,9 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { db } from '../db/client';
-import { feedback } from '../db/schema';
+import { feedback, events } from '../db/schema';
 import { eq, and, sql } from 'drizzle-orm';
+import { logger } from '../lib/logger';
 import type { AppEnv } from '../types';
 
 export const feedbackRoutes = new Hono<AppEnv>();
@@ -25,6 +26,22 @@ feedbackRoutes.post('/', async (c) => {
   });
 
   const parsed = feedbackSchema.parse(body);
+
+  // SECURITY: Validate eventId belongs to the same firm to prevent cross-firm data injection.
+  // Without this check, a user in Firm A could submit feedback referencing events from Firm B,
+  // poisoning Firm B's detection accuracy metrics and weight overrides.
+  if (parsed.eventId) {
+    const [event] = await db
+      .select({ id: events.id })
+      .from(events)
+      .where(and(eq(events.id, parsed.eventId), eq(events.firmId, firmId)))
+      .limit(1);
+
+    if (!event) {
+      logger.warn('Cross-firm feedback attempt blocked', { userId, firmId, eventId: parsed.eventId });
+      return c.json({ error: 'Event not found' }, 404);
+    }
+  }
 
   // Generate entityHash from entityText if not provided (hash PII server-side)
   let entityHash = parsed.entityHash || '';
@@ -182,4 +199,102 @@ feedbackRoutes.get('/rules', async (c) => {
   }
 
   return c.json({ rules, generatedAt: new Date().toISOString() });
+});
+
+// POST /v1/feedback/override — Capture user override of a sensitivity decision
+// When a user overrides a block/warn decision (e.g., "Allow anyway"), we record
+// the original score, the override action, and the zone for federated learning.
+feedbackRoutes.post('/override', async (c) => {
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+  const firmId = c.get('firmId');
+  const userId = c.get('userId');
+
+  const overrideSchema = z.object({
+    eventId: z.string().uuid().optional(),
+    originalScore: z.number().min(0).max(100),
+    originalLevel: z.enum(['low', 'medium', 'high', 'critical']),
+    originalZone: z.enum(['green', 'amber', 'red']),
+    overrideAction: z.enum(['allow', 'block', 'escalate']),
+    reason: z.string().max(500).optional(),
+    entityTypeCounts: z.record(z.string(), z.number()).optional(),
+    tiersConsulted: z.array(z.number()).optional(),
+  });
+
+  const parsed = overrideSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: 'Invalid request', details: parsed.error.issues }, 400);
+  }
+
+  // Validate eventId belongs to same firm
+  if (parsed.data.eventId) {
+    const [event] = await db
+      .select({ id: events.id })
+      .from(events)
+      .where(and(eq(events.id, parsed.data.eventId), eq(events.firmId, firmId)))
+      .limit(1);
+
+    if (!event) {
+      return c.json({ error: 'Event not found' }, 404);
+    }
+  }
+
+  // Store as feedback with override metadata
+  const [inserted] = await db.insert(feedback).values({
+    eventId: parsed.data.eventId ?? null,
+    firmId,
+    userId,
+    entityType: '__override__',
+    entityHash: `override:${parsed.data.originalZone}:${parsed.data.overrideAction}`,
+    isCorrect: parsed.data.overrideAction === 'block', // block = system was right, allow = system was wrong
+    correctedType: JSON.stringify({
+      originalScore: parsed.data.originalScore,
+      originalLevel: parsed.data.originalLevel,
+      originalZone: parsed.data.originalZone,
+      overrideAction: parsed.data.overrideAction,
+      reason: parsed.data.reason,
+      entityTypeCounts: parsed.data.entityTypeCounts,
+      tiersConsulted: parsed.data.tiersConsulted,
+    }),
+  }).returning({ id: feedback.id });
+
+  logger.info('Sensitivity override captured', {
+    firmId,
+    userId,
+    originalScore: parsed.data.originalScore,
+    originalZone: parsed.data.originalZone,
+    overrideAction: parsed.data.overrideAction,
+    feedbackId: inserted.id,
+  });
+
+  return c.json({ feedbackId: inserted.id, captured: true });
+});
+
+// GET /v1/feedback/overrides — Override statistics for adaptive learning
+feedbackRoutes.get('/overrides', async (c) => {
+  const firmId = c.get('firmId');
+
+  const overrides = await db
+    .select({
+      total: sql<number>`count(*)`,
+      allows: sql<number>`count(*) filter (where ${feedback.entityHash} like 'override:%:allow')`,
+      blocks: sql<number>`count(*) filter (where ${feedback.entityHash} like 'override:%:block')`,
+      escalates: sql<number>`count(*) filter (where ${feedback.entityHash} like 'override:%:escalate')`,
+    })
+    .from(feedback)
+    .where(and(
+      eq(feedback.firmId, firmId),
+      eq(feedback.entityType, '__override__'),
+    ));
+
+  const total = Number(overrides[0]?.total || 0);
+  const allows = Number(overrides[0]?.allows || 0);
+
+  return c.json({
+    totalOverrides: total,
+    allows,
+    blocks: Number(overrides[0]?.blocks || 0),
+    escalates: Number(overrides[0]?.escalates || 0),
+    overrideRate: total > 0 ? Math.round((allows / total) * 100) : 0,
+  });
 });

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useApiClient } from '../../../lib/api';
+import { EmptyState } from '@/components/EmptyState';
 
 interface ApiKey {
   id: string;
@@ -11,12 +12,6 @@ interface ApiKey {
   createdAt: string;
   lastUsed: string | null;
 }
-
-const DEMO_KEYS: ApiKey[] = [
-  { id: '1', name: 'Production API', prefix: 'ig_live_a3xK', scope: 'write', createdAt: '2026-01-15T10:00:00Z', lastUsed: '2026-02-20T18:30:00Z' },
-  { id: '2', name: 'CI/CD Pipeline', prefix: 'ig_live_m8nP', scope: 'read', createdAt: '2026-02-01T09:00:00Z', lastUsed: '2026-02-19T12:15:00Z' },
-  { id: '3', name: 'Development Key', prefix: 'ig_test_q2wE', scope: 'admin', createdAt: '2026-02-10T14:00:00Z', lastUsed: null },
-];
 
 const SCOPES = [
   { value: 'read', label: 'Read', description: 'Read-only access to events and settings' },
@@ -38,21 +33,24 @@ export default function ApiKeysPage() {
   const [linkCopied, setLinkCopied] = useState(false);
   const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function fetchKeys() {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await apiFetch('/admin/api-keys');
+      if (!response.ok) throw new Error(`Server responded with ${response.status}`);
+      const data = await response.json();
+      setKeys(data.keys || data || []);
+    } catch (err: any) {
+      setError(err.message || 'Failed to load data. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    async function fetchKeys() {
-      try {
-        setLoading(true);
-        const response = await apiFetch('/admin/api-keys');
-        if (!response.ok) throw new Error(`Server responded with ${response.status}`);
-        const data = await response.json();
-        setKeys(data.keys || data || []);
-      } catch {
-        setKeys(DEMO_KEYS);
-      } finally {
-        setLoading(false);
-      }
-    }
     fetchKeys();
   }, []);
 
@@ -164,6 +162,19 @@ export default function ApiKeysPage() {
 
   return (
     <div className="space-y-6 max-w-2xl">
+      {error && (
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4 flex items-center justify-between">
+          <p className="text-sm text-red-700 dark:text-red-400">{error}</p>
+          <button
+            type="button"
+            onClick={fetchKeys}
+            className="ml-4 px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Newly Created Key Banner */}
       {newlyCreatedKey && (
         <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl p-5">
@@ -310,13 +321,15 @@ export default function ApiKeysPage() {
         {/* Keys List */}
         <div className="divide-y divide-[#d2d2d7]/40 dark:divide-[#38383a]/60">
           {keys.length === 0 ? (
-            <div className="py-12 text-center">
-              <svg className="w-10 h-10 text-[#d2d2d7] dark:text-[#38383a] mx-auto mb-2" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z" />
-              </svg>
-              <p className="text-sm text-[#6e6e73] dark:text-[#86868b]">No API keys yet.</p>
-              <p className="text-xs text-[#86868b] dark:text-[#636366] mt-1">Create your first key to get started.</p>
-            </div>
+            <EmptyState
+              icon={
+                <svg className="w-12 h-12 text-[#d2d2d7] dark:text-[#38383a]" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z" />
+                </svg>
+              }
+              title="No API keys yet"
+              description="Create your first key to get started."
+            />
           ) : (
             keys.map((key) => (
               <div key={key.id} className="py-4 first:pt-0 last:pb-0">

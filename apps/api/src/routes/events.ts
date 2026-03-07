@@ -6,6 +6,7 @@ import { eq, desc, and, gte, lte, sql } from 'drizzle-orm';
 import { appendEvent } from '../services/audit-chain';
 import { enqueueCoOccurrences, enqueueWebhook, enqueueSIEM } from '../jobs/enqueue';
 import { triggerInferenceDistributed } from '../services/inference-trigger';
+import { recordCriticalEvent } from './security';
 import { sha256 } from '@iron-gate/crypto';
 import type { AppEnv } from '../types';
 import { logger } from '../lib/logger';
@@ -76,6 +77,10 @@ const minimizedEntitySchema = z.object({
   source: z.string().min(1).max(20),
 });
 
+// DEPRECATED: Raw entity schema (contains PII text).
+// New clients MUST send pre-minimized entities (textHash + length, no raw text).
+// Raw entities are still accepted for backward compatibility with older extension
+// versions, but they are logged as deprecated and will be rejected in v0.3.0.
 const rawEntitySchema = z.object({
   type: z.string().min(1).max(50),
   text: z.string().min(1),
@@ -97,7 +102,7 @@ const eventSchema = z.object({
   sensitivityLevel: z.enum(['low', 'medium', 'high', 'critical']),
   entities: z.array(entitySchema).max(100).optional().default([]),
   action: z.enum(['pass', 'warn', 'block', 'proxy', 'override']),
-  overrideReason: z.string().optional(),
+  overrideReason: z.string().max(500, 'Override reason must be 500 characters or less').optional(),
   captureMethod: z.string().min(1).max(20),
   sessionId: z.string().uuid().optional(),
   metadata: z.record(z.unknown()).optional(),
@@ -115,6 +120,15 @@ eventsRoutes.post('/', async (c) => {
     const parsed = eventSchema.parse(body);
     const firmId = c.get('firmId');
     const userId = c.get('userId');
+
+    // Warn if any entities contain raw text (deprecated — clients should pre-minimize)
+    const hasRawEntities = (parsed.entities as any[]).some((e: any) => 'text' in e && !('textHash' in e));
+    if (hasRawEntities) {
+      logger.warn('Event contains raw PII entities (deprecated)', {
+        firmId, aiToolId: parsed.aiToolId, entityCount: parsed.entities.length,
+      });
+      c.header('X-Deprecation-Warning', 'Raw entity text is deprecated. Send pre-minimized entities (textHash + length).');
+    }
 
     // Data minimization: strip raw PII text, store only hashes + lengths
     const minimizedEntities = await minimizeEntities(parsed.entities as RawEntity[]);
@@ -180,6 +194,13 @@ eventsRoutes.post('/', async (c) => {
 
     // Distributed inference trigger (Redis INCR counter, threshold = 100)
     triggerInferenceDistributed(firmId);
+
+    // Auto-trigger kill switch if critical event volume exceeds threshold
+    if (parsed.sensitivityLevel === 'critical') {
+      recordCriticalEvent(firmId).catch((err) =>
+        logger.warn('Failed to check auto-trigger', { error: err instanceof Error ? err.message : String(err) }),
+      );
+    }
 
     return c.json({
       eventId: inserted.id,

@@ -1,4 +1,5 @@
 services:
+  # ── Production API ────────────────────────────────────────────────────────
   - type: web
     name: irongate-api
     runtime: docker
@@ -18,8 +19,38 @@ services:
       - key: CLERK_SECRET_KEY
         sync: false
       - key: DEFAULT_FIRM_ID
-        value: 6a3de5b8-2ad3-4d94-9171-c02951e09e4e
+        sync: false
       - key: DASHBOARD_URL
         value: https://irongate-dashboard.vercel.app
-      - key: IRON_GATE_MASTER_SECRET
+      - key: IRON_GATE_ENCRYPTION_SECRET
+        generateValue: true
+      - key: IRON_GATE_SIGNING_SECRET
+        generateValue: true
+
+  # ── Staging API ───────────────────────────────────────────────────────────
+  - type: web
+    name: irongate-api-staging
+    runtime: docker
+    dockerfilePath: apps/api/Dockerfile
+    repo: https://github.com/ssiddharthsoni-spec/irongate2
+    branch: staging
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: staging
+      - key: PORT
+        value: "3000"
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_DB_URL
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: DEFAULT_FIRM_ID
+        sync: false
+      - key: DASHBOARD_URL
+        value: https://irongate-dashboard-staging.vercel.app
+      - key: IRON_GATE_ENCRYPTION_SECRET
+        generateValue: true
+      - key: IRON_GATE_SIGNING_SECRET
         generateValue: true

@@ -15,7 +15,8 @@ export interface DOMObserverHandle {
 
 export function createDOMObserver(
   detector: AIToolDetector,
-  onPromptChange: (text: string) => void
+  onPromptChange: (text: string) => void,
+  onPromptCleared?: () => void
 ): DOMObserverHandle {
   let observer: MutationObserver | null = null;
   let pollInterval: ReturnType<typeof setInterval> | null = null;
@@ -34,6 +35,9 @@ export function createDOMObserver(
         lastText = text;
         if (text.length > 0) {
           onPromptChange(text);
+        } else {
+          // Input was cleared — notify so sidepanel resets stale results
+          onPromptCleared?.();
         }
       }
     }, 300);

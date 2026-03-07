@@ -109,6 +109,12 @@ export const GeminiAdapter: SiteAdapter = {
       if (desc?.set) desc.set.call(el, text);
       else el.value = text;
       el.dispatchEvent(new Event('input', { bubbles: true }));
+      // Verify the write succeeded
+      const verifyText = el.value;
+      if (!verifyText.includes(text.substring(0, 50))) {
+        console.error('[Iron Gate] Gemini writeInput FAILED verification on textarea/input');
+        return false;
+      }
       return true;
     }
 
@@ -133,6 +139,15 @@ export const GeminiAdapter: SiteAdapter = {
     p.textContent = text;
     el.appendChild(p);
     el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+
+    // CRITICAL: Verify the DOM fallback actually wrote the pseudonymized text.
+    // If verification fails, return false so the caller blocks the submit
+    // instead of sending unprotected PII.
+    const finalCheck = this.readInput(el);
+    if (!finalCheck.includes(text.substring(0, 50))) {
+      console.error('[Iron Gate] Gemini writeInput FAILED verification — DOM fallback did not apply');
+      return false;
+    }
     return true;
   },
 

@@ -1,0 +1,19 @@
+{
+  "vitest.enable": true,
+  "vitest.commandLine": "pnpm vitest",
+  "vitest.include": [
+    "apps/api/tests/**/*.test.ts",
+    "apps/extension/tests/**/*.test.ts"
+  ],
+  "vitest.exclude": [
+    "**/node_modules/**",
+    "**/e2e/**"
+  ],
+  "testing.automaticallyOpenPeekView": "failureVisible",
+  "testing.defaultGutterClickAction": "run",
+  "testing.gutterEnabled": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll": "explicit"
+  },
+  "typescript.preferences.importModuleSpecifier": "relative"
+}

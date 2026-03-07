@@ -128,10 +128,11 @@ export function installFetchInterceptor(
               if (value instanceof File && value.size > 0) {
                 try {
                   // Hold the fetch until scanning completes (with timeout)
+                  // Fail-closed: timeout and errors block the request
                   const decision = await Promise.race([
                     onFileInFormData(value),
-                    new Promise<'allow'>((resolve) =>
-                      setTimeout(() => resolve('allow'), FILE_SCAN_TIMEOUT_MS)
+                    new Promise<'block'>((resolve) =>
+                      setTimeout(() => resolve('block'), FILE_SCAN_TIMEOUT_MS)
                     ),
                   ]);
                   if (decision === 'block') {
@@ -139,7 +140,9 @@ export function installFetchInterceptor(
                     break; // One blocked file blocks the entire request
                   }
                 } catch {
-                  // On error, default to allow
+                  // Fail-closed: scan error blocks the request
+                  shouldBlock = true;
+                  break;
                 }
               }
             }

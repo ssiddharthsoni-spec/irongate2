@@ -39,6 +39,46 @@ function getConfiguredLevel(): LogLevel {
   return 'info';
 }
 
+// ── PII Sanitization ──────────────────────────────────────────────────────────
+// Prevents accidental PII leakage in log output.
+
+const SENSITIVE_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
+  { pattern: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, replacement: '[EMAIL_REDACTED]' },
+  { pattern: /\b\d{3}-\d{2}-\d{4}\b/g, replacement: '[SSN_REDACTED]' },
+  { pattern: /\b(?:4\d{12}(?:\d{3})?|5[1-5]\d{14}|3[47]\d{13})\b/g, replacement: '[CARD_REDACTED]' },
+  { pattern: /(?:sk|pk|ig)_[a-zA-Z0-9]{16,}/g, replacement: '[API_KEY_REDACTED]' },
+  { pattern: /postgres(?:ql)?:\/\/[^\s"'}\]]+/gi, replacement: '[DB_URI_REDACTED]' },
+  { pattern: /rediss?:\/\/[^\s"'}\]]+/gi, replacement: '[REDIS_URI_REDACTED]' },
+  { pattern: /eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g, replacement: '[JWT_REDACTED]' },
+];
+
+/** Sanitize a string by replacing known PII patterns with redaction markers. */
+export function sanitizeForLogging(input: string): string {
+  let result = input;
+  for (const { pattern, replacement } of SENSITIVE_PATTERNS) {
+    pattern.lastIndex = 0;
+    result = result.replace(pattern, replacement);
+  }
+  return result;
+}
+
+/** Deep-sanitize a metadata object — sanitizes all string values recursively. */
+function sanitizeMeta(meta: Record<string, unknown>): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(meta)) {
+    if (typeof value === 'string') {
+      sanitized[key] = sanitizeForLogging(value);
+    } else if (value && typeof value === 'object' && !Array.isArray(value)) {
+      sanitized[key] = sanitizeMeta(value as Record<string, unknown>);
+    } else {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
+}
+
+// ── Core Emitter ──────────────────────────────────────────────────────────────
+
 function emit(level: LogLevel, message: string, meta?: Record<string, unknown>): void {
   const minLevel = getConfiguredLevel();
   if (LEVEL_ORDER[level] < LEVEL_ORDER[minLevel]) {
@@ -48,8 +88,8 @@ function emit(level: LogLevel, message: string, meta?: Record<string, unknown>):
   const entry: Record<string, unknown> = {
     timestamp: new Date().toISOString(),
     level,
-    message,
-    ...meta,
+    message: sanitizeForLogging(message),
+    ...(meta ? sanitizeMeta(meta) : {}),
   };
 
   CONSOLE_FN[level](JSON.stringify(entry));

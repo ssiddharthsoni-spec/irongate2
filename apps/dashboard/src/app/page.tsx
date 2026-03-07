@@ -55,7 +55,7 @@ export default async function LandingPage() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
                 <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500" />
               </span>
-              Works with ChatGPT, Claude, Gemini, Copilot &amp; 6 more
+              Works with ChatGPT, Claude, Gemini, Copilot &amp; more
             </div>
 
             <h1 className="text-4xl md:text-6xl font-bold leading-[1.08] tracking-tight">
@@ -87,6 +87,10 @@ export default async function LandingPage() {
                 See Live Demo
               </Link>
             </div>
+
+            <p className="mt-6 text-xs text-[#86868b] dark:text-[#636366]">
+              Built for law firms, healthcare, finance, and HR teams.
+            </p>
           </div>
         </div>
       </section>
@@ -94,11 +98,10 @@ export default async function LandingPage() {
       {/* ════════════════ THE ROUND-TRIP (3 steps) ════════════════ */}
       <section className="max-w-7xl mx-auto px-6 md:px-12 pb-24 md:pb-32">
         <div className="text-center mb-12">
-          <p className="text-xs font-semibold uppercase tracking-widest text-iron-600 dark:text-iron-400 mb-3">See It In Action</p>
           <h2 className="text-2xl md:text-3xl font-bold tracking-tight">The full round-trip, in three steps</h2>
           <p className="mt-3 text-sm text-[#6e6e73] dark:text-[#86868b] max-w-xl mx-auto leading-relaxed">
             Your team types naturally. Iron Gate swaps sensitive data before the AI sees it,
-            then restores real values in the response. No workflow changes needed.
+            then restores real values in the response.
           </p>
         </div>
 
@@ -149,84 +152,36 @@ export default async function LandingPage() {
         </div>
       </section>
 
-      {/* ════════════════ STATS BAR ════════════════ */}
-      <section className="border-y border-[#d2d2d7]/30 dark:border-[#38383a]/40 bg-white dark:bg-[#1c1c1e]">
-        <div className="max-w-7xl mx-auto px-6 md:px-12 py-12">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-10">
-            {[
-              { value: '27', label: 'Entity types detected', sub: 'SSNs, names, financials & more' },
-              { value: '10+', label: 'AI tools supported', sub: 'ChatGPT, Claude, Gemini, Copilot' },
-              { value: '<200ms', label: 'Avg. intercept speed', sub: 'Feels instant to end users' },
-              { value: 'Zero', label: 'Workflow changes', sub: 'Employees don\u2019t notice it\u2019s there' },
-            ].map((stat) => (
-              <div key={stat.label} className="text-center md:text-left">
-                <p className="text-2xl md:text-3xl font-bold tracking-tight">{stat.value}</p>
-                <p className="text-sm font-medium text-[#424245] dark:text-[#a1a1a6] mt-1">{stat.label}</p>
-                <p className="text-xs text-[#86868b] dark:text-[#636366] mt-0.5">{stat.sub}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-
       {/* ════════════════ FEATURES ════════════════ */}
       <section id="features" className="bg-white dark:bg-[#1c1c1e] border-y border-[#d2d2d7]/30 dark:border-[#38383a]/40">
-        <div className="max-w-7xl mx-auto px-6 md:px-12 py-24 md:py-32">
-          <div className="text-center mb-16">
-            <p className="text-xs font-semibold uppercase tracking-widest text-iron-600 dark:text-iron-400 mb-3">Platform</p>
-            <h2 className="text-2xl md:text-4xl font-bold tracking-tight">AI productivity with guardrails built in</h2>
+        <div className="max-w-7xl mx-auto px-6 md:px-12 py-24 md:py-28">
+          <div className="text-center mb-14">
+            <h2 className="text-2xl md:text-4xl font-bold tracking-tight">Everything your security team needs</h2>
             <p className="mt-3 text-sm text-[#6e6e73] dark:text-[#86868b] max-w-lg mx-auto leading-relaxed">
-              Everything your security team needs &mdash; nothing your employees notice.
+              Nothing your employees notice.
             </p>
           </div>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
+          <div className="grid md:grid-cols-2 gap-5 max-w-4xl mx-auto">
             {[
               {
-                icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" /></svg>,
                 title: 'Real-Time Entity Detection',
-                desc: 'Identifies SSNs, client names, case numbers, and 27 entity types inline with every prompt. Employees never wait.',
-                tag: 'Core',
+                desc: 'Identifies SSNs, client names, case numbers, and 27 entity types inline with every prompt. Under 200ms.',
               },
               {
-                icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" /></svg>,
                 title: 'Pre-Send Interception',
                 desc: 'Catches prompts and file uploads in the browser before they reach any AI tool. Nothing sensitive ever leaves.',
-                tag: 'Core',
               },
               {
-                icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" /></svg>,
                 title: 'Smart Pseudonymization',
-                desc: 'Sensitive data is replaced with realistic fakes. The AI gives useful answers &mdash; your employees stay productive, your data stays private.',
-                tag: 'Proxy',
+                desc: 'Sensitive data is replaced with realistic fakes. The AI gives useful answers while your data stays private.',
               },
               {
-                icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m5.231 13.481L15 17.25m-4.5-15H5.625c-.621 0-1.125.504-1.125 1.125v16.5c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Zm3.75 11.625a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" /></svg>,
-                title: 'Document Scanning',
-                desc: 'Scans PDF, DOCX, XLSX, and more before uploads. High-risk files are flagged or blocked automatically.',
-                tag: 'Files',
-              },
-              {
-                icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" /></svg>,
                 title: 'Executive Dashboard',
                 desc: 'Full visibility into AI usage across your org &mdash; data exposure, trust scores, and risk trends in real time.',
-                tag: 'Analytics',
-              },
-              {
-                icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75" /></svg>,
-                title: 'Configurable Policies',
-                desc: 'Set per-team rules: block, warn, or silently redact. Control sensitivity thresholds and choose which entity types to enforce.',
-                tag: 'Admin',
               },
             ].map((f) => (
-              <div key={f.title} className="bg-[#fafafa] dark:bg-[#141414] rounded-2xl p-6 border border-[#d2d2d7]/30 dark:border-[#38383a]/30 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-sm group">
-                <div className="flex items-start justify-between mb-4">
-                  <div className="w-10 h-10 rounded-xl bg-iron-50 dark:bg-iron-900/20 flex items-center justify-center text-iron-600 dark:text-iron-400">
-                    {f.icon}
-                  </div>
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-[#86868b] dark:text-[#636366] px-2 py-0.5 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded">{f.tag}</span>
-                </div>
+              <div key={f.title} className="bg-[#fafafa] dark:bg-[#141414] rounded-2xl p-6 border border-[#d2d2d7]/30 dark:border-[#38383a]/30">
                 <h3 className="text-sm font-bold mb-1.5">{f.title}</h3>
                 <p className="text-sm text-[#6e6e73] dark:text-[#86868b] leading-relaxed">{f.desc}</p>
               </div>
@@ -235,204 +190,114 @@ export default async function LandingPage() {
         </div>
       </section>
 
-      {/* ════════════════ INDUSTRIES ════════════════ */}
-      <section id="industries" className="max-w-7xl mx-auto px-6 md:px-12 py-24 md:py-32">
-        <div className="text-center mb-16">
-          <p className="text-xs font-semibold uppercase tracking-widest text-iron-600 dark:text-iron-400 mb-3">Industries</p>
-          <h2 className="text-2xl md:text-4xl font-bold tracking-tight">Built for teams that handle sensitive data</h2>
+      {/* ════════════════ SECURITY ════════════════ */}
+      <section id="security" className="max-w-7xl mx-auto px-6 md:px-12 py-24 md:py-28">
+        <div className="text-center mb-14">
+          <h2 className="text-2xl md:text-4xl font-bold tracking-tight">Enterprise-grade security</h2>
           <p className="mt-3 text-sm text-[#6e6e73] dark:text-[#86868b] max-w-lg mx-auto leading-relaxed">
-            Custom entity detectors tuned for the data types and compliance requirements in your industry.
+            Zero-knowledge architecture. Raw PII never reaches our servers.
           </p>
         </div>
 
-        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 max-w-3xl mx-auto text-center">
           {[
-            {
-              icon: <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 3v17.25m0 0c-1.472 0-2.882.265-4.185.75M12 20.25c1.472 0 2.882.265 4.185.75M18.75 4.97A48.416 48.416 0 0 0 12 4.5c-2.291 0-4.545.16-6.75.47m13.5 0c1.01.143 2.01.317 3 .52m-3-.52 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.988 5.988 0 0 1-2.031.352 5.988 5.988 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L18.75 4.97Zm-16.5.52c.99-.203 1.99-.377 3-.52m0 0 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.989 5.989 0 0 1-2.031.352 5.989 5.989 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L5.25 4.97Z" /></svg>,
-              title: 'Law Firms',
-              entities: 'Case names, matter numbers, privilege markers, opposing counsel',
-              color: 'text-blue-600 dark:text-blue-400',
-            },
-            {
-              icon: <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z" /></svg>,
-              title: 'Healthcare',
-              entities: 'Patient MRNs, diagnoses, insurance IDs, HIPAA-protected PHI',
-              color: 'text-red-600 dark:text-red-400',
-            },
-            {
-              icon: <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 0 0-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 0 1-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 0 0 3 15h-.75M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm3 0h.008v.008H18V10.5Zm-12 0h.008v.008H6V10.5Z" /></svg>,
-              title: 'Investment Banks',
-              entities: 'Deal codenames, MNPI, ticker symbols, information barriers',
-              color: 'text-green-600 dark:text-green-400',
-            },
-            {
-              icon: <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 0 0 3.741-.479 3 3 0 0 0-4.682-2.72m.94 3.198.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0 1 12 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 0 1 6 18.719m12 0a5.971 5.971 0 0 0-.941-3.197m0 0A5.995 5.995 0 0 0 12 12.75a5.995 5.995 0 0 0-5.058 2.772m0 0a3 3 0 0 0-4.681 2.72 8.986 8.986 0 0 0 3.74.477m.94-3.197a5.971 5.971 0 0 0-.94 3.197M15 6.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm6 3a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Zm-13.5 0a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Z" /></svg>,
-              title: 'HR & People Ops',
-              entities: 'Employee IDs, salaries, equity grants, performance reviews',
-              color: 'text-purple-600 dark:text-purple-400',
-            },
-          ].map((ind) => (
-            <div key={ind.title} className="bg-white dark:bg-[#1c1c1e] rounded-2xl p-6 border border-[#d2d2d7]/40 dark:border-[#38383a]/40 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-sm">
-              <div className={`w-10 h-10 rounded-xl bg-[#f5f5f7] dark:bg-[#2c2c2e] ${ind.color} flex items-center justify-center mb-4`}>
-                {ind.icon}
-              </div>
-              <h3 className="text-sm font-bold mb-1.5">{ind.title}</h3>
-              <p className="text-xs text-[#6e6e73] dark:text-[#86868b] leading-relaxed">{ind.entities}</p>
+            { title: 'Zero-Knowledge', desc: 'SHA-256 client-side hashing' },
+            { title: 'AES-256 Encryption', desc: 'Per-firm derived keys' },
+            { title: 'Firm Isolation', desc: 'Row-level DB security' },
+            { title: 'Tamper-Proof Audit', desc: 'Hash-chained event log' },
+          ].map((item) => (
+            <div key={item.title}>
+              <p className="text-sm font-bold mb-1">{item.title}</p>
+              <p className="text-xs text-[#86868b] dark:text-[#636366] leading-relaxed">{item.desc}</p>
             </div>
           ))}
         </div>
       </section>
 
-      {/* ════════════════ SECURITY ════════════════ */}
-      <section id="security" className="bg-white dark:bg-[#1c1c1e] border-y border-[#d2d2d7]/30 dark:border-[#38383a]/40">
-        <div className="max-w-7xl mx-auto px-6 md:px-12 py-24 md:py-32">
-          <div className="text-center mb-16">
-            <p className="text-xs font-semibold uppercase tracking-widest text-iron-600 dark:text-iron-400 mb-3">Security</p>
-            <h2 className="text-2xl md:text-4xl font-bold tracking-tight">Enterprise-grade security, built in</h2>
+      {/* ════════════════ PRICING ════════════════ */}
+      <section id="pricing" className="bg-white dark:bg-[#1c1c1e] border-y border-[#d2d2d7]/30 dark:border-[#38383a]/40">
+        <div className="max-w-7xl mx-auto px-6 md:px-12 py-24 md:py-28">
+          <div className="text-center mb-14">
+            <h2 className="text-2xl md:text-4xl font-bold tracking-tight">Simple pricing</h2>
             <p className="mt-3 text-sm text-[#6e6e73] dark:text-[#86868b] max-w-lg mx-auto leading-relaxed">
-              Zero-knowledge architecture. Entity values are hashed client-side, data is encrypted per-firm, and every event is hash-chained for tamper detection.
+              Start free. Upgrade when your team grows.
             </p>
           </div>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5">
-            {[
-              {
-                title: 'Zero-Knowledge Architecture',
-                desc: 'Entity values are SHA-256 hashed client-side. Raw PII never reaches our servers.',
-                icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" /></svg>,
-              },
-              {
-                title: 'AES-256 Encryption',
-                desc: 'AES-256-GCM encryption with per-firm derived keys. Pseudonym mappings are encrypted at rest.',
-                icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z" /></svg>,
-              },
-              {
-                title: 'Firm Isolation',
-                desc: 'PostgreSQL Row-Level Security enforces data isolation at the database layer.',
-                icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3.75 3H21m-3.75 3H21" /></svg>,
-              },
-              {
-                title: 'Tamper-Proof Audit',
-                desc: 'Every event is hash-chained using SHA-256. Break one link and the entire chain fails.',
-                icon: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" /></svg>,
-              },
-            ].map((item) => (
-              <div key={item.title} className="bg-[#fafafa] dark:bg-[#141414] rounded-2xl p-6 border border-[#d2d2d7]/30 dark:border-[#38383a]/30">
-                <div className="w-10 h-10 rounded-xl bg-iron-50 dark:bg-iron-900/20 flex items-center justify-center text-iron-600 dark:text-iron-400 mb-4">
-                  {item.icon}
-                </div>
-                <h3 className="text-sm font-bold mb-1.5">{item.title}</h3>
-                <p className="text-xs text-[#6e6e73] dark:text-[#86868b] leading-relaxed">{item.desc}</p>
+          <div className="grid md:grid-cols-3 gap-5 max-w-4xl mx-auto">
+            {/* Basic */}
+            <div className="bg-[#fafafa] dark:bg-[#141414] rounded-2xl p-7 border border-[#d2d2d7]/40 dark:border-[#38383a]/40">
+              <h3 className="text-base font-bold mb-1">Basic</h3>
+              <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-5">For individuals</p>
+              <div className="mb-5">
+                <span className="text-3xl font-bold">Free</span>
               </div>
-            ))}
-          </div>
-        </div>
-      </section>
+              <ul className="space-y-2.5 mb-7">
+                {['All AI platforms', 'Audit mode', 'Regex detection', 'Unlimited scans'].map((f) => (
+                  <li key={f} className="flex items-center gap-2.5 text-sm text-[#424245] dark:text-[#a1a1a6]">
+                    <CheckIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
+                    {f}
+                  </li>
+                ))}
+              </ul>
+              <Link href="/sign-up" className="block w-full text-center px-5 py-2.5 rounded-xl text-sm font-semibold border border-[#d2d2d7]/60 dark:border-[#38383a]/60 text-[#424245] dark:text-[#a1a1a6] hover:bg-white dark:hover:bg-[#2c2c2e] transition-colors">
+                Get Started
+              </Link>
+            </div>
 
-      {/* ════════════════ PRICING ════════════════ */}
-      <section id="pricing" className="max-w-7xl mx-auto px-6 md:px-12 py-24 md:py-32">
-        <div className="text-center mb-16">
-          <p className="text-xs font-semibold uppercase tracking-widest text-iron-600 dark:text-iron-400 mb-3">Pricing</p>
-          <h2 className="text-2xl md:text-4xl font-bold tracking-tight">Simple, transparent pricing</h2>
-          <p className="mt-3 text-sm text-[#6e6e73] dark:text-[#86868b] max-w-lg mx-auto leading-relaxed">
-            Start free. Upgrade when your team grows.
+            {/* Pro */}
+            <div className="relative bg-white dark:bg-[#1c1c1e] rounded-2xl p-7 border-2 border-iron-500 shadow-lg shadow-iron-500/8">
+              <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 px-3 py-0.5 bg-iron-600 text-white text-[10px] font-bold rounded-full uppercase tracking-wide">
+                Most Popular
+              </div>
+              <h3 className="text-base font-bold mb-1">Pro</h3>
+              <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-5">For teams</p>
+              <div className="mb-5">
+                <span className="text-3xl font-bold">$18</span>
+                <span className="text-[#6e6e73] dark:text-[#86868b] text-sm">/user/mo</span>
+              </div>
+              <ul className="space-y-2.5 mb-7">
+                {['Everything in Basic', 'ML-powered detection', 'Proxy mode (auto-redact)', 'Admin dashboard', 'Compliance export', '15-day free trial'].map((f) => (
+                  <li key={f} className="flex items-center gap-2.5 text-sm text-[#424245] dark:text-[#a1a1a6]">
+                    <CheckIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
+                    {f}
+                  </li>
+                ))}
+              </ul>
+              <Link href="/sign-up" className="block w-full text-center px-5 py-2.5 rounded-xl text-sm font-semibold bg-iron-600 text-white hover:bg-iron-700 transition-colors">
+                Start Free Trial
+              </Link>
+            </div>
+
+            {/* Enterprise */}
+            <div className="bg-[#fafafa] dark:bg-[#141414] rounded-2xl p-7 border border-[#d2d2d7]/40 dark:border-[#38383a]/40">
+              <h3 className="text-base font-bold mb-1">Enterprise</h3>
+              <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-5">For regulated industries</p>
+              <div className="mb-5">
+                <span className="text-3xl font-bold">Custom</span>
+              </div>
+              <ul className="space-y-2.5 mb-7">
+                {['Everything in Pro', 'Unlimited users', 'SSO & SCIM', 'SIEM integration', 'On-premise option', 'SLA guarantee'].map((f) => (
+                  <li key={f} className="flex items-center gap-2.5 text-sm text-[#424245] dark:text-[#a1a1a6]">
+                    <CheckIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
+                    {f}
+                  </li>
+                ))}
+              </ul>
+              <a href="mailto:sales@irongate.ai?subject=Enterprise%20Plan%20Inquiry" className="block w-full text-center px-5 py-2.5 rounded-xl text-sm font-semibold border border-[#d2d2d7]/60 dark:border-[#38383a]/60 text-[#424245] dark:text-[#a1a1a6] hover:bg-white dark:hover:bg-[#2c2c2e] transition-colors">
+                Contact Sales
+              </a>
+            </div>
+          </div>
+
+          <p className="text-center mt-6 text-xs text-[#86868b] dark:text-[#636366]">
+            All paid plans include a 15-day free Pro trial. Basic plan is free forever.
           </p>
         </div>
-
-        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5 max-w-5xl mx-auto">
-          {/* Basic */}
-          <div className="bg-white dark:bg-[#1c1c1e] rounded-2xl p-7 border border-[#d2d2d7]/40 dark:border-[#38383a]/40 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-sm">
-            <h3 className="text-base font-bold mb-1">Basic</h3>
-            <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-5">For individuals</p>
-            <div className="mb-5">
-              <span className="text-3xl font-bold">Free</span>
-            </div>
-            <ul className="space-y-2.5 mb-7">
-              {['All AI platforms', 'Audit mode', 'Regex detection', 'Unlimited scans', 'Community support'].map((f) => (
-                <li key={f} className="flex items-center gap-2.5 text-sm text-[#424245] dark:text-[#a1a1a6]">
-                  <CheckIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
-                  {f}
-                </li>
-              ))}
-            </ul>
-            <Link href="/sign-up" className="block w-full text-center px-5 py-2.5 rounded-xl text-sm font-semibold border border-[#d2d2d7]/60 dark:border-[#38383a]/60 text-[#424245] dark:text-[#a1a1a6] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] transition-colors">
-              Get Started
-            </Link>
-          </div>
-
-          {/* Pro */}
-          <div className="relative bg-white dark:bg-[#1c1c1e] rounded-2xl p-7 border-2 border-iron-500 shadow-lg shadow-iron-500/8">
-            <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 px-3 py-0.5 bg-iron-600 text-white text-[10px] font-bold rounded-full uppercase tracking-wide">
-              Most Popular
-            </div>
-            <h3 className="text-base font-bold mb-1">Pro</h3>
-            <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-5">For professionals</p>
-            <div className="mb-5">
-              <span className="text-3xl font-bold">$18</span>
-              <span className="text-[#6e6e73] dark:text-[#86868b] text-sm">/user/mo</span>
-            </div>
-            <ul className="space-y-2.5 mb-7">
-              {['Everything in Basic', 'ML-powered detection', 'Proxy mode (auto-redact)', 'Compliance export', 'Email support', '15-day free trial'].map((f) => (
-                <li key={f} className="flex items-center gap-2.5 text-sm text-[#424245] dark:text-[#a1a1a6]">
-                  <CheckIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
-                  {f}
-                </li>
-              ))}
-            </ul>
-            <Link href="/sign-up" className="block w-full text-center px-5 py-2.5 rounded-xl text-sm font-semibold bg-iron-600 text-white hover:bg-iron-700 transition-colors">
-              Start Free Trial
-            </Link>
-          </div>
-
-          {/* Team */}
-          <div className="bg-white dark:bg-[#1c1c1e] rounded-2xl p-7 border border-[#d2d2d7]/40 dark:border-[#38383a]/40 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-sm">
-            <h3 className="text-base font-bold mb-1">Team</h3>
-            <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-5">For growing teams</p>
-            <div className="mb-5">
-              <span className="text-3xl font-bold">$99</span>
-              <span className="text-[#6e6e73] dark:text-[#86868b] text-sm">/mo flat</span>
-            </div>
-            <ul className="space-y-2.5 mb-7">
-              {['Everything in Pro', 'Up to 10 users included', 'Shared admin dashboard', 'Slack + email alerts', 'Priority support', '1-year data retention'].map((f) => (
-                <li key={f} className="flex items-center gap-2.5 text-sm text-[#424245] dark:text-[#a1a1a6]">
-                  <CheckIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
-                  {f}
-                </li>
-              ))}
-            </ul>
-            <Link href="/sign-up" className="block w-full text-center px-5 py-2.5 rounded-xl text-sm font-semibold border border-[#d2d2d7]/60 dark:border-[#38383a]/60 text-[#424245] dark:text-[#a1a1a6] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] transition-colors">
-              Start Free Trial
-            </Link>
-          </div>
-
-          {/* Enterprise */}
-          <div className="bg-white dark:bg-[#1c1c1e] rounded-2xl p-7 border border-[#d2d2d7]/40 dark:border-[#38383a]/40 hover:border-[#d2d2d7] dark:hover:border-[#48484a] transition-all hover:shadow-sm">
-            <h3 className="text-base font-bold mb-1">Enterprise</h3>
-            <p className="text-xs text-[#6e6e73] dark:text-[#86868b] mb-5">For regulated industries</p>
-            <div className="mb-5">
-              <span className="text-3xl font-bold">Custom</span>
-            </div>
-            <ul className="space-y-2.5 mb-7">
-              {['Everything in Team', 'Unlimited users', 'SSO & SCIM', 'SIEM integration', 'On-premise option', 'SLA guarantee', 'Dedicated engineer'].map((f) => (
-                <li key={f} className="flex items-center gap-2.5 text-sm text-[#424245] dark:text-[#a1a1a6]">
-                  <CheckIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
-                  {f}
-                </li>
-              ))}
-            </ul>
-            <a href="mailto:sales@irongate.ai?subject=Enterprise%20Plan%20Inquiry" className="block w-full text-center px-5 py-2.5 rounded-xl text-sm font-semibold border border-[#d2d2d7]/60 dark:border-[#38383a]/60 text-[#424245] dark:text-[#a1a1a6] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e] transition-colors">
-              Contact Sales
-            </a>
-          </div>
-        </div>
-
-        <p className="text-center mt-6 text-xs text-[#86868b] dark:text-[#636366]">
-          All paid plans include a 15-day free Pro trial. Basic plan is free forever with unlimited scans.
-        </p>
       </section>
 
       {/* ════════════════ CTA ════════════════ */}
-      <section className="max-w-7xl mx-auto px-6 md:px-12 pb-24 md:pb-32">
+      <section className="max-w-7xl mx-auto px-6 md:px-12 py-24 md:py-28">
         <div className="relative rounded-3xl overflow-hidden">
           <div className="absolute inset-0 bg-gradient-to-br from-iron-600 via-iron-700 to-purple-700" />
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(255,255,255,0.08),transparent_60%)]" />
@@ -440,7 +305,7 @@ export default async function LandingPage() {
           <div className="relative px-8 py-16 md:px-16 md:py-20 text-center text-white">
             <h2 className="text-2xl md:text-4xl font-bold tracking-tight mb-4">Unlock AI for your team &mdash; safely</h2>
             <p className="text-iron-100/70 max-w-lg mx-auto mb-10 text-sm md:text-base leading-relaxed">
-              Install the Chrome extension, connect your team, and your employees start using AI productively &mdash; with every prompt protected.
+              Install the Chrome extension, connect your team, and start using AI productively &mdash; with every prompt protected.
             </p>
             <div className="flex flex-wrap justify-center gap-3">
               <Link

@@ -43,7 +43,8 @@ alertRoutes.patch('/:id/acknowledge', async (c) => {
   const userId = c.get('userId');
   const alertId = c.req.param('id');
 
-  const [updated] = await acknowledgeAlert(alertId, userId);
+  const firmId = c.get('firmId');
+  const [updated] = await acknowledgeAlert(alertId, userId, firmId);
   if (!updated) {
     return c.json({ error: 'Alert not found' }, 404);
   }

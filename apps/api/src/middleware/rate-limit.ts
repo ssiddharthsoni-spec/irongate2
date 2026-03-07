@@ -99,8 +99,74 @@ async function checkRedis(redisClient: any, key: string): Promise<{ count: numbe
 // Middleware
 // ---------------------------------------------------------------------------
 
+/**
+ * Create a rate limit middleware with custom limits.
+ * Useful for per-route or per-firm rate limiting.
+ */
+export function createRateLimiter(opts: {
+  maxRequests?: number;
+  windowMs?: number;
+  keyPrefix?: string;
+  /** Use firmId as the rate limit key instead of userId/IP */
+  perFirm?: boolean;
+} = {}) {
+  const max = opts.maxRequests ?? MAX_REQUESTS;
+  const window = opts.windowMs ?? WINDOW_MS;
+  const prefix = opts.keyPrefix ?? 'rl';
+
+  return createMiddleware(async (c, next) => {
+    const baseKey = opts.perFirm
+      ? (c.get('firmId') || 'unknown-firm')
+      : (c.get('userId')
+        || c.req.header('cf-connecting-ip')
+        || c.req.header('x-render-client-ip')
+        || (c.req.header('x-forwarded-for') || '').split(',')[0].trim()
+        || 'anonymous');
+
+    const key = `${prefix}:${baseKey}`;
+    let result: { count: number; remaining: number; resetTime: number };
+
+    try {
+      const redisClient = getRedisClient();
+      if (redisClient) {
+        result = await checkRedis(redisClient, key);
+      } else {
+        result = await checkInMemory(key);
+      }
+    } catch (err) {
+      logger.warn('Redis rate-limit failed, using in-memory fallback', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      result = await checkInMemory(key);
+    }
+
+    c.header('X-RateLimit-Limit', String(max));
+    c.header('X-RateLimit-Remaining', String(Math.max(0, max - result.count)));
+    c.header('X-RateLimit-Reset', String(Math.ceil(result.resetTime / 1000)));
+
+    if (result.count > max) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
+
+    await next();
+  });
+}
+
+/** Per-firm proxy rate limiter: 100 requests per firm per minute */
+export const proxyRateLimitMiddleware = createRateLimiter({
+  maxRequests: 100,
+  keyPrefix: 'rl:proxy',
+  perFirm: true,
+});
+
 export const rateLimitMiddleware = createMiddleware(async (c, next) => {
-  const key = c.get('userId') || c.req.header('x-forwarded-for') || 'anonymous';
+  // Prefer authenticated userId. For unauthenticated requests, use the
+  // most trustworthy client IP header available (CF > Render > XFF last hop).
+  const key = c.get('userId')
+    || c.req.header('cf-connecting-ip')
+    || c.req.header('x-render-client-ip')
+    || (c.req.header('x-forwarded-for') || '').split(',')[0].trim()
+    || 'anonymous';
 
   let result: { count: number; remaining: number; resetTime: number };
 

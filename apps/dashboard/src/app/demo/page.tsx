@@ -3,6 +3,11 @@
 import { useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
 
+/** Safely decode HTML numeric entities (e.g. &#9878;) to Unicode without innerHTML */
+function decodeHTMLEntities(html: string): string {
+  return html.replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)));
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -845,7 +850,7 @@ export default function DemoPage() {
                   : 'border-[#d2d2d7]/40 dark:border-[#38383a]/60 text-[#6e6e73] dark:text-[#86868b] hover:border-[#d2d2d7] dark:hover:border-[#38383a] hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e]'
               }`}
             >
-              <span dangerouslySetInnerHTML={{ __html: sc.icon }} />
+              <span aria-hidden="true">{decodeHTMLEntities(sc.icon)}</span>
               <span>{sc.label}</span>
               <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
                 scenarioId === sc.id
@@ -940,7 +945,7 @@ export default function DemoPage() {
                     Select a scenario above, then click &quot;Start Simulation&quot;
                   </p>
                   <div className="flex items-center gap-2 text-xs text-[#d2d2d7] dark:text-[#38383a]">
-                    <span dangerouslySetInnerHTML={{ __html: scenario.icon }} className="text-base" />
+                    <span className="text-base" aria-hidden="true">{decodeHTMLEntities(scenario.icon)}</span>
                     <span>{scenario.industry} &mdash; {scenario.userName} on {scenario.aiTool}</span>
                   </div>
                 </div>

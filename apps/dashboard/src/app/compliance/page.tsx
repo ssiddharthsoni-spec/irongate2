@@ -48,17 +48,6 @@ interface ComplianceStatusItem {
   lastAssessmentDate: string | null;
 }
 
-// Demo profiles (fallback when API is unavailable)
-const DEMO_PROFILES: ComplianceProfile[] = [
-  { id: 'soc2', name: 'SOC 2 Type II', shortName: 'SOC 2', description: 'Trust Services Criteria for security, availability, processing integrity, confidentiality, and privacy.', version: '2024', riskMultiplier: 1.3, autoBlockThreshold: 85, entityRuleCount: 9, requiredControlCount: 6, reportingFrequency: 'quarterly' },
-  { id: 'hipaa', name: 'HIPAA', shortName: 'HIPAA', description: 'Protects individually identifiable health information (PHI).', version: '2024', riskMultiplier: 2.0, autoBlockThreshold: 60, entityRuleCount: 10, requiredControlCount: 8, reportingFrequency: 'monthly' },
-  { id: 'gdpr', name: 'GDPR', shortName: 'GDPR', description: 'EU regulation for personal data protection and privacy rights.', version: '2024', riskMultiplier: 1.5, autoBlockThreshold: 70, entityRuleCount: 10, requiredControlCount: 8, reportingFrequency: 'monthly' },
-  { id: 'pci_dss', name: 'PCI DSS v4.0', shortName: 'PCI DSS', description: 'Protects cardholder data and sensitive authentication data.', version: '4.0', riskMultiplier: 2.5, autoBlockThreshold: 50, entityRuleCount: 6, requiredControlCount: 8, reportingFrequency: 'quarterly' },
-  { id: 'ccpa', name: 'CCPA / CPRA', shortName: 'CCPA', description: 'California consumer data privacy rights and business obligations.', version: '2024', riskMultiplier: 1.2, autoBlockThreshold: 75, entityRuleCount: 9, requiredControlCount: 6, reportingFrequency: 'quarterly' },
-  { id: 'glba', name: 'GLBA', shortName: 'GLBA', description: 'Protects consumers\' nonpublic personal financial information.', version: '2024', riskMultiplier: 1.8, autoBlockThreshold: 65, entityRuleCount: 7, requiredControlCount: 6, reportingFrequency: 'quarterly' },
-  { id: 'ferpa', name: 'FERPA', shortName: 'FERPA', description: 'Protects student education records.', version: '2024', riskMultiplier: 1.3, autoBlockThreshold: 70, entityRuleCount: 5, requiredControlCount: 5, reportingFrequency: 'monthly' },
-];
-
 const ACTION_COLORS: Record<string, string> = {
   block: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
   redact: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
@@ -69,7 +58,8 @@ const ACTION_COLORS: Record<string, string> = {
 
 export default function CompliancePage() {
   const { apiFetch } = useApiClient();
-  const [profiles, setProfiles] = useState<ComplianceProfile[]>(DEMO_PROFILES);
+  const [profiles, setProfiles] = useState<ComplianceProfile[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const [activeFrameworks, setActiveFrameworks] = useState<string[]>(['soc2', 'gdpr']);
   const [activeConfig, setActiveConfig] = useState<ActiveConfig | null>(null);
   const [statuses, setStatuses] = useState<ComplianceStatusItem[]>([]);
@@ -79,11 +69,16 @@ export default function CompliancePage() {
   // Fetch available profiles
   useEffect(() => {
     apiFetch('/compliance/profiles')
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error('Failed to load profiles');
+        return r.json();
+      })
       .then(data => {
         if (data.profiles) setProfiles(data.profiles);
       })
-      .catch(() => {});
+      .catch((err: any) => {
+        setError(err.message || 'Failed to load compliance profiles.');
+      });
   }, []);
 
   // Fetch active configuration
@@ -96,42 +91,8 @@ export default function CompliancePage() {
           setActiveConfig(data);
         }
       })
-      .catch(() => {
-        // Use demo active config
-        setActiveConfig({
-          frameworks: activeFrameworks,
-          mergedEntityRules: [
-            { entityType: 'SSN', action: 'redact', riskMultiplier: 2.5, justification: 'GDPR Art. 9 / SOC 2 CC6.1' },
-            { entityType: 'CREDIT_CARD', action: 'redact', riskMultiplier: 2.0, justification: 'SOC 2 CC6.1 / GDPR Art. 4(1)' },
-            { entityType: 'API_KEY', action: 'block', riskMultiplier: 3.0, justification: 'SOC 2 CC6.6' },
-            { entityType: 'DATABASE_URI', action: 'block', riskMultiplier: 3.0, justification: 'SOC 2 CC6.6' },
-            { entityType: 'PRIVATE_KEY', action: 'block', riskMultiplier: 3.0, justification: 'SOC 2 CC6.1' },
-            { entityType: 'PERSON', action: 'pseudonymize', riskMultiplier: 1.5, justification: 'GDPR Art. 4(5)' },
-            { entityType: 'EMAIL', action: 'pseudonymize', riskMultiplier: 1.5, justification: 'GDPR Art. 4(1)' },
-            { entityType: 'PHONE_NUMBER', action: 'pseudonymize', riskMultiplier: 1.5, justification: 'GDPR Art. 4(1)' },
-            { entityType: 'MEDICAL_RECORD', action: 'redact', riskMultiplier: 2.5, justification: 'GDPR Art. 9(1)' },
-            { entityType: 'IP_ADDRESS', action: 'pseudonymize', riskMultiplier: 1.3, justification: 'GDPR Recital 30' },
-            { entityType: 'PASSPORT_NUMBER', action: 'redact', riskMultiplier: 2.0, justification: 'GDPR Art. 87' },
-          ],
-          effectiveRiskMultiplier: 1.5,
-          effectiveBlockThreshold: 70,
-          allRequiredControls: [
-            'Cryptographic audit trail',
-            'Encryption at rest for stored data',
-            'Data Protection Impact Assessment (DPIA)',
-            'Data subject rights procedures',
-            'Data breach notification within 72 hours',
-            'Records of processing activities',
-            'Annual penetration testing',
-            'Employee security awareness training',
-          ],
-          retentionPolicy: {
-            auditLogDays: 1095,
-            eventDataDays: 730,
-            pseudonymMapDays: 365,
-            deleteRawPrompts: true,
-          },
-        });
+      .catch((err: any) => {
+        setError(err.message || 'Failed to load active configuration.');
       });
   }, []);
 
@@ -142,20 +103,8 @@ export default function CompliancePage() {
       .then(data => {
         if (data.frameworks) setStatuses(data.frameworks);
       })
-      .catch(() => {
-        setStatuses(activeFrameworks.map(id => {
-          const p = profiles.find(p => p.id === id);
-          return {
-            frameworkId: id,
-            name: p?.name || id,
-            shortName: p?.shortName || id,
-            enabled: true,
-            score: 87,
-            controlsMet: Math.round((p?.requiredControlCount || 6) * 0.87),
-            controlsTotal: p?.requiredControlCount || 6,
-            lastAssessmentDate: new Date().toISOString(),
-          };
-        }));
+      .catch((err: any) => {
+        setError(err.message || 'Failed to load compliance status.');
       });
   }, [activeFrameworks]);
 
@@ -172,8 +121,8 @@ export default function CompliancePage() {
         method: 'PUT',
         body: JSON.stringify({ frameworks: activeFrameworks }),
       });
-    } catch {
-      // OK in demo mode
+    } catch (err: any) {
+      setError(err.message || 'Failed to save configuration.');
     }
     setSaving(false);
   };
@@ -196,6 +145,16 @@ export default function CompliancePage() {
           {saving ? 'Saving...' : 'Save Configuration'}
         </button>
       </div>
+
+      {/* Error banner */}
+      {error && (
+        <div className="px-4 py-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/40 text-sm text-red-700 dark:text-red-400 flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => window.location.reload()} className="ml-4 px-3 py-1 text-xs font-medium bg-red-100 dark:bg-red-900/30 rounded-lg hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors">
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Status Cards */}
       {statuses.length > 0 && (

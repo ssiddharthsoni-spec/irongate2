@@ -347,18 +347,22 @@ export default function ExposureReportPage() {
   const [report, setReport] = useState<ExposureReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(30);
+  const [isDemoData, setIsDemoData] = useState(false);
 
   const fetchReport = useCallback(async (periodDays: number) => {
     try {
       setLoading(true);
+      setIsDemoData(false);
       const response = await apiFetch(`/reports/exposure?days=${periodDays}`);
       if (response.ok) {
         setReport(await response.json());
       } else {
         setReport(getDemoReport(periodDays));
+        setIsDemoData(true);
       }
     } catch {
       setReport(getDemoReport(periodDays));
+      setIsDemoData(true);
     } finally {
       setLoading(false);
     }
@@ -392,6 +396,26 @@ export default function ExposureReportPage() {
 
   return (
     <div className="max-w-5xl mx-auto">
+      {/* ---- Demo Data Warning Banner ---- */}
+      {isDemoData && (
+        <div className="mb-6 rounded-xl bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 px-5 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <svg className="w-5 h-5 text-yellow-600 dark:text-yellow-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+            </svg>
+            <p className="text-sm font-medium text-yellow-800 dark:text-yellow-300">
+              Displaying sample data — API is unreachable. Connect to your Iron Gate instance to see real metrics.
+            </p>
+          </div>
+          <button
+            onClick={() => fetchReport(days)}
+            className="ml-4 px-4 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white text-sm font-medium rounded-lg transition-colors flex-shrink-0"
+          >
+            Retry Connection
+          </button>
+        </div>
+      )}
+
       {/* ---- Header ---- */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <div>

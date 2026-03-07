@@ -16,6 +16,12 @@ let _proxyDebug = false;
 try { chrome.storage.local.get('ironGateDebug', (r) => { _proxyDebug = !!r.ironGateDebug; }); } catch {}
 function proxyLog(...args: any[]) { if (_proxyDebug) console.log('[Iron Gate Proxy]', ...args); }
 
+// ─── Request Deduplication ──────────────────────────────────────────────────
+// Prevents concurrent duplicate prompts from being processed simultaneously,
+// which could cause mismatched responses.
+const _inFlightRequests = new Map<string, Promise<ProxyFlowResult>>();
+const DEDUP_TTL_MS = 30_000;
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface ProxyAnalyzeResult {
@@ -127,6 +133,68 @@ export async function sendProxiedPrompt(
   return result;
 }
 
+// ─── Relay (Zero-Knowledge) ──────────────────────────────────────────────────
+
+export interface ProxyRelayResult {
+  action: 'relayed' | 'blocked';
+  response?: string;
+  reason?: string;
+  model?: string;
+  provider?: string;
+  tokensUsed?: { prompt: number; completion: number };
+  latencyMs?: number;
+  score?: number;
+  level?: string;
+}
+
+/**
+ * Send an already-pseudonymized prompt to the backend for LLM relay.
+ * The backend NEVER sees raw PII — only masked text, score, and entity types.
+ * De-pseudonymization happens client-side in the extension.
+ */
+export async function relayPrompt(
+  maskedPrompt: string,
+  sensitivityScore: number,
+  sensitivityLevel: string,
+  entityTypes: string[],
+  entityCount: number,
+  aiToolId: string,
+  sessionId: string,
+  route: 'cloud' | 'private_llm',
+  options?: {
+    model?: string;
+    systemPrompt?: string;
+    maxTokens?: number;
+    temperature?: number;
+  }
+): Promise<ProxyRelayResult> {
+  const result = await apiRequest<ProxyRelayResult>({
+    method: 'POST',
+    path: '/proxy/relay',
+    body: {
+      maskedPrompt,
+      sensitivityScore,
+      sensitivityLevel,
+      entityTypes,
+      entityCount,
+      aiToolId,
+      sessionId,
+      route,
+      ...(options?.model && { model: options.model }),
+      ...(options?.systemPrompt && { systemPrompt: options.systemPrompt }),
+      ...(options?.maxTokens && { maxTokens: options.maxTokens }),
+      ...(options?.temperature !== undefined && { temperature: options.temperature }),
+    },
+  });
+
+  proxyLog(
+    `Relay complete — action: ${result.action}, ` +
+    `model: ${result.model || 'n/a'}, latency: ${result.latencyMs || 0}ms`
+  );
+
+  return result;
+}
+
 // ─── Full Flow ───────────────────────────────────────────────────────────────
 
 /**
@@ -148,24 +216,53 @@ export async function handleProxyFlow(
   aiToolId: string,
   sessionId: string
 ): Promise<ProxyFlowResult> {
+  // Deduplication: if an identical prompt is already in-flight, return its result
+  const dedupKey = `${sessionId}:${promptText.length}:${promptText.substring(0, 128)}`;
+  const existing = _inFlightRequests.get(dedupKey);
+  if (existing) {
+    proxyLog('Dedup hit — returning in-flight result for same prompt');
+    return existing;
+  }
+
+  const resultPromise = _handleProxyFlowInner(promptText, aiToolId, sessionId);
+  _inFlightRequests.set(dedupKey, resultPromise);
+  resultPromise.finally(() => {
+    setTimeout(() => _inFlightRequests.delete(dedupKey), DEDUP_TTL_MS);
+  });
+  return resultPromise;
+}
+
+async function _handleProxyFlowInner(
+  promptText: string,
+  aiToolId: string,
+  sessionId: string
+): Promise<ProxyFlowResult> {
   // Step 1: Analyze the prompt
   let analysis: ProxyAnalyzeResult;
   try {
     analysis = await analyzePrompt(promptText, aiToolId, sessionId);
   } catch (error) {
-    // If analysis fails, fall back to allowing the prompt through.
-    // We never want to block the user due to our own infrastructure failure.
+    // SECURITY: Fail-closed in proxy mode — do NOT silently allow raw prompts.
+    // If no API key is configured, allow (extension is not set up yet).
+    // Otherwise, block the prompt and tell the user to retry.
     const msg = error instanceof Error ? error.message : String(error);
     if (msg.includes('No API key') || msg.includes('api key')) {
       proxyLog('No API key configured, skipping analysis.');
-    } else {
-      proxyLog('Analysis failed, falling back to allow:', error);
+      return {
+        action: 'allow',
+        score: 0,
+        level: 'low',
+        explanation: 'No API key configured — protection inactive.',
+      };
     }
+
+    proxyLog('Analysis failed — BLOCKING prompt (fail-closed):', error);
     return {
-      action: 'allow',
-      score: 0,
-      level: 'low',
-      explanation: 'Analysis unavailable — prompt allowed by default.',
+      action: 'proxy',
+      score: 100,
+      level: 'critical',
+      explanation: 'Analysis service unavailable — prompt blocked for safety.',
+      response: '[Iron Gate] The analysis service is temporarily unavailable. Your prompt was NOT sent to protect your data. Please try again in a moment.',
     };
   }
 

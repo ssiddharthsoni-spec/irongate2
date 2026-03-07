@@ -1,0 +1,44 @@
+[
+  {
+    "type": "JIRA_ISSUE_KEY",
+    "pattern": "\\b[A-Z][A-Z0-9_]{1,9}-\\d{1,6}\\b",
+    "flags": "g",
+    "confidence": 0.75,
+    "description": "Jira issue keys (e.g., PROJ-123, ACME-4567). Medium confidence — common pattern."
+  },
+  {
+    "type": "JIRA_PROJECT_KEY",
+    "pattern": "(?:project\\s*(?:key|id|name)?\\s*[=:\"']\\s*)[A-Z][A-Z0-9_]{1,9}(?=\\s|$|[,;\"'])",
+    "flags": "gi",
+    "confidence": 0.85,
+    "description": "Jira project keys with context keyword."
+  },
+  {
+    "type": "JIRA_BOARD_URL",
+    "pattern": "https?://[a-z0-9.-]+\\.atlassian\\.net/(?:browse|jira/software/projects)/[A-Z][A-Z0-9_]{1,9}(?:/[a-z/-]*)?",
+    "flags": "gi",
+    "confidence": 0.9,
+    "description": "Jira board/issue URLs containing project information."
+  },
+  {
+    "type": "JIRA_FILTER_JQL",
+    "pattern": "(?:jql|filter)\\s*[=:]\\s*[\"']?(?:project|assignee|status|sprint)\\s*(?:=|!=|in|not in)[^\"'\\n]{5,200}",
+    "flags": "gi",
+    "confidence": 0.8,
+    "description": "JQL queries that may reveal project structure and team information."
+  },
+  {
+    "type": "CONFLUENCE_PAGE_ID",
+    "pattern": "(?:page(?:\\s+id)?|pageId)\\s*[=:\"']\\s*\\d{6,12}",
+    "flags": "gi",
+    "confidence": 0.8,
+    "description": "Confluence page IDs — may link to internal documentation."
+  },
+  {
+    "type": "JIRA_API_TOKEN",
+    "pattern": "(?:ATATT|ATCTT)[a-zA-Z0-9+/=_-]{20,}",
+    "flags": "g",
+    "confidence": 0.95,
+    "description": "Atlassian API tokens (ATATT/ATCTT prefix) — critical credential."
+  }
+]

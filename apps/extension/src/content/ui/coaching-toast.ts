@@ -70,16 +70,18 @@ const TYPE_STYLES: Record<ToastType, { icon: string; accent: string; bg: string;
 // ─── Coaching Tips Pool ──────────────────────────────────────────────────────
 
 const COACHING_TIPS: string[] = [
-  'Use role descriptions instead of real names when asking AI for help.',
-  'Avoid pasting full contracts — summarize the key clauses first.',
-  'Replace real client names with "Client A" or "Acme Corp" before sending.',
-  'Never include Social Security numbers, credit card numbers, or passwords in AI prompts.',
-  'For legal documents, redact party names and case numbers before sharing.',
-  'Consider describing the problem abstractly rather than sharing raw data.',
-  'Iron Gate pseudonymizes entities automatically — but reviewing your prompt first is always wise.',
-  'Use AI tools for general research and drafting, not for processing real client data.',
-  'If you must share data, use Iron Gate\'s proxy mode for automatic protection.',
-  'Remember: anything you send to an AI tool may be used for training.',
+  'Pro move: use role descriptions like "the lead attorney" instead of real names.',
+  'Quick win: summarize key clauses instead of pasting full contracts — AI works better with concise context anyway.',
+  'Power tip: Iron Gate auto-swaps real names with realistic fakes, so the AI still gives great answers.',
+  'You\'re covered: Iron Gate catches SSNs, credit cards, and credentials before they leave your browser.',
+  'Smart pattern: describe the problem abstractly — you\'ll often get better AI responses too.',
+  'Your data never left your device. Iron Gate keeps it local and sends pseudonymized versions instead.',
+  'Did you know? Proxy mode auto-protects every prompt — zero effort, full coverage.',
+  'Nice work using AI for productivity. Iron Gate makes sure your client data stays private.',
+  'Heads up: AI tools may use your inputs for training. Iron Gate ensures nothing identifiable gets through.',
+  'Fun fact: the fake names Iron Gate uses are so realistic, the AI doesn\'t even notice the difference.',
+  'You\'re building great habits. Security-aware AI usage is a professional superpower.',
+  'Iron Gate just protected your prompt in the background. You didn\'t have to do a thing.',
 ];
 
 let tipIndex = 0;

@@ -42,11 +42,44 @@ export const users = pgTable('users', {
   email: varchar('email', { length: 255 }).notNull(),
   displayName: varchar('display_name', { length: 255 }),
   role: varchar('role', { length: 50 }).notNull().default('user'),
+  emailVerified: boolean('email_verified').default(false),
+  departmentId: uuid('department_id'), // nullable FK enforced via auto-migration SQL
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 }, (table) => [
   index('users_firm_id_idx').on(table.firmId),
   index('users_clerk_id_idx').on(table.clerkId),
+]);
+
+// --- Departments ---
+export const departments = pgTable('departments', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  name: varchar('name', { length: 255 }).notNull(),
+  description: text('description'),
+  parentId: uuid('parent_id'), // self-referential for nested departments
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => [
+  index('departments_firm_id_idx').on(table.firmId),
+  unique('departments_firm_name_uniq').on(table.firmId, table.name),
+]);
+
+// --- Department Policies ---
+export const departmentPolicies = pgTable('department_policies', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  departmentId: uuid('department_id').notNull().references(() => departments.id),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  policyType: varchar('policy_type', { length: 50 }).notNull(),
+  policyValue: jsonb('policy_value').notNull(),
+  isActive: boolean('is_active').notNull().default(true),
+  createdBy: uuid('created_by').notNull().references(() => users.id),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => [
+  index('dept_policies_dept_id_idx').on(table.departmentId),
+  index('dept_policies_firm_id_idx').on(table.firmId),
+  unique('dept_policies_dept_type_uniq').on(table.departmentId, table.policyType),
 ]);
 
 // --- Events (Core audit log — append-only) ---
@@ -74,6 +107,8 @@ export const events = pgTable('events', {
   serverSignature: varchar('server_signature', { length: 64 }),
   signedAt: timestamp('signed_at'),
   signatureVersion: integer('signature_version').default(1),
+  /** Tracks which encryption key version was used; enables async re-encryption on key rotation */
+  encryptionKeyVersion: integer('encryption_key_version').default(1),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (table) => [
   index('events_firm_id_idx').on(table.firmId),
@@ -387,6 +422,122 @@ export const auditLog = pgTable('audit_log', {
   index('audit_log_action_idx').on(table.action),
 ]);
 
+// --- Security Incidents ---
+export const incidents = pgTable('incidents', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  title: text('title').notNull(),
+  description: text('description'),
+  severity: varchar('severity', { length: 20 }).notNull().default('medium'),
+  status: varchar('status', { length: 20 }).notNull().default('open'),
+  reportedBy: uuid('reported_by').references(() => users.id),
+  assignedTo: uuid('assigned_to').references(() => users.id),
+  resolvedAt: timestamp('resolved_at'),
+  closedAt: timestamp('closed_at'),
+  rootCause: text('root_cause'),
+  remediation: text('remediation'),
+  affectedUsers: integer('affected_users'),
+  metadata: jsonb('metadata').default({}),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => [
+  index('incidents_firm_id_idx').on(table.firmId),
+  index('incidents_firm_created_idx').on(table.firmId, table.createdAt),
+]);
+
+// --- Feature Flags ---
+export const featureFlags = pgTable('feature_flags', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  key: varchar('key', { length: 100 }).notNull(),
+  enabled: boolean('enabled').notNull().default(false),
+  description: text('description'),
+  metadata: jsonb('metadata').default({}),
+  createdBy: uuid('created_by').references(() => users.id),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => [
+  unique('feature_flags_firm_key_uniq').on(table.firmId, table.key),
+  index('feature_flags_firm_idx').on(table.firmId),
+]);
+
+// --- Email Verification Tokens ---
+export const emailVerificationTokens = pgTable('email_verification_tokens', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  email: varchar('email', { length: 255 }).notNull(),
+  tokenHash: varchar('token_hash', { length: 64 }).notNull().unique(),
+  expiresAt: timestamp('expires_at').notNull(),
+  verifiedAt: timestamp('verified_at'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  index('email_verify_user_idx').on(table.userId),
+  index('email_verify_token_idx').on(table.tokenHash),
+]);
+
+// --- Data Deletion Requests (GDPR Article 17) ---
+export const dataDeletionRequests = pgTable('data_deletion_requests', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  requestedBy: uuid('requested_by').notNull().references(() => users.id),
+  status: varchar('status', { length: 20 }).notNull().default('pending'),
+  reason: text('reason'),
+  scheduledAt: timestamp('scheduled_at').notNull(),
+  executedAt: timestamp('executed_at'),
+  cancelledAt: timestamp('cancelled_at'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  index('data_deletion_firm_idx').on(table.firmId),
+]);
+
+// --- ToS Acceptance Tracking ---
+export const tosAcceptance = pgTable('tos_acceptance', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  acceptedBy: uuid('accepted_by').notNull().references(() => users.id),
+  tosVersion: varchar('tos_version', { length: 20 }).notNull(),
+  acceptedAt: timestamp('accepted_at').notNull().defaultNow(),
+  ipAddress: varchar('ip_address', { length: 45 }),
+  userAgent: text('user_agent'),
+}, (table) => [
+  index('tos_acceptance_firm_idx').on(table.firmId),
+]);
+
+// --- DPA Acceptance Tracking ---
+export const dpaAcceptance = pgTable('dpa_acceptance', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  acceptedBy: uuid('accepted_by').notNull().references(() => users.id),
+  signerName: varchar('signer_name', { length: 255 }).notNull(),
+  signerTitle: varchar('signer_title', { length: 255 }),
+  signerEmail: varchar('signer_email', { length: 255 }).notNull(),
+  dpaVersion: varchar('dpa_version', { length: 20 }).notNull(),
+  acceptedAt: timestamp('accepted_at').notNull().defaultNow(),
+  ipAddress: varchar('ip_address', { length: 45 }),
+}, (table) => [
+  index('dpa_acceptance_firm_idx').on(table.firmId),
+]);
+
+// --- Webhook Delivery Log ---
+export const webhookDeliveryLog = pgTable('webhook_delivery_log', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  webhookId: uuid('webhook_id').notNull().references(() => webhookSubscriptions.id),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  eventType: varchar('event_type', { length: 100 }).notNull(),
+  payload: jsonb('payload').default({}),
+  statusCode: integer('status_code'),
+  responseBody: text('response_body'),
+  attempt: integer('attempt').notNull().default(1),
+  success: boolean('success').notNull().default(false),
+  error: text('error'),
+  deliveredAt: timestamp('delivered_at').notNull().defaultNow(),
+}, (table) => [
+  index('webhook_delivery_webhook_idx').on(table.webhookId),
+  index('webhook_delivery_firm_idx').on(table.firmId),
+  index('webhook_delivery_time_idx').on(table.deliveredAt),
+]);
+
 // --- API Keys ---
 export const apiKeys = pgTable('api_keys', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -403,4 +554,23 @@ export const apiKeys = pgTable('api_keys', {
 }, (table) => [
   index('api_keys_firm_idx').on(table.firmId),
   index('api_keys_hash_idx').on(table.keyHash),
+]);
+
+// --- Breach Log (SOC 2 / HIPAA breach notification tracking) ---
+export const breachLog = pgTable('breach_log', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  triggerType: varchar('trigger_type', { length: 50 }).notNull(), // 'kill_switch' | 'auto_threshold' | 'manual'
+  severity: varchar('severity', { length: 20 }).notNull().default('high'),
+  description: text('description').notNull(),
+  affectedRecords: integer('affected_records'),
+  notifiedAt: timestamp('notified_at'),
+  notifiedEmails: jsonb('notified_emails').default([]),
+  resolvedAt: timestamp('resolved_at'),
+  resolvedBy: uuid('resolved_by').references(() => users.id),
+  metadata: jsonb('metadata').default({}),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  index('breach_log_firm_idx').on(table.firmId),
+  index('breach_log_firm_created_idx').on(table.firmId, table.createdAt),
 ]);

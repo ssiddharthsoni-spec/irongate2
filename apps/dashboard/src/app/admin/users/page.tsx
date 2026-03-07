@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useApiClient } from '@/lib/api';
+import { EmptyState } from '@/components/EmptyState';
 
 interface User {
   id: string;
@@ -11,57 +12,6 @@ interface User {
   lastActive: string;
   status: 'active' | 'inactive' | 'pending';
 }
-
-const DEMO_USERS: User[] = [
-  {
-    id: '1',
-    name: 'Sarah Chen',
-    email: 'sarah.chen@firm.com',
-    role: 'admin',
-    lastActive: '2026-02-21T09:15:00Z',
-    status: 'active',
-  },
-  {
-    id: '2',
-    name: 'James Rodriguez',
-    email: 'j.rodriguez@firm.com',
-    role: 'user',
-    lastActive: '2026-02-20T16:42:00Z',
-    status: 'active',
-  },
-  {
-    id: '3',
-    name: 'Emily Park',
-    email: 'emily.park@firm.com',
-    role: 'user',
-    lastActive: '2026-02-18T11:30:00Z',
-    status: 'active',
-  },
-  {
-    id: '4',
-    name: 'Michael Thompson',
-    email: 'm.thompson@firm.com',
-    role: 'viewer',
-    lastActive: '2026-02-10T08:20:00Z',
-    status: 'inactive',
-  },
-  {
-    id: '5',
-    name: 'Lisa Wang',
-    email: 'lisa.wang@firm.com',
-    role: 'viewer',
-    lastActive: '2026-02-19T14:55:00Z',
-    status: 'active',
-  },
-  {
-    id: '6',
-    name: 'David Kim',
-    email: 'd.kim@firm.com',
-    role: 'user',
-    lastActive: '',
-    status: 'pending',
-  },
-];
 
 export default function UsersPage() {
   const { apiFetch } = useApiClient();
@@ -91,8 +41,8 @@ export default function UsersPage() {
       const data = await res.json();
       setUsers(Array.isArray(data) ? data : data.users ?? []);
     } catch (err: any) {
-      console.error('Failed to load users, using demo data:', err);
-      setUsers(DEMO_USERS);
+      console.error('Failed to load users:', err);
+      setError(err.message || 'Failed to load users. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -125,20 +75,12 @@ export default function UsersPage() {
       setInviteEmail('');
       setInviteRole('user');
       await fetchUsers();
-    } catch {
-      // In demo mode, add the user locally
-      const newUser: User = {
-        id: String(Date.now()),
-        name: inviteEmail.trim().split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
-        email: inviteEmail.trim(),
-        role: inviteRole,
-        lastActive: '',
-        status: 'pending',
-      };
-      setUsers((prev) => [...prev, newUser]);
-      setInviteMessage({ type: 'success', text: `Invitation sent to ${inviteEmail.trim()} (demo mode).` });
-      setInviteEmail('');
-      setInviteRole('user');
+    } catch (err: any) {
+      // Show the actual error — never silently pretend it worked
+      const message = err?.message?.includes('Server responded')
+        ? 'Failed to send invitation. Please check your connection and try again.'
+        : 'Failed to send invitation. Please try again.';
+      setInviteMessage({ type: 'error', text: message });
     } finally {
       setInviting(false);
     }
@@ -148,17 +90,25 @@ export default function UsersPage() {
   // Change role
   // ---------------------------------------------------------------------------
   async function handleRoleChange(userId: string, newRole: 'admin' | 'user' | 'viewer') {
+    // Store previous role so we can revert on failure
+    const previousUser = users.find((u) => u.id === userId);
     try {
       setUpdatingRoleId(userId);
+      // Optimistic update
+      setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, role: newRole } : u)));
       const res = await apiFetch(`/admin/users/${userId}`, {
         method: 'PUT',
         body: JSON.stringify({ role: newRole }),
       });
       if (!res.ok) throw new Error(`Server responded with ${res.status}`);
-      setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, role: newRole } : u)));
     } catch {
-      // In demo mode, update locally
-      setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, role: newRole } : u)));
+      // REVERT optimistic update — never silently pretend it worked
+      if (previousUser) {
+        setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, role: previousUser.role } : u)));
+      }
+      setError(`Failed to update role for ${previousUser?.name || 'user'}. Please try again.`);
+      // Auto-clear error after 5 seconds
+      setTimeout(() => setError(null), 5000);
     } finally {
       setUpdatingRoleId(null);
     }
@@ -241,8 +191,9 @@ export default function UsersPage() {
 
       {/* Error banner */}
       {error && (
-        <div className="mb-6 p-3 rounded-lg text-sm font-medium bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800">
-          {error}
+        <div className="mb-6 p-3 rounded-lg text-sm font-medium bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800 flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={fetchUsers} className="shrink-0 ml-3 text-red-700 dark:text-red-400 underline hover:opacity-80 font-semibold">Retry</button>
         </div>
       )}
 
@@ -307,9 +258,15 @@ export default function UsersPage() {
       {/* Users table */}
       <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
         {users.length === 0 ? (
-          <p className="text-sm text-[#6e6e73] dark:text-[#86868b] text-center py-8">
-            No users found. Send an invitation to get started.
-          </p>
+          <EmptyState
+            icon={
+              <svg className="w-12 h-12 text-[#d2d2d7] dark:text-[#38383a]" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" />
+              </svg>
+            }
+            title="No users found"
+            description="Send an invitation to get started."
+          />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">

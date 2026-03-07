@@ -105,7 +105,9 @@ export class ErrorBoundary extends React.Component<
 
           {showDetails && error && (
             <pre className="mt-4 rounded-md bg-gray-100 dark:bg-gray-800 p-3 text-xs text-gray-700 dark:text-gray-300 overflow-x-auto max-h-48 overflow-y-auto">
-              {error.stack || error.message}
+              {process.env.NODE_ENV === 'production'
+                ? error.message
+                : (error.stack || error.message)}
             </pre>
           )}
         </div>

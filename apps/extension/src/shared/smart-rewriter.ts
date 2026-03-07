@@ -43,7 +43,7 @@ export function smartPseudonymize(
   entities: DetectedEntity[]
 ): PseudonymResult {
   if (entities.length === 0) {
-    return { maskedText: text, mappings: [] };
+    return { maskedText: text, mappings: [], skippedInCode: 0 };
   }
 
   const counters: Record<string, number> = {};
@@ -68,7 +68,7 @@ export function smartPseudonymize(
   }
 
   mappings.reverse();
-  return { maskedText, mappings };
+  return { maskedText, mappings, skippedInCode: 0 };
 }
 
 function generateSmartReplacement(type: string, index: number): string {

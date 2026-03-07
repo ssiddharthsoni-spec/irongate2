@@ -13,8 +13,19 @@ export const tlsConfig = {
     preload: true,
   },
   pinning: {
-    // TODO: Replace with real certificate SHA-256 hashes once production domain is live
-    pins: [] as string[],
+    // SPKI SHA-256 hashes for irongate-api.onrender.com and api.irongate.ai
+    // To regenerate: openssl s_client -connect <host>:443 | openssl x509 -pubkey -noout | openssl pkey -pubin -outform DER | openssl dgst -sha256 -binary | openssl enc -base64
+    // Include both current and backup pins for rotation safety
+    pins: [
+      // Primary: Render.com / api.irongate.ai leaf certificate
+      // NOTE: Replace these with actual hashes from your production certificates.
+      // Run the openssl command above against irongate-api.onrender.com to get the real values.
+      // These are placeholders that MUST be populated before production deployment.
+    ] as string[],
+    // SECURITY: If pins array is empty, cert pinning is not enforced.
+    // This is acceptable ONLY during initial deployment. Once production certs
+    // are provisioned, populate pins and set enforced=true.
+    enforced: false,
   },
 };
 

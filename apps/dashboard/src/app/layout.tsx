@@ -4,6 +4,8 @@ import Sidebar from '@/components/Sidebar';
 import { MainContentInner } from '@/components/MainContentInner';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { PostHogProvider } from '@/components/PostHogProvider';
+import { ToastProvider } from '@/components/toast';
+import { ErrorBoundary } from '@/components/error-boundary';
 import './globals.css';
 
 // All pages require auth — skip static generation at build time
@@ -23,7 +25,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <PostHogProvider>
               <div className="min-h-screen bg-[#f5f5f7] dark:bg-[#111113] transition-colors">
                 <Sidebar />
-                <MainContentInner>{children}</MainContentInner>
+                <MainContentInner>
+                  <ErrorBoundary>
+                    <ToastProvider>
+                      {children}
+                    </ToastProvider>
+                  </ErrorBoundary>
+                </MainContentInner>
               </div>
             </PostHogProvider>
           </ThemeProvider>

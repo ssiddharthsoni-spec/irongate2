@@ -18,7 +18,7 @@
 const AES_KEY_LENGTH = 256;
 const IV_LENGTH = 12;       // 96 bits — recommended for AES-GCM
 const AUTH_TAG_LENGTH = 128; // 128-bit auth tag (in bits, as WebCrypto expects)
-const PBKDF2_ITERATIONS = 100_000;
+const PBKDF2_ITERATIONS = 600_000;
 const SALT_LENGTH = 16;     // 128-bit salt for PBKDF2
 
 // ---------------------------------------------------------------------------
@@ -27,7 +27,7 @@ const SALT_LENGTH = 16;     // 128-bit salt for PBKDF2
 
 /**
  * Derive an AES-256-GCM CryptoKey from a master secret and salt.
- * Uses PBKDF2 with 100,000 iterations and SHA-256.
+ * Uses PBKDF2 with 600,000 iterations and SHA-256.
  *
  * @param masterSecret - The master secret string (e.g., firm-level secret)
  * @param salt - A unique salt per firm (16 bytes)

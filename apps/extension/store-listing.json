@@ -1,0 +1,55 @@
+{
+  "name": "Iron Gate — AI Data Governance",
+  "shortDescription": "Protect sensitive data in AI prompts. Real-time PII scanning and compliance for ChatGPT, Claude, Gemini, and more.",
+  "detailedDescription": "Iron Gate automatically detects and protects sensitive information before it reaches AI tools like ChatGPT, Claude, Gemini, and Microsoft Copilot.\n\n🛡️ KEY FEATURES:\n\n• Real-time PII Detection — Scans every prompt for emails, SSNs, credit cards, API keys, medical records, and 30+ entity types using local-first regex detection.\n\n• Smart Pseudonymization — Replaces sensitive data with realistic pseudonyms so AI can still provide useful responses. De-pseudonymizes AI responses automatically.\n\n• Compliance Enforcement — Built-in support for HIPAA, PCI-DSS, SOC 2, GDPR, CCPA, ITAR, and GLBA frameworks. Automatically blocks entity types required by your compliance framework.\n\n• Enterprise Controls — Department-level policies, SCIM provisioning, MDM deployment, SIEM integration, and SSO support.\n\n• Coaching Mode — Inline tooltips explain why data was flagged, with options to dismiss false positives and provide feedback.\n\n• Audit Trail — Every detection event is logged with metadata (never raw PII) for compliance reporting and incident response.\n\n• Zero Raw Data Transmission — All detection happens locally in your browser. Only metadata (entity types, scores, actions) is sent to the Iron Gate API.\n\n🔒 SUPPORTED AI TOOLS:\n• ChatGPT (chatgpt.com)\n• Claude (claude.ai)\n• Google Gemini (gemini.google.com)\n• Microsoft Copilot (copilot.microsoft.com)\n• DeepSeek, Poe, Perplexity, You.com, HuggingChat, Groq\n\n🏢 BUILT FOR ENTERPRISE:\nIron Gate is designed for organizations that need to enable AI adoption while maintaining data governance. Features include centralized admin dashboard, per-department policies, compliance reporting, and automated incident narratives.\n\n📊 HOW IT WORKS:\n1. You type a prompt in any supported AI tool\n2. Iron Gate scans the text locally for sensitive entities\n3. Detected entities are pseudonymized before sending\n4. AI responds using pseudonyms\n5. Iron Gate de-pseudonymizes the response so you see real names\n6. An audit event is logged (metadata only)\n\nNo data leaves your browser unprotected. Iron Gate acts as a transparent privacy layer between you and AI.",
+  "category": "Productivity",
+  "language": "en",
+  "primaryCategory": "productivity/workflow",
+  "additionalCategories": ["security", "business-tools"],
+  "singlePurpose": "Detects and protects sensitive data (PII, credentials, financial info) in AI tool prompts by scanning locally and pseudonymizing before transmission.",
+  "permissionJustifications": {
+    "activeTab": "Required to access the current tab's content when the user is on a supported AI tool page, so Iron Gate can scan input fields for sensitive data.",
+    "storage": "Stores user preferences, encrypted pseudonym reverse maps, cached compliance policies, and suppression rules.",
+    "sidePanel": "Displays the Iron Gate dashboard showing detection activity, sensitivity scores, and compliance status.",
+    "alarms": "Periodically syncs compliance policies, suppression rules, and organization configuration from the Iron Gate API.",
+    "scripting": "Injects content scripts into supported AI tool pages to intercept and scan user prompts before submission.",
+    "webNavigation": "Detects when the user navigates to a supported AI tool to activate Iron Gate's protection.",
+    "notifications": "Alerts users when high-sensitivity data is detected in their AI prompts."
+  },
+  "hostPermissionJustifications": {
+    "chatgpt.com": "Scans ChatGPT input for sensitive data and pseudonymizes before sending.",
+    "chat.openai.com": "Legacy ChatGPT domain — same functionality as chatgpt.com.",
+    "claude.ai": "Scans Claude AI input for sensitive data and pseudonymizes before sending.",
+    "gemini.google.com": "Scans Google Gemini input for sensitive data and pseudonymizes before sending.",
+    "irongate-api.onrender.com": "Iron Gate's own API endpoint for audit logging (metadata only) and configuration sync."
+  },
+  "dataUseDisclosure": {
+    "collectedData": [
+      {
+        "dataType": "Web history",
+        "purpose": "Identifying which AI tool the user is on to activate protection",
+        "isPersonallyIdentifiable": false,
+        "isTransmittedOffDevice": false
+      },
+      {
+        "dataType": "User activity",
+        "purpose": "Detecting sensitive entities in AI prompts (processed locally)",
+        "isPersonallyIdentifiable": false,
+        "isTransmittedOffDevice": false
+      }
+    ],
+    "transmittedData": [
+      {
+        "dataType": "Audit metadata",
+        "purpose": "Compliance logging — entity types, sensitivity scores, actions taken",
+        "isPersonallyIdentifiable": false,
+        "destination": "Iron Gate API (irongate-api.onrender.com)"
+      }
+    ],
+    "certifications": {
+      "noSaleOfData": true,
+      "noUnrelatedPurposes": true,
+      "noCreditworthiness": true
+    }
+  }
+}

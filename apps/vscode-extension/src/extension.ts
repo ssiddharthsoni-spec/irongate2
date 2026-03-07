@@ -26,10 +26,32 @@ export function activate(context: vscode.ExtensionContext): void {
     return;
   }
 
-  // Initialize core modules
+  // Initialize core modules — prefer SecretStorage for API key, fall back to settings
   scanner = new Scanner();
+
+  const secretStorage = context.secrets;
+  let resolvedApiKey = config.get<string>('apiKey', '');
+
+  // Migrate: if key is in settings but not in SecretStorage, move it and clear plaintext
+  const initApiKey = async () => {
+    const secretKey = await secretStorage.get('irongate.apiKey');
+    if (secretKey) {
+      resolvedApiKey = secretKey;
+    } else if (resolvedApiKey) {
+      // Migrate plaintext settings key to SecretStorage
+      await secretStorage.store('irongate.apiKey', resolvedApiKey);
+    }
+    // Clear plaintext API key from settings.json if present
+    const currentPlaintext = config.get<string>('apiKey', '');
+    if (currentPlaintext) {
+      await config.update('apiKey', undefined, vscode.ConfigurationTarget.Global);
+      await config.update('apiKey', undefined, vscode.ConfigurationTarget.Workspace);
+    }
+  };
+  initApiKey().catch(() => {});
+
   apiClient = new ApiClient({
-    apiKey: config.get<string>('apiKey', ''),
+    apiKey: resolvedApiKey,
     firmId: config.get<string>('firmId', ''),
     baseUrl: config.get<string>('apiBaseUrl', 'https://irongate-api.onrender.com'),
   });
@@ -49,6 +71,19 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('irongate.configure', () => {
       vscode.commands.executeCommand('workbench.action.openSettings', 'irongate');
+    }),
+    vscode.commands.registerCommand('irongate.setApiKey', async () => {
+      const key = await vscode.window.showInputBox({
+        prompt: 'Enter your Iron Gate API key',
+        placeHolder: 'ig_xxxxxxxxxxxx...',
+        password: true,
+        ignoreFocusOut: true,
+      });
+      if (key) {
+        await secretStorage.store('irongate.apiKey', key);
+        apiClient.updateConfig({ apiKey: key });
+        vscode.window.showInformationMessage('Iron Gate API key saved securely.');
+      }
     })
   );
 
@@ -69,10 +104,18 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('irongate')) {
         const newConfig = vscode.workspace.getConfiguration('irongate');
-        apiClient.updateConfig({
-          apiKey: newConfig.get<string>('apiKey', ''),
-          firmId: newConfig.get<string>('firmId', ''),
-          baseUrl: newConfig.get<string>('apiBaseUrl', 'https://irongate-api.onrender.com'),
+        // API key: prefer SecretStorage over settings
+        Promise.resolve(secretStorage.get('irongate.apiKey')).then((secretKey) => {
+          apiClient.updateConfig({
+            apiKey: secretKey || newConfig.get<string>('apiKey', ''),
+            firmId: newConfig.get<string>('firmId', ''),
+            baseUrl: newConfig.get<string>('apiBaseUrl', 'https://irongate-api.onrender.com'),
+          });
+        }).catch(() => {
+          apiClient.updateConfig({
+            firmId: newConfig.get<string>('firmId', ''),
+            baseUrl: newConfig.get<string>('apiBaseUrl', 'https://irongate-api.onrender.com'),
+          });
         });
       }
     })

@@ -17,9 +17,9 @@ export function PostHogProvider({ children }: { children: React.ReactNode }) {
   // Identify user when auth loads
   useEffect(() => {
     if (isLoaded && user) {
+      // Only send non-PII properties to PostHog — no email or name
       identifyUser(user.id, {
-        email: user.primaryEmailAddress?.emailAddress,
-        name: user.fullName,
+        org: user.organizationMemberships?.[0]?.organization?.slug,
       });
     }
   }, [isLoaded, user]);

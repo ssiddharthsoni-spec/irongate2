@@ -30,6 +30,9 @@ export interface RetentionCleanupResult {
   eventsDeleted: number;
   pseudonymMapsDeleted: number;
   auditEntriesDeleted: number;
+  alertsDeleted: number;
+  auditLogDeleted: number;
+  heartbeatsDeleted: number;
 }
 
 export interface FirmDataDeletionResult {
@@ -63,6 +66,9 @@ export async function runRetentionCleanup(): Promise<RetentionCleanupResult> {
     eventsDeleted: 0,
     pseudonymMapsDeleted: 0,
     auditEntriesDeleted: 0,
+    alertsDeleted: 0,
+    auditLogDeleted: 0,
+    heartbeatsDeleted: 0,
   };
 
   // -------------------------------------------------------------------------
@@ -106,12 +112,46 @@ export async function runRetentionCleanup(): Promise<RetentionCleanupResult> {
         AND created_at < NOW() - MAKE_INTERVAL(days => ${retentionDays})
     `);
     result.auditEntriesDeleted += extractRowCount(auditResult);
+
+    // -----------------------------------------------------------------------
+    // 5. Delete old acknowledged alerts beyond retention period
+    // -----------------------------------------------------------------------
+    const alertsResult = await db.execute(sql`
+      DELETE FROM alerts
+      WHERE firm_id = ${firmId}
+        AND acknowledged_at IS NOT NULL
+        AND created_at < NOW() - MAKE_INTERVAL(days => ${retentionDays})
+    `);
+    result.alertsDeleted += extractRowCount(alertsResult);
+
+    // -----------------------------------------------------------------------
+    // 6. Delete old admin audit log entries beyond retention period
+    // -----------------------------------------------------------------------
+    const auditLogResult = await db.execute(sql`
+      DELETE FROM audit_log
+      WHERE firm_id = ${firmId}
+        AND created_at < NOW() - MAKE_INTERVAL(days => ${retentionDays})
+    `);
+    result.auditLogDeleted += extractRowCount(auditLogResult);
+
+    // -----------------------------------------------------------------------
+    // 7. Delete stale extension heartbeats (older than retention period)
+    // -----------------------------------------------------------------------
+    const heartbeatsResult = await db.execute(sql`
+      DELETE FROM extension_heartbeats
+      WHERE firm_id = ${firmId}
+        AND last_seen_at < NOW() - MAKE_INTERVAL(days => ${retentionDays})
+    `);
+    result.heartbeatsDeleted += extractRowCount(heartbeatsResult);
   }
 
   logger.info('Retention cleanup complete', {
     eventsDeleted: result.eventsDeleted,
     pseudonymMapsDeleted: result.pseudonymMapsDeleted,
     auditEntriesDeleted: result.auditEntriesDeleted,
+    alertsDeleted: result.alertsDeleted,
+    auditLogDeleted: result.auditLogDeleted,
+    heartbeatsDeleted: result.heartbeatsDeleted,
   });
 
   return result;
@@ -208,6 +248,19 @@ export async function deleteAllFirmData(firmId: string): Promise<FirmDataDeletio
       DELETE FROM events WHERE firm_id = ${firmId}
     `);
     result.eventsDeleted = extractRowCount(eventsResult);
+
+    // 9-15. Additional firm-scoped tables (GDPR Art. 17 completeness)
+    await db.execute(sql`DELETE FROM client_matters WHERE firm_id = ${firmId}`);
+    await db.execute(sql`DELETE FROM firm_plugins WHERE firm_id = ${firmId}`);
+    await db.execute(sql`DELETE FROM invites WHERE firm_id = ${firmId}`);
+    await db.execute(sql`DELETE FROM api_keys WHERE firm_id = ${firmId}`);
+    await db.execute(sql`DELETE FROM extension_heartbeats WHERE firm_id = ${firmId}`);
+    await db.execute(sql`DELETE FROM kill_switch WHERE firm_id = ${firmId}`);
+    await db.execute(sql`DELETE FROM alerts WHERE firm_id = ${firmId}`);
+    await db.execute(sql`DELETE FROM audit_log WHERE firm_id = ${firmId}`);
+    await db.execute(sql`DELETE FROM subscriptions WHERE firm_id = ${firmId}`);
+    // Users deleted last (FK references from other tables)
+    await db.execute(sql`DELETE FROM users WHERE firm_id = ${firmId}`);
 
     await db.execute(sql`COMMIT`);
   } catch (error) {

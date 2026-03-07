@@ -119,6 +119,13 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
     });
   }
 
+  // Handler: input cleared — reset sidepanel score
+  function onPromptCleared() {
+    sendToWorker('PROMPT_CLEARED', {
+      aiToolId: detector.id,
+    });
+  }
+
   // Handler: fetch interception (ground truth)
   function onFetchRequest(request: InterceptedRequest) {
     const promptText = extractPromptFromPayload(request.body);
@@ -374,7 +381,7 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
       fetchCleanup = installFetchInterceptor(onFetchRequest, onFileInFormData, createBodyTransformer());
 
       // 2. Start DOM observer for real-time typing
-      domObserver = createDOMObserver(detector, onPromptChange);
+      domObserver = createDOMObserver(detector, onPromptChange, onPromptCleared);
 
       // 3. Install submit handler
       submitHandler = installSubmitHandler(detector, {

@@ -1,0 +1,51 @@
+[
+  {
+    "type": "SALESFORCE_RECORD_ID",
+    "pattern": "\\b[a-zA-Z0-9]{15}(?:[a-zA-Z0-9]{3})?\\b",
+    "flags": "g",
+    "confidence": 0.6,
+    "description": "Salesforce record IDs (15 or 18 character alphanumeric). Low confidence — requires context."
+  },
+  {
+    "type": "SALESFORCE_ACCOUNT_ID",
+    "pattern": "(?:Account(?:\\s+ID)?|AccountId|account_id)\\s*[=:\"']\\s*001[a-zA-Z0-9]{12,15}",
+    "flags": "gi",
+    "confidence": 0.9,
+    "description": "Salesforce Account IDs with context keyword (prefix 001)."
+  },
+  {
+    "type": "SALESFORCE_CONTACT_ID",
+    "pattern": "(?:Contact(?:\\s+ID)?|ContactId|contact_id)\\s*[=:\"']\\s*003[a-zA-Z0-9]{12,15}",
+    "flags": "gi",
+    "confidence": 0.9,
+    "description": "Salesforce Contact IDs with context keyword (prefix 003)."
+  },
+  {
+    "type": "SALESFORCE_OPPORTUNITY_ID",
+    "pattern": "(?:Opportunity(?:\\s+ID)?|OpportunityId|opportunity_id)\\s*[=:\"']\\s*006[a-zA-Z0-9]{12,15}",
+    "flags": "gi",
+    "confidence": 0.9,
+    "description": "Salesforce Opportunity IDs with context keyword (prefix 006)."
+  },
+  {
+    "type": "SALESFORCE_CASE_ID",
+    "pattern": "(?:Case(?:\\s+ID)?|CaseId|case_id)\\s*[=:\"']\\s*500[a-zA-Z0-9]{12,15}",
+    "flags": "gi",
+    "confidence": 0.9,
+    "description": "Salesforce Case IDs with context keyword (prefix 500)."
+  },
+  {
+    "type": "SALESFORCE_ORG_ID",
+    "pattern": "(?:org\\s*id|organization\\s*id|orgid)\\s*[=:\"']\\s*00D[a-zA-Z0-9]{12,15}",
+    "flags": "gi",
+    "confidence": 0.95,
+    "description": "Salesforce Organization IDs (prefix 00D) — highly sensitive."
+  },
+  {
+    "type": "SALESFORCE_API_TOKEN",
+    "pattern": "(?:access_token|session_id|bearer)\\s*[=:\"']\\s*[a-zA-Z0-9!]{40,100}",
+    "flags": "gi",
+    "confidence": 0.85,
+    "description": "Salesforce session tokens or OAuth access tokens."
+  }
+]

@@ -2,7 +2,7 @@
   "name": "irongate-vscode",
   "displayName": "Iron Gate — AI Data Protection",
   "description": "Protect sensitive data in AI coding assistants. Detects PII, credentials, and confidential information before it reaches LLMs.",
-  "version": "0.1.0",
+  "version": "0.2.7",
   "publisher": "irongate",
   "license": "UNLICENSED",
   "private": true,
@@ -44,6 +44,10 @@
       {
         "command": "irongate.configure",
         "title": "Iron Gate: Configure API Settings"
+      },
+      {
+        "command": "irongate.setApiKey",
+        "title": "Iron Gate: Set API Key (Secure)"
       }
     ],
     "viewsContainers": {
@@ -71,7 +75,8 @@
         "irongate.apiKey": {
           "type": "string",
           "default": "",
-          "description": "Iron Gate API key for authentication"
+          "description": "Iron Gate API key (DEPRECATED: use 'Iron Gate: Set API Key' command instead for secure storage)",
+          "deprecationMessage": "API keys should be stored securely via the 'Iron Gate: Set API Key' command, which uses VS Code's SecretStorage API."
         },
         "irongate.firmId": {
           "type": "string",
@@ -85,7 +90,10 @@
         },
         "irongate.mode": {
           "type": "string",
-          "enum": ["audit", "proxy"],
+          "enum": [
+            "audit",
+            "proxy"
+          ],
           "default": "audit",
           "description": "Operating mode: audit (monitor only) or proxy (auto-pseudonymize)"
         },
@@ -113,8 +121,9 @@
     "package": "vsce package"
   },
   "devDependencies": {
-    "@types/vscode": "^1.85.0",
     "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.7.1",
     "esbuild": "^0.24.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"

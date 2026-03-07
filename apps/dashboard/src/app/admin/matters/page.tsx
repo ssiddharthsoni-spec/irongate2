@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useApiClient } from '@/lib/api';
+import { EmptyState } from '@/components/EmptyState';
 
 interface Matter {
   id: string;
@@ -12,99 +13,6 @@ interface Matter {
   status: 'active' | 'closed' | 'archived';
   importedAt: string;
 }
-
-const DEMO_MATTERS: Matter[] = [
-  {
-    id: '1',
-    clientName: 'Acme Corporation',
-    clientNumber: 'CLI-001',
-    matterName: 'Annual Compliance Review',
-    matterNumber: 'MAT-2026-001',
-    status: 'active',
-    importedAt: '2026-01-15T10:00:00Z',
-  },
-  {
-    id: '2',
-    clientName: 'Acme Corporation',
-    clientNumber: 'CLI-001',
-    matterName: 'IP Licensing Agreement',
-    matterNumber: 'MAT-2026-002',
-    status: 'active',
-    importedAt: '2026-01-15T10:00:00Z',
-  },
-  {
-    id: '3',
-    clientName: 'Globex Industries',
-    clientNumber: 'CLI-002',
-    matterName: 'Merger Due Diligence',
-    matterNumber: 'MAT-2025-089',
-    status: 'active',
-    importedAt: '2025-11-20T14:30:00Z',
-  },
-  {
-    id: '4',
-    clientName: 'Globex Industries',
-    clientNumber: 'CLI-002',
-    matterName: 'Employment Dispute',
-    matterNumber: 'MAT-2025-045',
-    status: 'closed',
-    importedAt: '2025-08-10T09:15:00Z',
-  },
-  {
-    id: '5',
-    clientName: 'Initech LLC',
-    clientNumber: 'CLI-003',
-    matterName: 'Regulatory Filing',
-    matterNumber: 'MAT-2026-010',
-    status: 'active',
-    importedAt: '2026-02-01T11:20:00Z',
-  },
-  {
-    id: '6',
-    clientName: 'Soylent Corp',
-    clientNumber: 'CLI-004',
-    matterName: 'Product Liability Defense',
-    matterNumber: 'MAT-2025-072',
-    status: 'closed',
-    importedAt: '2025-09-05T16:45:00Z',
-  },
-  {
-    id: '7',
-    clientName: 'Soylent Corp',
-    clientNumber: 'CLI-004',
-    matterName: 'Real Estate Acquisition',
-    matterNumber: 'MAT-2026-015',
-    status: 'active',
-    importedAt: '2026-02-10T08:30:00Z',
-  },
-  {
-    id: '8',
-    clientName: 'Wayne Enterprises',
-    clientNumber: 'CLI-005',
-    matterName: 'Board Advisory',
-    matterNumber: 'MAT-2024-120',
-    status: 'archived',
-    importedAt: '2024-06-12T13:00:00Z',
-  },
-  {
-    id: '9',
-    clientName: 'Wayne Enterprises',
-    clientNumber: 'CLI-005',
-    matterName: 'Patent Prosecution',
-    matterNumber: 'MAT-2026-003',
-    status: 'active',
-    importedAt: '2026-01-22T10:10:00Z',
-  },
-  {
-    id: '10',
-    clientName: 'Stark Industries',
-    clientNumber: 'CLI-006',
-    matterName: 'Trade Secret Litigation',
-    matterNumber: 'MAT-2025-098',
-    status: 'archived',
-    importedAt: '2025-10-18T15:00:00Z',
-  },
-];
 
 export default function MattersPage() {
   const { apiFetch } = useApiClient();
@@ -139,8 +47,7 @@ export default function MattersPage() {
       const data = await res.json();
       setMatters(Array.isArray(data) ? data : data.matters ?? []);
     } catch (err: any) {
-      console.error('Failed to load matters, using demo data:', err);
-      setMatters(DEMO_MATTERS);
+      setError(err.message || 'Failed to load matters.');
     } finally {
       setLoading(false);
     }
@@ -203,36 +110,10 @@ export default function MattersPage() {
       });
       await fetchMatters();
     } catch (err: any) {
-      // In demo mode, add records locally from the CSV
-      const text = await file.text();
-      const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
-      const header = lines[0]?.toLowerCase() || '';
-      const startIndex = header.includes('client') || header.includes('matter') ? 1 : 0;
-      const parsed = lines.slice(startIndex).map((line, idx) => {
-        const parts = line.split(',').map((p) => p.trim());
-        return {
-          id: String(Date.now() + idx),
-          clientName: parts[0] || '',
-          clientNumber: parts[1] || '',
-          matterName: parts[2] || '',
-          matterNumber: parts[3] || '',
-          status: (parts[4] || 'active') as 'active' | 'closed' | 'archived',
-          importedAt: new Date().toISOString(),
-        };
-      }).filter((m) => m.clientName && m.matterNumber);
-
-      if (parsed.length > 0) {
-        setMatters((prev) => [...prev, ...parsed]);
-        setUploadMessage({
-          type: 'success',
-          text: `Imported ${parsed.length} matter${parsed.length !== 1 ? 's' : ''} (demo mode).`,
-        });
-      } else {
-        setUploadMessage({
-          type: 'error',
-          text: err.message || 'Failed to import CSV. Please try again.',
-        });
-      }
+      setUploadMessage({
+        type: 'error',
+        text: err.message || 'Failed to import CSV. Please try again.',
+      });
     } finally {
       setUploading(false);
       if (fileInputRef.current) {
@@ -250,9 +131,8 @@ export default function MattersPage() {
       const res = await apiFetch(`/admin/client-matters/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error(`Server responded with ${res.status}`);
       setMatters((prev) => prev.filter((m) => m.id !== id));
-    } catch {
-      // In demo mode, remove locally
-      setMatters((prev) => prev.filter((m) => m.id !== id));
+    } catch (err: any) {
+      setError(err.message || 'Failed to delete matter.');
     } finally {
       setDeletingId(null);
     }
@@ -359,8 +239,11 @@ export default function MattersPage() {
 
       {/* Error banner */}
       {error && (
-        <div className="mb-6 p-3 rounded-lg text-sm font-medium bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800">
-          {error}
+        <div className="mb-6 p-3 rounded-lg text-sm font-medium bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800 flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => fetchMatters()} className="ml-4 px-3 py-1 text-xs font-medium bg-red-100 dark:bg-red-900/30 rounded-lg hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors">
+            Retry
+          </button>
         </div>
       )}
 
@@ -452,11 +335,15 @@ export default function MattersPage() {
       {/* Matters table */}
       <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
         {filteredMatters.length === 0 ? (
-          <p className="text-sm text-[#6e6e73] dark:text-[#86868b] text-center py-8">
-            {matters.length === 0
-              ? 'No client matters found. Click "Import CSV" to add records.'
-              : 'No matters match your search criteria.'}
-          </p>
+          <EmptyState
+            icon={
+              <svg className="w-12 h-12 text-[#d2d2d7] dark:text-[#38383a]" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" />
+              </svg>
+            }
+            title={matters.length === 0 ? 'No client matters found' : 'No matching matters'}
+            description={matters.length === 0 ? 'Click "Import CSV" to add records.' : 'No matters match your search criteria.'}
+          />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">

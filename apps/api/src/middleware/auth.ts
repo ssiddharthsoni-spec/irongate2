@@ -146,9 +146,9 @@ export const authMiddleware = createMiddleware(async (c, next) => {
         return;
       }
 
-      // In dev mode, fall through to dev auth instead of rejecting
+      // In local dev mode only, fall through to dev auth instead of rejecting
       if (process.env.NODE_ENV === 'development' && process.env.IRON_GATE_DEV_AUTH === 'true') {
-        logger.warn('API key not found in DB, falling through to dev auth');
+        logger.warn('API key not found in DB, falling through to dev auth (development only)');
       } else {
         return c.json({ error: 'Unauthorized: Invalid API key' }, 401);
       }
@@ -161,9 +161,20 @@ export const authMiddleware = createMiddleware(async (c, next) => {
     }
   }
 
-  // ── Dev Mode (requires explicit opt-in via IRON_GATE_DEV_AUTH=true) ────
-  // SAFETY: Only activates when NODE_ENV is literally 'development'
-  if (process.env.NODE_ENV === 'development' && process.env.IRON_GATE_DEV_AUTH === 'true') {
+  // ── Dev Mode ─────────────────────────────────────────────────────────────
+  // SECURITY: Dev auth is ONLY available in local development.
+  // It is deliberately blocked in staging, production, and any other environment.
+  // If you need to test auth, use a real Clerk JWT or API key.
+  if (process.env.IRON_GATE_DEV_AUTH === 'true') {
+    if (process.env.NODE_ENV !== 'development') {
+      logger.error(
+        'SECURITY: IRON_GATE_DEV_AUTH=true detected in non-development environment. ' +
+        'This is a critical misconfiguration. Dev auth is DISABLED. ' +
+        'Remove IRON_GATE_DEV_AUTH from your environment variables immediately.',
+      );
+      return c.json({ error: 'Unauthorized: Dev auth is not available in this environment' }, 401);
+    }
+
     const cached = userCache.get('dev-clerk-id');
     if (cached) {
       c.set('userId', cached.userId);
@@ -191,18 +202,18 @@ export const authMiddleware = createMiddleware(async (c, next) => {
         return;
       }
     } catch (dbError) {
-      logger.warn('Dev auth user lookup failed (DB error), using fallback dev identity', {
+      logger.warn('Dev auth user lookup failed (DB error)', {
         error: dbError instanceof Error ? dbError.message : String(dbError),
       });
     }
 
-    // Fallback: no DB user found or DB error — use hardcoded dev identity
-    c.set('userId', 'dev-user-id');
-    c.set('clerkId', 'dev-clerk-id');
-    c.set('firmId', process.env.DEFAULT_FIRM_ID || 'dev-firm-id');
-    c.set('userRole', 'admin');
-    await next();
-    return;
+    // SECURITY: No hardcoded fallback identity. If the dev user doesn't
+    // exist in the database, auth fails. Run the seed script to create one.
+    logger.error(
+      'Dev auth enabled but no user with clerkId="dev-clerk-id" found in database. ' +
+      'Run the seed script to create a dev user.',
+    );
+    return c.json({ error: 'Unauthorized: dev user not found in database' }, 401);
   }
 
   // ── JWT Bearer Token (Clerk) ────────────────────────────────────────────

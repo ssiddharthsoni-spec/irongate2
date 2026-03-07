@@ -115,7 +115,7 @@ export async function getProposals(firmId: string) {
 /**
  * Approve an inferred entity proposal.
  */
-export async function approveProposal(id: string, confirmedBy: string) {
+export async function approveProposal(id: string, confirmedBy: string, firmId: string) {
   return db
     .update(inferredEntities)
     .set({
@@ -123,20 +123,20 @@ export async function approveProposal(id: string, confirmedBy: string) {
       confirmedBy,
       promotedAt: new Date(),
     })
-    .where(eq(inferredEntities.id, id));
+    .where(and(eq(inferredEntities.id, id), eq(inferredEntities.firmId, firmId)));
 }
 
 /**
  * Reject an inferred entity proposal.
  */
-export async function rejectProposal(id: string, confirmedBy: string) {
+export async function rejectProposal(id: string, confirmedBy: string, firmId: string) {
   return db
     .update(inferredEntities)
     .set({
       status: 'rejected',
       confirmedBy,
     })
-    .where(eq(inferredEntities.id, id));
+    .where(and(eq(inferredEntities.id, id), eq(inferredEntities.firmId, firmId)));
 }
 
 // ---------------------------------------------------------------------------

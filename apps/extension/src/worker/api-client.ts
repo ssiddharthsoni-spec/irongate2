@@ -5,8 +5,9 @@
 
 import { resolveConfig, onManagedConfigChanged } from '../managed-config';
 import { loadApiKey } from '../api-key-store';
+import { reportSecurityAnomaly } from '../security/network-guard';
 
-let API_BASE_URL = 'http://localhost:3000/v1';
+let API_BASE_URL = 'https://irongate-api.onrender.com/v1';
 
 interface ApiClientConfig {
   baseUrl: string;
@@ -26,10 +27,34 @@ let config: ApiClientConfig = {
   apiKey: DEFAULT_API_KEY,
 };
 
+// Allowed API host patterns — reject anything outside this list
+const ALLOWED_API_HOSTS = [
+  'irongate-api.onrender.com',
+  'irongate-api-staging.onrender.com',
+  'localhost',
+  '127.0.0.1',
+];
+
+function isAllowedApiUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return ALLOWED_API_HOSTS.includes(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function applyApiUrl(url: string): void {
+  if (isAllowedApiUrl(url)) {
+    config.baseUrl = url;
+    API_BASE_URL = url;
+  }
+}
+
 // Load config with managed-first priority (replaces direct chrome.storage.local reads)
 resolveConfig().then((resolved) => {
   if (resolved.apiKey) config.apiKey = resolved.apiKey;
-  if (resolved.apiUrl) { config.baseUrl = resolved.apiUrl; API_BASE_URL = resolved.apiUrl; }
+  if (resolved.apiUrl) applyApiUrl(resolved.apiUrl);
   if (resolved.firmId) config.firmId = resolved.firmId;
 }).catch(() => {
   // Fallback: load encrypted API key from local storage
@@ -39,9 +64,13 @@ resolveConfig().then((resolved) => {
 // Update config when managed policy changes
 onManagedConfigChanged((resolved) => {
   if (resolved.apiKey) config.apiKey = resolved.apiKey;
-  if (resolved.apiUrl) { config.baseUrl = resolved.apiUrl; API_BASE_URL = resolved.apiUrl; }
+  if (resolved.apiUrl) applyApiUrl(resolved.apiUrl);
   if (resolved.firmId) config.firmId = resolved.firmId;
 });
+
+export function getConfiguredApiKey(): string | undefined {
+  return config.apiKey || undefined;
+}
 
 export function configureApiClient(newConfig: Partial<ApiClientConfig>) {
   // Only override non-empty values — preserve defaults for unset fields
@@ -95,10 +124,15 @@ export async function apiRequest<T>(options: RequestOptions): Promise<T> {
         body: body ? JSON.stringify(body) : undefined,
       });
 
+      // Verify expected security headers are present (defense in depth)
+      if (attempt === 0) {
+        validateResponseIntegrity(url, response);
+      }
+
       if (!response.ok) {
         if (response.status === 429) {
-          // Rate limited — wait and retry
-          const retryAfter = parseInt(response.headers.get('Retry-After') || '5');
+          // Rate limited — wait and retry (cap at 60s to prevent server-controlled DoS)
+          const retryAfter = Math.min(parseInt(response.headers.get('Retry-After') || '5'), 60);
           await sleep(retryAfter * 1000);
           continue;
         }
@@ -208,4 +242,35 @@ function getBackoffDelay(attempt: number): number {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Verify that the API response includes expected security headers.
+ * Missing headers may indicate a proxy interception or misconfigured server.
+ * Reports anomalies but does not block — HSTS and CT enforcement are server-side.
+ */
+let _integrityWarningLogged = false;
+
+function validateResponseIntegrity(url: string, response: Response): void {
+  const hsts = response.headers.get('strict-transport-security');
+  const expectCt = response.headers.get('expect-ct');
+  const host = new URL(url).hostname;
+
+  if (!hsts && !_integrityWarningLogged) {
+    _integrityWarningLogged = true;
+    reportSecurityAnomaly('unexpected_redirect', {
+      url,
+      host,
+      reason: `Missing Strict-Transport-Security header from ${host}`,
+    });
+  }
+
+  if (!expectCt && !_integrityWarningLogged) {
+    _integrityWarningLogged = true;
+    reportSecurityAnomaly('unexpected_redirect', {
+      url,
+      host,
+      reason: `Missing Expect-CT header from ${host}`,
+    });
+  }
 }

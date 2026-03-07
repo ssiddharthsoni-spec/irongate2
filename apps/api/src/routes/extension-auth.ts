@@ -2,8 +2,8 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import crypto from 'crypto';
 import { db } from '../db/client';
-import { firms, users, subscriptions, apiKeys } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { firms, users, subscriptions, apiKeys, emailVerificationTokens } from '../db/schema';
+import { eq, and } from 'drizzle-orm';
 import { logger } from '../lib/logger';
 
 export const extensionAuthRoutes = new Hono();
@@ -30,6 +30,51 @@ function checkRateLimit(key: string): boolean {
   if (entry.count >= RATE_LIMIT) return false;
   entry.count++;
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// HMAC-SHA256 email verification tokens
+// Token format: base64url(userId:expiry:hmac)
+// ---------------------------------------------------------------------------
+const VERIFY_TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+function getHmacSecret(): string {
+  return process.env.JWT_SIGNING_KEY || process.env.IRON_GATE_MASTER_SECRET || `dev-hmac-${process.pid}`;
+}
+
+function createVerificationToken(userId: string, email: string): { token: string; hash: string; expiresAt: Date } {
+  const expiresAt = new Date(Date.now() + VERIFY_TOKEN_EXPIRY_MS);
+  const payload = `${userId}:${email}:${expiresAt.getTime()}`;
+  const hmac = crypto.createHmac('sha256', getHmacSecret()).update(payload).digest('hex');
+  const token = Buffer.from(`${payload}:${hmac}`).toString('base64url');
+  const hash = crypto.createHash('sha256').update(token).digest('hex');
+  return { token, hash, expiresAt };
+}
+
+function verifyToken(token: string): { valid: boolean; userId?: string; email?: string } {
+  try {
+    const decoded = Buffer.from(token, 'base64url').toString();
+    const parts = decoded.split(':');
+    if (parts.length < 4) return { valid: false };
+
+    const hmac = parts.pop()!;
+    const payload = parts.join(':');
+    const [userId, email, expiryStr] = [parts[0], parts[1], parts[2]];
+
+    // Check expiry
+    const expiry = parseInt(expiryStr, 10);
+    if (isNaN(expiry) || Date.now() > expiry) return { valid: false };
+
+    // Verify HMAC (constant-time comparison)
+    const expected = crypto.createHmac('sha256', getHmacSecret()).update(payload).digest('hex');
+    if (!crypto.timingSafeEqual(Buffer.from(hmac, 'hex'), Buffer.from(expected, 'hex'))) {
+      return { valid: false };
+    }
+
+    return { valid: true, userId, email };
+  } catch {
+    return { valid: false };
+  }
 }
 
 /**
@@ -61,7 +106,19 @@ extensionAuthRoutes.post('/register-extension', async (c) => {
   }
 
   const schema = z.object({
-    email: z.string().email(),
+    email: z.string().email().refine(
+      (email) => {
+        // Block disposable/temporary email domains commonly used for abuse
+        const disposableDomains = new Set([
+          'mailinator.com', 'guerrillamail.com', 'tempmail.com', 'throwaway.email',
+          'yopmail.com', 'sharklasers.com', 'guerrillamailblock.com', 'grr.la',
+          'dispostable.com', '10minutemail.com', 'trashmail.com', 'maildrop.cc',
+        ]);
+        const domain = email.split('@')[1]?.toLowerCase();
+        return domain && !disposableDomains.has(domain);
+      },
+      { message: 'Please use a work email address' }
+    ),
     deviceId: z.string().uuid(),
     industry: z.string().optional(),
     firmCode: z.string().optional(),
@@ -85,39 +142,13 @@ extensionAuthRoutes.post('/register-extension', async (c) => {
       .limit(1);
 
     if (existing) {
-      // User exists — look up their subscription and generate a fresh API key
-      const [sub] = await db
-        .select({ tier: subscriptions.tier, currentPeriodEnd: subscriptions.currentPeriodEnd })
-        .from(subscriptions)
-        .where(eq(subscriptions.firmId, existing.firmId))
-        .limit(1);
-
-      const [firm] = await db
-        .select({ name: firms.name })
-        .from(firms)
-        .where(eq(firms.id, existing.firmId))
-        .limit(1);
-
-      // Generate API key for this user
-      const { key, hash, prefix } = generateApiKey();
-      await db.insert(apiKeys).values({
-        firmId: existing.firmId,
-        name: `Extension (${parsed.email})`,
-        keyHash: hash,
-        keyPrefix: prefix,
-        scope: 'write',
-        createdBy: existing.id,
-      });
-
+      // User already exists — return a generic message that does NOT leak
+      // internal details (userId, firmId, firmName, tier, subscription).
+      // The user should sign in via the dashboard or use their existing API key.
       return c.json({
-        userId: existing.id,
-        firmId: existing.firmId,
-        firmName: firm?.name || '',
-        apiKey: key,
-        tier: sub?.tier || 'free',
-        trialEndsAt: sub?.currentPeriodEnd?.toISOString() || null,
+        error: 'An account with this email already exists. Please sign in through the Iron Gate dashboard or use your existing API key.',
         status: 'existing',
-      });
+      }, 409);
     }
 
     // New user registration — wrap in transaction to prevent orphaned data
@@ -202,14 +233,16 @@ extensionAuthRoutes.post('/register-extension', async (c) => {
         trialEndsAt = sub?.currentPeriodEnd?.toISOString() || null;
       }
 
-      // Generate API key
+      // Generate API key — new registrations get READ-ONLY scope by default.
+      // Write scope is granted after email verification or admin approval.
+      // This prevents privilege escalation from unverified sign-ups.
       const { key, hash, prefix } = generateApiKey();
       await tx.insert(apiKeys).values({
         firmId,
         name: `Extension (${parsed.email})`,
         keyHash: hash,
         keyPrefix: prefix,
-        scope: 'write',
+        scope: 'read',
         createdBy: newUser.id,
       });
 
@@ -222,14 +255,37 @@ extensionAuthRoutes.post('/register-extension', async (c) => {
       tier: registrationResult.tier,
     });
 
-    // Send welcome email (fire-and-forget, outside transaction)
-    import('../services/email').then(({ sendWelcomeEmail }) => {
+    // Send welcome + verification emails (fire-and-forget, outside transaction)
+    const dashboardUrl = process.env.DASHBOARD_URL || 'https://irongate-dashboard.vercel.app';
+    const { token: verifyTokenStr, hash: verifyHash, expiresAt: verifyExpiry } = createVerificationToken(
+      registrationResult.userId, parsed.email
+    );
+
+    // Store token hash in DB (not the token itself — hash-only storage)
+    db.insert(emailVerificationTokens).values({
+      userId: registrationResult.userId,
+      firmId: registrationResult.firmId,
+      email: parsed.email,
+      tokenHash: verifyHash,
+      expiresAt: verifyExpiry,
+    }).catch((err) => {
+      logger.error('Failed to store verification token', { error: err instanceof Error ? err.message : String(err) });
+    });
+
+    const verifyUrl = `${dashboardUrl}/verify-email?token=${verifyTokenStr}`;
+    import('../services/email').then(({ sendWelcomeEmail, sendVerificationEmail }) => {
       sendWelcomeEmail(parsed.email, parsed.email.split('@')[0]).catch(() => {});
+      sendVerificationEmail(parsed.email, parsed.email.split('@')[0], verifyUrl).catch(() => {});
     }).catch(() => {});
 
+    // Only return what the extension needs — never expose internal IDs
     return c.json({
-      ...registrationResult,
+      apiKey: registrationResult.apiKey,
+      firmName: registrationResult.firmName,
+      tier: registrationResult.tier,
+      trialEndsAt: registrationResult.trialEndsAt,
       status: 'created',
+      emailVerified: false,
     }, 201);
   } catch (err) {
     // Handle known error codes with appropriate status
@@ -291,5 +347,163 @@ extensionAuthRoutes.post('/validate-firm-code', async (c) => {
       error: err instanceof Error ? err.message : String(err),
     });
     return c.json({ error: 'Validation service unavailable' }, 503);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /verify-email — Verify email with HMAC-signed token
+// Upgrades API key scope from read → write on success.
+// ---------------------------------------------------------------------------
+extensionAuthRoutes.post('/verify-email', async (c) => {
+  const ip = c.req.header('x-forwarded-for') || c.req.header('cf-connecting-ip') || 'unknown';
+  if (!checkRateLimit(`verify:${ip}`)) {
+    return c.json({ error: 'Too many requests. Please try again later.' }, 429);
+  }
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const schema = z.object({ token: z.string().min(1) });
+  const result = schema.safeParse(body);
+  if (!result.success) {
+    return c.json({ error: 'Missing or invalid token' }, 400);
+  }
+
+  const { token } = result.data;
+
+  // Verify HMAC signature and expiry
+  const verification = verifyToken(token);
+  if (!verification.valid || !verification.userId || !verification.email) {
+    return c.json({ error: 'Invalid or expired verification token' }, 400);
+  }
+
+  // Check token hash exists in DB and hasn't been used
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+  try {
+    const [tokenRecord] = await db
+      .select()
+      .from(emailVerificationTokens)
+      .where(eq(emailVerificationTokens.tokenHash, tokenHash))
+      .limit(1);
+
+    if (!tokenRecord) {
+      return c.json({ error: 'Invalid or expired verification token' }, 400);
+    }
+
+    if (tokenRecord.verifiedAt) {
+      return c.json({ error: 'Email already verified', emailVerified: true }, 400);
+    }
+
+    if (new Date() > tokenRecord.expiresAt) {
+      return c.json({ error: 'Verification token has expired. Please request a new one.' }, 400);
+    }
+
+    // Atomic upgrade: mark token used, verify user, upgrade API key scope
+    await db.transaction(async (tx) => {
+      // Mark token as used
+      await tx
+        .update(emailVerificationTokens)
+        .set({ verifiedAt: new Date() })
+        .where(eq(emailVerificationTokens.id, tokenRecord.id));
+
+      // Mark user as verified
+      await tx
+        .update(users)
+        .set({ emailVerified: true, updatedAt: new Date() })
+        .where(eq(users.id, tokenRecord.userId));
+
+      // Upgrade all read-only API keys for this user to write scope
+      await tx
+        .update(apiKeys)
+        .set({ scope: 'write' })
+        .where(
+          and(
+            eq(apiKeys.createdBy, tokenRecord.userId),
+            eq(apiKeys.scope, 'read'),
+          ),
+        );
+    });
+
+    logger.info('Email verified successfully', {
+      userId: tokenRecord.userId,
+      email: tokenRecord.email,
+    });
+
+    return c.json({ emailVerified: true, message: 'Email verified. Your API key now has full access.' });
+  } catch (err) {
+    logger.error('Email verification failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return c.json({ error: 'Verification failed. Please try again.' }, 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /resend-verification — Resend verification email
+// Requires the user's email. Rate limited to prevent abuse.
+// ---------------------------------------------------------------------------
+extensionAuthRoutes.post('/resend-verification', async (c) => {
+  const ip = c.req.header('x-forwarded-for') || c.req.header('cf-connecting-ip') || 'unknown';
+  if (!checkRateLimit(`resend:${ip}`)) {
+    return c.json({ error: 'Too many requests. Please try again later.' }, 429);
+  }
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const schema = z.object({ email: z.string().email() });
+  const result = schema.safeParse(body);
+  if (!result.success) {
+    return c.json({ error: 'Invalid email' }, 400);
+  }
+
+  const { email } = result.data;
+
+  try {
+    // Find user — always return success to prevent email enumeration
+    const [user] = await db
+      .select({ id: users.id, firmId: users.firmId, emailVerified: users.emailVerified })
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+
+    if (!user || user.emailVerified) {
+      // Don't reveal whether the email exists or is already verified
+      return c.json({ message: 'If this email is registered and unverified, a verification link has been sent.' });
+    }
+
+    // Generate new token
+    const dashboardUrl = process.env.DASHBOARD_URL || 'https://irongate-dashboard.vercel.app';
+    const { token: verifyTokenStr, hash: verifyHash, expiresAt: verifyExpiry } = createVerificationToken(user.id, email);
+
+    // Store token
+    await db.insert(emailVerificationTokens).values({
+      userId: user.id,
+      firmId: user.firmId,
+      email,
+      tokenHash: verifyHash,
+      expiresAt: verifyExpiry,
+    });
+
+    const verifyUrl = `${dashboardUrl}/verify-email?token=${verifyTokenStr}`;
+    import('../services/email').then(({ sendVerificationEmail }) => {
+      sendVerificationEmail(email, email.split('@')[0], verifyUrl).catch(() => {});
+    }).catch(() => {});
+
+    return c.json({ message: 'If this email is registered and unverified, a verification link has been sent.' });
+  } catch (err) {
+    logger.error('Resend verification failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return c.json({ error: 'Service unavailable. Please try again.' }, 503);
   }
 });

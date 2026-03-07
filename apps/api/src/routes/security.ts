@@ -3,9 +3,10 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { randomUUID, randomBytes, timingSafeEqual } from 'node:crypto';
 import { db } from '../db/client';
-import { firms, users, killSwitch as killSwitchTable } from '../db/schema';
+import { firms, users, killSwitch as killSwitchTable, breachLog } from '../db/schema';
 import { eq, and, isNull, sql } from 'drizzle-orm';
 import type { AppEnv } from '../types';
+import { logger } from '../lib/logger';
 
 // ---------------------------------------------------------------------------
 // In-memory kill switch state
@@ -36,6 +37,99 @@ function isKillSwitchActive(firmId?: string): boolean {
   const envSwitch = process.env.KILL_SWITCH;
   if (envSwitch === 'true' || envSwitch === '1') return true;
 
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Auto-trigger thresholds — activate kill switch automatically on anomalies
+// ---------------------------------------------------------------------------
+
+/** Sliding window tracker for critical events per firm */
+const criticalEventCounts = new Map<string, number[]>();
+const AUTO_TRIGGER_WINDOW = 5 * 60_000; // 5 minutes
+const AUTO_TRIGGER_THRESHOLD = 50; // 50 critical events in 5 minutes
+
+/**
+ * Record a critical event for a firm. If threshold is breached,
+ * auto-activate the kill switch and log a breach.
+ */
+export async function recordCriticalEvent(firmId: string): Promise<boolean> {
+  const now = Date.now();
+  const events = (criticalEventCounts.get(firmId) || []).filter(t => now - t < AUTO_TRIGGER_WINDOW);
+  events.push(now);
+  criticalEventCounts.set(firmId, events);
+
+  // Periodic cleanup
+  if (criticalEventCounts.size > 5000) {
+    for (const [k, v] of criticalEventCounts) {
+      const filtered = v.filter(t => now - t < AUTO_TRIGGER_WINDOW);
+      if (filtered.length === 0) criticalEventCounts.delete(k);
+      else criticalEventCounts.set(k, filtered);
+    }
+  }
+
+  if (events.length >= AUTO_TRIGGER_THRESHOLD) {
+    // Auto-activate kill switch for this firm
+    const storeKey = `firm:${firmId}`;
+    if (!killSwitchStore.get(storeKey)?.enabled) {
+      killSwitchStore.set(storeKey, {
+        enabled: true,
+        scope: 'firm',
+        firmId,
+        activatedAt: new Date().toISOString(),
+      });
+
+      // Persist to DB
+      try {
+        await db.insert(killSwitchTable).values({
+          enabled: true,
+          scope: 'firm',
+          firmId,
+          activatedAt: new Date(),
+          reason: `Auto-triggered: ${events.length} critical events in 5 minutes`,
+        });
+      } catch { /* best-effort DB persist */ }
+
+      // Log breach
+      try {
+        await db.insert(breachLog).values({
+          firmId,
+          triggerType: 'auto_threshold',
+          severity: 'critical',
+          description: `Kill switch auto-activated: ${events.length} critical events detected within 5 minutes`,
+          metadata: { eventCount: events.length, windowMs: AUTO_TRIGGER_WINDOW },
+        });
+      } catch { /* best-effort */ }
+
+      // Send breach notification to firm admins
+      try {
+        const adminUsers = await db
+          .select({ email: users.email })
+          .from(users)
+          .where(and(eq(users.firmId, firmId), eq(users.role, 'admin')));
+
+        const [firm] = await db.select({ name: firms.name }).from(firms).where(eq(firms.id, firmId)).limit(1);
+        const firmName = firm?.name || 'Unknown';
+
+        const { sendBreachNotificationEmail } = await import('../services/email');
+        for (const admin of adminUsers) {
+          await sendBreachNotificationEmail(admin.email, firmName, {
+            triggerType: 'Auto-Threshold',
+            description: `${events.length} critical-severity events detected within 5 minutes. Kill switch has been automatically activated.`,
+            severity: 'critical',
+            timestamp: new Date().toISOString(),
+          });
+        }
+      } catch (err) {
+        logger.error('Failed to send breach notification', { firmId, error: err instanceof Error ? err.message : String(err) });
+      }
+
+      logger.warn('Kill switch auto-triggered', { firmId, criticalEvents: events.length });
+      // Reset the counter after triggering
+      criticalEventCounts.delete(firmId);
+      return true;
+    }
+  }
   return false;
 }
 
@@ -447,7 +541,7 @@ securityRoutes.get('/firm/security-status', async (c) => {
 
   return c.json({
     encryption: hasEncryptionSalt ? 'active' : 'inactive',
-    rls: 'enabled',
+    rls: 'middleware_active',
     public_key_uploaded: publicKeyUploaded,
     retention_days: retentionDays,
     last_key_rotation: lastKeyRotation,

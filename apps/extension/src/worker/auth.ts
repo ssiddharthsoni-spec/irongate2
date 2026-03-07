@@ -101,8 +101,15 @@ function hexToUint8(hex: string): Uint8Array {
 async function encryptedSet(data: Record<string, unknown>): Promise<void> {
   const key = await getEncryptionKey();
   if (!key) {
-    // No encryption key yet (pre-login) — store plaintext
-    await chrome.storage.local.set(data);
+    // No encryption key yet (pre-login) — store in session storage only
+    // (clears on browser close). Never write to local storage unencrypted.
+    try {
+      await chrome.storage.session.set(data);
+    } catch {
+      // Session storage unavailable — hold in memory only (authState).
+      // Data will be lost on SW restart, but that's safer than plaintext persistence.
+      authLog('No encryption key and no session storage — credentials held in memory only');
+    }
     return;
   }
 
@@ -125,8 +132,13 @@ async function encryptedGet(keys: string[]): Promise<Record<string, unknown>> {
     }
 
     if (!key) {
-      // No encryption key — try reading as plaintext (first run / pre-login)
-      result[k] = stored[k];
+      // No encryption key — try reading from session storage (pre-login fallback)
+      try {
+        const sessionData = await chrome.storage.session.get(k);
+        result[k] = sessionData[k] ?? null;
+      } catch {
+        result[k] = null;
+      }
       continue;
     }
 

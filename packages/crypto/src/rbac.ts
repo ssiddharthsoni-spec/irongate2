@@ -4,11 +4,13 @@
 // Defines the permission matrix for all roles in the Iron Gate platform.
 //
 // Roles:
-//   - admin: Full access to all dashboard, configuration, compliance, and
-//            billing features. Typically the firm's designated administrator.
-//   - user:  Can use the browser extension and AI tools with protection,
-//            view their own detection history, and submit feedback.
-//            Cannot access dashboard analytics, admin settings, or billing.
+//   - admin:  Full access to all dashboard, configuration, compliance, and
+//             billing features. Typically the firm's designated administrator.
+//   - viewer: Read-only dashboard access — can view analytics, audit trail,
+//             and compliance reports. Cannot change settings or manage users.
+//   - user:   Can use the browser extension and AI tools with protection,
+//             view their own detection history, and submit feedback.
+//             Cannot access dashboard analytics, admin settings, or billing.
 // ============================================================================
 
 // ---------------------------------------------------------------------------
@@ -53,6 +55,44 @@ export const ROLES = {
     useAIToolsWithProtection: true,
     viewOwnDetectionHistory: true,
     submitEntityFeedback: true,
+  },
+  viewer: {
+    // Dashboard & Analytics (read-only)
+    viewDashboard: true,
+    viewFirmAnalytics: true,
+    viewUserRiskScores: true,
+
+    // Compliance & Audit (read-only)
+    viewAuditTrail: true,
+    exportComplianceReports: true,
+
+    // Extension & Tools
+    useExtension: true,
+    useAIToolsWithProtection: true,
+    viewOwnDetectionHistory: true,
+    submitEntityFeedback: true,
+
+    // User Management — no access
+    inviteUsers: false,
+    removeUsers: false,
+    changeUserRoles: false,
+
+    // Configuration — no access
+    setSensitivityThresholds: false,
+    addCustomEntityPatterns: false,
+
+    // Integrations — no access
+    manageWebhooks: false,
+    configureSIEM: false,
+
+    // Security — no access
+    rotateEncryptionKeys: false,
+    uploadPublicKey: false,
+    requestDataDeletion: false,
+
+    // Billing — no access
+    manageBilling: false,
+    changeSubscriptionPlan: false,
   },
   user: {
     // Extension & Tools

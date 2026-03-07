@@ -12,6 +12,7 @@ import { AnthropicProvider } from './providers/anthropic';
 import { OllamaProvider } from './providers/ollama';
 import { AzureOpenAIProvider } from './providers/azure';
 import { logger } from '../lib/logger';
+import { CircuitBreaker, CircuitBreakerOpenError } from '../lib/circuit-breaker';
 
 // ---------------------------------------------------------------------------
 // Public interfaces (consumed by provider adapters and route handlers)
@@ -59,6 +60,56 @@ export interface FirmLLMConfig {
 }
 
 // ---------------------------------------------------------------------------
+// SSRF Protection — block private/internal network URLs
+// ---------------------------------------------------------------------------
+
+const PRIVATE_HOSTNAME_PATTERNS = [
+  /^localhost$/i,
+  /^127\./,
+  /^10\./,
+  /^172\.(1[6-9]|2\d|3[01])\./,
+  /^192\.168\./,
+  /^169\.254\./,
+  /^0\./,
+  // IPv6 loopback and private ranges (with and without brackets)
+  /^::1$/,
+  /^\[::1\]$/,
+  /^::$/,
+  /^\[::\]$/,
+  /^\[?::ffff:/i,             // IPv4-mapped IPv6 (e.g., ::ffff:127.0.0.1)
+  /^\[?0{0,4}:{0,2}0{0,4}:{0,2}0{0,4}:{0,2}0{0,4}:{0,2}0{0,4}:{0,2}0{0,4}:{0,2}0{0,4}:{0,2}0{0,3}1\]?$/, // Full form ::1
+  /^\[?fe80:/i,
+  /^\[?fc00:/i,
+  /^\[?fd00:/i,
+  /^\[?ff00:/i,               // Multicast
+  /\.internal$/i,
+  /\.local$/i,
+  /\.localhost$/i,
+];
+
+function validateBaseUrl(baseUrl: string | undefined): void {
+  if (!baseUrl) return;
+  try {
+    const parsed = new URL(baseUrl);
+    // Only allow HTTPS in production (HTTP for localhost in dev only)
+    if (parsed.protocol !== 'https:' && process.env.NODE_ENV === 'production') {
+      throw new Error(`SSRF blocked: non-HTTPS URL "${baseUrl}" not allowed in production`);
+    }
+    // Block private/internal hostnames
+    for (const pattern of PRIVATE_HOSTNAME_PATTERNS) {
+      if (pattern.test(parsed.hostname)) {
+        // Allow localhost for Ollama (private LLM) only in development
+        if (parsed.hostname === 'localhost' && process.env.NODE_ENV !== 'production') continue;
+        throw new Error(`SSRF blocked: private network URL "${baseUrl}" not allowed`);
+      }
+    }
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith('SSRF')) throw e;
+    throw new Error(`Invalid LLM provider URL: "${baseUrl}"`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Provider registry
 // ---------------------------------------------------------------------------
 
@@ -67,6 +118,14 @@ const PROVIDERS: Record<string, LLMProvider> = {
   anthropic: new AnthropicProvider(),
   azure: new AzureOpenAIProvider(),
   ollama: new OllamaProvider(),
+};
+
+// Per-provider circuit breakers — fail fast when a provider is down
+const CIRCUIT_BREAKERS: Record<string, CircuitBreaker> = {
+  openai: new CircuitBreaker('openai', 5, 30_000),
+  anthropic: new CircuitBreaker('anthropic', 5, 30_000),
+  azure: new CircuitBreaker('azure', 5, 30_000),
+  ollama: new CircuitBreaker('ollama', 3, 15_000),
 };
 
 // ---------------------------------------------------------------------------
@@ -89,12 +148,19 @@ export class LLMRouter {
   async send(request: LLMRequest): Promise<LLMResponse> {
     const { provider, providerConfig } = this.resolveProvider(request.route, request.model);
 
+    // SSRF protection — validate baseUrl before sending
+    validateBaseUrl(providerConfig.baseUrl);
+
     logger.info('Routing to provider', {
       provider: provider.name,
       model: request.model || providerConfig.model,
       route: request.route,
     });
 
+    const breaker = CIRCUIT_BREAKERS[providerConfig.provider];
+    if (breaker) {
+      return breaker.execute(() => provider.send(request, providerConfig));
+    }
     return provider.send(request, providerConfig);
   }
 

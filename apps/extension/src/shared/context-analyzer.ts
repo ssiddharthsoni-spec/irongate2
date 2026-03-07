@@ -8,6 +8,7 @@
  */
 
 import type { DetectedEntity } from '../detection/types';
+import { HIGH_PII_TYPES, ALWAYS_CRITICAL_TYPES } from '../detection/types';
 
 // ─── 7.1 Co-Occurrence Rules ────────────────────────────────────────────────
 
@@ -20,15 +21,8 @@ export interface CoOccurrenceResult {
   explanations: string[];
 }
 
-/** Entity types that are ALWAYS critical regardless of context */
-const ALWAYS_CRITICAL_TYPES = new Set([
-  'API_KEY', 'PRIVATE_KEY', 'AWS_CREDENTIAL', 'GCP_CREDENTIAL', 'DATABASE_URI',
-]);
-
-/** High-PII entity types that escalate when near a PERSON */
-const HIGH_PII_TYPES = new Set([
-  'SSN', 'CREDIT_CARD', 'MEDICAL_RECORD', 'PASSPORT_NUMBER', 'DRIVERS_LICENSE',
-]);
+// HIGH_PII_TYPES and ALWAYS_CRITICAL_TYPES imported from ../detection/types
+// Single source of truth — no duplicate definitions
 
 /**
  * Apply co-occurrence rules to detected entities.

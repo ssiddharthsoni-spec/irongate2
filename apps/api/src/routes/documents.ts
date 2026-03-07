@@ -125,7 +125,6 @@ documentRoutes.post('/scan', async (c) => {
       level: scoreResult.level,
       breakdown: scoreResult.breakdown,
       explanation: scoreResult.explanation,
-      originalText: extractedText,
       redactedText: pseudonymResult.maskedText,
       entitiesRedacted: pseudonymResult.entitiesReplaced,
       eventId: null,

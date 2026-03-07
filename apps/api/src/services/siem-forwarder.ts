@@ -12,10 +12,10 @@ import { logger } from '../lib/logger';
 
 interface SIEMConfig {
   enabled: boolean;
-  provider: 'splunk' | 'datadog' | 'generic';
+  provider: 'splunk' | 'datadog' | 'generic' | 'sentinel';
   url: string;
   token: string;
-  format: 'json' | 'cef';
+  format: 'json' | 'cef' | 'asim';
 }
 
 interface SIEMEvent {
@@ -33,11 +33,32 @@ interface SIEMEvent {
 const MAX_SIEM_RETRIES = 3;
 const SIEM_BASE_DELAY_MS = 500;
 
+const _siemRateLimits = new Map<string, { count: number; resetAt: number }>();
+const SIEM_RATE_LIMIT = 100;
+const SIEM_RATE_WINDOW_MS = 60_000;
+
+function checkSIEMRateLimit(firmId: string): boolean {
+  const now = Date.now();
+  const entry = _siemRateLimits.get(firmId);
+  if (!entry || now >= entry.resetAt) {
+    _siemRateLimits.set(firmId, { count: 1, resetAt: now + SIEM_RATE_WINDOW_MS });
+    return true;
+  }
+  if (entry.count >= SIEM_RATE_LIMIT) return false;
+  entry.count++;
+  return true;
+}
+
 /**
  * Forward an event to the firm's configured SIEM endpoint.
  * Retries up to 3 times with exponential backoff on transient failures.
  */
 export async function forward(firmId: string, event: SIEMEvent): Promise<void> {
+  if (!checkSIEMRateLimit(firmId)) {
+    logger.warn('SIEM rate limit exceeded, dropping event', { firmId, eventId: event.eventId });
+    return;
+  }
+
   let config: SIEMConfig | null;
   try {
     config = await getSIEMConfig(firmId);
@@ -127,6 +148,30 @@ function formatPayload(event: SIEMEvent, config: SIEMConfig): unknown {
     };
   }
 
+  if (config.format === 'asim') {
+    // Azure Sentinel Information Model (ASIM) — NetworkSession schema
+    return {
+      TimeGenerated: event.timestamp,
+      EventType: 'NetworkSession',
+      EventProduct: 'IronGate',
+      EventVendor: 'IronGate',
+      EventSchema: 'NetworkSession',
+      EventSchemaVersion: '0.2.6',
+      EventSeverity: mapASIMSeverity(event.sensitivityLevel),
+      EventResult: event.action === 'blocked' ? 'Failure' : 'Success',
+      DvcAction: event.action,
+      SrcAppName: event.aiToolId,
+      EventOriginalUid: event.eventId,
+      AdditionalFields: JSON.stringify({
+        sensitivityScore: event.sensitivityScore,
+        sensitivityLevel: event.sensitivityLevel,
+        entityCount: event.entityCount,
+        captureMethod: event.captureMethod,
+        firmId: event.firmId,
+      }),
+    };
+  }
+
   // Default: JSON format
   return {
     source: 'iron-gate',
@@ -143,11 +188,24 @@ function buildHeaders(config: SIEMConfig): Record<string, string> {
     headers['Authorization'] = `Splunk ${config.token}`;
   } else if (config.provider === 'datadog') {
     headers['DD-API-KEY'] = config.token;
+  } else if (config.provider === 'sentinel') {
+    headers['Authorization'] = `SharedKey ${config.token}`;
+    headers['Log-Type'] = 'IronGate_CL';
   } else {
     headers['Authorization'] = `Bearer ${config.token}`;
   }
 
   return headers;
+}
+
+function mapASIMSeverity(level: string): string {
+  switch (level) {
+    case 'critical': return 'High';
+    case 'high': return 'Medium';
+    case 'medium': return 'Low';
+    case 'low': return 'Informational';
+    default: return 'Informational';
+  }
 }
 
 function mapSeverity(level: string): number {

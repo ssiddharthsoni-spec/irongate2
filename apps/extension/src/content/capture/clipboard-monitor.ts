@@ -50,10 +50,13 @@ export function createClipboardMonitor(
       pastedText = `[${files.length} file(s) pasted]`;
     } else if (htmlData && !textData) {
       sourceType = 'html';
-      // Extract text from HTML
-      const temp = document.createElement('div');
-      temp.innerHTML = htmlData;
-      pastedText = temp.textContent || temp.innerText || '';
+      // Extract text from HTML using DOMParser (safer than innerHTML on live DOM)
+      try {
+        const doc = new DOMParser().parseFromString(htmlData, 'text/html');
+        pastedText = doc.body.textContent || '';
+      } catch {
+        pastedText = '';
+      }
     }
 
     if (pastedText) {

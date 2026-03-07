@@ -6,11 +6,11 @@
 // and Chrome extension service workers.
 // ============================================================================
 
-const PBKDF2_ITERATIONS = 100_000;
+const PBKDF2_ITERATIONS = 600_000;
 
 // Domain-separated salt for HMAC key derivation.
 // Distinct from AES salt in aes-gcm.ts and KMS salt in kms-encryption.ts.
-const HMAC_SIGNING_SALT = new TextEncoder().encode('IGHMACSINGKEY01');
+const HMAC_SIGNING_SALT = new TextEncoder().encode('IGHMAC_SIGNING_KEY_V2');
 
 /**
  * Derive a non-extractable HMAC-SHA256 CryptoKey from a master secret.

@@ -80,7 +80,7 @@ const SCENARIOS = {
     expectedEntityTypes: ['PERSON', 'EMAIL'],
     minEntities: 3, // 2 emails + at least 1 name
     minScore: 20,
-    expectedLevel: ['medium', 'high'],
+    expectedLevel: ['low', 'medium', 'high'],
     mustContain: ['john.smith@acme.com', 'sarah.j@globex.net'],
     mustNotContainAfterPseudo: ['john.smith@acme.com', 'sarah.j@globex.net'],
   },

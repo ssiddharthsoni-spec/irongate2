@@ -1,0 +1,46 @@
+name: Staging Smoke Tests
+
+on:
+  push:
+    branches: [staging]
+
+jobs:
+  smoke-test:
+    name: Post-Deploy Smoke Tests
+    runs-on: ubuntu-latest
+    # Wait for Render to build and deploy (~2 min)
+    steps:
+      - name: Wait for Render deployment
+        run: sleep 120
+
+      - name: Health check
+        run: |
+          for i in {1..10}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://irongate-api-staging.onrender.com/health)
+            if [ "$STATUS" = "200" ]; then
+              echo "Health check passed (attempt $i)"
+              exit 0
+            fi
+            echo "Attempt $i: got $STATUS, retrying in 15s..."
+            sleep 15
+          done
+          echo "Health check failed after 10 attempts"
+          exit 1
+
+      - name: Deep health check (database connectivity)
+        run: |
+          RESPONSE=$(curl -sf https://irongate-api-staging.onrender.com/health?deep=true)
+          echo "$RESPONSE"
+          echo "$RESPONSE" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          if data.get('status') != 'ok':
+              print(f'FAIL: status={data.get(\"status\")}')
+              sys.exit(1)
+          print('Deep health check passed')
+          "
+
+      - name: Version check
+        run: |
+          VERSION=$(curl -sf https://irongate-api-staging.onrender.com/v1/health | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','unknown'))")
+          echo "Deployed version: $VERSION"

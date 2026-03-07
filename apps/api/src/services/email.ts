@@ -85,6 +85,19 @@ function ctaButton(text: string, url: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// HTML escaping — prevent XSS via user-controlled values in email templates
+// ---------------------------------------------------------------------------
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// ---------------------------------------------------------------------------
 // Send helper
 // ---------------------------------------------------------------------------
 
@@ -129,7 +142,7 @@ export async function sendWelcomeEmail(to: string, name: string) {
   const displayName = name || 'there';
 
   const html = emailLayout(`
-    <h2 style="margin: 0 0 16px; color: #1e293b; font-size: 22px; font-weight: 600;">Welcome aboard, ${displayName}!</h2>
+    <h2 style="margin: 0 0 16px; color: #1e293b; font-size: 22px; font-weight: 600;">Welcome aboard, ${escapeHtml(displayName)}!</h2>
     <p style="margin: 0 0 16px; color: #475569; font-size: 15px; line-height: 1.6;">
       Thank you for joining Iron Gate. Your organization is now set up to detect and protect sensitive data flowing into AI tools.
     </p>
@@ -162,7 +175,7 @@ export async function sendInviteEmail(to: string, inviterName: string, firmName:
   const html = emailLayout(`
     <h2 style="margin: 0 0 16px; color: #1e293b; font-size: 22px; font-weight: 600;">You&rsquo;re invited!</h2>
     <p style="margin: 0 0 16px; color: #475569; font-size: 15px; line-height: 1.6;">
-      <strong>${inviterName}</strong> has invited you to join <strong>${firmName}</strong> on Iron Gate, the AI data protection platform.
+      <strong>${escapeHtml(inviterName)}</strong> has invited you to join <strong>${escapeHtml(firmName)}</strong> on Iron Gate, the AI data protection platform.
     </p>
     <p style="margin: 0 0 16px; color: #475569; font-size: 15px; line-height: 1.6;">
       Iron Gate helps organizations detect and protect sensitive information before it enters AI tools like ChatGPT, Claude, and others.
@@ -191,9 +204,9 @@ export async function sendAlertEmail(to: string, alertTitle: string, alertBody: 
         &#9888; Security Alert
       </p>
     </div>
-    <h2 style="margin: 0 0 16px; color: #1e293b; font-size: 22px; font-weight: 600;">${alertTitle}</h2>
+    <h2 style="margin: 0 0 16px; color: #1e293b; font-size: 22px; font-weight: 600;">${escapeHtml(alertTitle)}</h2>
     <p style="margin: 0 0 24px; color: #475569; font-size: 15px; line-height: 1.6;">
-      ${alertBody}
+      ${escapeHtml(alertBody)}
     </p>
     ${ctaButton('View in Dashboard', dashboardUrl)}
     <p style="margin: 0; color: #94a3b8; font-size: 13px;">
@@ -219,7 +232,7 @@ export async function sendWeeklyDigest(
     ? stats.topEntities
         .map(
           (e) =>
-            `<span style="display: inline-block; background-color: #f0fdfa; color: #0d9488; padding: 4px 12px; border-radius: 16px; font-size: 13px; margin: 2px 4px 2px 0; border: 1px solid #99f6e4;">${e}</span>`,
+            `<span style="display: inline-block; background-color: #f0fdfa; color: #0d9488; padding: 4px 12px; border-radius: 16px; font-size: 13px; margin: 2px 4px 2px 0; border: 1px solid #99f6e4;">${escapeHtml(e)}</span>`,
         )
         .join('')
     : '<span style="color: #94a3b8; font-size: 14px;">No entities detected this week</span>';
@@ -256,6 +269,97 @@ export async function sendWeeklyDigest(
     <p style="margin: 0; color: #94a3b8; font-size: 13px;">
       This digest is sent weekly. Manage your notification preferences in the dashboard settings.
     </p>
+  `);
+
+  return sendEmail(to, subject, html);
+}
+
+/**
+ * Email verification — sent after extension registration.
+ * Contains an HMAC-signed token link that upgrades API key scope from read to write.
+ */
+export async function sendVerificationEmail(to: string, name: string, verifyUrl: string) {
+  const subject = 'Verify your email — Iron Gate';
+  const displayName = name || 'there';
+
+  const html = emailLayout(`
+    <h2 style="margin: 0 0 16px; color: #1e293b; font-size: 22px; font-weight: 600;">Verify your email, ${escapeHtml(displayName)}</h2>
+    <p style="margin: 0 0 16px; color: #475569; font-size: 15px; line-height: 1.6;">
+      To activate full access to Iron Gate, please verify your email address by clicking the button below.
+    </p>
+    <p style="margin: 0 0 16px; color: #475569; font-size: 15px; line-height: 1.6;">
+      Until verified, your extension operates in read-only mode &mdash; it can detect sensitive data but cannot use proxy mode or submit override requests.
+    </p>
+    ${ctaButton('Verify Email', verifyUrl)}
+    <p style="margin: 0 0 8px; color: #94a3b8; font-size: 13px;">
+      This link expires in 24 hours. If you didn&rsquo;t create an Iron Gate account, you can safely ignore this email.
+    </p>
+    <p style="margin: 0; color: #cbd5e1; font-size: 12px; word-break: break-all;">
+      Or copy this link: ${escapeHtml(verifyUrl)}
+    </p>
+  `);
+
+  return sendEmail(to, subject, html);
+}
+
+/**
+ * Breach notification email — sent to admins when kill switch activates or
+ * auto-trigger thresholds are breached. Required by HIPAA and SOC 2.
+ */
+export async function sendBreachNotificationEmail(
+  to: string,
+  firmName: string,
+  details: { triggerType: string; description: string; severity: string; timestamp: string },
+) {
+  const subject = `[URGENT] Data Breach Alert — ${firmName}`;
+  const dashboardUrl = process.env.DASHBOARD_URL || 'https://irongate-dashboard.vercel.app';
+
+  const severityColor = details.severity === 'critical' ? '#dc2626' : '#f59e0b';
+
+  const html = emailLayout(`
+    <div style="background-color: #fef2f2; border: 2px solid #fca5a5; border-radius: 6px; padding: 20px; margin-bottom: 24px;">
+      <p style="margin: 0 0 8px; color: #dc2626; font-size: 16px; font-weight: 700;">
+        &#9888; Breach Notification
+      </p>
+      <p style="margin: 0; color: #991b1b; font-size: 14px;">
+        This is an automated breach notification under your organization&rsquo;s incident response policy.
+      </p>
+    </div>
+
+    <h2 style="margin: 0 0 16px; color: #1e293b; font-size: 22px; font-weight: 600;">Security Incident Detected</h2>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom: 24px; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden;">
+      <tr>
+        <td style="padding: 12px 16px; background-color: #f8fafc; font-size: 13px; color: #64748b; width: 140px; border-bottom: 1px solid #e2e8f0;">Trigger</td>
+        <td style="padding: 12px 16px; font-size: 14px; color: #1e293b; border-bottom: 1px solid #e2e8f0;">${escapeHtml(details.triggerType)}</td>
+      </tr>
+      <tr>
+        <td style="padding: 12px 16px; background-color: #f8fafc; font-size: 13px; color: #64748b; border-bottom: 1px solid #e2e8f0;">Severity</td>
+        <td style="padding: 12px 16px; font-size: 14px; border-bottom: 1px solid #e2e8f0;">
+          <span style="display: inline-block; padding: 2px 10px; border-radius: 12px; background-color: ${severityColor}; color: white; font-size: 12px; font-weight: 600;">${escapeHtml(details.severity.toUpperCase())}</span>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 12px 16px; background-color: #f8fafc; font-size: 13px; color: #64748b; border-bottom: 1px solid #e2e8f0;">Description</td>
+        <td style="padding: 12px 16px; font-size: 14px; color: #1e293b; border-bottom: 1px solid #e2e8f0;">${escapeHtml(details.description)}</td>
+      </tr>
+      <tr>
+        <td style="padding: 12px 16px; background-color: #f8fafc; font-size: 13px; color: #64748b;">Timestamp</td>
+        <td style="padding: 12px 16px; font-size: 14px; color: #1e293b;">${escapeHtml(details.timestamp)}</td>
+      </tr>
+    </table>
+
+    <p style="margin: 0 0 16px; color: #475569; font-size: 15px; line-height: 1.6;">
+      The kill switch has been activated to prevent further data exposure. Please investigate immediately and follow your incident response plan.
+    </p>
+
+    ${ctaButton('View Incident Dashboard', `${dashboardUrl}/admin/incidents`)}
+
+    <div style="background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 16px; margin-top: 24px;">
+      <p style="margin: 0; color: #92400e; font-size: 13px;">
+        <strong>Regulatory Note:</strong> Under HIPAA and GDPR, you may be required to notify affected individuals and regulatory authorities within 72 hours of discovering a breach involving protected data.
+      </p>
+    </div>
   `);
 
   return sendEmail(to, subject, html);

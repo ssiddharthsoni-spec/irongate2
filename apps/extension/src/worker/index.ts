@@ -5,19 +5,36 @@
 
 import { analyzePrompt, sendProxiedPrompt, handleProxyFlow, analyzeFile } from './proxy-handler';
 import { eventQueue } from './queue';
-import { apiRequest, configureApiClient } from './api-client';
+import { apiRequest, configureApiClient, getConfiguredApiKey } from './api-client';
 import { initAuth, getFirmId, getUserId, getToken } from './auth';
 import { detectWithRegex } from '../detection/fallback-regex';
-import { computeScore } from '../detection/scorer';
+import { computeScore, scoreToLevel } from '../detection/scorer';
 import { pseudonymizeLocal } from '../detection/pseudonymizer';
 import { scanForSecrets } from './detectors/secret-scanner';
 import { resolveConfig, onManagedConfigChanged } from '../managed-config';
 import { saveApiKey, loadApiKey } from '../api-key-store';
 import { recordAttestation, getAuditLog, clearAuditLog } from './audit-trail';
+import {
+  initSessionLock, recordActivity, lockSession, unlockSession,
+  isSessionLocked, handleLockAlarm, getLockTimeout, setLockTimeout,
+} from './session-lock';
 import { initTrialAlarms, handleTrialAlarm } from './trial-notifications';
 import { classifyIfPro, classifyForGhost } from '../detection/ml-classifier';
 import { isPro } from '../shared/tier-gate';
 import { TOTAL_ENTITIES_DETECTED, WEEKLY_SCAN_COUNT } from '../shared/storage-keys';
+import { startKillSwitchPoller } from '../security/kill-switch-poller';
+import {
+  enforceCompliance, setActiveFrameworks, needsProfileRefresh,
+  getActiveFrameworks, type ComplianceEnforcementResult,
+} from '../shared/compliance-enforcer';
+import { trackShadowAI, getShadowAIStats } from './shadow-ai-tracker';
+import { detectWithLocalLLM, resetLocalLLMHealth } from './local-llm-detector';
+import { createConfidenceRouter, scoreToZone, type RoutingDecision, type TierAdapter } from '../detection/confidence-router';
+import { createMetadataClassifierAdapter } from '../detection/metadata-classifier';
+import { createTier2Adapter, probeTier2, type Tier2Config } from '../detection/tier2-adapter';
+import { getSemanticClassifier } from '../detection/semantic-classifier';
+import { sanitizeForClassification } from '../detection/pseudonymizer';
+import { getWeightResolver } from '../detection/weight-resolver';
 
 // Debug logging — silent in production, enable via: chrome.storage.local.get('ironGateDebug')
 let _IG_DEBUG = false;
@@ -29,6 +46,7 @@ const lastPromptTextByTab = new Map<number, string>();
 
 // Debounce real-time broadcasts: at most once per 500ms per tab
 const lastBroadcastByTab = new Map<number, number>();
+const lastBroadcastScoreByTab = new Map<number, number>();
 const BROADCAST_DEBOUNCE_MS = 500;
 
 // Memory-leak guard: cap per-tab Maps so they never grow unbounded.
@@ -106,6 +124,17 @@ initAuth().then(() => {
     getToken,
   });
   igLog('Auth initialized & API client configured');
+
+  // Initialize weight resolver with API fetch function
+  const weightResolver = getWeightResolver();
+  weightResolver.configure(async (path: string) => {
+    return apiRequest({ method: 'GET', path, retries: 1 });
+  });
+  weightResolver.init().then(() => {
+    igLog('Weight resolver initialized');
+  }).catch((err) => igLog('Weight resolver init failed (non-fatal):', err));
+
+  // Auto-lock removed — no session lock initialization needed
 }).catch((err) => igLog('Startup init failed:', err));
 
 // Open side panel on extension icon click
@@ -115,6 +144,190 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 let firmMode: 'audit' | 'proxy' = 'proxy';
 let isManaged = false;
 
+// ─── Feedback Flywheel: Suppression Rules Cache ──────────────────────────────
+// Periodically fetches feedback-based suppression rules from the API.
+// Entity types with high false-positive rates get their scoring weights reduced.
+let _suppressionWeights: Partial<Record<string, number>> = {};
+let _suppressionLastFetch = 0;
+const SUPPRESSION_REFRESH_MS = 15 * 60 * 1000; // 15 minutes
+
+async function refreshSuppressionRules(): Promise<void> {
+  if (Date.now() - _suppressionLastFetch < SUPPRESSION_REFRESH_MS) return;
+  try {
+    const result = await apiRequest<{
+      rules: Array<{ entityType: string; rule: string; confidence: number }>;
+    }>({ method: 'GET', path: '/feedback/rules', retries: 1 });
+    if (!result?.rules) return;
+
+    const weights: Partial<Record<string, number>> = {};
+    for (const rule of result.rules) {
+      if (rule.rule === 'suppress_short') {
+        // 80%+ false positive rate — reduce weight to 20% of default
+        weights[rule.entityType] = 2;
+      } else if (rule.rule === 'reduce_confidence') {
+        // 60%+ false positive rate — halve the weight
+        const defaultWeight = 10; // fallback default
+        weights[rule.entityType] = Math.round(defaultWeight * 0.5);
+      }
+    }
+    _suppressionWeights = weights;
+    _suppressionLastFetch = Date.now();
+    if (Object.keys(weights).length > 0) {
+      igLog('Feedback suppression rules loaded:', Object.keys(weights).length, 'types adjusted');
+    }
+  } catch {
+    // Fail silently — use cached rules or no suppression
+  }
+}
+
+// ─── Confidence Router ──────────────────────────────────────────────────────
+// Lazy-initialized confidence router. Rebuilt when config changes (e.g., Tier 2
+// endpoint toggled on/off via managed config).
+let _confidenceRouter: ReturnType<typeof createConfidenceRouter> | null = null;
+let _routerEntities: import('../detection/types').DetectedEntity[] = [];
+let _routerTextLength = 0;
+
+function getConfidenceRouter(config: import('../managed-config').ResolvedConfig): ReturnType<typeof createConfidenceRouter> {
+  if (_confidenceRouter) return _confidenceRouter;
+
+  const adapters: TierAdapter[] = [];
+  const tierConfig = config.tiers;
+
+  // Tier 2: Client-side LLM (if enabled via tier config or legacy localLLM config)
+  const tier2Endpoint = tierConfig.tier2Enabled ? tierConfig.tier2Endpoint
+    : config.localLLM?.endpoint && config.localLLM.enableDetection ? config.localLLM.endpoint
+    : '';
+  if (tier2Endpoint) {
+    const tier2Config: Tier2Config = {
+      endpoint: tier2Endpoint,
+      model: tierConfig.tier2Model || config.localLLM?.model || 'llama3.2:1b',
+      format: tierConfig.tier2Protocol || (tier2Endpoint.includes('11434') ? 'ollama' : 'openai'),
+      timeoutMs: tierConfig.tier2TimeoutMs || config.localLLM?.timeoutMs || 5000,
+      enabled: true,
+    };
+    adapters.push(createTier2Adapter(tier2Config));
+    igLog('Confidence router: Tier 2 enabled —', tier2Config.model, 'at', tier2Config.endpoint);
+  }
+
+  // Tier 2.5: Metadata classifier (always available unless explicitly disabled)
+  if (tierConfig.tier25Enabled !== false) {
+    adapters.push(createMetadataClassifierAdapter(
+      () => _routerEntities,
+      () => _routerTextLength,
+    ));
+  }
+
+  // Semantic classifier (runs on all zones, catches casual language)
+  let semanticClassify: ((text: string) => Promise<import('../detection/semantic-classifier').SemanticClassification>) | undefined;
+  if (tierConfig.semanticEnabled !== false) {
+    const semanticClassifier = getSemanticClassifier();
+    if (semanticClassifier.isReady()) {
+      semanticClassify = (text: string) => semanticClassifier.classify(text);
+    }
+  }
+
+  _confidenceRouter = createConfidenceRouter({
+    adapters,
+    escalateAmber: true,
+    tierTimeoutMs: tierConfig.tier3TimeoutMs || 3000,
+    onTierError: (tier, err) => igLog(`Tier ${tier} error:`, err.message),
+    semanticClassify,
+  });
+
+  igLog('Confidence router initialized with', adapters.length, 'adapters');
+  return _confidenceRouter;
+}
+
+// Reset router when config changes so it picks up new tier settings
+function resetConfidenceRouter(): void {
+  _confidenceRouter = null;
+}
+
+// ─── Compliance Profile Cache ─────────────────────────────────────────────────
+// Fetches the firm's active compliance frameworks from the API.
+// Frameworks like HIPAA, PCI-DSS, SOC 2 define entity types that are BLOCKED
+// regardless of sensitivity score.
+
+async function refreshComplianceProfile(): Promise<void> {
+  if (!needsProfileRefresh()) return;
+  try {
+    const result = await apiRequest<{
+      frameworks?: Array<{ id: string; enabled: boolean }>;
+      activeFrameworks?: string[];
+    }>({ method: 'GET', path: '/compliance/active', retries: 1 });
+    if (result?.activeFrameworks) {
+      setActiveFrameworks(result.activeFrameworks);
+      igLog('Compliance profile loaded:', result.activeFrameworks.join(', ') || 'none');
+    } else if (result?.frameworks) {
+      const active = result.frameworks.filter(f => f.enabled).map(f => f.id);
+      setActiveFrameworks(active);
+      igLog('Compliance profile loaded:', active.join(', ') || 'none');
+    }
+  } catch {
+    // Fail open on fetch error — keep cached profile
+  }
+}
+
+// ─── Kill Switch Enforcement ─────────────────────────────────────────────────
+// Polls the API every 60 seconds. When active, ALL prompt processing is blocked
+// and users see an explanation. Fail-closed: if API is unreachable, kill switch
+// activates to prevent unmonitored operation.
+let killSwitchActive = false;
+let _killSwitchStopFn: (() => void) | null = null;
+
+function startKillSwitchEnforcement(apiBaseUrl: string): void {
+  if (_killSwitchStopFn) _killSwitchStopFn(); // Stop any existing poller
+
+  _killSwitchStopFn = startKillSwitchPoller(apiBaseUrl, (shouldDisable) => {
+    killSwitchActive = shouldDisable;
+    if (shouldDisable) {
+      igLog('KILL SWITCH ACTIVE — all AI tool access blocked');
+      // Update badge on all tabs
+      chrome.tabs.query({}, (tabs) => {
+        for (const tab of tabs) {
+          if (tab.id) {
+            chrome.action.setBadgeText({ text: 'OFF', tabId: tab.id });
+            chrome.action.setBadgeBackgroundColor({ color: '#EF4444', tabId: tab.id });
+          }
+        }
+      });
+      // Notify all content scripts to show block screen
+      chrome.tabs.query({}, (tabs) => {
+        for (const tab of tabs) {
+          if (tab.id && tab.url) {
+            chrome.tabs.sendMessage(tab.id, {
+              type: 'KILL_SWITCH_ACTIVATED',
+              payload: { active: true },
+            }).catch(() => {});
+          }
+        }
+      });
+    } else {
+      igLog('Kill switch cleared — normal operation resumed');
+      chrome.tabs.query({}, (tabs) => {
+        for (const tab of tabs) {
+          if (tab.id) {
+            chrome.action.setBadgeText({ text: '', tabId: tab.id });
+          }
+        }
+      });
+      chrome.tabs.query({}, (tabs) => {
+        for (const tab of tabs) {
+          if (tab.id && tab.url) {
+            chrome.tabs.sendMessage(tab.id, {
+              type: 'KILL_SWITCH_ACTIVATED',
+              payload: { active: false },
+            }).catch(() => {});
+          }
+        }
+      });
+    }
+  }, getConfiguredApiKey);
+}
+
+// Start kill switch poller once config is resolved (needs API URL)
+const KILL_SWITCH_API_URL = 'https://irongate-api.onrender.com/v1';
+
 // Load config with managed-first priority
 resolveConfig().then((config) => {
   firmMode = config.firmMode;
@@ -122,8 +335,15 @@ resolveConfig().then((config) => {
   if (config.isManaged) {
     configureApiClient({ apiKey: config.apiKey, baseUrl: config.apiUrl });
     igLog('Enterprise managed mode active. Mode:', firmMode);
+    // Start kill switch enforcement with the configured API URL
+    startKillSwitchEnforcement(config.apiUrl || KILL_SWITCH_API_URL);
+    // Pre-fetch feedback suppression rules and compliance profile
+    refreshSuppressionRules().catch(() => {});
+    refreshComplianceProfile().catch(() => {});
   } else {
     igLog('Individual mode. Loaded firm mode:', firmMode);
+    // Start kill switch enforcement with default API URL
+    startKillSwitchEnforcement(KILL_SWITCH_API_URL);
   }
 }).catch((err) => {
   igLog('Failed to resolve managed config:', err);
@@ -144,6 +364,9 @@ onManagedConfigChanged((config) => {
   if (config.isManaged) {
     configureApiClient({ apiKey: config.apiKey, baseUrl: config.apiUrl });
   }
+  // Reset local LLM health cache and confidence router when config changes
+  resetLocalLLMHealth();
+  resetConfidenceRouter();
   // Relay mode change to all content scripts
   chrome.tabs.query({}, (tabs) => {
     for (const tab of tabs) {
@@ -170,6 +393,7 @@ interface TabState {
   lastExplanation: string | null;
   lastEntities: any[];
   lastPromptHash?: string;
+  lastOriginalPrompt?: string;
   lastMaskedPrompt?: string;
   lastPseudonymMappings?: any[];
   detectionCount: number;
@@ -235,10 +459,48 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true; // Keep channel open for async
 });
 
+// ── Sender validation helpers ──────────────────────────────────────────────
+// Sidepanel-only messages must originate from the extension itself (no tab).
+// Content-script messages must originate from a tab.
+function isSidepanelSender(sender: chrome.runtime.MessageSender): boolean {
+  // Sidepanel messages have no tab, and the origin is the extension itself
+  return !sender.tab && sender.id === chrome.runtime.id;
+}
+function isContentScriptSender(sender: chrome.runtime.MessageSender): boolean {
+  return !!sender.tab && sender.id === chrome.runtime.id;
+}
+
+// Messages that are ONLY allowed from the sidepanel (no tab)
+const SIDEPANEL_ONLY: ReadonlySet<string> = new Set([
+  'SET_API_KEY', 'MODE_CHANGED', 'BLOCK_OVERRIDE', 'ENTITY_FEEDBACK',
+  'CLEAR_AUDIT_LOG', 'GET_AUDIT_LOG', 'GET_MANAGED_STATUS', 'GET_SHADOW_AI_STATS',
+]);
+
+
 async function handleMessage(
-  message: any,
+  message: { type: string; payload?: any },
   sender: chrome.runtime.MessageSender
 ): Promise<any> {
+  // ── Kill switch: block ALL prompt processing when active ──
+  const KILL_SWITCH_BLOCKED_TYPES = new Set([
+    'PROMPT_DETECTED', 'PROMPT_SUBMITTED', 'PROXY_ANALYZE', 'PROXY_SEND',
+    'FILE_DETECTED', 'CLIPBOARD_DETECTED',
+  ]);
+  if (killSwitchActive && KILL_SWITCH_BLOCKED_TYPES.has(message.type)) {
+    igLog('KILL SWITCH — blocked message:', message.type);
+    return {
+      ok: false,
+      blocked: true,
+      reason: 'Iron Gate kill switch is active. All AI tool monitoring is disabled by your administrator.',
+    };
+  }
+
+  // ── Sender validation: reject spoofed messages ──
+  if (SIDEPANEL_ONLY.has(message.type) && !isSidepanelSender(sender)) {
+    igLog('BLOCKED — sidepanel-only message from non-sidepanel sender:', message.type);
+    return { ok: false, error: 'Unauthorized sender' };
+  }
+
   switch (message.type) {
     case 'PROMPT_DETECTED': {
       const { text, aiToolId, captureMethod } = message.payload;
@@ -261,18 +523,123 @@ async function handleMessage(
         })),
       ];
 
+      // ── Local LLM detection (enterprise, optional) ──
+      // Runs on-premise — no PII leaves the machine/network.
+      const config = await resolveConfig();
+      if (config.localLLM) {
+        try {
+          const llmResult = await detectWithLocalLLM(text, config.localLLM);
+          if (llmResult.available && llmResult.entities.length > 0) {
+            // Deduplicate: skip LLM entities that overlap with existing regex detections
+            for (const llmEntity of llmResult.entities) {
+              const overlaps = allEntities.some(e =>
+                e.start < llmEntity.end && e.end > llmEntity.start
+              );
+              if (!overlaps) {
+                allEntities.push(llmEntity);
+              }
+            }
+            igLog('Local LLM added', llmResult.entities.length, 'entities in', llmResult.latencyMs, 'ms');
+          }
+        } catch (err) {
+          igLog('Local LLM detection error (non-fatal):', err);
+        }
+      }
+
       // ── ML classification (Pro+ only) ──
       const mlResult = await classifyIfPro(text);
       if (mlResult && (mlResult.label === 'SENSITIVE' || mlResult.label === 'CRITICAL')) {
         igLog('ML classified as', mlResult.label, 'confidence:', mlResult.confidence);
       }
 
-      const sensitivityResult = computeScore(text, allEntities);
+      // Apply adaptive weights (API-driven) + feedback-based suppression weights
+      await refreshSuppressionRules();
+      const adaptiveWeights = getWeightResolver().getWeights();
+      const mergedWeights = { ...adaptiveWeights, ..._suppressionWeights };
+      const rawSensitivity = computeScore(text, allEntities,
+        Object.keys(mergedWeights).length > 0 ? mergedWeights : undefined);
 
-      // If ML says CRITICAL but regex says low, boost the score
-      if (mlResult && mlResult.label === 'CRITICAL' && sensitivityResult.score < 60) {
-        sensitivityResult.score = Math.max(sensitivityResult.score, 60);
-        sensitivityResult.level = 'high';
+      // If ML says CRITICAL but regex says low, boost the score.
+      // Create a new object instead of mutating — prevents downstream surprises.
+      let finalScore = rawSensitivity.score;
+      let finalLevel = rawSensitivity.level;
+      if (mlResult && mlResult.label === 'CRITICAL' && finalScore < 60) {
+        finalScore = 60;
+        finalLevel = scoreToLevel(finalScore);
+      }
+      const tier1Result = { ...rawSensitivity, score: finalScore, level: finalLevel };
+
+      // ── Confidence-gated routing: escalate amber zone through tiers ──
+      // Green (0-25): pass. Amber (26-60): escalate to Tier 2/2.5/3. Red (61+): block.
+      // The router also applies semantic classification on ALL zones to catch
+      // content that regex/keywords missed (e.g., casual M&A language).
+      _routerEntities = allEntities;
+      _routerTextLength = text.length;
+      const router = getConfidenceRouter(config);
+      let routingDecision: RoutingDecision | null = null;
+      try {
+        routingDecision = await router.route(text, tier1Result, performance.now() - (performance.now()));
+        igLog('Confidence routing:', routingDecision.finalZone,
+          'score:', tier1Result.score, '→', routingDecision.finalScore,
+          'tiers:', routingDecision.tiersConsulted.map(t => t.source).join(', '));
+      } catch (err) {
+        igLog('Confidence routing failed (using Tier 1 result):', err);
+      }
+
+      // Use routed score if available, otherwise fall back to Tier 1
+      const sensitivityResult = routingDecision
+        ? { ...tier1Result, score: routingDecision.finalScore, level: routingDecision.finalLevel }
+        : tier1Result;
+
+      // ── Compliance enforcement: framework-specific blocking ──
+      // HIPAA + MEDICAL_RECORD = block, regardless of score.
+      await refreshComplianceProfile();
+      const complianceResult = enforceCompliance(allEntities);
+      if (complianceResult.blocked) {
+        igLog('COMPLIANCE BLOCK:', complianceResult.reason);
+
+        // Queue event with complianceOverride flag
+        const promptHash = await hashText(text);
+        queueEventToApi({
+          aiToolId,
+          promptHash,
+          promptLength: text.length,
+          sensitivityScore: 100, // Force critical
+          sensitivityLevel: 'critical',
+          entities: allEntities.map((e) => ({
+            type: e.type, text: e.text, start: e.start, end: e.end,
+            confidence: e.confidence, source: e.source,
+          })),
+          action: 'block',
+          captureMethod,
+          complianceOverride: true,
+          complianceFrameworks: complianceResult.activeFrameworks,
+        });
+
+        // Broadcast block to sidepanel
+        const blockTabId = sender.tab?.id;
+        if (blockTabId) {
+          chrome.runtime.sendMessage({
+            type: 'COMPLIANCE_BLOCK',
+            payload: {
+              reason: complianceResult.reason,
+              violations: complianceResult.violations,
+              frameworks: complianceResult.activeFrameworks,
+              score: 100,
+              level: 'critical',
+              tabId: blockTabId,
+              aiToolId,
+            },
+          }).catch(() => {});
+        }
+
+        return {
+          received: true,
+          blocked: true,
+          complianceOverride: true,
+          reason: complianceResult.reason,
+          violations: complianceResult.violations,
+        };
       }
 
       // Generate pseudonymized version for transparency view
@@ -283,7 +650,13 @@ async function handleMessage(
 
       // Queue event for API with CORRECT schema
       const promptHash = await hashText(text);
-      const action = firmMode === 'proxy' ? 'proxy' : (sensitivityResult.level === 'critical' ? 'block' : 'pass');
+      // Use confidence router's action when available; fall back to static thresholds
+      const routedAction = routingDecision?.action; // 'pass' | 'warn' | 'block'
+      const action = firmMode === 'proxy'
+        ? 'proxy'
+        : routedAction === 'block' ? 'block'
+        : routedAction === 'warn' ? 'warn'
+        : sensitivityResult.level === 'critical' ? 'block' : 'pass';
       queueEventToApi({
         aiToolId,
         promptHash,
@@ -302,6 +675,29 @@ async function handleMessage(
         captureMethod,
       });
 
+      // ── Positive badge reinforcement ──
+      // Show entity count (amber/red) when entities are detected, or a green
+      // checkmark when the prompt is clean. This replaces the "silent unless
+      // bad" pattern with visible reassurance that protection is active.
+      const badgeTabId = sender.tab?.id;
+      if (badgeTabId) {
+        if (allEntities.length > 0) {
+          // Entities detected and protected — show shield count
+          const badgeColor = sensitivityResult.level === 'critical' ? '#EF4444'
+            : sensitivityResult.level === 'high' ? '#F59E0B'
+            : '#6366F1'; // indigo for low/medium — "we see it, you're covered"
+          chrome.action.setBadgeText({ text: String(allEntities.length), tabId: badgeTabId });
+          chrome.action.setBadgeBackgroundColor({ color: badgeColor, tabId: badgeTabId });
+        } else {
+          // Clean prompt — brief green checkmark (clears after 3s)
+          chrome.action.setBadgeText({ text: '\u2713', tabId: badgeTabId });
+          chrome.action.setBadgeBackgroundColor({ color: '#22C55E', tabId: badgeTabId });
+          setTimeout(() => {
+            chrome.action.setBadgeText({ text: '', tabId: badgeTabId }).catch(() => {});
+          }, 3000);
+        }
+      }
+
       // ── Broadcast real-time detection to side panel (debounced) ──
       // This gives users live feedback as they type. The MAIN world fetch
       // interceptor (SENSITIVITY_SCORE on submit) will overwrite with the
@@ -313,9 +709,15 @@ async function handleMessage(
 
         const now = Date.now();
         const lastBroadcast = lastBroadcastByTab.get(pdTabId) || 0;
-        if (now - lastBroadcast >= BROADCAST_DEBOUNCE_MS) {
+        const prevScore = lastBroadcastScoreByTab.get(pdTabId) ?? -1;
+        // Always broadcast immediately when score DROPS (user removed sensitive data)
+        // — stale high scores shouldn't persist. Otherwise debounce normally.
+        const scoreDropped = sensitivityResult.score < prevScore;
+        if (scoreDropped || now - lastBroadcast >= BROADCAST_DEBOUNCE_MS) {
           lastBroadcastByTab.set(pdTabId, now);
+          lastBroadcastScoreByTab.set(pdTabId, sensitivityResult.score);
           pruneMap(lastBroadcastByTab);
+          pruneMap(lastBroadcastScoreByTab);
           chrome.runtime.sendMessage({
             type: 'SENSITIVITY_SCORE',
             payload: {
@@ -331,15 +733,35 @@ async function handleMessage(
               aiToolId,
               tabId: pdTabId,
               maskedPrompt: pseudoResult.maskedText,
-              pseudonymMappings: pseudoResult.mappings.map(m => ({ pseudonym: m.pseudonym, type: m.type, length: m.original.length })),
+              pseudonymMappings: pseudoResult.mappings.map(m => ({ original: m.original, pseudonym: m.pseudonym, type: m.type, length: m.original.length })),
               promptHash: await hashText(text),
               promptLength: text.length,
               realtime: true, // Flag so UI can differentiate from submit
+              zone: routingDecision?.finalZone ?? scoreToZone(sensitivityResult.score),
+              action: routedAction ?? (sensitivityResult.level === 'critical' ? 'block' : 'pass'),
+              wasEscalated: routingDecision?.wasEscalated ?? false,
+              tiersConsulted: routingDecision?.tiersConsulted?.map(t => t.source) ?? ['local-regex-scorer'],
             },
           }).catch(() => {});
         }
       }
 
+      return { received: true };
+    }
+
+    // ── PROMPT_CLEARED — user emptied the input field ──
+    // Broadcast to sidepanel so it resets stale detection results.
+    case 'PROMPT_CLEARED': {
+      const clearTabId = sender.tab?.id;
+      if (clearTabId) {
+        lastPromptTextByTab.delete(clearTabId);
+        lastBroadcastByTab.delete(clearTabId);
+        lastBroadcastScoreByTab.delete(clearTabId);
+        chrome.runtime.sendMessage({
+          type: 'PROMPT_CLEARED',
+          payload: { tabId: clearTabId, aiToolId: message.payload?.aiToolId },
+        }).catch(() => {});
+      }
       return { received: true };
     }
 
@@ -409,6 +831,7 @@ async function handleMessage(
           lastExplanation: explanation,
           lastEntities: entities || [],
           lastPromptHash: promptHash,
+          lastOriginalPrompt: payload.originalPrompt || '',
           lastMaskedPrompt: maskedPrompt,
           lastPseudonymMappings: pseudonymMappings,
           detectionCount: ((await getTabState(ssTabId))?.detectionCount || 0) + 1,
@@ -473,7 +896,7 @@ async function handleMessage(
         promptHash,
         promptLength: text.length,
         sensitivityScore: sensitivityScore || 0,
-        sensitivityLevel: sensitivityScore >= 86 ? 'critical' : sensitivityScore >= 61 ? 'high' : sensitivityScore >= 26 ? 'medium' : 'low',
+        sensitivityLevel: scoreToLevel(sensitivityScore || 0),
         entities: [],
         action: 'pass',
         captureMethod: 'submit',
@@ -641,6 +1064,18 @@ async function handleMessage(
       return { ok: true, isManaged, firmMode };
     }
 
+    case 'GET_KILL_SWITCH_STATUS': {
+      return { ok: true, active: killSwitchActive };
+    }
+
+    case 'GET_COMPLIANCE_STATUS': {
+      return {
+        ok: true,
+        activeFrameworks: getActiveFrameworks(),
+        frameworkCount: getActiveFrameworks().length,
+      };
+    }
+
     case 'BLOCK_OVERRIDE': {
       const { eventId, reason } = message.payload;
       igLog('Block override:', eventId, 'reason:', reason);
@@ -739,6 +1174,33 @@ async function handleMessage(
       return { ok: true };
     }
 
+    // Session lock removed — no lock/unlock handlers needed
+
+    // ── SSO Detection & Shadow AI ──────────────────────────────────────────
+    case 'SSO_DETECTION_RESULT': {
+      const { accountType, emailDomain, ssoProvider, confidence, aiToolId } = message.payload;
+      igLog('SSO detection result:', accountType, 'domain:', emailDomain, 'provider:', ssoProvider, 'confidence:', confidence);
+
+      // If personal or unknown account, track as shadow AI
+      if (accountType === 'personal' || accountType === 'unknown') {
+        await trackShadowAI({
+          aiToolId,
+          accountType,
+          emailDomain,
+          timestamp: new Date().toISOString(),
+          action: 'warning_shown',
+        });
+        igLog('Shadow AI event tracked for', aiToolId, '(', accountType, ')');
+      }
+
+      return { ok: true, accountType, policyTier: accountType === 'corporate' ? 'full' : 'warning' };
+    }
+
+    case 'GET_SHADOW_AI_STATS': {
+      const stats = await getShadowAIStats();
+      return { ok: true, stats };
+    }
+
     default:
       return { error: 'Unknown message type' };
   }
@@ -765,6 +1227,8 @@ async function queueEventToApi(event: {
   captureMethod: string;
   sessionId?: string;
   metadata?: Record<string, unknown>;
+  complianceOverride?: boolean;
+  complianceFrameworks?: string[];
 }): Promise<void> {
   // Client-side data minimization: hash entity text so raw PII never leaves the browser
   const minimizedEntities = await Promise.all(
@@ -779,6 +1243,12 @@ async function queueEventToApi(event: {
     }))
   );
 
+  const meta: Record<string, unknown> = { ...(event.metadata || {}) };
+  if (event.complianceOverride) {
+    meta.complianceOverride = true;
+    meta.complianceFrameworks = event.complianceFrameworks;
+  }
+
   eventQueue.enqueue({
     aiToolId: event.aiToolId,
     aiToolUrl: '',
@@ -791,7 +1261,7 @@ async function queueEventToApi(event: {
     overrideReason: event.overrideReason,
     captureMethod: event.captureMethod,
     sessionId: event.sessionId,
-    metadata: event.metadata || {},
+    metadata: meta,
   }).catch((err) => console.warn('[Iron Gate] Failed to queue event:', err));
 }
 
@@ -819,6 +1289,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     syncPolicies().catch((err) =>
       console.warn('[Iron Gate] Policy sync failed:', err)
     );
+    // Refresh compliance profile alongside policy sync
+    refreshComplianceProfile().catch(() => {});
   }
   if (alarm.name === 'heartbeat') {
     igLog('Sending heartbeat');
@@ -1085,9 +1557,10 @@ reinjectAllTabs();
 function inlineFetchInterceptor() {
   const _debug = !!(window as any).__IRON_GATE_DEBUG;
 
-  // Skip if full main-world.ts already loaded
-  if ((window as any).__IRON_GATE_MAIN_WORLD === 'active') {
-    if (_debug) console.log('[Iron Gate INLINE] Full main-world.ts already active — skipping inline fallback');
+  // Skip if full main-world.ts already loaded or is loading
+  const mwState = (window as any).__IRON_GATE_MAIN_WORLD;
+  if (mwState === 'active' || mwState === 'loading') {
+    if (_debug) console.log('[Iron Gate INLINE] Full main-world.ts already ' + mwState + ' — skipping inline fallback');
     return;
   }
 
@@ -1108,13 +1581,17 @@ function inlineFetchInterceptor() {
   // ── Entity Detection Patterns ──
   const PATTERNS: Array<{ type: string; re: RegExp }> = [
     { type: 'SSN', re: /\b\d{3}-\d{2}-\d{4}\b/g },
+    { type: 'SSN', re: /\b\d{3}\s\d{2}\s\d{4}\b/g },
+    { type: 'SSN', re: /(?<=(?:ssn|social\s*security(?:\s*(?:number|num|no|#))?|ss#)\s*(?:is|:|=|#)?\s*)\d{9}(?!\d)/gi },
     { type: 'EMAIL', re: /\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/g },
     { type: 'PHONE_NUMBER', re: /\b(?:\+1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g },
     { type: 'CREDIT_CARD', re: /\b(?:\d{4}[-\s]?){3}\d{4}\b/g },
     { type: 'IP_ADDRESS', re: /\b(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g },
     { type: 'DATE_OF_BIRTH', re: /\b(?:0[1-9]|1[0-2])\/(?:0[1-9]|[12]\d|3[01])\/(?:19|20)\d{2}\b/g },
     { type: 'PERSON', re: /\b(?:Mr|Mrs|Ms|Dr|Prof)\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b/g },
-    { type: 'MONETARY_AMOUNT', re: /\$\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})?\b/g },
+    { type: 'PERSON', re: /(?<=\b(?:CEO|CFO|CTO|COO|CMO|VP|SVP|EVP|Director|Manager|Attorney|Counsel|Partner|President|Chairman)\s+)[A-Z][a-z]+\s+[A-Z][a-z]+\b/g },
+    { type: 'MONETARY_AMOUNT', re: /\$\s?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?\s?(?:million|billion|M|B|k|K)?\b/g },
+    { type: 'MONETARY_AMOUNT', re: /\b\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?\s?(?:dollars?|USD|EUR|GBP|million|billion)\b/gi },
     { type: 'API_KEY', re: /\b(?:sk|pk|api|key|token|secret)[-_][A-Za-z0-9]{20,}\b/gi },
   ];
 
@@ -1124,13 +1601,84 @@ function inlineFetchInterceptor() {
       const re = new RegExp(p.re.source, p.re.flags);
       let match;
       while ((match = re.exec(text)) !== null) {
-        entities.push({ type: p.type, text: match[0], start: match.index, end: match.index + match[0].length, confidence: 0.9 });
+        // Skip overlapping matches
+        const overlaps = entities.some(e =>
+          (match!.index >= e.start && match!.index < e.end) ||
+          (match!.index + match![0].length > e.start && match!.index + match![0].length <= e.end)
+        );
+        if (!overlaps) {
+          entities.push({ type: p.type, text: match[0], start: match.index, end: match.index + match[0].length, confidence: 0.9 });
+        }
       }
     }
     return entities;
   }
 
-  let pseudonymCounter = 1;
+  // ── Realistic Fake Data Pools ──
+  const FAKE_NAMES = [
+    'James Mitchell', 'Emily Rogers', 'Robert Chen', 'Anna Peterson',
+    'David Kumar', 'Lisa Chang', 'William Taylor', 'Maria Santos',
+    'Thomas Garcia', 'Rachel Kim', 'Andrew Watson', 'Diana Walsh',
+    'Daniel Price', 'Nicole Foster', 'Christopher Lee', 'Amanda Brooks',
+  ];
+  const FAKE_EMAILS = [
+    'j.mitchell@northwind.com', 'e.rogers@contoso.com', 'r.chen@fabrikam.net',
+    'a.peterson@adatum.org', 'd.kumar@proseware.io', 'l.chang@northwind.com',
+  ];
+  const fakeCounters: Record<string, number> = {};
+  function pickFake(pool: string[], key: string): string {
+    if (!fakeCounters[key]) fakeCounters[key] = 0;
+    const idx = fakeCounters[key] % pool.length;
+    fakeCounters[key]++;
+    return pool[idx];
+  }
+
+  function generateRealisticFake(type: string, original: string): string {
+    switch (type) {
+      case 'PERSON':
+        return pickFake(FAKE_NAMES, 'PERSON');
+      case 'EMAIL':
+        return pickFake(FAKE_EMAILS, 'EMAIL');
+      case 'MONETARY_AMOUNT': {
+        const cleaned = original.replace(/[,$\s]/g, '');
+        const m = cleaned.match(/^(\d+(?:\.\d+)?)\s*(million|billion|M|B|k|K|dollars?|USD|EUR|GBP)?/i);
+        if (m) {
+          const num = parseFloat(m[1]);
+          const suffix = m[2] || '';
+          const factor = 0.7 + Math.random() * 0.65;
+          const shifted = num * factor;
+          const hasDec = m[1].includes('.');
+          const formatted = hasDec ? shifted.toFixed(m[1].split('.')[1]?.length || 1) : Math.round(shifted).toString();
+          const prefix = original.startsWith('$') ? '$' : '';
+          return prefix + formatted + suffix;
+        }
+        return original;
+      }
+      case 'SSN': {
+        const a = Math.floor(100 + Math.random() * 799);
+        const b = Math.floor(10 + Math.random() * 89);
+        const c = Math.floor(1000 + Math.random() * 8999);
+        return original.includes('-') ? a + '-' + b + '-' + c : a + ' ' + b + ' ' + c;
+      }
+      case 'PHONE_NUMBER': {
+        const a = Math.floor(200 + Math.random() * 699);
+        const b = Math.floor(200 + Math.random() * 699);
+        const c = Math.floor(1000 + Math.random() * 8999);
+        return original.includes('(') ? '(' + a + ') ' + b + '-' + c : a + '-' + b + '-' + c;
+      }
+      case 'CREDIT_CARD':
+        return '4' + Array.from({length: 15}, () => Math.floor(Math.random() * 10)).join('');
+      case 'IP_ADDRESS':
+        return '192.0.2.' + (Math.floor(Math.random() * 254) + 1);
+      case 'API_KEY':
+        return 'sk-test-' + 'x'.repeat(32);
+      default:
+        // Randomize digits, preserve structure
+        if (/\d/.test(original)) return original.replace(/\d/g, () => String(Math.floor(Math.random() * 10)));
+        return original;
+    }
+  }
+
   function pseudonymize(text: string, entities: Array<{type: string; text: string; start: number; end: number}>) {
     const sorted = [...entities].sort((a, b) => b.start - a.start);
     const mappings: Array<{original: string; pseudonym: string; type: string}> = [];
@@ -1139,7 +1687,7 @@ function inlineFetchInterceptor() {
     for (const entity of sorted) {
       let pseudonym = seen.get(entity.text);
       if (!pseudonym) {
-        pseudonym = '[' + entity.type + '-' + String(pseudonymCounter++).padStart(4, '0') + ']';
+        pseudonym = generateRealisticFake(entity.type, entity.text);
         seen.set(entity.text, pseudonym);
       }
       result = result.substring(0, entity.start) + pseudonym + result.substring(entity.end);

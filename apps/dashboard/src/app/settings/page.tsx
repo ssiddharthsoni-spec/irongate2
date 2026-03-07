@@ -27,33 +27,26 @@ export default function GeneralSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // Demo data fallback
-  const DEMO_CONFIG = {
-    firmName: 'Acme Legal LLP',
-    industry: 'legal',
-    retention: 90,
-  };
+  async function fetchConfig() {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await apiFetch('/admin/firm');
+      if (!response.ok) throw new Error(`Server responded with ${response.status}`);
+      const data = await response.json();
+      if (data.firmName) setFirmName(data.firmName);
+      if (data.industry) setIndustry(data.industry);
+      if (data.retention) setRetention(data.retention);
+    } catch (err: any) {
+      setError(err.message || 'Failed to load data. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    async function fetchConfig() {
-      try {
-        setLoading(true);
-        const response = await apiFetch('/admin/firm');
-        if (!response.ok) throw new Error(`Server responded with ${response.status}`);
-        const data = await response.json();
-        if (data.firmName) setFirmName(data.firmName);
-        if (data.industry) setIndustry(data.industry);
-        if (data.retention) setRetention(data.retention);
-      } catch {
-        // Fallback to demo data
-        setFirmName(DEMO_CONFIG.firmName);
-        setIndustry(DEMO_CONFIG.industry);
-        setRetention(DEMO_CONFIG.retention);
-      } finally {
-        setLoading(false);
-      }
-    }
     fetchConfig();
   }, []);
 
@@ -94,6 +87,19 @@ export default function GeneralSettingsPage() {
 
   return (
     <div className="space-y-6 max-w-2xl">
+      {error && (
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4 flex items-center justify-between">
+          <p className="text-sm text-red-700 dark:text-red-400">{error}</p>
+          <button
+            type="button"
+            onClick={fetchConfig}
+            className="ml-4 px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Firm Details */}
       <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
         <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">Firm Details</h2>

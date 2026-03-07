@@ -421,6 +421,113 @@ const EXECUTIVE_LENS: Record<string, ExecutiveLensEntry> = {
     ],
     okToShare: ['published frameworks', 'general business concepts', 'public company filings'],
   },
+  insurance: {
+    role: 'Chief Actuary + Chief Risk Officer',
+    neverShare: [
+      { category: 'CLAIMS_RESERVES', label: 'Claims Reserves / IBNR Data',
+        patterns: [/\bclaims?\s+reserve/gi,
+                   /\bIBNR\b/g,
+                   /\bloss\s+reserve/gi,
+                   /\bloss\s+development\b/gi,
+                   /\badverse\s+development\b/gi],
+        action: 'private_llm', reason: 'Reserve data is market-sensitive — reveals loss exposure and financial position' },
+      { category: 'CAT_MODEL', label: 'Catastrophe Model Results',
+        patterns: [/\bcat(?:astrophe)?\s+model/gi,
+                   /\bPML\b/g,
+                   /\bprobable\s+maximum\s+loss/gi,
+                   /\baggregate\s+exceedance/gi],
+        action: 'private_llm', reason: 'Cat model results reveal concentration risk and reinsurance needs' },
+      { category: 'REINSURANCE', label: 'Reinsurance Treaty Terms',
+        patterns: [/\breinsurance\s+(?:treaty|program)/gi,
+                   /\bretrocession/gi,
+                   /\bquota\s+share/gi,
+                   /\bexcess\s+of\s+loss/gi],
+        action: 'pseudonymize', reason: 'Reinsurance terms reveal risk appetite and pricing leverage' },
+    ],
+    okToShare: ['published loss ratios', 'state filings', 'general actuarial concepts'],
+  },
+  real_estate: {
+    role: 'Managing Partner + General Counsel',
+    neverShare: [
+      { category: 'DEAL_TERMS', label: 'Off-Market Deal Terms',
+        patterns: [/\boff[\s-]?market/gi,
+                   /\bpocket\s+listing/gi,
+                   /\basking\s+price/gi,
+                   /\bcap\s+rate\b.*?\b\d/gi],
+        action: 'pseudonymize', reason: 'Off-market deal terms reveal negotiating position and valuation' },
+      { category: 'TENANT_DATA', label: 'Rent Roll / Tenant Financial Data',
+        patterns: [/\brent\s+roll\b/gi,
+                   /\btenant\s+(?:roster|list|data)/gi,
+                   /\blease\s+(?:expiration|abstract)/gi],
+        action: 'pseudonymize', reason: 'Tenant data reveals property value and risk profile' },
+    ],
+    okToShare: ['published comps', 'public zoning records', 'general market data'],
+  },
+  energy: {
+    role: 'CEO + VP Exploration',
+    neverShare: [
+      { category: 'RESERVE_DATA', label: 'Reserve Estimates / Exploration Data',
+        patterns: [/\b(?:proved|probable|possible)\s+reserves?\b/gi,
+                   /\bseismic\s+(?:data|survey|interpretation)/gi,
+                   /\bwell\s+log/gi,
+                   /\bdecline\s+curve/gi],
+        action: 'private_llm', reason: 'Reserve data is material non-public information and a trade secret' },
+      { category: 'PPA_TERMS', label: 'Power Purchase Agreement Terms',
+        patterns: [/\bPPA\b.*?\$[\d,.]+/gi,
+                   /\bpower\s+purchase\s+agreement/gi,
+                   /\bofftake\s+(?:agreement|contract)/gi],
+        action: 'pseudonymize', reason: 'PPA terms reveal pricing and competitive position' },
+    ],
+    okToShare: ['published SEC reserve filings', 'public regulatory orders', 'general energy market data'],
+  },
+  education: {
+    role: 'General Counsel + Provost',
+    neverShare: [
+      { category: 'STUDENT_RECORDS', label: 'FERPA-Protected Student Records',
+        patterns: [/\bFERPA\b/g,
+                   /\bstudent\s+(?:record|transcript|file)/gi,
+                   /\bdisciplinar/gi,
+                   /\bexpulsion/gi],
+        action: 'pseudonymize', reason: 'FERPA: student records cannot be disclosed without consent' },
+      { category: 'TITLE_IX', label: 'Title IX Matters',
+        patterns: [/\bTitle\s+IX\b/g,
+                   /\bsexual\s+(?:misconduct|harassment|assault)/gi,
+                   /\bTitle\s+IX\s+(?:investigation|complaint|hearing)/gi],
+        action: 'private_llm', reason: 'Title IX matters are legally protected — investigation details cannot be externalized' },
+      { category: 'RESEARCH_IP', label: 'Unpublished Research / Patent-Pending',
+        patterns: [/\bunpublished\s+(?:research|data|findings)/gi,
+                   /\bpatent[\s-]?pending/gi,
+                   /\bpre[\s-]?publication/gi],
+        action: 'private_llm', reason: 'Pre-publication research IP — disclosure could void patent rights' },
+    ],
+    okToShare: ['published research', 'course catalogs', 'general academic concepts'],
+  },
+  government: {
+    role: 'CISO + Classification Authority',
+    neverShare: [
+      { category: 'CLASSIFIED', label: 'Classified / SCI Information',
+        patterns: [/\bclassified\b/gi,
+                   /\btop\s+secret\b/gi,
+                   /\bSCI\b/g,
+                   /\bspecial\s+access\s+program/gi,
+                   /\bneed[\s-]to[\s-]know\b/gi],
+        action: 'private_llm', reason: 'Classified information — cannot leave secure environment under any circumstances' },
+      { category: 'EXPORT_CONTROL', label: 'ITAR / EAR Export-Controlled Data',
+        patterns: [/\bITAR\b/g,
+                   /\bexport\s+control/gi,
+                   /\bmunitions\s+list/gi,
+                   /\bECCN\s*\d/g,
+                   /\bdeemed\s+export/gi],
+        action: 'private_llm', reason: 'Export-controlled data — criminal penalties for unauthorized disclosure' },
+      { category: 'PROCUREMENT', label: 'Procurement Sensitive / Source Selection',
+        patterns: [/\bsource\s+selection/gi,
+                   /\bprocurement\s+sensitive/gi,
+                   /\bbid\s+(?:evaluation|protest)/gi,
+                   /\bsole\s+source\s+justification/gi],
+        action: 'pseudonymize', reason: 'Procurement data reveals acquisition strategy and vendor evaluations' },
+    ],
+    okToShare: ['public regulations', 'published standards', 'unclassified training materials'],
+  },
 };
 
 /**
@@ -438,6 +545,11 @@ export function analyzeContext(text: string, entities: DetectedEntity[]): Contex
     technology:    [/\bAPI\b/, /\bendpoint\b/i, /\bserver\b/i, /\bmiddleware\b/i, /\bauthenticat/i, /\btoken\b/i, /\bdebug/i, /\bsource code\b/i],
     consulting:    [/\bengagement\b/i, /\bmarket share\b/i, /\bTAM\b/i, /\bSWOT\b/i, /\bFive Forces\b/i, /\bboard meeting\b/i, /\bactivist\b/i, /\bprojection\b/i],
     manufacturing: [/\bformul(?:a|ation)\b/i, /\bsurfactant\b/i, /\bbatch\b/i, /\breactor\b/i, /\byield\b/i, /\bviscosity\b/i, /\bpH\b/, /\bsodium\b/i, /\bpreservative\b/i, /\braw\s+material/i, /\bsupplier\b/i, /\bchemical\b/i, /\bmanufactur/i, /\bproduction\s+line/i],
+    insurance:     [/\bactuarial\b/i, /\bunderwriting\b/i, /\bclaims?\s+reserve/i, /\bloss\s+ratio/i, /\bcombined\s+ratio/i, /\bIBNR\b/, /\breinsurance\b/i, /\bpolicyholder\b/i, /\bcatastrophe\s+model/i, /\bsolvency\b/i, /\bpremium\b/i, /\bclaimant\b/i],
+    real_estate:   [/\bcap\s+rate\b/i, /\bNOI\b/, /\brent\s+roll\b/i, /\boccupancy\b/i, /\bvacancy\b/i, /\btenant\b/i, /\blease\b/i, /\b1031\s+exchange/i, /\bzoning\b/i, /\bentitlement\b/i, /\bappraisal\b/i, /\bAPN\b/],
+    energy:        [/\breserves?\b/i, /\bBOE\b/, /\bseismic\b/i, /\bwell\s+log/i, /\bdrilling\b/i, /\bPPA\b/, /\bFERC\b/, /\bNERC\b/, /\bpipeline\b/i, /\bupstream\b/i, /\bmidstream\b/i, /\bLCOE\b/],
+    education:     [/\bFERPA\b/, /\bstudent\s+record/i, /\btranscript\b/i, /\bGPA\b/, /\bTitle\s+IX\b/, /\baccreditation\b/i, /\bIRB\b/, /\btenure\b/i, /\bNCAA\b/, /\bfinancial\s+aid\b/i, /\benrollment\b/i],
+    government:    [/\bclassified\b/i, /\btop\s+secret\b/i, /\bFOUO\b/, /\bCUI\b/, /\bITAR\b/, /\bexport\s+control/i, /\bCFIUS\b/, /\bOFAC\b/, /\bsanction/i, /\bprocurement\b/i, /\bclearance\b/i, /\bFedRAMP\b/],
   };
   let detectedIndustry: string | null = null;
   let bestIndustryScore = 0;
@@ -805,7 +917,8 @@ export class Pseudonymizer {
       return existing;
     }
 
-    const hash = sha256Sync(original);
+    // Salt with firmId to prevent cross-firm rainbow table attacks
+    const hash = sha256Sync(`${this.firmId}:${original}`);
     const hashKey = `hash::${hash}`;
 
     // Check hash-based key (loaded from DB)

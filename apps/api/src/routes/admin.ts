@@ -2,16 +2,74 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import crypto from 'crypto';
 import { db } from '../db/client';
-import { firms, users, clientMatters, weightOverrides, firmPlugins, events, subscriptions } from '../db/schema';
+import { firms, users, clientMatters, weightOverrides, firmPlugins, events, subscriptions, featureFlags, departments, departmentPolicies, incidents } from '../db/schema';
 import { eq, and, gte, sql, desc } from 'drizzle-orm';
+import { invalidateDepartmentPolicyCache } from '../middleware/department-policy';
 import { analyzePatterns, getProposals, approveProposal, rejectProposal } from '../services/inference-engine';
+import { computeAdaptiveWeights, getWeightOverrides } from '../services/adaptive-weights';
+import { handleFederatedAggregation } from '../jobs/federated-aggregator';
+import { getZoneAnalytics } from '../services/zone-analytics';
 import { registerWebhook, removeWebhook, listWebhooks } from '../services/webhook-dispatcher';
 import { invalidateCache } from '../services/plugin-loader';
 import { processFeedback } from '../services/feedback-processor';
 import { invalidateUserCache } from '../middleware/auth';
+import { sanitizeInput, sanitizeUrl } from '../lib/sanitize';
+import { requirePerm } from '../middleware/rbac';
+import { mdmRoutes } from './mdm';
 import type { AppEnv } from '../types';
 
 export const adminRoutes = new Hono<AppEnv>();
+
+// Mount MDM config export sub-routes under /mdm/*
+adminRoutes.route('/mdm', mdmRoutes);
+
+// ---------------------------------------------------------------------------
+// Granular RBAC — write operations require specific permissions beyond
+// the blanket 'viewDashboard' check applied at the app-level router.
+// ---------------------------------------------------------------------------
+
+// Firm config mutations require admin-level access
+adminRoutes.post('/firm', requirePerm('setSensitivityThresholds'));
+adminRoutes.put('/firm', requirePerm('setSensitivityThresholds'));
+
+// User management requires invite/role-change permissions
+adminRoutes.get('/users', requirePerm('viewFirmAnalytics'));
+
+// Client matter mutations
+adminRoutes.post('/client-matters', requirePerm('addCustomEntityPatterns'));
+
+// Weight overrides (detection tuning)
+adminRoutes.put('/weight-overrides', requirePerm('setSensitivityThresholds'));
+adminRoutes.delete('/weight-overrides/:entityType', requirePerm('setSensitivityThresholds'));
+
+// Inferred entity management
+adminRoutes.post('/inferred-entities/analyze', requirePerm('addCustomEntityPatterns'));
+adminRoutes.put('/inferred-entities/:id', requirePerm('addCustomEntityPatterns'));
+
+// Webhook management
+adminRoutes.post('/webhooks', requirePerm('manageWebhooks'));
+adminRoutes.delete('/webhooks/:id', requirePerm('manageWebhooks'));
+
+// SIEM configuration
+adminRoutes.put('/siem', requirePerm('configureSIEM'));
+
+// Plugin management
+adminRoutes.post('/plugins', requirePerm('addCustomEntityPatterns'));
+adminRoutes.put('/plugins/:id', requirePerm('addCustomEntityPatterns'));
+adminRoutes.delete('/plugins/:id', requirePerm('addCustomEntityPatterns'));
+
+// Feedback weight recalculation
+adminRoutes.post('/recalculate-weights', requirePerm('setSensitivityThresholds'));
+
+// Feature flags
+adminRoutes.put('/feature-flags', requirePerm('setSensitivityThresholds'));
+adminRoutes.delete('/feature-flags/:key', requirePerm('setSensitivityThresholds'));
+
+// Department management
+adminRoutes.post('/departments', requirePerm('setSensitivityThresholds'));
+adminRoutes.put('/departments/:id', requirePerm('setSensitivityThresholds'));
+adminRoutes.delete('/departments/:id', requirePerm('removeUsers'));
+adminRoutes.put('/departments/:id/policies', requirePerm('setSensitivityThresholds'));
 
 // GET /v1/admin/firm — Get firm configuration
 adminRoutes.get('/firm', async (c) => {
@@ -22,7 +80,23 @@ adminRoutes.get('/firm', async (c) => {
     return c.json({ error: 'Firm not found' }, 404);
   }
 
-  return c.json(firm);
+  // Strip sensitive credentials from config before returning
+  const config = (firm.config ?? {}) as Record<string, any>;
+  const safeConfig = { ...config };
+  if (safeConfig.llm) {
+    const safeLlm = { ...safeConfig.llm };
+    for (const provider of ['openai', 'anthropic', 'azure'] as const) {
+      if (safeLlm[provider]?.apiKey) {
+        safeLlm[provider] = { ...safeLlm[provider], apiKey: `****${safeLlm[provider].apiKey.slice(-4)}` };
+      }
+    }
+    safeConfig.llm = safeLlm;
+  }
+  if (safeConfig.siem?.token) {
+    safeConfig.siem = { ...safeConfig.siem, token: `****${safeConfig.siem.token.slice(-4)}` };
+  }
+
+  return c.json({ ...firm, config: safeConfig });
 });
 
 // POST /v1/admin/firm — Create firm during onboarding
@@ -55,11 +129,11 @@ adminRoutes.post('/firm', async (c) => {
   const [newFirm] = await db
     .insert(firms)
     .values({
-      name: parsed.firmName,
+      name: sanitizeInput(parsed.firmName),
       mode: parsed.protectionMode,
       config: {
-        industry: parsed.industry,
-        firmSize: parsed.firmSize,
+        industry: parsed.industry ? sanitizeInput(parsed.industry) : undefined,
+        firmSize: parsed.firmSize ? sanitizeInput(parsed.firmSize) : undefined,
         thresholds: parsed.thresholds,
       },
       encryptionSalt,
@@ -114,16 +188,20 @@ adminRoutes.put('/firm', async (c) => {
   return c.json(updated);
 });
 
-// GET /v1/admin/users — List firm users
+// GET /v1/admin/users — List firm users (paginated, max 100)
 adminRoutes.get('/users', async (c) => {
   const firmId = c.get('firmId');
+  const limit = Math.min(Math.max(1, parseInt(c.req.query('limit') || '100', 10) || 100), 100);
+  const offset = Math.max(0, parseInt(c.req.query('offset') || '0', 10) || 0);
 
   const firmUsers = await db
     .select()
     .from(users)
-    .where(eq(users.firmId, firmId));
+    .where(eq(users.firmId, firmId))
+    .limit(limit)
+    .offset(offset);
 
-  return c.json(firmUsers);
+  return c.json({ users: firmUsers, limit, offset });
 });
 
 // POST /v1/admin/client-matters — Import client/matter data
@@ -259,10 +337,11 @@ adminRoutes.put('/inferred-entities/:id', async (c) => {
   });
   const parsed = actionSchema.parse(body);
 
+  const firmId = c.get('firmId');
   if (parsed.action === 'approve') {
-    await approveProposal(id, userId);
+    await approveProposal(id, userId, firmId);
   } else {
-    await rejectProposal(id, userId);
+    await rejectProposal(id, userId, firmId);
   }
 
   return c.json({ ok: true });
@@ -296,11 +375,45 @@ adminRoutes.post('/webhooks', async (c) => {
   try {
     const urlObj = new URL(parsed.url);
     const hostname = urlObj.hostname.toLowerCase();
-    const blockedHosts = ['localhost', '127.0.0.1', '0.0.0.0', '[::1]', 'metadata.google.internal'];
-    const blockedPrefixes = ['10.', '172.16.', '172.17.', '172.18.', '172.19.', '172.20.',
+
+    // Strip IPv6 brackets for consistent matching
+    const bare = hostname.replace(/^\[|\]$/g, '');
+
+    // Block known internal hostnames
+    const blockedHosts = new Set([
+      'localhost', '127.0.0.1', '0.0.0.0', '::1', '::',
+      '0000:0000:0000:0000:0000:0000:0000:0001', // long-form ::1
+      'metadata.google.internal', 'metadata.google',
+      '169.254.169.254', // AWS/GCP metadata
+    ]);
+
+    // Block IPv4 private ranges
+    const blockedIPv4Prefixes = [
+      '10.', '172.16.', '172.17.', '172.18.', '172.19.', '172.20.',
       '172.21.', '172.22.', '172.23.', '172.24.', '172.25.', '172.26.', '172.27.',
-      '172.28.', '172.29.', '172.30.', '172.31.', '192.168.', '169.254.'];
-    if (blockedHosts.includes(hostname) || blockedPrefixes.some(p => hostname.startsWith(p))) {
+      '172.28.', '172.29.', '172.30.', '172.31.', '192.168.', '169.254.', '0.',
+    ];
+
+    // Block IPv6 private/link-local ranges and IPv4-mapped IPv6 addresses
+    const blockedIPv6Prefixes = [
+      'fc', 'fd',    // unique local (RFC 4193)
+      'fe80',        // link-local
+      '::ffff:10.',  // IPv4-mapped private
+      '::ffff:172.', // IPv4-mapped private
+      '::ffff:192.168.', // IPv4-mapped private
+      '::ffff:127.', // IPv4-mapped loopback
+      '::ffff:169.254.', // IPv4-mapped link-local
+      '::ffff:0.',   // IPv4-mapped zero
+      '0000:',       // long-form zero prefix
+    ];
+
+    const isBlocked = blockedHosts.has(bare)
+      || blockedIPv4Prefixes.some(p => bare.startsWith(p))
+      || blockedIPv6Prefixes.some(p => bare.startsWith(p))
+      || bare === '0' || bare === '0.0.0.0'
+      || /^[0:]+1?$/.test(bare); // catches ::, ::0, ::1 variants
+
+    if (isBlocked) {
       return c.json({ error: 'Webhook URL must point to a public endpoint' }, 400);
     }
     if (urlObj.protocol !== 'https:') {
@@ -317,7 +430,11 @@ adminRoutes.post('/webhooks', async (c) => {
 // DELETE /v1/admin/webhooks/:id — Remove webhook
 adminRoutes.delete('/webhooks/:id', async (c) => {
   const id = c.req.param('id');
-  await removeWebhook(id);
+  const firmId = c.get('firmId');
+  const deleted = await removeWebhook(id, firmId);
+  if (!deleted) {
+    return c.json({ error: 'Webhook not found' }, 404);
+  }
   return c.json({ ok: true });
 });
 
@@ -333,10 +450,10 @@ adminRoutes.put('/siem', async (c) => {
 
   const siemSchema = z.object({
     enabled: z.boolean(),
-    provider: z.enum(['splunk', 'datadog', 'generic']),
+    provider: z.enum(['splunk', 'datadog', 'generic', 'sentinel']),
     url: z.string().url(),
     token: z.string().min(1),
-    format: z.enum(['json', 'cef']).optional().default('json'),
+    format: z.enum(['json', 'cef', 'asim']).optional().default('json'),
   });
   const parsed = siemSchema.parse(body);
 
@@ -408,10 +525,10 @@ adminRoutes.post('/plugins', async (c) => {
     .insert(firmPlugins)
     .values({
       firmId,
-      name: parsed.name,
-      description: parsed.description,
+      name: sanitizeInput(parsed.name),
+      description: sanitizeInput(parsed.description),
       version: parsed.version,
-      code: parsed.code,
+      code: parsed.code, // Plugin code is sandboxed, not rendered in HTML
       entityTypes: parsed.entityTypes,
       isActive: true,
       hitCount: 0,
@@ -579,4 +696,623 @@ adminRoutes.get('/analytics', async (c) => {
       count: Number(d.count),
     })),
   });
+});
+
+// ---------------------------------------------------------------------------
+// Feature Flags
+// ---------------------------------------------------------------------------
+
+adminRoutes.get('/feature-flags', async (c) => {
+  const firmId = c.get('firmId');
+  const flags = await db
+    .select()
+    .from(featureFlags)
+    .where(eq(featureFlags.firmId, firmId));
+  return c.json({ flags });
+});
+
+adminRoutes.get('/feature-flags/:key', async (c) => {
+  const firmId = c.get('firmId');
+  const key = c.req.param('key');
+  const [flag] = await db
+    .select()
+    .from(featureFlags)
+    .where(and(eq(featureFlags.firmId, firmId), eq(featureFlags.key, key)))
+    .limit(1);
+  if (!flag) return c.json({ key, enabled: false, exists: false });
+  return c.json({ ...flag, exists: true });
+});
+
+adminRoutes.put('/feature-flags', async (c) => {
+  const firmId = c.get('firmId');
+  const userId = c.get('userId');
+  const body = await c.req.json().catch(() => null);
+  if (!body) return c.json({ error: 'Invalid JSON body' }, 400);
+
+  const schema = z.object({
+    key: z.string().min(1).max(100).regex(/^[a-z][a-z0-9_]*$/, 'Key must be lowercase snake_case'),
+    enabled: z.boolean(),
+    description: z.string().max(500).optional(),
+    metadata: z.record(z.unknown()).optional(),
+  });
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const [upserted] = await db
+    .insert(featureFlags)
+    .values({
+      firmId,
+      key: parsed.data.key,
+      enabled: parsed.data.enabled,
+      description: parsed.data.description ? sanitizeInput(parsed.data.description) : null,
+      metadata: parsed.data.metadata || {},
+      createdBy: userId,
+    })
+    .onConflictDoUpdate({
+      target: [featureFlags.firmId, featureFlags.key],
+      set: {
+        enabled: parsed.data.enabled,
+        description: parsed.data.description ? sanitizeInput(parsed.data.description) : null,
+        metadata: parsed.data.metadata || {},
+        updatedAt: new Date(),
+      },
+    })
+    .returning();
+
+  return c.json(upserted);
+});
+
+adminRoutes.delete('/feature-flags/:key', async (c) => {
+  const firmId = c.get('firmId');
+  const key = c.req.param('key');
+  await db
+    .delete(featureFlags)
+    .where(and(eq(featureFlags.firmId, firmId), eq(featureFlags.key, key)));
+  return c.json({ ok: true });
+});
+
+// GET /v1/admin/detection-health — Detection service health monitoring
+adminRoutes.get('/detection-health', async (c) => {
+  const { getDetectionClient } = await import('../proxy/detection-client');
+  const client = getDetectionClient();
+
+  const circuitState = client.getCircuitState();
+  const serviceAvailable = client.isServiceAvailable();
+  const healthOk = await client.healthCheck();
+
+  return c.json({
+    detectionService: {
+      healthy: healthOk,
+      circuitBreakerState: circuitState,
+      serviceAvailable,
+      fallback: !healthOk ? 'local_regex' : 'none',
+    },
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Departments & Department Policies
+// ---------------------------------------------------------------------------
+
+// GET /v1/admin/departments — List departments for firm
+adminRoutes.get('/departments', async (c) => {
+  const firmId = c.get('firmId');
+
+  const depts = await db
+    .select()
+    .from(departments)
+    .where(eq(departments.firmId, firmId))
+    .orderBy(departments.name);
+
+  return c.json({ departments: depts });
+});
+
+// POST /v1/admin/departments — Create a department
+adminRoutes.post('/departments', async (c) => {
+  const firmId = c.get('firmId');
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+
+  const createSchema = z.object({
+    name: z.string().min(1).max(255),
+    description: z.string().max(1000).optional(),
+    parentId: z.string().uuid().optional(),
+  });
+
+  const parsed = createSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  // If parentId is given, verify it belongs to the same firm
+  if (parsed.data.parentId) {
+    const [parent] = await db
+      .select({ id: departments.id })
+      .from(departments)
+      .where(and(eq(departments.id, parsed.data.parentId), eq(departments.firmId, firmId)))
+      .limit(1);
+    if (!parent) {
+      return c.json({ error: 'Parent department not found' }, 404);
+    }
+  }
+
+  try {
+    const [dept] = await db
+      .insert(departments)
+      .values({
+        firmId,
+        name: sanitizeInput(parsed.data.name),
+        description: parsed.data.description ? sanitizeInput(parsed.data.description) : null,
+        parentId: parsed.data.parentId || null,
+      })
+      .returning();
+
+    return c.json(dept, 201);
+  } catch (err: any) {
+    if (err?.code === '23505') {
+      return c.json({ error: 'A department with this name already exists in your firm' }, 409);
+    }
+    throw err;
+  }
+});
+
+// PUT /v1/admin/departments/:id — Update a department
+adminRoutes.put('/departments/:id', async (c) => {
+  const firmId = c.get('firmId');
+  const id = c.req.param('id');
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+
+  const updateSchema = z.object({
+    name: z.string().min(1).max(255).optional(),
+    description: z.string().max(1000).optional(),
+    parentId: z.string().uuid().nullable().optional(),
+  });
+
+  const parsed = updateSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  // Prevent setting parentId to self
+  if (parsed.data.parentId === id) {
+    return c.json({ error: 'A department cannot be its own parent' }, 400);
+  }
+
+  const sanitizedData: Record<string, any> = { updatedAt: new Date() };
+  if (parsed.data.name) sanitizedData.name = sanitizeInput(parsed.data.name);
+  if (parsed.data.description !== undefined) sanitizedData.description = parsed.data.description ? sanitizeInput(parsed.data.description) : null;
+  if (parsed.data.parentId !== undefined) sanitizedData.parentId = parsed.data.parentId;
+
+  const [updated] = await db
+    .update(departments)
+    .set(sanitizedData)
+    .where(and(eq(departments.id, id), eq(departments.firmId, firmId)))
+    .returning();
+
+  if (!updated) {
+    return c.json({ error: 'Department not found' }, 404);
+  }
+
+  return c.json(updated);
+});
+
+// DELETE /v1/admin/departments/:id — Delete a department
+adminRoutes.delete('/departments/:id', async (c) => {
+  const firmId = c.get('firmId');
+  const id = c.req.param('id');
+
+  // Delete associated policies first
+  await db
+    .delete(departmentPolicies)
+    .where(and(eq(departmentPolicies.departmentId, id), eq(departmentPolicies.firmId, firmId)));
+
+  // Clear users' departmentId references
+  await db
+    .update(users)
+    .set({ departmentId: null, updatedAt: new Date() })
+    .where(and(eq(users.departmentId, id), eq(users.firmId, firmId)));
+
+  // Delete the department
+  const deleted = await db
+    .delete(departments)
+    .where(and(eq(departments.id, id), eq(departments.firmId, firmId)))
+    .returning({ id: departments.id });
+
+  if (deleted.length === 0) {
+    return c.json({ error: 'Department not found' }, 404);
+  }
+
+  // Invalidate policy cache
+  invalidateDepartmentPolicyCache(id);
+
+  return c.json({ ok: true });
+});
+
+// GET /v1/admin/departments/:id/policies — Get policies for a department
+adminRoutes.get('/departments/:id/policies', async (c) => {
+  const firmId = c.get('firmId');
+  const departmentId = c.req.param('id');
+
+  // Verify department belongs to this firm
+  const [dept] = await db
+    .select({ id: departments.id, name: departments.name })
+    .from(departments)
+    .where(and(eq(departments.id, departmentId), eq(departments.firmId, firmId)))
+    .limit(1);
+
+  if (!dept) {
+    return c.json({ error: 'Department not found' }, 404);
+  }
+
+  const policies = await db
+    .select()
+    .from(departmentPolicies)
+    .where(and(eq(departmentPolicies.departmentId, departmentId), eq(departmentPolicies.firmId, firmId)));
+
+  return c.json({ department: dept, policies });
+});
+
+// PUT /v1/admin/departments/:id/policies — Upsert a policy for a department
+adminRoutes.put('/departments/:id/policies', async (c) => {
+  const firmId = c.get('firmId');
+  const userId = c.get('userId');
+  const departmentId = c.req.param('id');
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+
+  const policySchema = z.object({
+    policyType: z.enum(['allowed_sites', 'blocked_entity_types', 'can_bypass', 'max_sensitivity']),
+    policyValue: z.record(z.unknown()),
+    isActive: z.boolean().optional().default(true),
+  });
+
+  const parsed = policySchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  // Validate policyValue shape based on policyType
+  switch (parsed.data.policyType) {
+    case 'allowed_sites': {
+      const sites = (parsed.data.policyValue as any)?.sites;
+      if (!Array.isArray(sites) || !sites.every((s: unknown) => typeof s === 'string')) {
+        return c.json({ error: 'allowed_sites policy requires { sites: string[] }' }, 400);
+      }
+      break;
+    }
+    case 'blocked_entity_types': {
+      const entityTypes = (parsed.data.policyValue as any)?.entityTypes;
+      if (!Array.isArray(entityTypes) || !entityTypes.every((t: unknown) => typeof t === 'string')) {
+        return c.json({ error: 'blocked_entity_types policy requires { entityTypes: string[] }' }, 400);
+      }
+      break;
+    }
+    case 'can_bypass': {
+      const enabled = (parsed.data.policyValue as any)?.enabled;
+      if (typeof enabled !== 'boolean') {
+        return c.json({ error: 'can_bypass policy requires { enabled: boolean }' }, 400);
+      }
+      break;
+    }
+    case 'max_sensitivity': {
+      const maxScore = (parsed.data.policyValue as any)?.maxScore;
+      if (typeof maxScore !== 'number' || maxScore < 0 || maxScore > 100) {
+        return c.json({ error: 'max_sensitivity policy requires { maxScore: number } between 0 and 100' }, 400);
+      }
+      break;
+    }
+  }
+
+  // Verify department belongs to this firm
+  const [dept] = await db
+    .select({ id: departments.id })
+    .from(departments)
+    .where(and(eq(departments.id, departmentId), eq(departments.firmId, firmId)))
+    .limit(1);
+
+  if (!dept) {
+    return c.json({ error: 'Department not found' }, 404);
+  }
+
+  // Upsert the policy (unique constraint on departmentId + policyType)
+  const [upserted] = await db
+    .insert(departmentPolicies)
+    .values({
+      departmentId,
+      firmId,
+      policyType: parsed.data.policyType,
+      policyValue: parsed.data.policyValue,
+      isActive: parsed.data.isActive,
+      createdBy: userId,
+    })
+    .onConflictDoUpdate({
+      target: [departmentPolicies.departmentId, departmentPolicies.policyType],
+      set: {
+        policyValue: parsed.data.policyValue,
+        isActive: parsed.data.isActive,
+        updatedAt: new Date(),
+      },
+    })
+    .returning();
+
+  // Invalidate cache so changes take effect immediately
+  invalidateDepartmentPolicyCache(departmentId);
+
+  return c.json(upserted);
+});
+
+// ---------------------------------------------------------------------------
+// SCIM Token Management — Generate, rotate, and revoke SCIM bearer tokens
+// ---------------------------------------------------------------------------
+
+// GET /v1/admin/scim-token — Check if a SCIM token exists (does not reveal the token)
+adminRoutes.get('/scim-token', requirePerm('setSensitivityThresholds'), async (c) => {
+  const firmId = c.get('firmId');
+
+  const [firm] = await db.select({ config: firms.config }).from(firms).where(eq(firms.id, firmId)).limit(1);
+  if (!firm) return c.json({ error: 'Firm not found' }, 404);
+
+  const config = (firm.config ?? {}) as Record<string, any>;
+  const hasToken = !!config.scimToken;
+  const tokenPrefix = hasToken ? `scim_****${(config.scimToken as string).slice(-4)}` : null;
+
+  return c.json({
+    hasToken,
+    tokenPrefix,
+    scimBaseUrl: `${process.env.API_URL || 'https://irongate-api.onrender.com'}/scim/v2`,
+  });
+});
+
+// POST /v1/admin/scim-token — Generate a new SCIM token (or rotate existing)
+adminRoutes.post('/scim-token', requirePerm('setSensitivityThresholds'), async (c) => {
+  const firmId = c.get('firmId');
+
+  // Generate a cryptographically secure token
+  const token = `scim_${crypto.randomBytes(32).toString('hex')}`;
+
+  const [firm] = await db.select({ config: firms.config }).from(firms).where(eq(firms.id, firmId)).limit(1);
+  if (!firm) return c.json({ error: 'Firm not found' }, 404);
+
+  const existingConfig = (firm.config ?? {}) as Record<string, any>;
+  const updatedConfig = { ...existingConfig, scimToken: token };
+
+  await db.update(firms).set({ config: updatedConfig, updatedAt: new Date() }).where(eq(firms.id, firmId));
+
+  return c.json({
+    token, // Only returned once — client must store it
+    message: 'SCIM token generated. Store this securely — it will not be shown again.',
+    scimBaseUrl: `${process.env.API_URL || 'https://irongate-api.onrender.com'}/scim/v2`,
+  }, 201);
+});
+
+// DELETE /v1/admin/scim-token — Revoke the SCIM token
+adminRoutes.delete('/scim-token', requirePerm('setSensitivityThresholds'), async (c) => {
+  const firmId = c.get('firmId');
+
+  const [firm] = await db.select({ config: firms.config }).from(firms).where(eq(firms.id, firmId)).limit(1);
+  if (!firm) return c.json({ error: 'Firm not found' }, 404);
+
+  const existingConfig = (firm.config ?? {}) as Record<string, any>;
+  delete existingConfig.scimToken;
+
+  await db.update(firms).set({ config: existingConfig, updatedAt: new Date() }).where(eq(firms.id, firmId));
+
+  return c.json({ ok: true, message: 'SCIM token revoked. Any configured identity provider will lose access.' });
+});
+
+// ---------------------------------------------------------------------------
+// Security Incidents
+// ---------------------------------------------------------------------------
+
+// RBAC: incident management requires admin-level access
+adminRoutes.post('/incidents', requirePerm('setSensitivityThresholds'));
+adminRoutes.put('/incidents/:id', requirePerm('setSensitivityThresholds'));
+
+// GET /v1/admin/incidents — List incidents for firm (paginated, filterable by status/severity)
+adminRoutes.get('/incidents', async (c) => {
+  const firmId = c.get('firmId');
+  const limit = Math.min(Math.max(1, parseInt(c.req.query('limit') || '50', 10) || 50), 100);
+  const offset = Math.max(0, parseInt(c.req.query('offset') || '0', 10) || 0);
+  const statusFilter = c.req.query('status');
+  const severityFilter = c.req.query('severity');
+
+  const conditions = [eq(incidents.firmId, firmId)];
+  if (statusFilter) {
+    conditions.push(eq(incidents.status, statusFilter));
+  }
+  if (severityFilter) {
+    conditions.push(eq(incidents.severity, severityFilter));
+  }
+
+  const [items, countResult] = await Promise.all([
+    db
+      .select()
+      .from(incidents)
+      .where(and(...conditions))
+      .orderBy(desc(incidents.createdAt))
+      .limit(limit)
+      .offset(offset),
+    db
+      .select({ total: sql<number>`count(*)` })
+      .from(incidents)
+      .where(and(...conditions)),
+  ]);
+
+  return c.json({
+    incidents: items,
+    total: Number(countResult[0]?.total || 0),
+    limit,
+    offset,
+  });
+});
+
+// GET /v1/admin/incidents/:id — Get single incident
+adminRoutes.get('/incidents/:id', async (c) => {
+  const firmId = c.get('firmId');
+  const id = c.req.param('id');
+
+  const [incident] = await db
+    .select()
+    .from(incidents)
+    .where(and(eq(incidents.id, id), eq(incidents.firmId, firmId)))
+    .limit(1);
+
+  if (!incident) {
+    return c.json({ error: 'Incident not found' }, 404);
+  }
+
+  return c.json(incident);
+});
+
+// POST /v1/admin/incidents — Create incident
+adminRoutes.post('/incidents', async (c) => {
+  const firmId = c.get('firmId');
+  const userId = c.get('userId');
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+
+  const createSchema = z.object({
+    title: z.string().min(1).max(500),
+    description: z.string().max(5000).optional(),
+    severity: z.enum(['low', 'medium', 'high', 'critical']).optional().default('medium'),
+    status: z.enum(['open', 'investigating', 'resolved', 'closed']).optional().default('open'),
+    assignedTo: z.string().uuid().optional(),
+    affectedUsers: z.number().int().min(0).optional(),
+    metadata: z.record(z.unknown()).optional(),
+  });
+
+  const parsed = createSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const [created] = await db
+    .insert(incidents)
+    .values({
+      firmId,
+      title: sanitizeInput(parsed.data.title),
+      description: parsed.data.description ? sanitizeInput(parsed.data.description) : null,
+      severity: parsed.data.severity,
+      status: parsed.data.status,
+      reportedBy: userId,
+      assignedTo: parsed.data.assignedTo || null,
+      affectedUsers: parsed.data.affectedUsers ?? null,
+      metadata: parsed.data.metadata || {},
+    })
+    .returning();
+
+  return c.json(created, 201);
+});
+
+// PUT /v1/admin/incidents/:id — Update incident
+adminRoutes.put('/incidents/:id', async (c) => {
+  const firmId = c.get('firmId');
+  const id = c.req.param('id');
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+
+  const updateSchema = z.object({
+    title: z.string().min(1).max(500).optional(),
+    description: z.string().max(5000).optional(),
+    severity: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+    status: z.enum(['open', 'investigating', 'resolved', 'closed']).optional(),
+    assignedTo: z.string().uuid().nullable().optional(),
+    rootCause: z.string().max(5000).nullable().optional(),
+    remediation: z.string().max(5000).nullable().optional(),
+    affectedUsers: z.number().int().min(0).nullable().optional(),
+    metadata: z.record(z.unknown()).optional(),
+  });
+
+  const parsed = updateSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const updates: Record<string, any> = { updatedAt: new Date() };
+  if (parsed.data.title !== undefined) updates.title = sanitizeInput(parsed.data.title);
+  if (parsed.data.description !== undefined) updates.description = parsed.data.description ? sanitizeInput(parsed.data.description) : null;
+  if (parsed.data.severity !== undefined) updates.severity = parsed.data.severity;
+  if (parsed.data.status !== undefined) {
+    updates.status = parsed.data.status;
+    if (parsed.data.status === 'resolved' && !updates.resolvedAt) updates.resolvedAt = new Date();
+    if (parsed.data.status === 'closed' && !updates.closedAt) updates.closedAt = new Date();
+  }
+  if (parsed.data.assignedTo !== undefined) updates.assignedTo = parsed.data.assignedTo;
+  if (parsed.data.rootCause !== undefined) updates.rootCause = parsed.data.rootCause ? sanitizeInput(parsed.data.rootCause) : null;
+  if (parsed.data.remediation !== undefined) updates.remediation = parsed.data.remediation ? sanitizeInput(parsed.data.remediation) : null;
+  if (parsed.data.affectedUsers !== undefined) updates.affectedUsers = parsed.data.affectedUsers;
+  if (parsed.data.metadata !== undefined) updates.metadata = parsed.data.metadata;
+
+  const [updated] = await db
+    .update(incidents)
+    .set(updates)
+    .where(and(eq(incidents.id, id), eq(incidents.firmId, firmId)))
+    .returning();
+
+  if (!updated) {
+    return c.json({ error: 'Incident not found' }, 404);
+  }
+
+  return c.json(updated);
+});
+
+// ── Adaptive Weights & Zone Analytics (Phase 4) ──────────────────────────────
+
+// GET /v1/admin/adaptive-weights — View computed adaptive weights for this firm
+adminRoutes.get('/adaptive-weights', async (c) => {
+  const firmId = c.get('firmId');
+  const result = await computeAdaptiveWeights(firmId);
+  return c.json(result);
+});
+
+// GET /v1/admin/adaptive-weights/overrides — Get weight overrides for scorer
+adminRoutes.get('/adaptive-weights/overrides', async (c) => {
+  const firmId = c.get('firmId');
+  const overrides = await getWeightOverrides(firmId);
+  return c.json({ firmId, overrides, count: Object.keys(overrides).length });
+});
+
+// GET /v1/admin/zone-analytics — Zone distribution analytics
+adminRoutes.get('/zone-analytics', async (c) => {
+  const firmId = c.get('firmId');
+  const days = parseInt(c.req.query('days') || '30', 10);
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const zoneStats = await db
+    .select({
+      total: sql<number>`count(*)`,
+      green: sql<number>`count(*) filter (where (${events.metadata}->>'sensitivityScore')::int <= 25)`,
+      amber: sql<number>`count(*) filter (where (${events.metadata}->>'sensitivityScore')::int between 26 and 60)`,
+      red: sql<number>`count(*) filter (where (${events.metadata}->>'sensitivityScore')::int > 60)`,
+    })
+    .from(events)
+    .where(and(
+      eq(events.firmId, firmId),
+      gte(events.createdAt, since),
+    ));
+
+  const total = Number(zoneStats[0]?.total || 0);
+  const green = Number(zoneStats[0]?.green || 0);
+  const amber = Number(zoneStats[0]?.amber || 0);
+  const red = Number(zoneStats[0]?.red || 0);
+
+  return c.json({
+    period: { days, since: since.toISOString() },
+    total,
+    zones: {
+      green: { count: green, percentage: total > 0 ? Math.round((green / total) * 100) : 0 },
+      amber: { count: amber, percentage: total > 0 ? Math.round((amber / total) * 100) : 0 },
+      red: { count: red, percentage: total > 0 ? Math.round((red / total) * 100) : 0 },
+    },
+  });
+});
+
+// POST /v1/admin/federated-aggregation — Trigger a federated weight aggregation run
+// Collects anonymized feedback across all firms, detects outliers, and computes weight deltas.
+adminRoutes.post('/federated-aggregation', requirePerm('setSensitivityThresholds'), async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const periodDays = body.periodDays ?? 90;
+  const result = await handleFederatedAggregation(periodDays);
+  return c.json(result);
+});
+
+// GET /v1/admin/zone-analytics — Full zone analytics for the firm
+// Returns distribution, trends, overrides, and accuracy improvement metrics.
+adminRoutes.get('/zone-analytics-full', async (c) => {
+  const firmId = c.get('firmId');
+  const days = Number(c.req.query('days') || 30);
+  const result = await getZoneAnalytics(firmId, days);
+  return c.json(result);
 });

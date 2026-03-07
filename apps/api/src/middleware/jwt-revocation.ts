@@ -10,7 +10,7 @@ const REVOKED_TTL = 3600; // 1 hour — matches typical JWT expiry
 // goes down after the revocation was issued. Bounded to prevent memory leaks.
 // ---------------------------------------------------------------------------
 const LOCAL_REVOKED = new Map<string, number>(); // tokenHash → expiresAt (epoch ms)
-const LOCAL_REVOKED_MAX = 5_000;
+const LOCAL_REVOKED_MAX = 50_000;
 
 function localRevoke(tokenHash: string): void {
   // Evict expired entries if map is full
@@ -19,11 +19,10 @@ function localRevoke(tokenHash: string): void {
     for (const [k, exp] of LOCAL_REVOKED) {
       if (now > exp) LOCAL_REVOKED.delete(k);
     }
-    // Still full after cleanup — drop oldest 20%
+    // If still at capacity after expiry cleanup, log a warning but never
+    // drop non-expired entries — that would let revoked tokens through.
     if (LOCAL_REVOKED.size >= LOCAL_REVOKED_MAX) {
-      const keys = Array.from(LOCAL_REVOKED.keys());
-      const toDelete = Math.floor(keys.length * 0.2);
-      for (let i = 0; i < toDelete; i++) LOCAL_REVOKED.delete(keys[i]);
+      logger.warn(`JWT revocation cache at capacity (${LOCAL_REVOKED_MAX}). Expired entries cleaned but cache is full of active revocations.`);
     }
   }
   LOCAL_REVOKED.set(tokenHash, Date.now() + REVOKED_TTL * 1000);
@@ -87,27 +86,46 @@ export const jwtRevocationMiddleware = createMiddleware(async (c, next) => {
     return;
   }
 
-  const redis = getRedisClient();
-  if (!redis) {
-    // No Redis — can't check revocation list, allow through (fail-open for availability)
-    logger.warn('JWT revocation check skipped: Redis unavailable — revoked tokens will NOT be rejected');
-    await next();
-    return;
-  }
-
   // Hash the token for the blacklist lookup (don't store raw JWTs in Redis)
   const token = authHeader.slice(7);
   const crypto = await import('crypto');
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
 
+  // Always check local in-memory revocation list first (instant, no Redis needed)
+  if (isLocallyRevoked(tokenHash)) {
+    return c.json({ error: 'Unauthorized: token has been revoked' }, 401);
+  }
+
+  const redis = getRedisClient();
+  if (!redis) {
+    // No Redis — local check passed, but we can't verify against the full
+    // revocation list. In production, fail-closed (reject) to prevent
+    // revoked tokens from being accepted. In dev, allow through.
+    if (process.env.NODE_ENV === 'production') {
+      logger.error('JWT revocation check BLOCKED: Redis unavailable in production');
+      return c.json({ error: 'Service temporarily unavailable — please retry' }, 503);
+    }
+    logger.warn('JWT revocation check skipped: Redis unavailable (dev mode)');
+    await next();
+    return;
+  }
+
   try {
-    const revoked = await isTokenRevoked(tokenHash);
-    if (revoked) {
+    const result = await redis.get(`${REVOKED_KEY_PREFIX}${tokenHash}`);
+    if (result !== null) {
+      // Also add to local cache for faster subsequent checks
+      localRevoke(tokenHash);
       return c.json({ error: 'Unauthorized: token has been revoked' }, 401);
     }
   } catch (err) {
-    // Redis error — allow through (fail open for availability)
-    logger.warn('JWT revocation check failed', {
+    // Redis error in production — fail-closed
+    if (process.env.NODE_ENV === 'production') {
+      logger.error('JWT revocation check BLOCKED: Redis error in production', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return c.json({ error: 'Service temporarily unavailable — please retry' }, 503);
+    }
+    logger.warn('JWT revocation check failed (dev mode — allowing through)', {
       error: err instanceof Error ? err.message : String(err),
     });
   }

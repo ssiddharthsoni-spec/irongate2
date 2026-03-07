@@ -16,12 +16,6 @@ const ENTITY_TYPES = [
   { key: 'legal', label: 'Legal Identifiers', description: 'Case numbers, docket IDs, matter numbers' },
 ];
 
-const DEMO_CONFIG = {
-  entityToggles: Object.fromEntries(ENTITY_TYPES.map((e) => [e.key, true])),
-  allowlist: ['Acme Corp', 'internal-project-alpha'],
-  blocklist: ['confidential-client-x', 'Project Nightfall'],
-};
-
 export default function ProtectionSettingsPage() {
   const { apiFetch } = useApiClient();
 
@@ -36,25 +30,26 @@ export default function ProtectionSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function fetchConfig() {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await apiFetch('/admin/firm');
+      if (!response.ok) throw new Error(`Server responded with ${response.status}`);
+      const data = await response.json();
+      if (data.config?.entityToggles) setEntityToggles(data.config.entityToggles);
+      if (data.config?.allowlist) setAllowlist(data.config.allowlist);
+      if (data.config?.blocklist) setBlocklist(data.config.blocklist);
+    } catch (err: any) {
+      setError(err.message || 'Failed to load data. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    async function fetchConfig() {
-      try {
-        setLoading(true);
-        const response = await apiFetch('/admin/firm');
-        if (!response.ok) throw new Error(`Server responded with ${response.status}`);
-        const data = await response.json();
-        if (data.config?.entityToggles) setEntityToggles(data.config.entityToggles);
-        if (data.config?.allowlist) setAllowlist(data.config.allowlist);
-        if (data.config?.blocklist) setBlocklist(data.config.blocklist);
-      } catch {
-        setEntityToggles(DEMO_CONFIG.entityToggles);
-        setAllowlist(DEMO_CONFIG.allowlist);
-        setBlocklist(DEMO_CONFIG.blocklist);
-      } finally {
-        setLoading(false);
-      }
-    }
     fetchConfig();
   }, []);
 
@@ -128,6 +123,19 @@ export default function ProtectionSettingsPage() {
 
   return (
     <div className="space-y-6 max-w-2xl">
+      {error && (
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4 flex items-center justify-between">
+          <p className="text-sm text-red-700 dark:text-red-400">{error}</p>
+          <button
+            type="button"
+            onClick={fetchConfig}
+            className="ml-4 px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Entity Type Toggles */}
       <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
         <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-1">Entity Detection</h2>

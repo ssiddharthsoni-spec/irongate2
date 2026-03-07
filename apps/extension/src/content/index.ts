@@ -25,6 +25,80 @@ function igLog(...args: any[]) { if (_IG_DEBUG) console.log('[Iron Gate]', ...ar
  * Detects the active AI tool and starts capturing prompts.
  */
 
+// ── Encrypted Map Persistence Helpers ────────────────────────────────────────
+// Uses a session-scoped AES-GCM key (generated once per browser session) to
+// encrypt the reverse pseudonym map before storing in chrome.storage.session.
+// This ensures PII in the map is encrypted at rest.
+
+const SESSION_KEY_NAME = '__ig_session_key';
+let _sessionKey: CryptoKey | null = null;
+
+async function getSessionKey(): Promise<CryptoKey> {
+  if (_sessionKey) return _sessionKey;
+  // Try to import a previously exported key from session storage
+  try {
+    const result = await chrome.storage.session.get(SESSION_KEY_NAME);
+    if (result[SESSION_KEY_NAME]) {
+      const raw = Uint8Array.from(atob(result[SESSION_KEY_NAME]), c => c.charCodeAt(0));
+      _sessionKey = await crypto.subtle.importKey(
+        'raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt'],
+      );
+      return _sessionKey;
+    }
+  } catch {}
+  // Generate a new key for this browser session
+  _sessionKey = await crypto.subtle.generateKey(
+    { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt'],
+  );
+  // Export and store so other tabs in this session can use the same key
+  try {
+    const exported = await crypto.subtle.exportKey('raw', _sessionKey);
+    const b64 = btoa(String.fromCharCode(...new Uint8Array(exported)));
+    await chrome.storage.session.set({ [SESSION_KEY_NAME]: b64 });
+  } catch {}
+  return _sessionKey;
+}
+
+async function encryptAndStore(key: string, map: Record<string, string>): Promise<number> {
+  const entries = Object.keys(map).length;
+  if (entries === 0) {
+    await chrome.storage.session.set({ [key]: null });
+    return 0;
+  }
+  const aesKey = await getSessionKey();
+  const plaintext = JSON.stringify(map);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, tagLength: 128 }, aesKey,
+    new TextEncoder().encode(plaintext),
+  );
+  const combined = new Uint8Array(12 + encrypted.byteLength);
+  combined.set(iv, 0);
+  combined.set(new Uint8Array(encrypted), 12);
+  const b64 = btoa(String.fromCharCode(...combined));
+  await chrome.storage.session.set({ [key]: b64 });
+  return entries;
+}
+
+async function loadAndDecrypt(key: string): Promise<Record<string, string> | null> {
+  try {
+    const result = await chrome.storage.session.get(key);
+    const stored = result[key];
+    if (!stored || typeof stored !== 'string') return null;
+    const aesKey = await getSessionKey();
+    const combined = Uint8Array.from(atob(stored), c => c.charCodeAt(0));
+    if (combined.length < 13) return null;
+    const iv = combined.slice(0, 12);
+    const ciphertext = combined.slice(12);
+    const decrypted = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv, tagLength: 128 }, aesKey, ciphertext,
+    );
+    return JSON.parse(new TextDecoder().decode(decrypted));
+  } catch {
+    return null;
+  }
+}
+
 let detector: ReturnType<typeof detectAITool> = null;
 let engine: ReturnType<typeof createCaptureEngine> | null = null;
 let badge: ReturnType<typeof createSensitivityBadge> | null = null;
@@ -79,12 +153,30 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-// ── MAIN world heartbeat monitor ─────────────────────────────────────────
+// ── MAIN world heartbeat monitor + nonce challenge-response ──────────────
+// The MAIN world script generates a cryptographic nonce and includes it in
+// every postMessage. The content script captures the nonce from the first
+// heartbeat and rejects all subsequent IRON_GATE_* messages without it.
+// This prevents other page scripts from injecting fake messages.
 let mainWorldAlive = false;
+let _igMainWorldNonce: string | null = null;
+
+function isValidMainWorldMessage(data: any): boolean {
+  // Heartbeat establishes the nonce — always accept the first one
+  if (data?.type === 'IRON_GATE_HEARTBEAT' && !_igMainWorldNonce && data._nonce) {
+    _igMainWorldNonce = data._nonce;
+    return true;
+  }
+  // Fail-closed: reject all messages until nonce is established
+  if (!_igMainWorldNonce) return false;
+  // All IRON_GATE_* messages must include the valid nonce
+  return data?._nonce === _igMainWorldNonce;
+}
 
 window.addEventListener('message', (event) => {
   if (event.source !== window) return;
   if (event.data?.type === 'IRON_GATE_HEARTBEAT') {
+    if (!isValidMainWorldMessage(event.data)) return;
     mainWorldAlive = true;
     igLog('MAIN world heartbeat received', `v${event.data.version}, mode: ${event.data.mode}`);
   }
@@ -154,15 +246,46 @@ setTimeout(() => {
   }
 }, 500);
 
+// ── Input validation for MAIN world relay ─────────────────────────────────
+// Validates data from postMessage before relaying to the trusted service worker.
+const MAX_FILE_BASE64_LEN = 10_000_000; // ~7.5MB decoded
+const MAX_STRING_LEN = 200_000;
+const VALID_LEVELS = new Set(['critical', 'high', 'medium', 'low']);
+
+function clampNumber(val: unknown, min: number, max: number, fallback: number): number {
+  if (typeof val !== 'number' || !Number.isFinite(val)) return fallback;
+  return Math.max(min, Math.min(max, val));
+}
+function sanitizeString(val: unknown, maxLen: number): string {
+  if (typeof val !== 'string') return '';
+  return val.substring(0, maxLen);
+}
+
 // Listen for messages from MAIN world (fetch interception results)
 window.addEventListener('message', (event) => {
   if (event.source !== window) return;
+  // Validate origin matches current page
+  if (event.origin !== window.location.origin) return;
+  // Validate cryptographic nonce from MAIN world script
+  if (event.data?.type?.startsWith('IRON_GATE_') && !isValidMainWorldMessage(event.data)) {
+    igLog('REJECTED message with invalid nonce:', event.data?.type);
+    return;
+  }
 
   // ── File Upload Detection from MAIN world ────────────────────────────
   // The main world fetch interceptor detects File objects in FormData bodies
   // and sends them via postMessage. We relay to the service worker for scanning.
   if (event.data?.type === 'IRON_GATE_FILE_UPLOAD') {
-    const { fileName, fileSize, fileType, fileBase64, url } = event.data;
+    // Reject oversized payloads BEFORE allocating memory for sanitization
+    if (event.data.fileBase64 && typeof event.data.fileBase64 === 'string' && event.data.fileBase64.length > MAX_FILE_BASE64_LEN) {
+      igLog('File upload rejected — exceeds size limit');
+      return;
+    }
+    const fileName = sanitizeString(event.data.fileName, 500);
+    const fileSize = clampNumber(event.data.fileSize, 0, 100_000_000, 0);
+    const fileType = sanitizeString(event.data.fileType, 100);
+    const fileBase64 = sanitizeString(event.data.fileBase64, MAX_FILE_BASE64_LEN);
+    const url = sanitizeString(event.data.url, 500);
     igLog(`File upload from MAIN world: ${fileName} (${fileSize} bytes) → ${url?.substring(0, 80)}`);
     try {
       chrome.runtime.sendMessage(
@@ -202,7 +325,10 @@ window.addEventListener('message', (event) => {
   // ── File Metadata Detection from MAIN world ──────────────────────────
   // Detects file upload requests with metadata (e.g., ChatGPT's /backend-api/files)
   if (event.data?.type === 'IRON_GATE_FILE_METADATA') {
-    const { fileName, fileSize, fileType, url } = event.data;
+    const fileName = sanitizeString(event.data.fileName, 500);
+    const fileSize = clampNumber(event.data.fileSize, 0, 100_000_000, 0);
+    const fileType = sanitizeString(event.data.fileType, 100);
+    const url = sanitizeString(event.data.url, 500);
     igLog(`File metadata from MAIN world: ${fileName} (${fileSize} bytes) → ${url?.substring(0, 80)}`);
     // Notify sidepanel via service worker (lightweight — no file content to scan)
     try {
@@ -233,40 +359,52 @@ window.addEventListener('message', (event) => {
     return;
   }
 
-  // PROXY mode: fetch was pseudonymized before sending to LLM
-  if (event.data?.type === 'IRON_GATE_INTERCEPTED') {
-    const { promptHash, promptLength, maskedPrompt, mappings, entityCount, level, score, entities } = event.data;
-    igLog(`MAIN world intercepted fetch — ${entityCount} entities pseudonymized (${level}, score=${score})`);
-
-    try {
-      chrome.runtime.sendMessage({
-        type: 'SENSITIVITY_SCORE',
-        payload: {
-          score: score ?? (level === 'critical' ? 95 : level === 'high' ? 75 : level === 'medium' ? 45 : 15),
-          level,
-          explanation: `Pseudonymized ${entityCount} entities before sending to AI tool.`,
-          entities: entities || [],
-          aiToolId: detector?.id || 'unknown',
-          promptHash,
-          promptLength,
-          maskedPrompt,
-          pseudonymMappings: mappings,
-        },
-      }).catch((err) => {
-        console.warn('[Iron Gate] Failed to relay INTERCEPTED to service worker:', err);
-      });
-    } catch {
-      // Extension context may be invalidated
+  // ── Reverse Pseudonym Map Persistence (Encrypted) ────────────────────────
+  // MAIN world sends updated reverse map for persistence in chrome.storage.session.
+  // Map is encrypted at rest using a session-scoped AES-GCM key to protect PII
+  // even if chrome.storage.session is somehow compromised.
+  if (event.data?.type === 'IRON_GATE_PERSIST_REVERSE_MAP') {
+    const map = event.data.map;
+    if (map && typeof map === 'object') {
+      const tabKey = `reverse_map_${window.location.hostname}`;
+      encryptAndStore(tabKey, map).then((entryCount) => {
+        igLog(`Persisted reverse map (${entryCount} entries) encrypted to session storage`);
+      }).catch(() => {});
     }
-
-    // Coaching toast: confirm pseudonymization
-    showCoachingFeedback('proxy', entityCount, level, score);
+    return;
   }
 
-  // AUDIT mode: entities detected but NOT pseudonymized (just scored)
-  if (event.data?.type === 'IRON_GATE_AUDIT') {
-    const { promptHash, promptLength, maskedPrompt, mappings, entityCount, level, score, entities } = event.data;
-    igLog(`MAIN world audit — ${entityCount} entities detected (${level}, score=${score})`);
+  // MAIN world requests persisted reverse map (after page refresh)
+  if (event.data?.type === 'IRON_GATE_REQUEST_REVERSE_MAP') {
+    const tabKey = `reverse_map_${window.location.hostname}`;
+    loadAndDecrypt(tabKey).then((map) => {
+      if (map && Object.keys(map).length > 0) {
+        window.postMessage({
+          type: 'IRON_GATE_RESTORE_REVERSE_MAP',
+          map,
+        }, window.location.origin);
+        igLog(`Restored reverse map (${Object.keys(map).length} entries) to MAIN world`);
+      }
+    }).catch(() => {});
+    return;
+  }
+
+  // Shared validation for INTERCEPTED/AUDIT
+  if (event.data?.type === 'IRON_GATE_INTERCEPTED' || event.data?.type === 'IRON_GATE_AUDIT') {
+    const isProxy = event.data.type === 'IRON_GATE_INTERCEPTED';
+    const promptHash = sanitizeString(event.data.promptHash, 128);
+    const promptLength = clampNumber(event.data.promptLength, 0, 10_000_000, 0);
+    // SECURITY: originalPrompt intentionally NOT relayed from postMessage.
+    // Raw prompt text must never travel through the page's message channel.
+    const maskedPrompt = sanitizeString(event.data.maskedPrompt, MAX_STRING_LEN);
+    const entityCount = clampNumber(event.data.entityCount, 0, 10000, 0);
+    const rawLevel = sanitizeString(event.data.level, 20);
+    const level = VALID_LEVELS.has(rawLevel) ? rawLevel : 'low';
+    const score = clampNumber(event.data.score, 0, 100, 15);
+    const entities = Array.isArray(event.data.entities) ? event.data.entities.slice(0, 1000) : [];
+    const mappings = Array.isArray(event.data.mappings) ? event.data.mappings.slice(0, 1000) : [];
+
+    igLog(`MAIN world ${isProxy ? 'intercepted' : 'audit'} — ${entityCount} entities (${level}, score=${score})`);
 
     try {
       chrome.runtime.sendMessage({
@@ -274,8 +412,10 @@ window.addEventListener('message', (event) => {
         payload: {
           score: score ?? (level === 'critical' ? 95 : level === 'high' ? 75 : level === 'medium' ? 45 : 15),
           level,
-          explanation: `Detected ${entityCount} sensitive entities in prompt (audit mode — not pseudonymized).`,
-          entities: entities || [],
+          explanation: isProxy
+            ? `Pseudonymized ${entityCount} entities before sending to AI tool.`
+            : `Detected ${entityCount} sensitive entities in prompt (audit mode — not pseudonymized).`,
+          entities,
           aiToolId: detector?.id || 'unknown',
           promptHash,
           promptLength,
@@ -283,14 +423,13 @@ window.addEventListener('message', (event) => {
           pseudonymMappings: mappings,
         },
       }).catch((err) => {
-        console.warn('[Iron Gate] Failed to relay AUDIT to service worker:', err);
+        console.warn('[Iron Gate] Failed to relay to service worker:', err);
       });
     } catch {
       // Extension context may be invalidated
     }
 
-    // Coaching toast: warn about detected entities in audit mode
-    showCoachingFeedback('audit', entityCount, level, score);
+    showCoachingFeedback(isProxy ? 'proxy' : 'audit', entityCount, level, score);
   }
 });
 
@@ -437,6 +576,7 @@ function initialize() {
       engine.start();
 
       badge = createSensitivityBadge();
+      badge.showStandby(); // Show "Protected" indicator immediately on page load
       toasts = createCoachingToasts();
 
       // Welcome toast on first load (only once per session)

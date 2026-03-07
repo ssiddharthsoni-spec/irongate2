@@ -36,27 +36,6 @@ interface AnalyticsData {
   signupTrend: { date: string; count: number }[];
 }
 
-/* ── Demo fallback ──────────────────────────────────────────────────────── */
-
-const DEMO_DATA: AnalyticsData = {
-  summary: { totalUsers: 24, activeNow: 7, activeToday: 16, totalInteractions: 2847 },
-  users: [
-    { id: '1', name: 'Sarah Chen', email: 'sarah.chen@firm.com', role: 'admin', lastActive: new Date(Date.now() - 2 * 60_000).toISOString(), interactions: 347, status: 'online', createdAt: '2026-01-15T00:00:00Z' },
-    { id: '2', name: 'James Rodriguez', email: 'j.rodriguez@firm.com', role: 'user', lastActive: new Date(Date.now() - 3 * 60_000).toISOString(), interactions: 298, status: 'online', createdAt: '2026-01-20T00:00:00Z' },
-    { id: '3', name: 'Priya Sharma', email: 'p.sharma@firm.com', role: 'user', lastActive: new Date(Date.now() - 45 * 60_000).toISOString(), interactions: 215, status: 'offline', createdAt: '2026-01-22T00:00:00Z' },
-    { id: '4', name: "Michael O'Brien", email: 'm.obrien@firm.com', role: 'admin', lastActive: new Date(Date.now() - 1 * 60_000).toISOString(), interactions: 189, status: 'online', createdAt: '2026-02-01T00:00:00Z' },
-    { id: '5', name: 'Emily Watson', email: 'e.watson@firm.com', role: 'user', lastActive: new Date(Date.now() - 2 * 3600_000).toISOString(), interactions: 156, status: 'offline', createdAt: '2026-02-03T00:00:00Z' },
-    { id: '6', name: 'David Kim', email: 'd.kim@firm.com', role: 'viewer', lastActive: new Date(Date.now() - 24 * 3600_000).toISOString(), interactions: 42, status: 'offline', createdAt: '2026-02-10T00:00:00Z' },
-    { id: '7', name: 'Lisa Park', email: 'l.park@firm.com', role: 'user', lastActive: new Date(Date.now() - 4 * 60_000).toISOString(), interactions: 201, status: 'online', createdAt: '2026-02-12T00:00:00Z' },
-  ],
-  signupTrend: [
-    { date: '2026-01-15', count: 2 }, { date: '2026-01-20', count: 1 }, { date: '2026-01-22', count: 1 },
-    { date: '2026-02-01', count: 3 }, { date: '2026-02-03', count: 2 }, { date: '2026-02-10', count: 4 },
-    { date: '2026-02-12', count: 3 }, { date: '2026-02-15', count: 1 }, { date: '2026-02-20', count: 5 },
-    { date: '2026-02-25', count: 2 },
-  ],
-};
-
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
 function relativeTime(iso: string | null): string {
@@ -113,10 +92,9 @@ export default function AdminAnalyticsPage() {
         if (!res.ok) throw new Error('API error');
         const json = await res.json();
         if (!cancelled) setData(json);
-      } catch {
+      } catch (err: any) {
         if (!cancelled) {
-          setError('Could not load analytics — showing demo data');
-          setData(DEMO_DATA);
+          setError(err.message || 'Failed to load analytics.');
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -140,7 +118,21 @@ export default function AdminAnalyticsPage() {
     );
   }
 
-  const { summary, users, signupTrend } = data!;
+  if (error || !data) {
+    return (
+      <div className="max-w-6xl mx-auto px-6 py-10">
+        <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7] mb-4">User Analytics</h1>
+        <div className="mb-6 px-4 py-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/40 text-sm text-red-700 dark:text-red-400 flex items-center justify-between">
+          <span>{error || 'Failed to load analytics.'}</span>
+          <button onClick={() => window.location.reload()} className="ml-4 px-3 py-1 text-xs font-medium bg-red-100 dark:bg-red-900/30 rounded-lg hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors">
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const { summary, users, signupTrend } = data;
 
   const statCards = [
     { label: 'Total Users', value: summary.totalUsers.toLocaleString(), color: 'text-[#1d1d1f] dark:text-[#f5f5f7]' },
@@ -162,12 +154,6 @@ export default function AdminAnalyticsPage() {
       <p className="text-[#6e6e73] dark:text-[#86868b] text-sm mb-8">
         Monitor user activity, logins, and engagement across your organization.
       </p>
-
-      {error && (
-        <div className="mb-6 px-4 py-3 rounded-lg bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800/40 text-sm text-yellow-700 dark:text-yellow-400">
-          {error}
-        </div>
-      )}
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">

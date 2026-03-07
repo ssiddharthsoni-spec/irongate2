@@ -113,11 +113,11 @@ export async function getAlerts(
 /**
  * Acknowledge an alert.
  */
-export async function acknowledgeAlert(alertId: string, userId: string) {
+export async function acknowledgeAlert(alertId: string, userId: string, firmId: string) {
   return db
     .update(alerts)
     .set({ acknowledgedAt: new Date(), acknowledgedBy: userId })
-    .where(eq(alerts.id, alertId))
+    .where(and(eq(alerts.id, alertId), eq(alerts.firmId, firmId)))
     .returning();
 }
 

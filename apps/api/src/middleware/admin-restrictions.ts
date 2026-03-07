@@ -1,4 +1,5 @@
 import { createMiddleware } from 'hono/factory';
+import { timingSafeEqual } from 'node:crypto';
 import { logger } from '../lib/logger';
 
 /**
@@ -56,6 +57,15 @@ export const BLOCKED_PATTERNS: RegExp[] = [
  * Both `X-Admin-Key-1` and `X-Admin-Key-2` must be present and valid.
  * The keys must be different (two distinct approvers).
  */
+function safeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  try {
+    return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  } catch {
+    return false;
+  }
+}
+
 function validateDualApproval(
   key1: string | undefined,
   key2: string | undefined,
@@ -68,10 +78,22 @@ function validateDualApproval(
     return { valid: false, reason: 'Dual approval failed: both keys must be from different approvers' };
   }
 
-  // In production, these would be verified against a key store / HSM.
-  // For now, validate that they are non-empty and structurally valid (min 32 chars).
   if (key1.length < 32 || key2.length < 32) {
     return { valid: false, reason: 'Dual approval failed: admin keys must be at least 32 characters' };
+  }
+
+  // Verify against configured admin keys
+  const envKey1 = process.env.ADMIN_KEY_1;
+  const envKey2 = process.env.ADMIN_KEY_2;
+  if (!envKey1 || !envKey2) {
+    return { valid: false, reason: 'Admin keys not configured on server' };
+  }
+
+  // Accept keys in either order (key1↔envKey1/key2↔envKey2, or swapped)
+  const match1 = safeEqual(key1, envKey1) && safeEqual(key2, envKey2);
+  const match2 = safeEqual(key1, envKey2) && safeEqual(key2, envKey1);
+  if (!match1 && !match2) {
+    return { valid: false, reason: 'Invalid admin keys' };
   }
 
   return { valid: true };

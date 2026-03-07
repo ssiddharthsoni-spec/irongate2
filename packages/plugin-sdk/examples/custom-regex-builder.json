@@ -1,0 +1,51 @@
+[
+  {
+    "type": "INTERNAL_PROJECT_CODE",
+    "pattern": "(?:project|initiative|program)\\s*(?:code|id|#)?\\s*[=:\"']?\\s*[A-Z]{2,4}-\\d{4,8}",
+    "flags": "gi",
+    "confidence": 0.8,
+    "description": "Internal project codes (e.g., ENG-20240123, MKT-5678). Customize the prefix pattern for your organization."
+  },
+  {
+    "type": "EMPLOYEE_ID",
+    "pattern": "(?:employee|emp|staff)\\s*(?:id|#|number)?\\s*[=:\"']?\\s*E\\d{5,8}",
+    "flags": "gi",
+    "confidence": 0.85,
+    "description": "Employee IDs with E prefix (e.g., E12345). Adjust pattern to match your HR system format."
+  },
+  {
+    "type": "COST_CENTER",
+    "pattern": "(?:cost\\s*center|cc|dept\\s*code)\\s*[=:\"']?\\s*\\d{4,6}(?:-\\d{2,4})?",
+    "flags": "gi",
+    "confidence": 0.75,
+    "description": "Cost center codes — reveals organizational structure."
+  },
+  {
+    "type": "INTERNAL_URL",
+    "pattern": "https?://(?:internal|intranet|wiki|confluence|jira|gitlab|github)\\.(?:company|corp|local)\\.[a-z]{2,4}/[^\\s\"'<>]{5,200}",
+    "flags": "gi",
+    "confidence": 0.85,
+    "description": "Internal URLs. Replace 'company' with your actual internal domain."
+  },
+  {
+    "type": "DEAL_REFERENCE",
+    "pattern": "(?:deal|opportunity|prospect|lead)\\s*(?:ref|id|#|number)?\\s*[=:\"']?\\s*(?:DL|OPP|PR|LD)-\\d{4,10}",
+    "flags": "gi",
+    "confidence": 0.85,
+    "description": "CRM deal references. Customize prefixes for your CRM system."
+  },
+  {
+    "type": "INTERNAL_CODENAME",
+    "pattern": "(?:codename|project\\s+name|initiative)\\s*[=:\"']\\s*[\"']?(?:Project\\s+)?[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)?[\"']?",
+    "flags": "gi",
+    "confidence": 0.7,
+    "description": "Internal project codenames (e.g., 'Project Phoenix'). Lower confidence — may need tuning."
+  },
+  {
+    "type": "SLACK_CHANNEL_ID",
+    "pattern": "(?:channel|slack)\\s*(?:id)?\\s*[=:\"']?\\s*[CG][A-Z0-9]{8,10}",
+    "flags": "gi",
+    "confidence": 0.8,
+    "description": "Slack channel/group IDs — reveals internal communication structure."
+  }
+]

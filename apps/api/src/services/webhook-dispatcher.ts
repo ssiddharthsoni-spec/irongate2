@@ -9,6 +9,51 @@ import { db } from '../db/client';
 import { webhookSubscriptions } from '../db/schema';
 import { eq, and, sql } from 'drizzle-orm';
 import { logger } from '../lib/logger';
+import { encrypt, decrypt, deriveKey } from '@iron-gate/crypto';
+
+// ── SSRF Protection for webhook URLs ────────────────────────────────────────
+const PRIVATE_URL_PATTERNS = [
+  /^localhost$/i, /^127\./, /^10\./, /^172\.(1[6-9]|2\d|3[01])\./,
+  /^192\.168\./, /^169\.254\./, /^0\./, /^\[?::1\]?$/,
+  /^\[?fe80:/i, /^\[?fc00:/i, /^\[?fd00:/i, /^\[?::ffff:/i,
+  /\.internal$/i, /\.local$/i, /\.localhost$/i,
+];
+
+function validateWebhookUrl(url: string): void {
+  const parsed = new URL(url);
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Webhook URL must use HTTPS');
+  }
+  for (const pattern of PRIVATE_URL_PATTERNS) {
+    if (pattern.test(parsed.hostname)) {
+      throw new Error(`Webhook URL cannot point to private/internal network: ${parsed.hostname}`);
+    }
+  }
+}
+
+// ── Application-layer encryption for webhook secrets ─────────────────────────
+// Prefer dedicated encryption secret; fall back to master secret for backward compat
+const ENCRYPTION_SECRET = process.env.IRON_GATE_ENCRYPTION_SECRET
+  || process.env.IRON_GATE_MASTER_SECRET || '';
+const WEBHOOK_KEY_SALT = new TextEncoder().encode('ig-webhook-secret-enc-v1');
+let _webhookEncKey: CryptoKey | null = null;
+
+async function getWebhookEncKey(): Promise<CryptoKey> {
+  if (_webhookEncKey) return _webhookEncKey;
+  if (!ENCRYPTION_SECRET) throw new Error('IRON_GATE_ENCRYPTION_SECRET (or IRON_GATE_MASTER_SECRET) is required for webhook encryption');
+  _webhookEncKey = await deriveKey(ENCRYPTION_SECRET, WEBHOOK_KEY_SALT);
+  return _webhookEncKey;
+}
+
+async function encryptSecret(plaintext: string): Promise<string> {
+  const key = await getWebhookEncKey();
+  return encrypt(plaintext, key);
+}
+
+async function decryptSecret(ciphertext: string): Promise<string> {
+  const key = await getWebhookEncKey();
+  return decrypt(ciphertext, key);
+}
 
 /**
  * Dispatch an event to all matching webhook subscriptions for a firm.
@@ -37,8 +82,19 @@ export async function dispatch(
     });
 
     for (const sub of matching) {
+      // Decrypt the secret before use — stored encrypted at rest
+      let plainSecret: string;
+      try {
+        plainSecret = await decryptSecret(sub.secret);
+      } catch {
+        // If decryption fails, the secret may be legacy plaintext — use as-is once, then re-encrypt
+        plainSecret = sub.secret;
+        encryptSecret(sub.secret).then(enc => {
+          db.update(webhookSubscriptions).set({ secret: enc }).where(eq(webhookSubscriptions.id, sub.id)).catch(() => {});
+        }).catch(() => {});
+      }
       // Fire-and-forget per subscription
-      deliverWithRetry(sub.id, sub.url, sub.secret, eventType, payload).catch((err) => {
+      deliverWithRetry(sub.id, sub.url, plainSecret, eventType, payload).catch((err) => {
         logger.error('Webhook delivery failed', { url: sub.url, error: String(err) });
       });
     }
@@ -56,9 +112,13 @@ export async function registerWebhook(
   secret: string,
   eventTypes: string[],
 ) {
+  // SSRF protection — reject private/internal URLs
+  validateWebhookUrl(url);
+  // Encrypt webhook secret before storing — never persisted as plaintext
+  const encryptedSecret = await encryptSecret(secret);
   const [sub] = await db
     .insert(webhookSubscriptions)
-    .values({ firmId, url, secret, eventTypes, isActive: true })
+    .values({ firmId, url, secret: encryptedSecret, eventTypes, isActive: true })
     .returning();
   return sub;
 }
@@ -66,8 +126,11 @@ export async function registerWebhook(
 /**
  * Remove a webhook subscription.
  */
-export async function removeWebhook(id: string) {
-  await db.delete(webhookSubscriptions).where(eq(webhookSubscriptions.id, id));
+export async function removeWebhook(id: string, firmId: string) {
+  const result = await db.delete(webhookSubscriptions).where(
+    and(eq(webhookSubscriptions.id, id), eq(webhookSubscriptions.firmId, firmId)),
+  ).returning({ id: webhookSubscriptions.id });
+  return result.length > 0;
 }
 
 /**
@@ -75,7 +138,14 @@ export async function removeWebhook(id: string) {
  */
 export async function listWebhooks(firmId: string) {
   return db
-    .select()
+    .select({
+      id: webhookSubscriptions.id,
+      firmId: webhookSubscriptions.firmId,
+      url: webhookSubscriptions.url,
+      eventTypes: webhookSubscriptions.eventTypes,
+      isActive: webhookSubscriptions.isActive,
+      createdAt: webhookSubscriptions.createdAt,
+    })
     .from(webhookSubscriptions)
     .where(eq(webhookSubscriptions.firmId, firmId));
 }

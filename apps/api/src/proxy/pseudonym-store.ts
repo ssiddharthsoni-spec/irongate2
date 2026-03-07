@@ -3,7 +3,7 @@
 // Now with AES-256-GCM encryption at rest
 // ==========================================
 
-import { eq, and, lt } from 'drizzle-orm';
+import { eq, and, lt, sql } from 'drizzle-orm';
 import { db } from '../db/client';
 import { pseudonymMaps, firms } from '../db/schema';
 import type { PseudonymMap, PseudonymEntry } from './pseudonymizer';
@@ -14,7 +14,29 @@ import { encrypt, decrypt, deriveKey, generateSalt, saltToHex, hexToSalt } from 
 // Configuration
 // ---------------------------------------------------------------------------
 
-const MASTER_SECRET = process.env.IRON_GATE_MASTER_SECRET || 'iron-gate-dev-secret-change-in-production';
+// Prefer dedicated encryption secret; fall back to master secret for backward compat
+function getEncryptionSecret(): string {
+  const secret = process.env.IRON_GATE_ENCRYPTION_SECRET || process.env.IRON_GATE_MASTER_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging') {
+      throw new Error(
+        'FATAL: IRON_GATE_ENCRYPTION_SECRET or IRON_GATE_MASTER_SECRET must be set in production/staging.'
+      );
+    }
+    throw new Error(
+      'IRON_GATE_ENCRYPTION_SECRET or IRON_GATE_MASTER_SECRET must be set. ' +
+      'No hardcoded fallback is provided for security.'
+    );
+  }
+  return secret;
+}
+
+// Lazy getter — evaluated at request time, not import time
+let _encryptionSecret: string | null = null;
+function ENCRYPTION_SECRET(): string {
+  if (!_encryptionSecret) _encryptionSecret = getEncryptionSecret();
+  return _encryptionSecret;
+}
 
 // Cache derived keys per firm to avoid re-deriving on every request
 const keyCache = new Map<string, CryptoKey>();
@@ -44,15 +66,18 @@ async function getFirmKey(firmId: string): Promise<CryptoKey> {
   if (firmRows.length > 0 && firmRows[0].encryptionSalt) {
     salt = hexToSalt(firmRows[0].encryptionSalt);
   } else {
-    // First time — generate salt and store it
-    salt = generateSalt();
-    await db
+    // First time — generate salt and store atomically using COALESCE to prevent race conditions.
+    // If two requests arrive concurrently, only the first write takes effect.
+    const newSalt = generateSalt();
+    const [result] = await db
       .update(firms)
-      .set({ encryptionSalt: saltToHex(salt) })
-      .where(eq(firms.id, firmId));
+      .set({ encryptionSalt: sql`COALESCE(${firms.encryptionSalt}, ${saltToHex(newSalt)})` })
+      .where(eq(firms.id, firmId))
+      .returning({ encryptionSalt: firms.encryptionSalt });
+    salt = result?.encryptionSalt ? hexToSalt(result.encryptionSalt) : newSalt;
   }
 
-  const key = await deriveKey(MASTER_SECRET, salt);
+  const key = await deriveKey(ENCRYPTION_SECRET(), salt);
   keyCache.set(firmId, key);
   return key;
 }

@@ -42,4 +42,6 @@ export const securityHeadersMiddleware = createMiddleware(async (c, next) => {
 
   // Disable access to sensitive browser APIs
   c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+
+  // Expect-CT removed — deprecated by all browsers; CT is universally enforced.
 });

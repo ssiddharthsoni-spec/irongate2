@@ -1,0 +1,16 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "initiatorDomains": ["irongate-api.onrender.com", "irongate-api-staging.onrender.com"],
+      "excludedRequestDomains": [
+        "irongate-api.onrender.com",
+        "irongate-api-staging.onrender.com",
+        "api.irongate.ai"
+      ],
+      "resourceTypes": ["xmlhttprequest", "other"]
+    }
+  }
+]

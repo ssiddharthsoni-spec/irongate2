@@ -20,13 +20,17 @@ interface OnboardingOverlayProps {
   onComplete: () => void;
 }
 
-type Industry = 'legal' | 'finance' | 'tech' | 'healthcare';
+type Industry = 'legal' | 'finance' | 'tech' | 'healthcare' | 'consulting' | 'government' | 'education' | 'other';
 
 const INDUSTRIES: { id: Industry; label: string; icon: string; desc: string }[] = [
   { id: 'legal', label: 'Legal', icon: '\u2696\uFE0F', desc: 'Law firms, legal departments' },
   { id: 'finance', label: 'Finance', icon: '\uD83C\uDFE6', desc: 'Banks, investment, accounting' },
   { id: 'tech', label: 'Technology', icon: '\uD83D\uDCBB', desc: 'Software, IT, startups' },
   { id: 'healthcare', label: 'Healthcare', icon: '\uD83C\uDFE5', desc: 'Hospitals, clinics, pharma' },
+  { id: 'consulting', label: 'Consulting', icon: '\uD83D\uDCCA', desc: 'Advisory, management consulting' },
+  { id: 'government', label: 'Government', icon: '\uD83C\uDFDB\uFE0F', desc: 'Public sector, agencies' },
+  { id: 'education', label: 'Education', icon: '\uD83C\uDF93', desc: 'Universities, schools, research' },
+  { id: 'other', label: 'Other', icon: '\uD83C\uDFE2', desc: 'Insurance, real estate, non-profit' },
 ];
 
 const DEMO_TEXT = `Please review the merger documents for Meridian Health (client #MH-2024-0891).

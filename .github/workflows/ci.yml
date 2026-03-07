@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, staging]
   pull_request:
-    branches: [main]
+    branches: [main, staging]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -247,7 +247,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Run dependency audit
-        run: pnpm audit --audit-level=critical
+        run: pnpm audit --audit-level=high
 
   dependency-review:
     name: Dependency Review
@@ -262,6 +262,77 @@ jobs:
         with:
           fail-on-severity: high
 
+  sast:
+    name: SAST (CodeQL)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+
+      - name: Run CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+  secrets-scanning:
+    name: Secrets Scanning (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "true"
+
+  sbom:
+    name: SBOM Generation (CycloneDX)
+    runs-on: ubuntu-latest
+    needs: [build-packages]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate SBOM
+        run: npx @cyclonedx/cyclonedx-npm --output-file sbom.json --output-format json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+          retention-days: 90
+
   # ── Deployment ───────────────────────────────────────────────────────────
   # API deploys automatically via Render (connected to GitHub).
   # Dashboard deploys automatically via Vercel (connected to GitHub).
+  #
+  # Deployment Approval Gates:
+  # - Production deploys require: all CI checks passing (lint, build, test, security, SAST)
+  # - Enable GitHub branch protection rules on `main`:
+  #   1. Require pull request reviews (1+ approver)
+  #   2. Require status checks: lint, build-*, test-*, security, sast, secrets-scanning
+  #   3. Require conversation resolution
+  #   4. Restrict push access to release managers
+  # - Staging deploys trigger automatically on push to `staging` branch

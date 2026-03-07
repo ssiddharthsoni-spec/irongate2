@@ -80,8 +80,9 @@ interface DocumentScanData {
 }
 
 interface PromptInspectorData {
+  originalPrompt: string;
   maskedPrompt: string;
-  pseudonymMappings: Array<{ pseudonym: string; type: string; length: number }>;
+  pseudonymMappings: Array<{ original?: string; pseudonym: string; type: string; length: number }>;
 }
 
 export function App() {
@@ -139,6 +140,7 @@ export function App() {
     setOnboardingCompleted(false);
   }, []);
 
+
   // Show loading while checking onboarding status
   if (onboardingCompleted === null) {
     return (
@@ -169,7 +171,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
 
   // Prompt Inspector state
   const [inspectorData, setInspectorData] = useState<PromptInspectorData | null>(null);
-  const [inspectorView, setInspectorView] = useState<'original' | 'masked' | 'mappings'>('original');
+  const [inspectorView, setInspectorView] = useState<'diff' | 'original' | 'masked' | 'mappings'>('diff');
   const [inspectorOpen, setInspectorOpen] = useState(true);
 
   // Document Inspector state
@@ -241,6 +243,10 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
   const [isManaged, setIsManaged] = useState(false);
   const [managedFirmName, setManagedFirmName] = useState<string | null>(null);
 
+  // Kill switch and connectivity state
+  const [killSwitchActive, setKillSwitchActive] = useState(false);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
   // Active tab tracking for multi-tab awareness
   const [activeTabId, setActiveTabId] = useState<number | null>(null);
   const activeTabIdRef = useRef<number | null>(null);
@@ -294,6 +300,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
       });
     }
     loadConfig();
+
   }, []);
 
   // Listen for managed storage changes (admin pushes new policy at runtime)
@@ -318,6 +325,36 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
     };
     chrome.storage.onChanged.addListener(listener);
     return () => chrome.storage.onChanged.removeListener(listener);
+  }, []);
+
+  // Online/offline detection
+  useEffect(() => {
+    const goOnline = () => setIsOnline(true);
+    const goOffline = () => setIsOnline(false);
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+  }, []);
+
+  // Kill switch status polling (every 30s)
+  useEffect(() => {
+    let cancelled = false;
+    async function checkKillSwitch() {
+      try {
+        const result = await chrome.runtime.sendMessage({ type: 'GET_KILL_SWITCH_STATUS' });
+        if (!cancelled && result?.ok) {
+          setKillSwitchActive(!!result.active);
+        }
+      } catch {
+        // Extension context may be invalidated
+      }
+    }
+    checkKillSwitch();
+    const interval = setInterval(checkKillSwitch, 30_000);
+    return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
   // Attempt to connect to the Iron Gate API
@@ -519,6 +556,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
               }
               if (s.lastMaskedPrompt) {
                 setInspectorData({
+                  originalPrompt: s.lastOriginalPrompt || '',
                   maskedPrompt: s.lastMaskedPrompt || '',
                   pseudonymMappings: s.lastPseudonymMappings || [],
                 });
@@ -591,11 +629,25 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
           // Update Prompt Inspector data if available
           if (newScore.maskedPrompt) {
             setInspectorData({
+              originalPrompt: newScore.originalPrompt || '',
               maskedPrompt: newScore.maskedPrompt,
               pseudonymMappings: newScore.pseudonymMappings || [],
             });
             setInspectorOpen(true);
           }
+        }
+      }
+
+      // ── PROMPT_CLEARED — user emptied the input field ──
+      // Reset the live score display so stale results don't persist.
+      if (message.type === 'PROMPT_CLEARED') {
+        const clearTabId = message.payload?.tabId;
+        const currentActiveTab = activeTabIdRef.current;
+        if (clearTabId == null || currentActiveTab == null || clearTabId === currentActiveTab) {
+          setLastScore(null);
+          setInspectorData(null);
+          setInspectorOpen(false);
+          chrome.storage.local.remove('lastScore');
         }
       }
 
@@ -962,6 +1014,38 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
         </div>
       )}
 
+      {/* Kill Switch Warning */}
+      {killSwitchActive && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+          <div className="flex items-center gap-2 mb-1">
+            <svg className="w-4 h-4 text-red-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+            </svg>
+            <p className="text-xs font-semibold text-red-800">AI Monitoring Paused</p>
+          </div>
+          <p className="text-[10px] text-red-600">
+            Your administrator has temporarily disabled Iron Gate monitoring.
+            This may be due to maintenance or a security review.
+            Contact your IT team if you have questions.
+          </p>
+        </div>
+      )}
+
+      {/* Offline Indicator */}
+      {!isOnline && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4 flex items-center gap-2">
+          <svg className="w-4 h-4 text-amber-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8.288 15.038a5.25 5.25 0 0 1 7.424 0M5.106 11.856c3.807-3.808 9.98-3.808 13.788 0M1.924 8.674c5.565-5.565 14.587-5.565 20.152 0M12.53 18.22l-.53.53-.53-.53a.75.75 0 0 1 1.06 0Z" />
+          </svg>
+          <div>
+            <p className="text-xs font-medium text-amber-800">Offline — Local Detection Only</p>
+            <p className="text-[10px] text-amber-600">
+              API is unreachable. PII detection continues locally but events won&apos;t sync until reconnected.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Trial Banner */}
       {!isManaged && <TrialBanner />}
 
@@ -1199,6 +1283,16 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
               {/* Tab bar */}
               <div className="flex border-b">
                 <button
+                  onClick={() => setInspectorView('diff')}
+                  className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
+                    inspectorView === 'diff'
+                      ? 'text-iron-700 border-b-2 border-iron-600 bg-iron-50'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Changes
+                </button>
+                <button
                   onClick={() => setInspectorView('original')}
                   className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
                     inspectorView === 'original'
@@ -1206,7 +1300,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
                       : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  What You Sent
+                  Original
                 </button>
                 <button
                   onClick={() => setInspectorView('masked')}
@@ -1216,7 +1310,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
                       : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  What LLM Receives
+                  Safe Version
                 </button>
                 <button
                   onClick={() => setInspectorView('mappings')}
@@ -1226,18 +1320,73 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
                       : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  Mappings
+                  Map
                 </button>
               </div>
 
               {/* Content */}
               <div className="p-3 max-h-64 overflow-y-auto">
+                {/* Coaching diff view — shows inline changes with highlights */}
+                {inspectorView === 'diff' && (
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <p className="text-[10px] text-gray-400 uppercase tracking-wide">What Iron Gate changed</p>
+                      {inspectorData.pseudonymMappings.length > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.5 bg-indigo-100 text-indigo-700 rounded-full font-medium">
+                          {inspectorData.pseudonymMappings.length} swap{inspectorData.pseudonymMappings.length !== 1 ? 's' : ''}
+                        </span>
+                      )}
+                    </div>
+                    {inspectorData.pseudonymMappings.length === 0 ? (
+                      <div className="bg-green-50 border border-green-100 rounded-md p-3 text-center">
+                        <svg className="w-6 h-6 text-green-500 mx-auto mb-1.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                        </svg>
+                        <p className="text-xs text-green-700 font-medium">All clear!</p>
+                        <p className="text-[10px] text-green-600 mt-0.5">No sensitive data detected in this prompt.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {inspectorData.pseudonymMappings.map((m, i) => (
+                          <div key={i} className="bg-white border rounded-md overflow-hidden">
+                            <div className="flex items-center gap-1.5 px-2.5 py-1.5">
+                              <span className="text-[9px] px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded font-medium uppercase">{m.type}</span>
+                            </div>
+                            <div className="px-2.5 pb-2 flex items-center gap-2 text-xs font-mono">
+                              <span className="bg-red-100 text-red-700 px-1.5 py-0.5 rounded line-through">
+                                {'*'.repeat(Math.min(m.length, 12))}
+                              </span>
+                              <svg className="h-3 w-3 text-gray-400 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clipRule="evenodd" />
+                              </svg>
+                              <span className="bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-medium">
+                                {m.pseudonym}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                        <div className="bg-indigo-50 border border-indigo-100 rounded-md p-2 text-center">
+                          <p className="text-[10px] text-indigo-700">
+                            The AI gets realistic replacements — your answers stay just as useful.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {inspectorView === 'original' && (
                   <div>
                     <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1.5">Original prompt</p>
-                    <div className="text-xs text-gray-500 italic bg-red-50 border border-red-100 rounded-md p-2.5 leading-relaxed">
-                      Original text is not stored for privacy. The pseudonymized version below shows what was sent to the AI.
-                    </div>
+                    {inspectorData.originalPrompt ? (
+                      <pre className="text-xs text-gray-700 whitespace-pre-wrap break-words bg-red-50 border border-red-100 rounded-md p-2.5 leading-relaxed font-mono">
+                        {inspectorData.originalPrompt}
+                      </pre>
+                    ) : (
+                      <div className="text-xs text-gray-500 italic bg-red-50 border border-red-100 rounded-md p-2.5 leading-relaxed">
+                        Original text not available for this prompt.
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1272,7 +1421,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
                       <div className="space-y-1.5">
                         {inspectorData.pseudonymMappings.map((m, i) => (
                           <div key={i} className="flex items-center gap-2 text-xs bg-gray-50 rounded-md px-2.5 py-1.5 border">
-                            <span className="font-mono text-red-400">{m.length} chars</span>
+                            <span className="font-mono text-red-400">{m.original || `${m.length} chars`}</span>
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 text-gray-400 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
                               <path fillRule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clipRule="evenodd" />
                             </svg>
@@ -1293,11 +1442,17 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
       {/* Last Detection */}
       {lastScore && (
         <div className="bg-white rounded-lg p-4 mb-4 shadow-sm border">
-          <h2 className="text-sm font-medium text-gray-500 mb-2">Last Detection</h2>
+          <h2 className="text-sm font-medium text-gray-500 mb-2">
+            {lastScore.entities.length > 0
+              ? (mode === 'proxy' ? 'Protected Your Prompt' : 'Detected in Your Prompt')
+              : 'Last Scan'}
+          </h2>
           <div className="flex items-center gap-3">
             <div
               className={`text-3xl font-bold ${
-                lastScore.level === 'critical'
+                lastScore.entities.length === 0
+                  ? 'text-green-500'
+                  : lastScore.level === 'critical'
                   ? 'text-risk-critical'
                   : lastScore.level === 'high'
                   ? 'text-risk-high'
@@ -1306,12 +1461,24 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
                   : 'text-risk-low'
               }`}
             >
-              {lastScore.score}
+              {lastScore.entities.length === 0 ? '\u2713' : lastScore.score}
             </div>
             <div>
-              <div className="text-sm font-medium capitalize">{lastScore.level} Risk</div>
+              <div className="text-sm font-medium">
+                {lastScore.entities.length === 0
+                  ? 'All Clear'
+                  : mode === 'proxy'
+                    ? `${lastScore.entities.length} item${lastScore.entities.length !== 1 ? 's' : ''} protected`
+                    : `${lastScore.entities.length} item${lastScore.entities.length !== 1 ? 's' : ''} found`
+                }
+              </div>
               <div className="text-xs text-gray-500">
-                {lastScore.entities.length} entities detected
+                {lastScore.entities.length === 0
+                  ? 'No sensitive data in this prompt'
+                  : mode === 'proxy'
+                    ? 'Replaced with realistic pseudonyms'
+                    : `Sensitivity: ${lastScore.level}`
+                }
               </div>
             </div>
           </div>

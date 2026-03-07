@@ -18,13 +18,6 @@ const DEFAULT_ALERTS: AlertConfig[] = [
   { key: 'weekly_digest', label: 'Weekly Digest', description: 'A summary of all events and metrics from the past week.', enabled: true, mode: 'digest' },
 ];
 
-const DEMO_CONFIG = {
-  emailEnabled: true,
-  alerts: DEFAULT_ALERTS,
-  slackWebhook: 'https://hooks.slack.com/services/T00000/B00000/XXXXXXXX',
-  customWebhook: '',
-};
-
 export default function NotificationsSettingsPage() {
   const { apiFetch } = useApiClient();
 
@@ -38,30 +31,30 @@ export default function NotificationsSettingsPage() {
   const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [testSending, setTestSending] = useState(false);
   const [testMessage, setTestMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function fetchConfig() {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await apiFetch('/admin/firm');
+      if (!response.ok) throw new Error(`Server responded with ${response.status}`);
+      const data = await response.json();
+      if (data.notifications) {
+        const n = data.notifications;
+        if (typeof n.emailEnabled === 'boolean') setEmailEnabled(n.emailEnabled);
+        if (n.alerts) setAlerts(n.alerts);
+        if (n.slackWebhook) setSlackWebhook(n.slackWebhook);
+        if (n.customWebhook) setCustomWebhook(n.customWebhook);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to load data. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    async function fetchConfig() {
-      try {
-        setLoading(true);
-        const response = await apiFetch('/admin/firm');
-        if (!response.ok) throw new Error(`Server responded with ${response.status}`);
-        const data = await response.json();
-        if (data.notifications) {
-          const n = data.notifications;
-          if (typeof n.emailEnabled === 'boolean') setEmailEnabled(n.emailEnabled);
-          if (n.alerts) setAlerts(n.alerts);
-          if (n.slackWebhook) setSlackWebhook(n.slackWebhook);
-          if (n.customWebhook) setCustomWebhook(n.customWebhook);
-        }
-      } catch {
-        setEmailEnabled(DEMO_CONFIG.emailEnabled);
-        setAlerts(DEMO_CONFIG.alerts);
-        setSlackWebhook(DEMO_CONFIG.slackWebhook);
-        setCustomWebhook(DEMO_CONFIG.customWebhook);
-      } finally {
-        setLoading(false);
-      }
-    }
     fetchConfig();
   }, []);
 
@@ -132,6 +125,19 @@ export default function NotificationsSettingsPage() {
 
   return (
     <div className="space-y-6 max-w-2xl">
+      {error && (
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4 flex items-center justify-between">
+          <p className="text-sm text-red-700 dark:text-red-400">{error}</p>
+          <button
+            type="button"
+            onClick={fetchConfig}
+            className="ml-4 px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Email Notifications Toggle */}
       <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
         <div className="flex items-center justify-between">

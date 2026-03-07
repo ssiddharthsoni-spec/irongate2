@@ -115,61 +115,87 @@ interface SandboxResult {
   confidence: number;
 }
 
-function executeSandboxed(code: string, text: string, firmId: string): SandboxResult[] {
-  const sandbox = {
-    console: { log: () => {}, warn: () => {}, error: () => {} },
-    JSON,
-    Math,
-    String,
-    Number,
-    Boolean,
-    Array,
-    Object,
-    RegExp,
-    Date,
-    Map,
-    Set,
-    parseInt,
-    parseFloat,
-    isNaN,
-    isFinite,
-  };
+/**
+ * Plugins are now restricted to declarative regex-based rules only.
+ * Arbitrary code execution (new Function / eval) is NOT supported due to
+ * the inherent sandbox-escape risk in the Node.js main thread.
+ *
+ * Plugin `code` must be a JSON string containing an array of rules:
+ * [
+ *   { "type": "CLIENT_ID", "pattern": "CLI-\\d{6}", "flags": "gi", "confidence": 0.9 },
+ *   ...
+ * ]
+ *
+ * Each rule produces entity matches where the regex matches the input text.
+ */
+interface PluginRule {
+  type: string;
+  pattern: string;
+  flags?: string;
+  confidence?: number;
+}
 
-  const wrappedCode = `
-    "use strict";
-    const module = { exports: {} };
-    const exports = module.exports;
-    ${code}
-    return module.exports;
-  `;
+const DANGEROUS_REGEX_PATTERNS = /(\{[0-9]{4,\}|[\+\*]\{[0-9]{3,\}|(\.\*){5,})/;
+const MAX_RULES_PER_PLUGIN = 50;
+const MAX_PATTERN_LENGTH = 500;
+const REGEX_EXEC_TIMEOUT_MS = 50;
 
+function executeSandboxed(code: string, text: string, _firmId: string): SandboxResult[] {
+  let rules: PluginRule[];
   try {
-    const argNames = Object.keys(sandbox);
-    const argValues = Object.values(sandbox);
-    const factory = new Function(...argNames, wrappedCode);
-
-    const start = Date.now();
-    const pluginModule = factory(...argValues) as any;
-
-    const plugin = pluginModule.default || pluginModule.plugin || pluginModule;
-    if (typeof plugin.recognize !== 'function') return [];
-
-    const results = plugin.recognize(text, { firmId });
-
-    // Enforce 100ms timeout
-    if (Date.now() - start > 100) return [];
-
-    if (!Array.isArray(results)) return [];
-    return results.filter(
-      (r: any) =>
-        typeof r.type === 'string' &&
-        typeof r.text === 'string' &&
-        typeof r.start === 'number' &&
-        typeof r.end === 'number' &&
-        typeof r.confidence === 'number',
-    );
+    const parsed = JSON.parse(code);
+    if (!Array.isArray(parsed)) return [];
+    rules = parsed.slice(0, MAX_RULES_PER_PLUGIN);
   } catch {
+    logger.warn('Plugin code is not valid JSON — skipping (arbitrary code execution is disabled)');
     return [];
   }
+
+  const results: SandboxResult[] = [];
+  const startTime = Date.now();
+
+  for (const rule of rules) {
+    // Validate rule structure
+    if (typeof rule.type !== 'string' || typeof rule.pattern !== 'string') continue;
+    if (rule.pattern.length > MAX_PATTERN_LENGTH) continue;
+
+    // Block potentially catastrophic regex patterns (ReDoS protection)
+    if (DANGEROUS_REGEX_PATTERNS.test(rule.pattern)) {
+      logger.warn('Plugin rule has potentially dangerous regex pattern — skipping', { type: rule.type });
+      continue;
+    }
+
+    try {
+      const flags = typeof rule.flags === 'string' ? rule.flags.replace(/[^gimsuy]/g, '') : 'gi';
+      const regex = new RegExp(rule.pattern, flags);
+      const confidence = typeof rule.confidence === 'number' ? Math.min(1, Math.max(0, rule.confidence)) : 0.8;
+
+      let match: RegExpExecArray | null;
+      let matchCount = 0;
+      while ((match = regex.exec(text)) !== null && matchCount < 100) {
+        // Timeout check
+        if (Date.now() - startTime > REGEX_EXEC_TIMEOUT_MS) break;
+
+        results.push({
+          type: rule.type,
+          text: match[0],
+          start: match.index,
+          end: match.index + match[0].length,
+          confidence,
+        });
+        matchCount++;
+
+        // Prevent infinite loop on zero-length matches
+        if (match[0].length === 0) regex.lastIndex++;
+      }
+    } catch {
+      // Invalid regex — skip this rule silently
+    }
+
+    // Overall timeout
+    if (Date.now() - startTime > REGEX_EXEC_TIMEOUT_MS) break;
+  }
+
+  return results;
 }
 

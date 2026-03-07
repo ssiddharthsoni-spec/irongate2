@@ -13,7 +13,13 @@ export type DocumentType =
   | 'financial_data'
   | 'litigation_doc'
   | 'client_memo'
-  | 'personal';
+  | 'personal'
+  | 'insurance_doc'
+  | 'medical_record'
+  | 'government_doc'
+  | 'energy_report'
+  | 'real_estate_doc'
+  | 'education_record';
 
 export const DOCUMENT_TYPE_MULTIPLIERS: Record<DocumentType, number> = {
   casual_question: 0.5,
@@ -25,6 +31,12 @@ export const DOCUMENT_TYPE_MULTIPLIERS: Record<DocumentType, number> = {
   litigation_doc: 2.0,
   client_memo: 1.5,
   personal: 0.3,
+  insurance_doc: 1.8,
+  medical_record: 2.0,
+  government_doc: 2.0,
+  energy_report: 1.6,
+  real_estate_doc: 1.5,
+  education_record: 1.8,
 };
 
 interface ClassificationResult {
@@ -130,6 +142,66 @@ export function classifyDocument(text: string): ClassificationResult {
   if (/\b(my personal|my own|just for me|not work|personal project)\b/i.test(text)) {
     scores.personal = (scores.personal || 0) + 4;
     signals.push('personal_markers');
+  }
+
+  // --- Insurance Document ---
+  if (/\b(policyholder|insured|claimant|claims?\s+reserve|loss\s+ratio|combined\s+ratio|actuarial|underwriting)\b/i.test(text)) {
+    scores.insurance_doc = (scores.insurance_doc || 0) + 4;
+    signals.push('insurance_terms');
+  }
+  if (/\b(IBNR|reinsurance|treaty|catastrophe\s+model|PML|solvency)\b/i.test(text)) {
+    scores.insurance_doc = (scores.insurance_doc || 0) + 3;
+    signals.push('insurance_technical');
+  }
+
+  // --- Medical Record ---
+  if (/\b(patient|diagnosis|medication|dosage|discharge|admission|MRN|medical\s+record)\b/i.test(text)) {
+    scores.medical_record = (scores.medical_record || 0) + 4;
+    signals.push('medical_terms');
+  }
+  if (/\b(HIPAA|PHI|protected\s+health|clinical\s+trial|lab\s+results?)\b/i.test(text)) {
+    scores.medical_record = (scores.medical_record || 0) + 3;
+    signals.push('hipaa_context');
+  }
+
+  // --- Government Document ---
+  if (/\b(classified|top\s+secret|FOUO|CUI|controlled\s+unclassified|ITAR|export\s+control)\b/i.test(text)) {
+    scores.government_doc = (scores.government_doc || 0) + 5;
+    signals.push('classification_markers');
+  }
+  if (/\b(procurement|RFP|appropriation|CFIUS|inspector\s+general|OFAC|sanctions?)\b/i.test(text)) {
+    scores.government_doc = (scores.government_doc || 0) + 3;
+    signals.push('government_terms');
+  }
+
+  // --- Energy Report ---
+  if (/\b(reserves?|BOE|MBOE|production\s+rate|decline\s+curve|well\s+log|seismic)\b/i.test(text)) {
+    scores.energy_report = (scores.energy_report || 0) + 4;
+    signals.push('energy_exploration');
+  }
+  if (/\b(PPA|FERC|NERC|tariff|rate\s+case|LCOE|capacity\s+factor|renewable)\b/i.test(text)) {
+    scores.energy_report = (scores.energy_report || 0) + 3;
+    signals.push('energy_regulatory');
+  }
+
+  // --- Real Estate Document ---
+  if (/\b(cap\s+rate|NOI|rent\s+roll|occupancy|vacancy|tenant|lease\s+abstract)\b/i.test(text)) {
+    scores.real_estate_doc = (scores.real_estate_doc || 0) + 4;
+    signals.push('real_estate_terms');
+  }
+  if (/\b(1031\s+exchange|zoning|entitlement|off[\s-]?market|appraisal|APN|parcel)\b/i.test(text)) {
+    scores.real_estate_doc = (scores.real_estate_doc || 0) + 3;
+    signals.push('real_estate_deal');
+  }
+
+  // --- Education Record ---
+  if (/\b(FERPA|student\s+record|transcript|GPA|financial\s+aid|enrollment)\b/i.test(text)) {
+    scores.education_record = (scores.education_record || 0) + 4;
+    signals.push('education_terms');
+  }
+  if (/\b(Title\s+IX|disciplinary|IRB|accreditation|NCAA|tenure)\b/i.test(text)) {
+    scores.education_record = (scores.education_record || 0) + 3;
+    signals.push('education_compliance');
   }
 
   // Find the type with highest score

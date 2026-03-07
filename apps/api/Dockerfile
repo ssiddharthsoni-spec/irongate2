@@ -1,4 +1,5 @@
-FROM node:20-slim
+# Pin to specific Node.js 20 LTS release for reproducible builds
+FROM node:20.18-slim
 
 # Install pnpm via corepack
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
@@ -32,6 +33,10 @@ COPY apps/api/ apps/api/
 
 # Force IPv4 DNS resolution (Railway can't reach Supabase over IPv6)
 ENV NODE_OPTIONS="--dns-result-order=ipv4first"
+
+# Run as non-root for defense-in-depth
+RUN groupadd --system irongate && useradd --system --gid irongate irongate
+USER irongate
 
 # Expose port
 EXPOSE 3000

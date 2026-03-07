@@ -8,8 +8,8 @@
  * - Flushes when back online
  * - Max queue size: 1000 events (drops oldest if exceeded)
  *
- * Queue data is ephemeral (flushed within seconds) so plain JSON storage
- * in chrome.storage.local is sufficient — no at-rest encryption needed.
+ * Queue data is ephemeral (flushed within seconds). Events contain only
+ * hashed entity values and metadata — no raw PII is stored in the queue.
  */
 
 import { apiRequest } from './api-client';

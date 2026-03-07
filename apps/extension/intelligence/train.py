@@ -155,6 +155,114 @@ TECH_ENTERPRISE_KEYWORDS = {
     "rewrite": 4, "migration": 4, "deprecate": 5,
 }
 
+REAL_ESTATE_KEYWORDS = {
+    "cap rate": 6, "NOI": 6, "net operating income": 6, "capitalization rate": 6,
+    "occupancy rate": 5, "vacancy": 4, "tenant": 3, "lease": 3,
+    "triple net": 6, "NNN": 6, "gross lease": 4, "rent roll": 7,
+    "asking price": 5, "appraised value": 6, "assessed value": 5,
+    "comps": 4, "comparable sales": 5, "price per square foot": 5,
+    "cash on cash": 6, "IRR": 5, "debt service coverage": 7, "DSCR": 7,
+    "LTV ratio": 6, "loan to value": 6, "amortization": 4,
+    "zoning": 4, "entitlement": 5, "variance": 4, "rezoning": 6,
+    "environmental assessment": 6, "Phase I": 4, "Phase II": 5,
+    "closing date": 5, "escrow": 4, "title insurance": 4,
+    "1031 exchange": 7, "opportunity zone": 6, "tax abatement": 6,
+    "construction loan": 5, "permanent financing": 5, "bridge loan": 6,
+    "development rights": 6, "air rights": 6, "FAR": 5,
+    "HOA": 3, "condo conversion": 6, "rent stabilized": 7,
+    "off-market": 7, "pocket listing": 7, "pre-marketing": 6,
+    "LOI": 5, "letter of intent": 5, "purchase and sale agreement": 6,
+    "due diligence period": 5, "inspection contingency": 4,
+    "property management": 3, "asset management": 4,
+    "REIT": 4, "fund": 3, "limited partner": 5, "GP": 4, "LP": 4,
+}
+
+ENERGY_KEYWORDS = {
+    "well log": 7, "drilling": 4, "fracking": 6, "hydraulic fracturing": 6,
+    "reservoir": 5, "formation": 4, "permeability": 6, "porosity": 5,
+    "barrel": 3, "BOE": 5, "MBOE": 5, "production rate": 6,
+    "proved reserves": 7, "probable reserves": 7, "1P": 6, "2P": 6, "3P": 6,
+    "decline curve": 7, "EUR": 5, "estimated ultimate recovery": 7,
+    "pipeline": 3, "midstream": 4, "upstream": 4, "downstream": 4,
+    "PPA": 6, "power purchase agreement": 6, "offtake agreement": 7,
+    "interconnection": 5, "grid": 3, "capacity factor": 6,
+    "LCOE": 6, "levelized cost": 6, "curtailment": 5,
+    "solar": 2, "wind": 2, "turbine": 3, "inverter": 3,
+    "battery storage": 4, "energy storage": 4, "dispatch": 4,
+    "renewable energy credit": 5, "REC": 4, "carbon credit": 5,
+    "emission": 3, "carbon offset": 5, "ESG": 4,
+    "FERC": 5, "NERC": 5, "ERCOT": 5, "ISO": 3, "RTO": 4,
+    "tariff": 4, "rate case": 6, "rate base": 6,
+    "decommissioning": 5, "reclamation": 5, "environmental liability": 7,
+    "royalty": 5, "mineral rights": 6, "working interest": 6,
+    "joint venture": 4, "farm-in": 6, "farm-out": 6,
+    "seismic data": 7, "proprietary survey": 8, "geological survey": 6,
+    "refinery": 4, "crack spread": 7, "Henry Hub": 5, "WTI": 4, "Brent": 4,
+}
+
+INSURANCE_KEYWORDS = {
+    "policyholder": 4, "insured": 3, "beneficiary": 4, "claimant": 4,
+    "premium": 3, "deductible": 3, "coverage limit": 5, "aggregate limit": 6,
+    "claims reserve": 7, "loss reserve": 7, "IBNR": 8,
+    "incurred but not reported": 8, "case reserve": 6,
+    "actuarial": 5, "loss ratio": 6, "combined ratio": 6, "expense ratio": 5,
+    "underwriting": 4, "risk assessment": 5, "risk selection": 6,
+    "reinsurance": 5, "treaty": 5, "facultative": 6, "retrocession": 7,
+    "catastrophe model": 7, "cat model": 6, "probable maximum loss": 8, "PML": 7,
+    "return period": 5, "aggregate exceedance": 7,
+    "solvency": 5, "RBC": 5, "risk-based capital": 6, "surplus": 4,
+    "admitted": 4, "non-admitted": 5, "surplus lines": 5,
+    "policy form": 4, "endorsement": 3, "exclusion": 4, "sublimit": 5,
+    "subrogation": 5, "salvage": 4, "contribution": 4,
+    "bad faith": 7, "denial of claim": 6, "coverage dispute": 6,
+    "class action": 6, "mass tort": 7, "long-tail liability": 7,
+    "D&O": 5, "E&O": 5, "professional liability": 5, "cyber liability": 6,
+    "workers compensation": 4, "general liability": 4, "umbrella": 3,
+    "experience modification": 6, "EMR": 5, "loss development": 6,
+    "NAIC": 4, "state filing": 5, "rate filing": 6, "form filing": 5,
+}
+
+EDUCATION_KEYWORDS = {
+    "FERPA": 7, "student record": 7, "transcript": 5, "GPA": 4,
+    "enrollment": 3, "admission": 3, "applicant": 3, "financial aid": 4,
+    "scholarship": 3, "grant": 3, "tuition": 3, "endowment": 5,
+    "Title IX": 6, "sexual misconduct": 8, "harassment": 5,
+    "disciplinary": 5, "expulsion": 6, "suspension": 5, "honor code": 4,
+    "accreditation": 4, "SACSCOC": 5, "HLC": 5, "AACSB": 4,
+    "tenure": 4, "faculty": 3, "provost": 4, "dean": 3,
+    "research grant": 5, "NIH": 4, "NSF": 4, "principal investigator": 5,
+    "IRB": 6, "institutional review board": 6, "human subjects": 6,
+    "intellectual property": 5, "patent": 4, "technology transfer": 5,
+    "student athlete": 5, "NCAA": 5, "NIL": 6, "eligibility": 4,
+    "IDEA": 5, "IEP": 6, "504 plan": 6, "special education": 5,
+    "standardized test": 4, "SAT": 3, "ACT": 3, "GRE": 3,
+    "Clery Act": 6, "campus safety": 4, "crime statistics": 5,
+    "donor": 4, "gift agreement": 5, "pledge": 4, "naming rights": 6,
+    "board of trustees": 5, "regent": 4, "chancellor": 4,
+}
+
+GOVERNMENT_KEYWORDS = {
+    "classified": 7, "top secret": 9, "secret": 5, "confidential": 4,
+    "SCI": 8, "SAP": 7, "FOUO": 6, "CUI": 6,
+    "controlled unclassified": 6, "need to know": 7,
+    "clearance": 5, "security clearance": 6, "polygraph": 7,
+    "FOIA": 5, "Freedom of Information": 5, "public records request": 5,
+    "procurement": 4, "RFP": 4, "RFQ": 4, "sole source": 6,
+    "appropriation": 5, "budget": 3, "continuing resolution": 5,
+    "executive order": 5, "regulation": 3, "rulemaking": 5,
+    "ITAR": 8, "EAR": 6, "export control": 7, "munitions list": 8,
+    "CFIUS": 8, "national security": 6, "critical infrastructure": 6,
+    "FedRAMP": 5, "FISMA": 5, "NIST 800": 6, "CMMC": 6,
+    "inspector general": 6, "IG report": 6, "audit finding": 5,
+    "whistleblower": 7, "qui tam": 8, "False Claims Act": 7,
+    "lobbyist": 5, "lobbying": 4, "PAC": 5, "campaign contribution": 6,
+    "legislative": 3, "bill": 3, "amendment": 3, "committee": 3,
+    "subcommittee": 4, "hearing": 3, "testimony": 5,
+    "sanction": 6, "OFAC": 7, "SDN list": 8, "embargo": 6,
+    "ATO": 6, "authority to operate": 6, "accreditation": 4,
+    "GFE": 4, "government furnished": 5, "COTS": 4, "GOTS": 5,
+}
+
 
 def extract_keyword_features(text):
     text_lower = text.lower()
@@ -164,6 +272,9 @@ def extract_keyword_features(text):
         ("tech", TECH_KEYWORDS), ("healthcare", HEALTHCARE_KEYWORDS),
         ("general", GENERAL_KEYWORDS), ("investment_banking", INVESTMENT_BANKING_KEYWORDS),
         ("tech_enterprise", TECH_ENTERPRISE_KEYWORDS),
+        ("real_estate", REAL_ESTATE_KEYWORDS), ("energy", ENERGY_KEYWORDS),
+        ("insurance", INSURANCE_KEYWORDS), ("education", EDUCATION_KEYWORDS),
+        ("government", GOVERNMENT_KEYWORDS),
     ]:
         total_weight = 0
         matched_count = 0
@@ -385,6 +496,9 @@ if __name__ == "__main__":
             "tech": TECH_KEYWORDS, "healthcare": HEALTHCARE_KEYWORDS,
             "general": GENERAL_KEYWORDS, "investment_banking": INVESTMENT_BANKING_KEYWORDS,
             "tech_enterprise": TECH_ENTERPRISE_KEYWORDS,
+            "real_estate": REAL_ESTATE_KEYWORDS, "energy": ENERGY_KEYWORDS,
+            "insurance": INSURANCE_KEYWORDS, "education": EDUCATION_KEYWORDS,
+            "government": GOVERNMENT_KEYWORDS,
         },
     }
 

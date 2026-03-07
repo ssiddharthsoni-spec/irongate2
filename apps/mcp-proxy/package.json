@@ -1,0 +1,22 @@
+{
+  "name": "@iron-gate/mcp-proxy",
+  "version": "0.2.7",
+  "private": true,
+  "description": "MCP proxy that intercepts agentic AI tool calls for PII detection and governance",
+  "scripts": {
+    "dev": "tsx --watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "build": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@iron-gate/crypto": "workspace:*",
+    "tsx": "^4.19.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

@@ -25,103 +25,6 @@ interface UserActivityData {
   users: UserActivity[];
 }
 
-function getDemoData(): UserActivityData {
-  return {
-    users: [
-      {
-        userId: '1',
-        displayName: 'Siddharth Soni',
-        email: 'siddharth.soni@irongate.dev',
-        role: 'admin',
-        totalEvents: 347,
-        avgScore: 48.3,
-        highRiskCount: 31,
-        lastActivity: '2026-02-28T14:32:00.000Z',
-        actionBreakdown: { blocked: 8, warned: 15, proxied: 8 },
-        entityBreakdown: [
-          { type: 'PERSON', count: 89 },
-          { type: 'EMAIL', count: 67 },
-          { type: 'PRIVILEGE_MARKER', count: 34 },
-          { type: 'SSN', count: 18 },
-          { type: 'MATTER_NUMBER', count: 14 },
-          { type: 'ORGANIZATION', count: 12 },
-          { type: 'MONETARY_AMOUNT', count: 9 },
-        ],
-      },
-      {
-        userId: '2',
-        displayName: 'Emily Dawson',
-        email: 'emily.dawson@irongate.dev',
-        role: 'user',
-        totalEvents: 298,
-        avgScore: 35.2,
-        highRiskCount: 14,
-        lastActivity: '2026-02-28T13:15:00.000Z',
-        actionBreakdown: { blocked: 3, warned: 8, proxied: 3 },
-        entityBreakdown: [
-          { type: 'PERSON', count: 72 },
-          { type: 'ORGANIZATION', count: 51 },
-          { type: 'EMAIL', count: 43 },
-          { type: 'MATTER_NUMBER', count: 22 },
-        ],
-      },
-      {
-        userId: '3',
-        displayName: 'Marcus Rivera',
-        email: 'marcus.rivera@irongate.dev',
-        role: 'user',
-        totalEvents: 276,
-        avgScore: 52.7,
-        highRiskCount: 42,
-        lastActivity: '2026-02-27T11:48:00.000Z',
-        actionBreakdown: { blocked: 12, warned: 21, proxied: 9 },
-        entityBreakdown: [
-          { type: 'PERSON', count: 95 },
-          { type: 'SSN', count: 28 },
-          { type: 'CREDIT_CARD', count: 19 },
-          { type: 'EMAIL', count: 37 },
-          { type: 'ORGANIZATION', count: 24 },
-          { type: 'PRIVILEGE_MARKER', count: 11 },
-        ],
-      },
-      {
-        userId: '4',
-        displayName: 'Jennifer Hartwell',
-        email: 'jennifer.hartwell@irongate.dev',
-        role: 'user',
-        totalEvents: 251,
-        avgScore: 29.1,
-        highRiskCount: 8,
-        lastActivity: '2026-02-27T10:22:00.000Z',
-        actionBreakdown: { blocked: 2, warned: 4, proxied: 2 },
-        entityBreakdown: [
-          { type: 'PERSON', count: 61 },
-          { type: 'ORGANIZATION', count: 48 },
-          { type: 'EMAIL', count: 29 },
-        ],
-      },
-      {
-        userId: '5',
-        displayName: 'David Okonkwo',
-        email: 'david.okonkwo@irongate.dev',
-        role: 'user',
-        totalEvents: 189,
-        avgScore: 44.6,
-        highRiskCount: 22,
-        lastActivity: '2026-02-26T08:18:00.000Z',
-        actionBreakdown: { blocked: 5, warned: 12, proxied: 5 },
-        entityBreakdown: [
-          { type: 'PERSON', count: 54 },
-          { type: 'MONETARY_AMOUNT', count: 31 },
-          { type: 'DEAL_CODENAME', count: 18 },
-          { type: 'EMAIL', count: 24 },
-          { type: 'ORGANIZATION', count: 17 },
-        ],
-      },
-    ],
-  };
-}
-
 function getScoreColor(score: number): string {
   if (score > 85) return 'text-risk-critical bg-red-50 dark:bg-red-900/20';
   if (score > 60) return 'text-risk-high bg-orange-50 dark:bg-orange-900/20';
@@ -168,9 +71,9 @@ function relativeTime(iso: string): string {
 
 export default function UserActivityPage() {
   const { apiFetch } = useApiClient();
-  const [data, setData] = useState<UserActivityData>(getDemoData());
-  const [isLive, setIsLive] = useState(false);
-  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [data, setData] = useState<UserActivityData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [timeRange, setTimeRange] = useState(30);
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
 
@@ -180,16 +83,56 @@ export default function UserActivityPage() {
 
   async function fetchData() {
     try {
-      setFetchError(null);
+      setError(null);
       const response = await apiFetch(`/dashboard/user-activity?days=${timeRange}`);
-      if (!response.ok) throw new Error('Failed to fetch');
+      if (!response.ok) throw new Error('Failed to fetch user activity.');
       const json = await response.json();
       setData(json);
-      setIsLive(true);
-    } catch {
-      setIsLive(false);
-      setFetchError('Unable to connect to API. Showing demo data.');
+    } catch (err: any) {
+      setError(err.message || 'Failed to load user activity.');
+    } finally {
+      setLoading(false);
     }
+  }
+
+  if (loading) {
+    return (
+      <div>
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">User Activity</h1>
+            <p className="text-sm text-[#6e6e73] dark:text-[#86868b]">Loading...</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="bg-white dark:bg-[#1c1c1e] rounded-xl p-5 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 animate-pulse">
+              <div className="h-4 w-24 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded mb-3" />
+              <div className="h-8 w-16 bg-[#d2d2d7]/40 dark:bg-[#38383a] rounded" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <div>
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">User Activity</h1>
+            <p className="text-sm text-[#6e6e73] dark:text-[#86868b]">See what sensitive data your team is sharing with AI tools</p>
+          </div>
+        </div>
+        <div className="mb-6 px-4 py-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/40 text-sm text-red-700 dark:text-red-400 flex items-center justify-between">
+          <span>{error || 'Failed to load user activity.'}</span>
+          <button onClick={fetchData} className="ml-4 px-3 py-1 text-xs font-medium bg-red-100 dark:bg-red-900/30 rounded-lg hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors">
+            Retry
+          </button>
+        </div>
+      </div>
+    );
   }
 
   const totalUsers = data.users.length;
@@ -201,24 +144,6 @@ export default function UserActivityPage() {
 
   return (
     <div>
-      {/* Demo data banner */}
-      {!isLive && (
-        <div className="mb-4 flex items-center gap-3 rounded-lg border border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20 px-4 py-3">
-          <svg className="w-5 h-5 text-yellow-600 dark:text-yellow-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
-          </svg>
-          <p className="text-sm text-yellow-800 dark:text-yellow-300 flex-1">
-            {fetchError || 'Demo Mode — Showing sample data. Unable to connect to API. Showing demo data.'}
-          </p>
-          <button
-            onClick={fetchData}
-            className="text-xs font-medium text-yellow-700 dark:text-yellow-300 hover:underline flex-shrink-0"
-          >
-            Retry
-          </button>
-        </div>
-      )}
-
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>

@@ -34,71 +34,6 @@ interface TrustScoreResponse {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Demo data                                                          */
-/* ------------------------------------------------------------------ */
-
-function getDemoData(): TrustScoreResponse {
-  const base = new Date('2026-02-20T00:00:00Z').getTime();
-
-  return {
-    score: {
-      overall: 76,
-      dimensions: [
-        {
-          name: 'Detection Accuracy',
-          score: 82,
-          weight: 25,
-          description:
-            'Measures the precision and recall of sensitive-data detection across all monitored AI interactions.',
-        },
-        {
-          name: 'Feedback Participation',
-          score: 61,
-          weight: 15,
-          description:
-            'Tracks how actively users review and provide feedback on flagged events, improving model quality over time.',
-        },
-        {
-          name: 'Policy Compliance',
-          score: 78,
-          weight: 30,
-          description:
-            'Evaluates adherence to organization-defined governance policies, including blocking rules and data-handling procedures.',
-        },
-        {
-          name: 'Chain Integrity',
-          score: 71,
-          weight: 15,
-          description:
-            'Verifies the completeness and tamper-resistance of the audit trail for every AI interaction event.',
-        },
-        {
-          name: 'Coverage Completeness',
-          score: 68,
-          weight: 15,
-          description:
-            'Assesses the percentage of AI tools and user groups actively monitored by Iron Gate.',
-        },
-      ],
-      firmId: 'demo',
-      computedAt: '2026-02-20T12:00:00.000Z',
-    },
-    history: Array.from({ length: 30 }, (_, i) => {
-      const day = new Date(base - (29 - i) * 86400000);
-      const seed1 = ((i * 7 + 13) % 30);
-      const seed2 = ((i * 11 + 3) % 15);
-      const seed3 = ((i * 5 + 9) % 10);
-      return {
-        date: day.toISOString().split('T')[0],
-        totalEvents: 80 + seed1 * 4,
-        avgScore: 70 + seed2,
-        complianceRate: 85 + seed3,
-      };
-    }),
-  };
-}
-
-/* ------------------------------------------------------------------ */
 /*  Score color helpers                                                 */
 /* ------------------------------------------------------------------ */
 
@@ -222,10 +157,10 @@ function DimensionCard({ dimension }: { dimension: Dimension }) {
 
 export default function TrustScorePage() {
   const { apiFetch } = useApiClient();
-  const [data, setData] = useState<TrustScoreResponse>(getDemoData());
-  const [isLive, setIsLive] = useState(false);
+  const [data, setData] = useState<TrustScoreResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchTrustScore();
@@ -234,43 +169,59 @@ export default function TrustScorePage() {
   async function fetchTrustScore() {
     try {
       setSyncing(true);
-      setFetchError(null);
+      setError(null);
       const response = await apiFetch('/dashboard/trust-score?days=30');
 
-      if (!response.ok) throw new Error('Failed to fetch');
+      if (!response.ok) throw new Error('Failed to fetch trust score.');
       const json = await response.json();
       setData(json);
-      setIsLive(true);
-    } catch {
-      setIsLive(false);
-      setFetchError('Unable to connect to API. Showing demo data.');
+    } catch (err: any) {
+      setError(err.message || 'Failed to load trust score.');
     } finally {
       setSyncing(false);
+      setLoading(false);
     }
+  }
+
+  if (loading) {
+    return (
+      <div>
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Trust Score</h1>
+            <p className="text-sm text-[#6e6e73] dark:text-[#86868b]">Loading...</p>
+          </div>
+        </div>
+        <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 mb-6">
+          <div className="h-[220px] bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded-lg animate-pulse" />
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <div>
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7]">Trust Score</h1>
+            <p className="text-sm text-[#6e6e73] dark:text-[#86868b]">Composite governance health across 5 dimensions</p>
+          </div>
+        </div>
+        <div className="mb-6 px-4 py-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/40 text-sm text-red-700 dark:text-red-400 flex items-center justify-between">
+          <span>{error || 'Failed to load trust score.'}</span>
+          <button onClick={fetchTrustScore} className="ml-4 px-3 py-1 text-xs font-medium bg-red-100 dark:bg-red-900/30 rounded-lg hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors">
+            Retry
+          </button>
+        </div>
+      </div>
+    );
   }
 
   const { score, history } = data;
 
   return (
     <div>
-      {/* Demo/error banner */}
-      {!isLive && !syncing && (
-        <div className="mb-4 flex items-center gap-3 rounded-lg border border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20 px-4 py-3">
-          <svg className="w-5 h-5 text-yellow-600 dark:text-yellow-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
-          </svg>
-          <p className="text-sm text-yellow-800 dark:text-yellow-300 flex-1">
-            <span className="font-medium">Demo Mode</span> — {fetchError || 'Showing sample data.'}
-          </p>
-          <button
-            onClick={fetchTrustScore}
-            className="text-xs font-medium text-yellow-700 dark:text-yellow-300 hover:underline flex-shrink-0"
-          >
-            Retry
-          </button>
-        </div>
-      )}
-
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>

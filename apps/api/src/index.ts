@@ -2,6 +2,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { bodyLimit } from 'hono/body-limit';
+import { createMiddleware } from 'hono/factory';
 import { logger as honoLogger } from 'hono/logger';
 import { logger } from './lib/logger';
 import { z } from 'zod';
@@ -16,6 +17,21 @@ if (process.env.SENTRY_DSN) {
       dsn: process.env.SENTRY_DSN,
       environment: process.env.NODE_ENV || 'development',
       tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
+      // Strip PII from error reports — never send request bodies to Sentry
+      beforeSend(event: any) {
+        if (event.request) {
+          delete event.request.data;
+          delete event.request.cookies;
+          if (event.request.headers) {
+            delete event.request.headers['authorization'];
+            delete event.request.headers['x-api-key'];
+            delete event.request.headers['x-admin-key-1'];
+            delete event.request.headers['x-admin-key-2'];
+            delete event.request.headers['cookie'];
+          }
+        }
+        return event;
+      },
     });
     SentryMod = mod;
     logger.info('Sentry initialized');
@@ -45,14 +61,22 @@ import { apiKeyRoutes } from './routes/api-keys';
 import { complianceRoutes } from './routes/compliance';
 import { userDataRoutes } from './routes/user-data';
 import { logoutRoutes } from './routes/logout';
+import { provenanceRoutes } from './routes/provenance';
+import { scimRoutes } from './routes/scim';
+import { incidentRoutes } from './routes/incidents';
+import { enterpriseRoutes } from './routes/enterprise';
+import classifyRoutes from './routes/classify';
 import { authMiddleware } from './middleware/auth';
-import { rateLimitMiddleware } from './middleware/rate-limit';
+import { rateLimitMiddleware, proxyRateLimitMiddleware } from './middleware/rate-limit';
 import { firmContextMiddleware } from './middleware/firm-context';
+import { rlsContextMiddleware } from './middleware/rls-context';
 import { securityHeadersMiddleware } from './middleware/security-headers';
 import { requestLoggerMiddleware } from './middleware/request-logger';
 import { csrfProtectionMiddleware } from './middleware/csrf';
 import { jwtRevocationMiddleware } from './middleware/jwt-revocation';
 import { requirePerm } from './middleware/rbac';
+import { adminRestrictionsMiddleware } from './middleware/admin-restrictions';
+import { mfaEnforcementMiddleware } from './middleware/mfa-enforcement';
 import { metrics } from './lib/metrics';
 import { openApiSpec } from './docs/openapi';
 import { sql } from 'drizzle-orm';
@@ -119,7 +143,7 @@ app.use(
 app.get('/health', async (c) => {
   const health: Record<string, unknown> = {
     status: 'ok',
-    version: '0.1.0',
+    version: '0.2.7',
     timestamp: new Date().toISOString(),
   };
 
@@ -131,18 +155,57 @@ app.get('/health', async (c) => {
     } catch (e) {
       health.database = 'disconnected';
       health.status = 'degraded';
-      health.dbError = e instanceof Error ? e.message : String(e);
+      // Don't leak DB error details (may contain connection strings)
+      health.dbError = 'connection_failed';
     }
   }
 
   return c.json(health);
 });
 
+// Kubernetes liveness probe — always returns 200 if process is running
+app.get('/health/live', (c) => c.json({ status: 'alive' }));
+
+// Kubernetes readiness probe — returns 200 only if dependencies are healthy
+app.get('/health/ready', async (c) => {
+  const checks: Record<string, boolean> = {};
+
+  // Database check
+  try {
+    await db.execute(sql`SELECT 1`);
+    checks.database = true;
+  } catch {
+    checks.database = false;
+  }
+
+  // Redis check
+  try {
+    const redis = (await import('./lib/redis')).getRedisClient();
+    if (redis) {
+      await redis.ping();
+      checks.redis = true;
+    } else {
+      checks.redis = false;
+    }
+  } catch {
+    checks.redis = false;
+  }
+
+  // Encryption config check
+  checks.encryption = !!(process.env.IRON_GATE_ENCRYPTION_SECRET || process.env.IRON_GATE_MASTER_SECRET);
+
+  const allHealthy = Object.values(checks).every(Boolean);
+  return c.json(
+    { status: allHealthy ? 'ready' : 'degraded', checks },
+    allHealthy ? 200 : 503,
+  );
+});
+
 // Mirror health check under /v1 so extension connect works without auth
 app.get('/v1/health', async (c) => {
   return c.json({
     status: 'ok',
-    version: '0.1.0',
+    version: '0.2.7',
     timestamp: new Date().toISOString(),
   });
 });
@@ -192,20 +255,54 @@ app.get('/openapi.json', (c) => c.json(openApiSpec));
 app.get('/docs', (c) => {
   const html = `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/><title>Iron Gate API Docs</title>
-<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css"/>
+<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.18.2/swagger-ui.css"
+  integrity="sha384-rcbEi6xgdPk0iWkAQzT2F3FeBJXdG+ydrawGlfHAFIZG7wU6aKbQaRewysYpmrlW" crossorigin="anonymous"/>
 </head><body><div id="swagger-ui"></div>
-<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script src="https://unpkg.com/swagger-ui-dist@5.18.2/swagger-ui-bundle.js"
+  integrity="sha384-NXtFPpN61oWCuN4D42K6Zd5Rt2+uxeIT36R7kpXBuY9tLnZorzrJ4ykpqwJfgjpZ" crossorigin="anonymous"></script>
 <script>SwaggerUIBundle({ url: '/openapi.json', dom_id: '#swagger-ui' });</script>
 </body></html>`;
   return c.html(html);
 });
 
-// Auth routes (self-authenticated — must be mounted before the global auth middleware)
+// Auth routes — stricter rate limit (20 req/min per IP) to prevent brute-force.
+// Mounted before the global auth middleware because these endpoints self-authenticate.
+const authRateCounts = new Map<string, { count: number; resetAt: number }>();
+const AUTH_RATE_LIMIT = 20;
+const AUTH_RATE_WINDOW = 60_000;
+
+app.use('/v1/auth/*', createMiddleware(async (c, next) => {
+  const ip = c.req.header('cf-connecting-ip')
+    || c.req.header('x-render-client-ip')
+    || (c.req.header('x-forwarded-for') || '').split(',')[0].trim()
+    || 'anonymous';
+  const now = Date.now();
+  let entry = authRateCounts.get(ip);
+  if (!entry || now > entry.resetAt) {
+    entry = { count: 0, resetAt: now + AUTH_RATE_WINDOW };
+    authRateCounts.set(ip, entry);
+  }
+  entry.count++;
+  if (entry.count > AUTH_RATE_LIMIT) {
+    return c.json({ error: 'Too many auth requests — try again later' }, 429);
+  }
+  // Periodic cleanup
+  if (authRateCounts.size > 5000) {
+    for (const [k, v] of authRateCounts) {
+      if (now > v.resetAt) authRateCounts.delete(k);
+    }
+  }
+  await next();
+}));
+
 app.route('/v1/auth', authRoutes);
 app.route('/v1/auth', extensionAuthRoutes);
 
 // Stripe webhook (no auth — verified via webhook signature)
 app.route('/v1/webhooks/stripe', stripeWebhookRoutes);
+
+// SCIM 2.0 provisioning (no Clerk auth — uses its own bearer token via firms.config.scimToken)
+app.route('/scim', scimRoutes);
 
 // API routes (with auth + security middleware)
 app.use('/v1/*', csrfProtectionMiddleware);
@@ -213,9 +310,14 @@ app.use('/v1/*', authMiddleware);
 app.use('/v1/*', jwtRevocationMiddleware);
 app.use('/v1/*', rateLimitMiddleware);
 app.use('/v1/*', firmContextMiddleware);
+app.use('/v1/*', rlsContextMiddleware);
 
+// MFA enforcement on admin routes (when firm has mfaRequired=true)
+app.use('/v1/admin/*', mfaEnforcementMiddleware);
 // RBAC enforcement on admin and privileged routes
 app.use('/v1/admin/*', requirePerm('viewDashboard'));
+// Dual-approval restrictions for Iron Gate internal admin access
+app.use('/v1/admin/internal/*', adminRestrictionsMiddleware);
 app.use('/v1/invites/*', requirePerm('inviteUsers'));
 
 app.route('/v1/events', eventsRoutes);
@@ -223,6 +325,7 @@ app.route('/v1/dashboard', dashboardRoutes);
 app.route('/v1/admin', adminRoutes);
 app.route('/v1/reports', reportsRoutes);
 app.route('/v1/feedback', feedbackRoutes);
+app.use('/v1/proxy/*', proxyRateLimitMiddleware);
 app.route('/v1/proxy', proxyRoutes);
 app.route('/v1/documents', documentRoutes);
 app.route('/v1/audit', auditRoutes);
@@ -236,6 +339,29 @@ app.route('/v1/compliance', complianceRoutes);
 app.route('/v1/user', userDataRoutes);
 app.route('/v1/heartbeat', heartbeatRoutes);
 app.route('/v1/logout', logoutRoutes);
+app.route('/v1/provenance', provenanceRoutes);
+app.route('/v1/incidents', incidentRoutes);
+app.route('/v1/enterprise', enterpriseRoutes);
+app.route('/v1/classify', classifyRoutes);
+
+// ---------------------------------------------------------------------------
+// Internal cron endpoints (secured by CRON_SECRET header)
+// ---------------------------------------------------------------------------
+app.get('/internal/cron/retention', async (c) => {
+  const cronSecret = process.env.CRON_SECRET;
+  const provided = c.req.header('Authorization');
+  if (!cronSecret || provided !== `Bearer ${cronSecret}`) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  try {
+    const { runRetentionCleanup } = await import('./jobs/data-retention');
+    const result = await runRetentionCleanup();
+    return c.json({ status: 'ok', ...result });
+  } catch (err) {
+    logger.error('Retention cron failed', { error: err instanceof Error ? err.message : String(err) });
+    return c.json({ error: 'Retention cleanup failed' }, 500);
+  }
+});
 
 // 404 handler
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
@@ -270,8 +396,10 @@ const envSchema = z.object({
   SUPABASE_DB_URL: z.string().min(1).optional(),
   CLERK_SECRET_KEY: isDevAuth ? z.string().optional() : z.string().min(1, 'CLERK_SECRET_KEY is required for production auth'),
   IRON_GATE_MASTER_SECRET: z.string().min(16, 'IRON_GATE_MASTER_SECRET must be at least 16 characters').optional(),
+  IRON_GATE_ENCRYPTION_SECRET: z.string().min(16, 'IRON_GATE_ENCRYPTION_SECRET must be at least 16 characters').optional(),
+  IRON_GATE_SIGNING_SECRET: z.string().min(16, 'IRON_GATE_SIGNING_SECRET must be at least 16 characters').optional(),
   PORT: z.string().regex(/^\d+$/, 'PORT must be a number').optional().default('3000'),
-  NODE_ENV: z.enum(['development', 'production', 'test']).optional().default('development'),
+  NODE_ENV: z.enum(['development', 'staging', 'production', 'test']).optional().default('development'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).optional().default('info'),
   REDIS_URL: z.string().min(1).optional(),
   CHROME_EXTENSION_ID: z.string().optional(),
@@ -284,6 +412,7 @@ const envSchema = z.object({
   RESEND_API_KEY: z.string().optional(),
   SENTRY_DSN: z.string().optional(),
   DETECTION_SERVICE_URL: z.string().min(1).optional(),
+  CRON_SECRET: z.string().min(16).optional(),
 }).refine(
   (data) => data.DATABASE_URL || data.SUPABASE_DB_URL,
   { message: 'Either DATABASE_URL or SUPABASE_DB_URL must be set' },
@@ -309,6 +438,13 @@ if (!process.env.ALLOWED_EXTENSION_IDS && !process.env.CHROME_EXTENSION_ID) {
 }
 if (!process.env.ADMIN_KEY_1 || !process.env.ADMIN_KEY_2) {
   logger.warn('ADMIN_KEY_1/ADMIN_KEY_2 not set — kill switch endpoint will be inaccessible');
+}
+if (process.env.IRON_GATE_MASTER_SECRET && !process.env.IRON_GATE_ENCRYPTION_SECRET && !process.env.IRON_GATE_SIGNING_SECRET) {
+  if (process.env.NODE_ENV === 'production') {
+    logger.error('CRITICAL: Using shared IRON_GATE_MASTER_SECRET in production. Set separate IRON_GATE_ENCRYPTION_SECRET and IRON_GATE_SIGNING_SECRET.');
+    throw new Error('FATAL: Separate IRON_GATE_ENCRYPTION_SECRET and IRON_GATE_SIGNING_SECRET required in production');
+  }
+  logger.warn('Using shared IRON_GATE_MASTER_SECRET for both encryption and signing — set IRON_GATE_ENCRYPTION_SECRET and IRON_GATE_SIGNING_SECRET separately for production');
 }
 if (process.env.IRON_GATE_DEV_AUTH === 'true' && process.env.NODE_ENV === 'production') {
   logger.error('CRITICAL: IRON_GATE_DEV_AUTH=true is set in production! Disabling dev auth.');

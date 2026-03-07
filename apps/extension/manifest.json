@@ -8,11 +8,11 @@
     "activeTab",
     "storage",
     "sidePanel",
-    "webRequest",
     "alarms",
     "scripting",
     "webNavigation",
-    "notifications"
+    "notifications",
+    "declarativeNetRequest"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
@@ -20,7 +20,7 @@
     "https://claude.ai/*",
     "https://gemini.google.com/*",
     "https://irongate-api.onrender.com/*",
-    "http://localhost:3000/*"
+    "https://irongate-api-staging.onrender.com/*"
   ],
   "optional_host_permissions": [
     "https://copilot.microsoft.com/*",
@@ -96,13 +96,27 @@
   "storage": {
     "managed_schema": "managed_schema.json"
   },
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "iron_gate_net_rules",
+        "enabled": true,
+        "path": "net_request_rules.json"
+      }
+    ]
+  },
   "web_accessible_resources": [
     {
       "resources": ["intelligence/model_weights.json"],
-      "matches": ["<all_urls>"]
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*"
+      ]
     }
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'none'; connect-src https://irongate-api.onrender.com http://localhost:3000 'self';"
+    "extension_pages": "script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; connect-src https://irongate-api.onrender.com https://irongate-api-staging.onrender.com 'self';"
   }
 }

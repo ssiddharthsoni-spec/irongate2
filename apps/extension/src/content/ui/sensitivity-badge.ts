@@ -18,6 +18,8 @@
 interface SensitivityBadgeHandle {
   /** Update the badge with a new score and level */
   update(score: number, level: string): void;
+  /** Show the badge in standby mode (AI tool detected, no content scored yet) */
+  showStandby(): void;
   /** Show the badge */
   show(): void;
   /** Hide the badge */
@@ -246,6 +248,22 @@ export function createSensitivityBadge(): SensitivityBadgeHandle {
       } else if (score === 0 && isVisible) {
         handle.hide();
       }
+    },
+
+    showStandby() {
+      if (isVisible) return;
+      isVisible = true;
+      // Standby state: muted green shield with "Protected" label
+      badge.style.display = 'flex';
+      badge.style.animation = 'ironGateBadgeFadeIn 0.25s ease-out forwards';
+      badge.style.background = '#f0fdf4';
+      badge.style.color = '#166534';
+      badge.style.border = '1px solid #bbf7d0';
+      iconEl.style.color = '#22c55e';
+      dot.style.background = '#22c55e';
+      dot.style.boxShadow = '0 0 6px rgba(34, 197, 94, 0.3)';
+      scoreEl.textContent = '';
+      labelEl.textContent = 'Protected';
     },
 
     show() {

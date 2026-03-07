@@ -43,6 +43,7 @@ export interface KillSwitchState {
 async function fetchWithTimeout(
   url: string,
   timeoutMs: number,
+  extraHeaders?: Record<string, string>,
 ): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -50,7 +51,7 @@ async function fetchWithTimeout(
   try {
     return await fetch(url, {
       method: 'GET',
-      headers: { Accept: 'application/json' },
+      headers: { Accept: 'application/json', ...extraHeaders },
       signal: controller.signal,
     });
   } finally {
@@ -70,13 +71,31 @@ async function fetchWithTimeout(
  */
 export async function checkKillSwitch(
   apiBaseUrl: string,
+  apiKey?: string,
 ): Promise<KillSwitchState> {
-  const url = `${apiBaseUrl.replace(/\/+$/, '')}/kill-switch`;
+  // If no API key is configured, the extension isn't set up yet.
+  // Don't activate the kill switch — just report inactive without blocking.
+  if (!apiKey) {
+    return { kill_switch: false, active: true, config_version: 0 };
+  }
+
+  const url = `${apiBaseUrl.replace(/\/+$/, '')}/security/extension/status`;
 
   try {
-    const response = await fetchWithTimeout(url, REQUEST_TIMEOUT);
+    const response = await fetchWithTimeout(url, REQUEST_TIMEOUT, {
+      'X-API-Key': apiKey,
+    });
 
     if (!response.ok) {
+      // 401/403 = auth issue (key not registered yet, expired, etc.)
+      // Don't lock the user out — treat as "not configured".
+      if (response.status === 401 || response.status === 403) {
+        console.warn(
+          `[SECURITY] Kill-switch endpoint returned HTTP ${response.status}. API key not registered — skipping kill switch.`,
+        );
+        return { kill_switch: false, active: true, config_version: 0 };
+      }
+      // Other errors (5xx, etc.) — fail closed for safety
       console.error(
         `[SECURITY] Kill-switch endpoint returned HTTP ${response.status}. Failing closed.`,
       );
@@ -109,11 +128,13 @@ export async function checkKillSwitch(
 export function startKillSwitchPoller(
   apiBaseUrl: string,
   onKillSwitch: (active: boolean) => void,
+  getApiKey?: () => string | undefined,
 ): () => void {
   let lastKnownActive: boolean | null = null;
 
   async function poll(): Promise<void> {
-    const state = await checkKillSwitch(apiBaseUrl);
+    const apiKey = getApiKey?.();
+    const state = await checkKillSwitch(apiBaseUrl, apiKey);
 
     // Determine whether the extension should be disabled
     const shouldDisable = state.kill_switch || !state.active;

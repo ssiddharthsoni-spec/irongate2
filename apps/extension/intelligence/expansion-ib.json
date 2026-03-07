@@ -1,0 +1,1326 @@
+[
+  {
+    "id": "IB091",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "Can you walk me through how to build a discounted cash flow model from scratch? I want to understand the core assumptions around terminal value and WACC.",
+    "label": "SAFE",
+    "sensitivity_types": [],
+    "reasoning": "General valuation methodology question with no deal-specific or confidential information.",
+    "regulations": [],
+    "pii_entities": [],
+    "contextual_entities": ["DCF model", "terminal value", "WACC"],
+    "confidence": 0.97
+  },
+  {
+    "id": "IB092",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "What are the key differences between a leveraged buyout and a management buyout? When would a sponsor prefer one structure over the other?",
+    "label": "SAFE",
+    "sensitivity_types": [],
+    "reasoning": "Academic question about deal structures with no specific transaction details.",
+    "regulations": [],
+    "pii_entities": [],
+    "contextual_entities": ["LBO", "MBO", "sponsor"],
+    "confidence": 0.96
+  },
+  {
+    "id": "IB093",
+    "industry": "investment_banking",
+    "role_perspective": "associate",
+    "prompt": "Help me understand the accretion/dilution analysis framework. How do you determine whether a merger is accretive to the acquirer's EPS?",
+    "label": "SAFE",
+    "sensitivity_types": [],
+    "reasoning": "General M&A modeling technique question without reference to any specific transaction.",
+    "regulations": [],
+    "pii_entities": [],
+    "contextual_entities": ["accretion/dilution", "merger", "EPS"],
+    "confidence": 0.97
+  },
+  {
+    "id": "IB094",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "What's the standard methodology for calculating unlevered free cash flow? I keep getting confused about whether to add back stock-based compensation.",
+    "label": "SAFE",
+    "sensitivity_types": [],
+    "reasoning": "Textbook financial modeling question with no proprietary data.",
+    "regulations": [],
+    "pii_entities": [],
+    "contextual_entities": ["unlevered free cash flow", "stock-based compensation"],
+    "confidence": 0.98
+  },
+  {
+    "id": "IB095",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "How do you typically sensitize an LBO model? What are the key variables to toggle for entry multiple, leverage, and exit assumptions?",
+    "label": "SAFE",
+    "sensitivity_types": [],
+    "reasoning": "General LBO modeling technique without any deal-specific parameters.",
+    "regulations": [],
+    "pii_entities": [],
+    "contextual_entities": ["LBO model", "entry multiple", "leverage", "exit assumptions"],
+    "confidence": 0.96
+  },
+  {
+    "id": "IB096",
+    "industry": "investment_banking",
+    "role_perspective": "associate",
+    "prompt": "Can you explain the difference between enterprise value and equity value bridges? I need to make sure I'm handling minority interest and pension liabilities correctly.",
+    "label": "SAFE",
+    "sensitivity_types": [],
+    "reasoning": "Standard valuation concept question with no confidential data.",
+    "regulations": [],
+    "pii_entities": [],
+    "contextual_entities": ["enterprise value", "equity value", "minority interest", "pension liabilities"],
+    "confidence": 0.97
+  },
+  {
+    "id": "IB097",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "What public comps multiples are typically used for SaaS companies? I know EV/Revenue is common but what about EV/ARR vs EV/NTM Revenue?",
+    "label": "SAFE",
+    "sensitivity_types": [],
+    "reasoning": "General market analysis question about valuation multiples for a sector.",
+    "regulations": [],
+    "pii_entities": [],
+    "contextual_entities": ["SaaS", "EV/Revenue", "EV/ARR", "public comps"],
+    "confidence": 0.95
+  },
+  {
+    "id": "IB098",
+    "industry": "investment_banking",
+    "role_perspective": "vp_banking",
+    "prompt": "How should we think about structuring a sell-side process for a mid-market industrials company? What's the typical timeline from engagement letter to close?",
+    "label": "SAFE",
+    "sensitivity_types": [],
+    "reasoning": "General process question about sell-side advisory without identifying any specific company or deal.",
+    "regulations": [],
+    "pii_entities": [],
+    "contextual_entities": ["sell-side process", "mid-market", "industrials"],
+    "confidence": 0.93
+  },
+  {
+    "id": "IB099",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "What are the main sectors that tend to trade at premium multiples and why? I'm trying to understand sector-level valuation dispersion in the current market.",
+    "label": "SAFE",
+    "sensitivity_types": [],
+    "reasoning": "Broad market analysis question with no insider information.",
+    "regulations": [],
+    "pii_entities": [],
+    "contextual_entities": ["sector valuation", "premium multiples"],
+    "confidence": 0.97
+  },
+  {
+    "id": "IB100",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "Can you explain how a reverse merger works and why a company might choose that path over a traditional IPO or SPAC?",
+    "label": "SAFE",
+    "sensitivity_types": [],
+    "reasoning": "Educational question about transaction structures without any deal-specific context.",
+    "regulations": [],
+    "pii_entities": [],
+    "contextual_entities": ["reverse merger", "IPO", "SPAC"],
+    "confidence": 0.97
+  },
+  {
+    "id": "IB101",
+    "industry": "investment_banking",
+    "role_perspective": "associate",
+    "prompt": "What are the typical covenant packages in leveraged finance? How do maintenance vs incurrence covenants differ in terms of risk allocation?",
+    "label": "SAFE",
+    "sensitivity_types": [],
+    "reasoning": "General leveraged finance knowledge question with no deal-specific terms.",
+    "regulations": [],
+    "pii_entities": [],
+    "contextual_entities": ["covenants", "leveraged finance", "maintenance covenants", "incurrence covenants"],
+    "confidence": 0.96
+  },
+  {
+    "id": "IB102",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "How do you normalize EBITDA for one-time charges and restructuring costs? What adjustments are generally accepted by buyers vs ones that get pushed back on?",
+    "label": "SAFE",
+    "sensitivity_types": [],
+    "reasoning": "General financial analysis methodology question.",
+    "regulations": [],
+    "pii_entities": [],
+    "contextual_entities": ["EBITDA normalization", "restructuring costs", "one-time charges"],
+    "confidence": 0.96
+  },
+  {
+    "id": "IB103",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "What's the best way to think about selecting precedent transactions for a comparable transactions analysis? Should I weight more recent deals more heavily?",
+    "label": "SAFE",
+    "sensitivity_types": [],
+    "reasoning": "Methodological question about precedent transaction analysis with no specific deal references.",
+    "regulations": [],
+    "pii_entities": [],
+    "contextual_entities": ["precedent transactions", "comparable transactions analysis"],
+    "confidence": 0.97
+  },
+  {
+    "id": "IB104",
+    "industry": "investment_banking",
+    "role_perspective": "vp_banking",
+    "prompt": "In the current rate environment, how are banks typically structuring their leveraged loan commitments? Are we seeing more flex provisions and what does that mean for execution risk?",
+    "label": "SAFE",
+    "sensitivity_types": [],
+    "reasoning": "General market commentary question about leveraged lending trends without proprietary information.",
+    "regulations": [],
+    "pii_entities": [],
+    "contextual_entities": ["leveraged loans", "flex provisions", "execution risk"],
+    "confidence": 0.93
+  },
+  {
+    "id": "IB105",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "Can you explain how to calculate the implied premium in a stock-for-stock merger? What exchange ratio mechanics should I understand?",
+    "label": "SAFE",
+    "sensitivity_types": [],
+    "reasoning": "Textbook M&A concept question with no reference to any actual transaction.",
+    "regulations": [],
+    "pii_entities": [],
+    "contextual_entities": ["implied premium", "stock-for-stock merger", "exchange ratio"],
+    "confidence": 0.97
+  },
+  {
+    "id": "IB106",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "What is the role of a stapled financing package in an M&A auction process? How does it affect bidder participation?",
+    "label": "SAFE",
+    "sensitivity_types": [],
+    "reasoning": "General knowledge question about M&A process mechanics.",
+    "regulations": [],
+    "pii_entities": [],
+    "contextual_entities": ["stapled financing", "M&A auction"],
+    "confidence": 0.96
+  },
+  {
+    "id": "IB107",
+    "industry": "investment_banking",
+    "role_perspective": "associate",
+    "prompt": "How does the Section 338(h)(10) election impact the tax structuring of an acquisition? When would a buyer push for asset deal treatment?",
+    "label": "SAFE",
+    "sensitivity_types": [],
+    "reasoning": "General tax structuring question applicable to M&A broadly, no deal-specific details.",
+    "regulations": [],
+    "pii_entities": [],
+    "contextual_entities": ["Section 338(h)(10)", "asset deal", "tax structuring"],
+    "confidence": 0.95
+  },
+  {
+    "id": "IB108",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "What are typical EBITDA margins for healthcare services companies and how do they compare to healthcare IT? I'm building a sector overview for a pitch.",
+    "label": "SAFE",
+    "sensitivity_types": [],
+    "reasoning": "General sector research for a pitch deck using publicly available data.",
+    "regulations": [],
+    "pii_entities": [],
+    "contextual_entities": ["EBITDA margins", "healthcare services", "healthcare IT", "sector overview"],
+    "confidence": 0.94
+  },
+  {
+    "id": "IB109",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "How do you model working capital adjustments in an M&A context? What's the difference between a peg and a true-up mechanism at closing?",
+    "label": "SAFE",
+    "sensitivity_types": [],
+    "reasoning": "General M&A modeling and deal mechanics question.",
+    "regulations": [],
+    "pii_entities": [],
+    "contextual_entities": ["working capital adjustments", "peg", "true-up mechanism"],
+    "confidence": 0.96
+  },
+  {
+    "id": "IB110",
+    "industry": "investment_banking",
+    "role_perspective": "associate",
+    "prompt": "What's the typical fee structure for a sell-side advisory mandate? How do success fees scale with deal size in the middle market?",
+    "label": "SAFE",
+    "sensitivity_types": [],
+    "reasoning": "General industry knowledge about advisory fee structures, not tied to a specific engagement.",
+    "regulations": [],
+    "pii_entities": [],
+    "contextual_entities": ["sell-side advisory", "success fees", "middle market"],
+    "confidence": 0.95
+  },
+  {
+    "id": "IB111",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "How does the concept of a 'material adverse change' clause work in acquisition agreements? What events typically trigger MAC provisions?",
+    "label": "SAFE",
+    "sensitivity_types": [],
+    "reasoning": "General legal/structural M&A question without reference to any specific deal.",
+    "regulations": [],
+    "pii_entities": [],
+    "contextual_entities": ["MAC clause", "acquisition agreements"],
+    "confidence": 0.96
+  },
+  {
+    "id": "IB112",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "Can you explain dividend recapitalization mechanics? When do PE sponsors typically pursue a dividend recap and what are the risks?",
+    "label": "SAFE",
+    "sensitivity_types": [],
+    "reasoning": "General private equity concept question with no specific sponsor or portfolio company mentioned.",
+    "regulations": [],
+    "pii_entities": [],
+    "contextual_entities": ["dividend recapitalization", "PE sponsors"],
+    "confidence": 0.95
+  },
+  {
+    "id": "IB113",
+    "industry": "investment_banking",
+    "role_perspective": "associate",
+    "prompt": "We're working on a deal where the target operates in a fragmented industry with lots of bolt-on potential. How should we frame the platform thesis in the CIM without revealing which subsector we're focused on?",
+    "label": "SENSITIVE",
+    "sensitivity_types": ["MANAGEMENT_PRESENTATION"],
+    "reasoning": "Discusses deal strategy for an active CIM preparation, though no specific company or codename is mentioned.",
+    "regulations": ["NDA"],
+    "pii_entities": [],
+    "contextual_entities": ["CIM", "platform thesis", "bolt-on acquisition", "fragmented industry"],
+    "confidence": 0.88
+  },
+  {
+    "id": "IB114",
+    "industry": "investment_banking",
+    "role_perspective": "vp_banking",
+    "prompt": "For the current sell-side we're running, what are the best ways to position a company with declining revenue but expanding margins? The buyer universe is mostly strategics in adjacent verticals.",
+    "label": "SENSITIVE",
+    "sensitivity_types": ["MANAGEMENT_PRESENTATION"],
+    "reasoning": "References an active sell-side process with general financial characteristics, but no company names or codenames are disclosed.",
+    "regulations": ["NDA"],
+    "pii_entities": [],
+    "contextual_entities": ["sell-side process", "declining revenue", "expanding margins", "strategic buyers"],
+    "confidence": 0.87
+  },
+  {
+    "id": "IB115",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "I'm putting together a buyer universe for a potential sell-side in the specialty chemicals space. What types of strategics and financial sponsors typically look at this sector?",
+    "label": "SENSITIVE",
+    "sensitivity_types": ["MNPI"],
+    "reasoning": "Indicates a potential sell-side mandate in a specific sector, which could be material if linked to the right company.",
+    "regulations": ["NDA", "Regulation FD"],
+    "pii_entities": [],
+    "contextual_entities": ["buyer universe", "specialty chemicals", "sell-side", "financial sponsors"],
+    "confidence": 0.85
+  },
+  {
+    "id": "IB116",
+    "industry": "investment_banking",
+    "role_perspective": "associate",
+    "prompt": "We need to think about how to structure an earn-out for a founder-led business where the seller wants to de-risk but also participate in upside. What are typical earn-out structures that align incentives?",
+    "label": "SENSITIVE",
+    "sensitivity_types": ["BID_TERMS"],
+    "reasoning": "Discusses deal structuring for what appears to be an active transaction but doesn't name parties.",
+    "regulations": ["NDA"],
+    "pii_entities": [],
+    "contextual_entities": ["earn-out", "founder-led business", "deal structuring"],
+    "confidence": 0.85
+  },
+  {
+    "id": "IB117",
+    "industry": "investment_banking",
+    "role_perspective": "director",
+    "prompt": "The sponsor landscape for mid-market healthcare deals has shifted significantly. We're seeing more continuation vehicles and GP-led secondaries. How should we be advising our clients on these alternatives?",
+    "label": "SENSITIVE",
+    "sensitivity_types": ["MNPI"],
+    "reasoning": "Contains insider market perspective on sponsor behavior in healthcare M&A that could inform trading decisions, though no specific deals are named.",
+    "regulations": ["Regulation FD"],
+    "pii_entities": [],
+    "contextual_entities": ["sponsor landscape", "healthcare deals", "continuation vehicles", "GP-led secondaries"],
+    "confidence": 0.84
+  },
+  {
+    "id": "IB118",
+    "industry": "investment_banking",
+    "role_perspective": "md_coverage",
+    "prompt": "I'm hearing that several large-cap tech companies are looking at transformative acquisitions in the AI infrastructure space. What valuation frameworks should we be pitching to position ourselves for these mandates?",
+    "label": "SENSITIVE",
+    "sensitivity_types": ["MNPI"],
+    "reasoning": "Suggests insider knowledge of potential large-cap tech M&A activity in a specific sector, even without naming companies.",
+    "regulations": ["SEC Rule 10b-5", "Regulation FD"],
+    "pii_entities": [],
+    "contextual_entities": ["large-cap tech", "AI infrastructure", "transformative acquisitions"],
+    "confidence": 0.86
+  },
+  {
+    "id": "IB119",
+    "industry": "investment_banking",
+    "role_perspective": "associate",
+    "prompt": "For the LBO model I'm building, what leverage levels are realistic in the current market for a business doing $50M EBITDA with 15% margins in the food & beverage space?",
+    "label": "SENSITIVE",
+    "sensitivity_types": ["LBO_TERMS"],
+    "reasoning": "Contains specific financial parameters that could be tied to a real deal in a specific sector, though no company is identified.",
+    "regulations": ["NDA"],
+    "pii_entities": [],
+    "contextual_entities": ["LBO model", "leverage levels", "$50M EBITDA", "food & beverage"],
+    "confidence": 0.84
+  },
+  {
+    "id": "IB120",
+    "industry": "investment_banking",
+    "role_perspective": "vp_banking",
+    "prompt": "How are fairness opinion committees typically evaluating minority squeeze-out transactions right now? I want to make sure our analysis holds up to scrutiny on the methodology front.",
+    "label": "SENSITIVE",
+    "sensitivity_types": ["FAIRNESS_OPINION"],
+    "reasoning": "References fairness opinion work on what may be an active squeeze-out deal without naming parties.",
+    "regulations": ["Securities Exchange Act"],
+    "pii_entities": [],
+    "contextual_entities": ["fairness opinion", "minority squeeze-out", "methodology"],
+    "confidence": 0.86
+  },
+  {
+    "id": "IB121",
+    "industry": "investment_banking",
+    "role_perspective": "restructuring_specialist",
+    "prompt": "In a distressed situation where the company has both first lien and second lien debt, how do you typically think about the fulcrum security analysis? What recovery rates are realistic for second lien in the current cycle?",
+    "label": "SENSITIVE",
+    "sensitivity_types": ["RESTRUCTURING_PLAN"],
+    "reasoning": "Discusses restructuring concepts in a way that suggests active engagement, though no specific debtor is named.",
+    "regulations": ["Securities Exchange Act"],
+    "pii_entities": [],
+    "contextual_entities": ["distressed situation", "first lien", "second lien", "fulcrum security", "recovery rates"],
+    "confidence": 0.83
+  },
+  {
+    "id": "IB122",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "I need to model a PIPE transaction for a company going public through a de-SPAC. What are the typical PIPE discount ranges and what structural protections do PIPE investors usually get?",
+    "label": "SENSITIVE",
+    "sensitivity_types": ["PIPE_TRANSACTION"],
+    "reasoning": "References PIPE structuring in a de-SPAC context suggesting active deal work, but no specific entities named.",
+    "regulations": ["Securities Exchange Act", "SEC Rule 10b-5"],
+    "pii_entities": [],
+    "contextual_entities": ["PIPE transaction", "de-SPAC", "PIPE discount", "structural protections"],
+    "confidence": 0.84
+  },
+  {
+    "id": "IB123",
+    "industry": "investment_banking",
+    "role_perspective": "vp_banking",
+    "prompt": "We're seeing activist pressure build across the consumer staples sector. Several names are trading below intrinsic value with weak boards. How should we be positioning our defense advisory capabilities?",
+    "label": "SENSITIVE",
+    "sensitivity_types": ["ACTIVIST_STRATEGY"],
+    "reasoning": "References activist trends with insider perspective on vulnerable companies in a specific sector, though no names disclosed.",
+    "regulations": ["SEC Rule 10b-5", "Regulation FD"],
+    "pii_entities": [],
+    "contextual_entities": ["activist pressure", "consumer staples", "defense advisory"],
+    "confidence": 0.86
+  },
+  {
+    "id": "IB124",
+    "industry": "investment_banking",
+    "role_perspective": "associate",
+    "prompt": "For a cross-border deal, how do you handle the FX risk in the valuation? The target is a European company and the acquirer is US-based. Should we hedge the entire purchase price or just the cash flows?",
+    "label": "SENSITIVE",
+    "sensitivity_types": ["BID_TERMS"],
+    "reasoning": "Implies an active cross-border transaction with geographic details but no named parties.",
+    "regulations": ["NDA"],
+    "pii_entities": [],
+    "contextual_entities": ["cross-border deal", "FX risk", "European target", "US acquirer"],
+    "confidence": 0.83
+  },
+  {
+    "id": "IB125",
+    "industry": "investment_banking",
+    "role_perspective": "director",
+    "prompt": "Our syndication desk is telling me the leveraged loan market is getting choppy. For deals in the $500M-$1B range, are arrangers still willing to flex down or are we looking at reverse flex scenarios?",
+    "label": "SENSITIVE",
+    "sensitivity_types": ["SYNDICATION_TERMS"],
+    "reasoning": "Contains insider market intelligence about syndication conditions that could influence deal pricing, without naming specific deals.",
+    "regulations": ["FINRA"],
+    "pii_entities": [],
+    "contextual_entities": ["syndication desk", "leveraged loan market", "flex provisions", "reverse flex"],
+    "confidence": 0.85
+  },
+  {
+    "id": "IB126",
+    "industry": "investment_banking",
+    "role_perspective": "md_coverage",
+    "prompt": "I'm thinking about how to pitch a dual-track process to a board that's leaning toward an IPO. What's the best way to frame the optionality of running a private sale alongside the S-1 prep?",
+    "label": "SENSITIVE",
+    "sensitivity_types": ["MNPI"],
+    "reasoning": "Discusses pitching a dual-track process to a specific board, implying knowledge of a company's strategic plans, though unnamed.",
+    "regulations": ["Regulation FD", "Securities Exchange Act"],
+    "pii_entities": [],
+    "contextual_entities": ["dual-track process", "IPO", "private sale", "S-1"],
+    "confidence": 0.86
+  },
+  {
+    "id": "IB127",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "What's the right way to adjust for non-recurring litigation costs in a normalized EBITDA calculation when the company has had three consecutive years of settlements? At what point does it become recurring?",
+    "label": "SENSITIVE",
+    "sensitivity_types": ["MANAGEMENT_PRESENTATION"],
+    "reasoning": "Describes specific financial characteristics of a target company that could be identifiable, though not named.",
+    "regulations": ["NDA"],
+    "pii_entities": [],
+    "contextual_entities": ["normalized EBITDA", "litigation costs", "non-recurring adjustments"],
+    "confidence": 0.82
+  },
+  {
+    "id": "IB128",
+    "industry": "investment_banking",
+    "role_perspective": "associate",
+    "prompt": "How do we handle the management rollover in our LBO returns analysis? The CEO and CFO are expected to roll 30% of their equity, and we need to model the dilution impact on the sponsor's returns.",
+    "label": "SENSITIVE",
+    "sensitivity_types": ["LBO_TERMS"],
+    "reasoning": "Contains specific deal terms (30% rollover) and references management roles, suggesting an active LBO without naming parties.",
+    "regulations": ["NDA"],
+    "pii_entities": [],
+    "contextual_entities": ["management rollover", "LBO returns", "equity rollover", "sponsor returns", "dilution"],
+    "confidence": 0.86
+  },
+  {
+    "id": "IB129",
+    "industry": "investment_banking",
+    "role_perspective": "restructuring_specialist",
+    "prompt": "We need to prepare a liquidation analysis as a baseline for the plan of reorganization. What's the standard approach for valuing hard assets versus intangibles in a Chapter 11 context?",
+    "label": "SENSITIVE",
+    "sensitivity_types": ["RESTRUCTURING_PLAN"],
+    "reasoning": "Indicates active Chapter 11 advisory work without identifying the debtor.",
+    "regulations": ["Securities Exchange Act"],
+    "pii_entities": [],
+    "contextual_entities": ["liquidation analysis", "plan of reorganization", "Chapter 11", "hard assets", "intangibles"],
+    "confidence": 0.85
+  },
+  {
+    "id": "IB130",
+    "industry": "investment_banking",
+    "role_perspective": "vp_banking",
+    "prompt": "The board wants to understand the implications of a rights plan adoption. How do we advise them on pill trigger thresholds and flip-in provisions in the current regulatory environment?",
+    "label": "SENSITIVE",
+    "sensitivity_types": ["ACTIVIST_STRATEGY"],
+    "reasoning": "Indicates active board advisory on anti-takeover defenses, implying a real threat, though no company named.",
+    "regulations": ["Securities Exchange Act", "SEC Rule 10b-5"],
+    "pii_entities": [],
+    "contextual_entities": ["rights plan", "poison pill", "trigger thresholds", "flip-in provisions", "board advisory"],
+    "confidence": 0.87
+  },
+  {
+    "id": "IB131",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "Project Phoenix is moving to Phase 2. Ridgemont Partners submitted an IOI at $42 per share, implying a 35% premium to the undisturbed price. We need to update the board book with their proposed financing structure.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "BID_TERMS", "SPONSOR_IDENTITY"],
+    "reasoning": "Contains a deal codename, specific bid price, identified sponsor, and premium calculation for an active deal.",
+    "regulations": ["SEC Rule 10b-5", "Regulation FD", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Ridgemont Partners"}
+    ],
+    "contextual_entities": ["Project Phoenix", "$42 per share", "35% premium", "IOI", "Phase 2", "board book"],
+    "confidence": 0.98
+  },
+  {
+    "id": "IB132",
+    "industry": "investment_banking",
+    "role_perspective": "associate",
+    "prompt": "Harborview Capital has indicated they can go up to 6.5x leverage on Project Titan, with a $1.2B equity check. Their base case assumes 22% IRR with a 5-year hold and exit at 11x EBITDA. Can you stress-test the downside scenario?",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "SPONSOR_IDENTITY", "LBO_TERMS"],
+    "reasoning": "Contains sponsor name, deal codename, specific leverage ratios, equity commitment, IRR targets, and exit assumptions for an active LBO.",
+    "regulations": ["SEC Rule 10b-5", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Harborview Capital"}
+    ],
+    "contextual_entities": ["Project Titan", "6.5x leverage", "$1.2B equity check", "22% IRR", "11x EBITDA exit"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB133",
+    "industry": "investment_banking",
+    "role_perspective": "md_coverage",
+    "prompt": "Sentinel Holdings' board has authorized us to engage with three potential acquirers. The ask is $3.8B, representing 14x LTM EBITDA. We cannot approach Meridian Industries due to the antitrust overlap. Set up the outreach for the other two.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["BID_TERMS", "MNPI", "EXCLUSIVITY_TERMS"],
+    "reasoning": "Identifies the target company, specific valuation ask, EBITDA multiple, restricted parties, and details of a sell-side process.",
+    "regulations": ["SEC Rule 10b-5", "Regulation FD", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Sentinel Holdings"},
+      {"type": "ORGANIZATION", "value": "Meridian Industries"}
+    ],
+    "contextual_entities": ["$3.8B ask", "14x LTM EBITDA", "antitrust overlap", "sell-side process", "board authorization"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB134",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "I need to update the Project Aurora CIM. Crestview Equity Partners wants to see adjusted EBITDA excluding the $18M one-time facility consolidation charge. The target's run-rate EBITDA is $145M on $890M revenue.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "SPONSOR_IDENTITY", "MANAGEMENT_PRESENTATION"],
+    "reasoning": "Contains deal codename, sponsor name, and specific target financial details including revenue, EBITDA, and adjustments.",
+    "regulations": ["SEC Rule 10b-5", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Crestview Equity Partners"}
+    ],
+    "contextual_entities": ["Project Aurora", "CIM", "$18M adjustment", "$145M EBITDA", "$890M revenue"],
+    "confidence": 0.98
+  },
+  {
+    "id": "IB135",
+    "industry": "investment_banking",
+    "role_perspective": "vp_banking",
+    "prompt": "The fairness opinion for Northbridge Technology's take-private by Apex Capital needs to include a DCF range of $28-$34 per share and precedent transaction range of $30-$37. The board is meeting Thursday to approve the definitive agreement at $33.50.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["FAIRNESS_OPINION", "BID_TERMS", "SPONSOR_IDENTITY", "MNPI"],
+    "reasoning": "Contains fairness opinion valuation ranges, specific deal price, named parties, and imminent board approval timeline.",
+    "regulations": ["SEC Rule 10b-5", "Regulation FD", "Securities Exchange Act", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Northbridge Technology"},
+      {"type": "ORGANIZATION", "value": "Apex Capital"}
+    ],
+    "contextual_entities": ["fairness opinion", "take-private", "$28-$34 DCF range", "$33.50 deal price", "board meeting Thursday"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB136",
+    "industry": "investment_banking",
+    "role_perspective": "restructuring_specialist",
+    "prompt": "Lakeshore Manufacturing's restructuring plan proposes a debt-for-equity swap where first lien holders recover 85 cents on the dollar and second lien holders get 40 cents plus warrants. The ad hoc group led by Blackrock Credit is pushing for better terms. We need to model the plan vs. liquidation value.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["RESTRUCTURING_PLAN", "CREDITOR_DETAILS"],
+    "reasoning": "Names the debtor, details recovery rates for each tranche, identifies a major creditor leading negotiations, and outlines restructuring terms.",
+    "regulations": ["Securities Exchange Act", "SEC Rule 10b-5", "NDA"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Lakeshore Manufacturing"},
+      {"type": "ORGANIZATION", "value": "Blackrock Credit"}
+    ],
+    "contextual_entities": ["debt-for-equity swap", "85 cents first lien", "40 cents second lien", "warrants", "ad hoc group", "liquidation value"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB137",
+    "industry": "investment_banking",
+    "role_perspective": "associate",
+    "prompt": "For Project Cornerstone, Pinnacle Growth Partners is offering $2.1B with a $175M rollover from the founder. The breakup fee is set at 3.5% of enterprise value. Draft the fee letter reflecting a 1.5% advisory fee with a $5M minimum.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "BID_TERMS", "SPONSOR_IDENTITY", "BREAKUP_FEE"],
+    "reasoning": "Contains codename, bid amount, sponsor identity, breakup fee percentage, management rollover, and advisory fee details.",
+    "regulations": ["SEC Rule 10b-5", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Pinnacle Growth Partners"}
+    ],
+    "contextual_entities": ["Project Cornerstone", "$2.1B offer", "$175M rollover", "3.5% breakup fee", "1.5% advisory fee"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB138",
+    "industry": "investment_banking",
+    "role_perspective": "md_coverage",
+    "prompt": "Vanguard Therapeutics has received an unsolicited approach from BioNexus Corp at $65 per share. The board is considering a white knight defense and wants us to approach Catalent and Thermo Fisher. Keep this strictly above the wall.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["BID_TERMS", "MNPI", "ACTIVIST_STRATEGY"],
+    "reasoning": "Contains unsolicited bid details, named parties, specific share price, white knight strategy, and potential alternative acquirers.",
+    "regulations": ["SEC Rule 10b-5", "Regulation FD", "Securities Exchange Act", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Vanguard Therapeutics"},
+      {"type": "ORGANIZATION", "value": "BioNexus Corp"},
+      {"type": "ORGANIZATION", "value": "Catalent"},
+      {"type": "ORGANIZATION", "value": "Thermo Fisher"}
+    ],
+    "contextual_entities": ["unsolicited approach", "$65 per share", "white knight defense", "above the wall"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB139",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "Project Evergreen update: Sterling Capital has moved their bid to $1.6B from $1.4B. The new offer implies 12.5x EBITDA vs the initial 10.9x. They want 45-day exclusivity and a go-shop provision limited to 30 days.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "BID_TERMS", "SPONSOR_IDENTITY", "EXCLUSIVITY_TERMS"],
+    "reasoning": "Contains codename, named sponsor, two bid levels, implied multiples, and specific exclusivity/go-shop terms.",
+    "regulations": ["SEC Rule 10b-5", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Sterling Capital"}
+    ],
+    "contextual_entities": ["Project Evergreen", "$1.6B bid", "$1.4B initial", "12.5x EBITDA", "45-day exclusivity", "30-day go-shop"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB140",
+    "industry": "investment_banking",
+    "role_perspective": "vp_banking",
+    "prompt": "The PIPE for Arcadian Technologies' de-SPAC is oversubscribed. Wellington and Fidelity are anchoring at $10 per share with full ratchet anti-dilution. Total PIPE size is $250M against a $1.8B pro forma enterprise value. Lock-up is 180 days.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["PIPE_TRANSACTION", "MNPI"],
+    "reasoning": "Names the company, anchor investors, PIPE pricing, anti-dilution terms, total commitment, and lock-up period for an unannounced de-SPAC.",
+    "regulations": ["SEC Rule 10b-5", "Securities Exchange Act", "Regulation FD", "NDA"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Arcadian Technologies"},
+      {"type": "ORGANIZATION", "value": "Wellington"},
+      {"type": "ORGANIZATION", "value": "Fidelity"}
+    ],
+    "contextual_entities": ["PIPE", "de-SPAC", "$10 per share", "full ratchet", "$250M PIPE", "$1.8B EV", "180-day lock-up"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB141",
+    "industry": "investment_banking",
+    "role_perspective": "director",
+    "prompt": "Trident Activist Fund has accumulated a 7.2% stake in Constellation Brands through swap agreements and is planning to file a 13D next week. They want three board seats and are pushing for a separation of the wine and spirits division. Our defense team needs to prepare the board immediately.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["ACTIVIST_STRATEGY", "MNPI"],
+    "reasoning": "Contains specific stake size, accumulation method, imminent 13D filing, board demands, and strategic plan of an activist campaign against a named company.",
+    "regulations": ["SEC Rule 10b-5", "Securities Exchange Act", "Regulation FD", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Trident Activist Fund"},
+      {"type": "ORGANIZATION", "value": "Constellation Brands"}
+    ],
+    "contextual_entities": ["7.2% stake", "swap agreements", "13D filing", "three board seats", "division separation"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB142",
+    "industry": "investment_banking",
+    "role_perspective": "associate",
+    "prompt": "The management presentation for Project Ironclad is scheduled for next Tuesday. The CEO of Westfield Logistics will present the 5-year plan showing revenue growth from $420M to $780M and EBITDA margins expanding from 18% to 24%. Three sponsors are attending: Bain Capital, KKR, and Warburg Pincus.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "MANAGEMENT_PRESENTATION", "SPONSOR_IDENTITY", "MNPI"],
+    "reasoning": "Contains codename, named target company, specific financial projections, named sponsors attending a management presentation.",
+    "regulations": ["SEC Rule 10b-5", "Regulation FD", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Westfield Logistics"},
+      {"type": "ORGANIZATION", "value": "Bain Capital"},
+      {"type": "ORGANIZATION", "value": "KKR"},
+      {"type": "ORGANIZATION", "value": "Warburg Pincus"}
+    ],
+    "contextual_entities": ["Project Ironclad", "management presentation", "$420M to $780M revenue", "18% to 24% margins", "5-year plan"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB143",
+    "industry": "investment_banking",
+    "role_perspective": "restructuring_specialist",
+    "prompt": "The DIP financing for Cascade Energy is being led by JPMorgan with a $300M super-priority facility. The pre-petition first lien group is objecting to the priming and the judge has set a hearing for March 15th. Recovery for unsecured creditors is estimated at 5-10 cents.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["RESTRUCTURING_PLAN", "CREDITOR_DETAILS"],
+    "reasoning": "Contains named debtor, DIP financing details, identified lender, creditor dispute details, court dates, and recovery estimates.",
+    "regulations": ["Securities Exchange Act", "SEC Rule 10b-5", "NDA"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Cascade Energy"},
+      {"type": "ORGANIZATION", "value": "JPMorgan"}
+    ],
+    "contextual_entities": ["DIP financing", "$300M super-priority", "priming objection", "March 15th hearing", "5-10 cents recovery"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB144",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "For Project Sapphire, run the LBO sensitivity table at entry multiples of 9x-11x, leverage of 5.0x-6.5x, and exit multiples of 10x-13x. Atlas Partners needs this by tomorrow for their IC memo. The target does $95M EBITDA with 3% growth.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "SPONSOR_IDENTITY", "LBO_TERMS"],
+    "reasoning": "Contains codename, named sponsor, specific LBO parameters, target EBITDA, and urgency indicating active deal work for investment committee.",
+    "regulations": ["SEC Rule 10b-5", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Atlas Partners"}
+    ],
+    "contextual_entities": ["Project Sapphire", "LBO sensitivity", "9x-11x entry", "5.0x-6.5x leverage", "$95M EBITDA", "IC memo"],
+    "confidence": 0.98
+  },
+  {
+    "id": "IB145",
+    "industry": "investment_banking",
+    "role_perspective": "md_coverage",
+    "prompt": "Redwood Capital is preparing a hostile bid for Sequoia Materials at $28 per share, contingent on financing from Goldman Sachs and Jefferies. The breakup fee demand is 4% and they want to launch a tender offer within two weeks. We are advising the target.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["BID_TERMS", "MNPI", "BREAKUP_FEE", "SPONSOR_IDENTITY"],
+    "reasoning": "Contains hostile bid details, named bidder and target, specific price, financing banks, breakup fee, and imminent tender offer timeline.",
+    "regulations": ["SEC Rule 10b-5", "Regulation FD", "Securities Exchange Act", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Redwood Capital"},
+      {"type": "ORGANIZATION", "value": "Sequoia Materials"},
+      {"type": "ORGANIZATION", "value": "Goldman Sachs"},
+      {"type": "ORGANIZATION", "value": "Jefferies"}
+    ],
+    "contextual_entities": ["hostile bid", "$28 per share", "4% breakup fee", "tender offer", "two-week timeline"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB146",
+    "industry": "investment_banking",
+    "role_perspective": "associate",
+    "prompt": "Project Falcon syndication update: Barclays and Credit Suisse are co-leading the $800M TLB. Pricing is SOFR + 425 with a 99 OID. Commitments from CLO managers are soft and we may need to flex up to SOFR + 475. The leveraged credit market is watching this deal closely.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "SYNDICATION_TERMS", "MNPI"],
+    "reasoning": "Contains codename, named arrangers, loan size, exact pricing, OID, flex scenarios, and market intelligence about syndication risk.",
+    "regulations": ["SEC Rule 10b-5", "FINRA", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Barclays"},
+      {"type": "ORGANIZATION", "value": "Credit Suisse"}
+    ],
+    "contextual_entities": ["Project Falcon", "$800M TLB", "SOFR + 425", "99 OID", "SOFR + 475 flex", "CLO managers"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB147",
+    "industry": "investment_banking",
+    "role_perspective": "vp_banking",
+    "prompt": "The exclusivity agreement for Project Horizon expires Friday at midnight. Granite Peak Capital is at $52 per share but the special committee believes they can extract $55-$57 from a competing bidder if we reopen the process. Legal is drafting the termination notice.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "BID_TERMS", "SPONSOR_IDENTITY", "EXCLUSIVITY_TERMS"],
+    "reasoning": "Contains codename, named bidder, specific bid and expected competing price range, exclusivity expiration date, and special committee strategy.",
+    "regulations": ["SEC Rule 10b-5", "Regulation FD", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Granite Peak Capital"}
+    ],
+    "contextual_entities": ["Project Horizon", "exclusivity expiration", "$52 per share", "$55-$57 target", "special committee", "termination notice"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB148",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "I need to finalize the contribution analysis for the Keystone Energy / Pacific Resources merger of equals. Keystone contributes 55% of revenue but 62% of EBITDA. The exchange ratio is 0.85 Keystone shares per Pacific share. How should we present the implied premium?",
+    "label": "CRITICAL",
+    "sensitivity_types": ["BID_TERMS", "MNPI"],
+    "reasoning": "Names both merger parties, contains contribution split, specific exchange ratio, and financial metrics for an unannounced merger of equals.",
+    "regulations": ["SEC Rule 10b-5", "Regulation FD", "Securities Exchange Act", "NDA"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Keystone Energy"},
+      {"type": "ORGANIZATION", "value": "Pacific Resources"}
+    ],
+    "contextual_entities": ["merger of equals", "contribution analysis", "55%/62% split", "0.85 exchange ratio"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB149",
+    "industry": "investment_banking",
+    "role_perspective": "director",
+    "prompt": "The consortium of Apollo, Blackstone, and CVC is submitting a joint bid of $8.5B for Meridian Healthcare Services under Project Atlas. Each sponsor commits $1.5B equity with the remainder financed through a $4.0B term loan and $1.0B mezzanine facility.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "BID_TERMS", "SPONSOR_IDENTITY", "LBO_TERMS"],
+    "reasoning": "Contains codename, three named sponsors in consortium, total bid, equity splits, and complete financing structure for an active take-private.",
+    "regulations": ["SEC Rule 10b-5", "Regulation FD", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Apollo"},
+      {"type": "ORGANIZATION", "value": "Blackstone"},
+      {"type": "ORGANIZATION", "value": "CVC"},
+      {"type": "ORGANIZATION", "value": "Meridian Healthcare Services"}
+    ],
+    "contextual_entities": ["Project Atlas", "consortium bid", "$8.5B", "$1.5B equity each", "$4.0B term loan", "$1.0B mezzanine"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB150",
+    "industry": "investment_banking",
+    "role_perspective": "restructuring_specialist",
+    "prompt": "The creditor committee for Pinnacle Retail Group has rejected the 363 sale proposal from Cerberus at $220M. The secured lenders led by Deutsche Bank want a credit bid at $180M to take control. The company has 45 days of cash runway remaining.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["RESTRUCTURING_PLAN", "CREDITOR_DETAILS", "BID_TERMS"],
+    "reasoning": "Names debtor, bidder, lead secured lender, specific bid amounts, credit bid strategy, and critical cash runway information.",
+    "regulations": ["Securities Exchange Act", "SEC Rule 10b-5", "NDA"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Pinnacle Retail Group"},
+      {"type": "ORGANIZATION", "value": "Cerberus"},
+      {"type": "ORGANIZATION", "value": "Deutsche Bank"}
+    ],
+    "contextual_entities": ["363 sale", "$220M proposal", "credit bid $180M", "45 days cash runway", "creditor committee"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB151",
+    "industry": "investment_banking",
+    "role_perspective": "associate",
+    "prompt": "Project Lighthouse final bid analysis: Nordic Capital at $38/share (all cash), Advent International at $36/share with a $2/share CVR tied to FDA approval, and the management-led MBO at $34/share with 100% rollover. Recommend we go with Nordic given certainty of close.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "BID_TERMS", "SPONSOR_IDENTITY"],
+    "reasoning": "Contains codename, three named bidders with specific prices and deal structures, and a recommendation for an active competitive process.",
+    "regulations": ["SEC Rule 10b-5", "Regulation FD", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Nordic Capital"},
+      {"type": "ORGANIZATION", "value": "Advent International"}
+    ],
+    "contextual_entities": ["Project Lighthouse", "$38/share Nordic", "$36 + $2 CVR Advent", "$34 MBO", "FDA approval CVR"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB152",
+    "industry": "investment_banking",
+    "role_perspective": "md_coverage",
+    "prompt": "Summit Aerospace is being approached by both Lockheed Martin and L3Harris for a potential acquisition. Summit's CEO wants to explore a sale at no less than 16x forward EBITDA, which implies roughly $2.4B. We have an NDA in place with both parties.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["BID_TERMS", "MNPI", "SPONSOR_IDENTITY"],
+    "reasoning": "Names target and two potential acquirers, specific valuation floor, and confirms active NDA-covered discussions.",
+    "regulations": ["SEC Rule 10b-5", "Regulation FD", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Summit Aerospace"},
+      {"type": "ORGANIZATION", "value": "Lockheed Martin"},
+      {"type": "ORGANIZATION", "value": "L3Harris"}
+    ],
+    "contextual_entities": ["16x forward EBITDA", "$2.4B implied valuation", "NDA in place", "dual acquirer interest"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB153",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "The Project Mercury management presentation deck needs to include the synergy analysis. Acquirer expects $120M in cost synergies (60% headcount, 30% procurement, 10% facilities) achievable over 3 years. Revenue synergies of $45M are not in the base case.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "MANAGEMENT_PRESENTATION", "BID_TERMS"],
+    "reasoning": "Contains codename, detailed synergy breakdown by category, timeline, and distinction between base and upside case for an active deal.",
+    "regulations": ["SEC Rule 10b-5", "NDA", "Chinese Wall"],
+    "pii_entities": [],
+    "contextual_entities": ["Project Mercury", "management presentation", "$120M cost synergies", "60% headcount", "$45M revenue synergies"],
+    "confidence": 0.98
+  },
+  {
+    "id": "IB154",
+    "industry": "investment_banking",
+    "role_perspective": "vp_banking",
+    "prompt": "Ironwood Partners is structuring a $500M PIPE to support their acquisition of Brightpath Digital. The PIPE terms include a 15% discount to the 10-day VWAP, registration rights within 30 days, and a 12-month lock-up. Three sovereign wealth funds are participating.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["PIPE_TRANSACTION", "SPONSOR_IDENTITY", "MNPI"],
+    "reasoning": "Names sponsor and target, contains specific PIPE pricing, size, discount mechanism, registration rights, lock-up, and investor types.",
+    "regulations": ["SEC Rule 10b-5", "Securities Exchange Act", "NDA"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Ironwood Partners"},
+      {"type": "ORGANIZATION", "value": "Brightpath Digital"}
+    ],
+    "contextual_entities": ["$500M PIPE", "15% VWAP discount", "30-day registration rights", "12-month lock-up", "sovereign wealth funds"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB155",
+    "industry": "investment_banking",
+    "role_perspective": "restructuring_specialist",
+    "prompt": "The plan support agreement for Bridgewater Media requires 66.7% of first lien holders to sign by March 20th. Oaktree and Elliott have committed representing 45% of the class. We need another $300M in claims to reach the threshold. The equitization ratio gives new equity 85% to first lien and 15% to second lien.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["RESTRUCTURING_PLAN", "CREDITOR_DETAILS"],
+    "reasoning": "Names debtor and key creditors, contains voting thresholds, commitment levels, deadline, and equitization ratios for a restructuring plan.",
+    "regulations": ["Securities Exchange Act", "SEC Rule 10b-5", "NDA"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Bridgewater Media"},
+      {"type": "ORGANIZATION", "value": "Oaktree"},
+      {"type": "ORGANIZATION", "value": "Elliott"}
+    ],
+    "contextual_entities": ["plan support agreement", "66.7% threshold", "45% committed", "$300M claims gap", "85/15 equitization"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB156",
+    "industry": "investment_banking",
+    "role_perspective": "associate",
+    "prompt": "Project Gemini syndication is struggling. Morgan Stanley flexed the TLB from SOFR + 400 to SOFR + 475 and moved the OID from 99.5 to 97. Total issuance is $1.1B. We may need to hold $200M on our balance sheet if we can't clear the book by Friday.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "SYNDICATION_TERMS", "MNPI"],
+    "reasoning": "Contains codename, named arranger, original and flexed pricing, OID change, issuance size, potential balance sheet retention, and deadline.",
+    "regulations": ["SEC Rule 10b-5", "FINRA", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Morgan Stanley"}
+    ],
+    "contextual_entities": ["Project Gemini", "SOFR + 400 to +475 flex", "97 OID", "$1.1B issuance", "$200M hold", "balance sheet risk"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB157",
+    "industry": "investment_banking",
+    "role_perspective": "md_coverage",
+    "prompt": "Clearwater Systems' founder wants to sell 100% of the business. We're targeting a $600M-$700M valuation range based on 10x-12x the $62M adjusted EBITDA. First round bids are due April 5th. The teaser went out to 35 parties last week under Project Cascade.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "BID_TERMS", "MANAGEMENT_PRESENTATION", "MNPI"],
+    "reasoning": "Names the target, contains codename, valuation range, EBITDA, bid deadline, and number of parties contacted in an active sell-side.",
+    "regulations": ["SEC Rule 10b-5", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Clearwater Systems"}
+    ],
+    "contextual_entities": ["Project Cascade", "$600M-$700M range", "$62M EBITDA", "10x-12x multiple", "April 5th deadline", "35 parties"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB158",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "The fairness committee wants to see a sum-of-the-parts analysis for Beacon Industries. The industrial segment is worth $1.8B at 8x EBITDA, the technology segment is worth $900M at 15x, and the services segment is worth $450M at 6x. Total SOTP of $3.15B versus the $2.7B offer from Crosspoint Holdings.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["FAIRNESS_OPINION", "BID_TERMS", "MNPI"],
+    "reasoning": "Names target and bidder, contains segment-level valuations, implied multiples, total SOTP value, and comparison to a specific offer price.",
+    "regulations": ["SEC Rule 10b-5", "Securities Exchange Act", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Beacon Industries"},
+      {"type": "ORGANIZATION", "value": "Crosspoint Holdings"}
+    ],
+    "contextual_entities": ["sum-of-the-parts", "$1.8B industrial", "$900M tech", "$450M services", "$3.15B SOTP", "$2.7B offer"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB159",
+    "industry": "investment_banking",
+    "role_perspective": "director",
+    "prompt": "Trident Capital's activist campaign against Oceanview Corp is escalating. They now own 9.1% and have nominated four independent directors for the proxy fight. Their public letter demands $2B in share buybacks and a sale of the Latin American division. We need the poison pill ready by Friday.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["ACTIVIST_STRATEGY", "MNPI"],
+    "reasoning": "Names activist and target, contains stake percentage, board nominees, specific demands, division sale push, and defensive measure timeline.",
+    "regulations": ["SEC Rule 10b-5", "Securities Exchange Act", "Regulation FD", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Trident Capital"},
+      {"type": "ORGANIZATION", "value": "Oceanview Corp"}
+    ],
+    "contextual_entities": ["9.1% stake", "four director nominees", "proxy fight", "$2B buyback demand", "LatAm division sale", "poison pill"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB160",
+    "industry": "investment_banking",
+    "role_perspective": "associate",
+    "prompt": "Project Nighthawk: The LBO returns for Silverline Capital show 2.8x MOIC and 24% gross IRR at the $1.9B bid price. Entry at 10.5x, exit at 11.0x after 5 years. Leverage is 5.5x total with 4.0x senior and 1.5x mezzanine. The management equity pool is 8%.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "SPONSOR_IDENTITY", "LBO_TERMS"],
+    "reasoning": "Contains codename, named sponsor, complete LBO returns profile, bid price, entry/exit multiples, leverage structure, and management equity terms.",
+    "regulations": ["SEC Rule 10b-5", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Silverline Capital"}
+    ],
+    "contextual_entities": ["Project Nighthawk", "2.8x MOIC", "24% IRR", "$1.9B bid", "10.5x/11.0x entry/exit", "5.5x leverage", "8% management pool"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB161",
+    "industry": "investment_banking",
+    "role_perspective": "vp_banking",
+    "prompt": "Orion Financial Group has terminated exclusivity on Project Starlight after discovering $40M in undisclosed environmental liabilities in the Phase 2 diligence. The seller's counsel is pushing back hard. We need to decide whether to re-market or renegotiate at a $40M haircut.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "SPONSOR_IDENTITY", "BID_TERMS", "EXCLUSIVITY_TERMS"],
+    "reasoning": "Contains codename, named sponsor, specific diligence findings, termination of exclusivity, and renegotiation strategy with dollar amounts.",
+    "regulations": ["SEC Rule 10b-5", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Orion Financial Group"}
+    ],
+    "contextual_entities": ["Project Starlight", "exclusivity termination", "$40M environmental liabilities", "Phase 2 diligence", "$40M haircut"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB162",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "For Project Cobalt, update the sources and uses table. The acquisition price is $3.2B. Sources: $1.8B term loan B, $400M revolver (undrawn), $200M second lien, $800M sponsor equity from Ridgeline Partners. Uses: $3.2B purchase price, $90M fees and expenses, $45M OID.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "LBO_TERMS", "SPONSOR_IDENTITY"],
+    "reasoning": "Contains codename, named sponsor, complete sources and uses with exact dollar amounts for every financing component.",
+    "regulations": ["SEC Rule 10b-5", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Ridgeline Partners"}
+    ],
+    "contextual_entities": ["Project Cobalt", "$3.2B acquisition", "$1.8B TLB", "$200M second lien", "$800M equity", "$90M fees"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB163",
+    "industry": "investment_banking",
+    "role_perspective": "restructuring_specialist",
+    "prompt": "Monarch Holdings' Chapter 11 plan includes a rights offering backstopped by Canyon Capital at $150M, giving them 40% of the reorganized equity. Existing equity holders are getting wiped out. The confirmed plan also includes a $75M exit facility from Ares Capital.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["RESTRUCTURING_PLAN", "CREDITOR_DETAILS", "SPONSOR_IDENTITY"],
+    "reasoning": "Names the debtor, backstop provider with equity allocation, rights offering size, treatment of existing equity, and exit facility details.",
+    "regulations": ["Securities Exchange Act", "SEC Rule 10b-5", "NDA"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Monarch Holdings"},
+      {"type": "ORGANIZATION", "value": "Canyon Capital"},
+      {"type": "ORGANIZATION", "value": "Ares Capital"}
+    ],
+    "contextual_entities": ["Chapter 11 plan", "$150M rights offering", "40% reorganized equity", "equity wipeout", "$75M exit facility"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB164",
+    "industry": "investment_banking",
+    "role_perspective": "md_coverage",
+    "prompt": "Project Zenith is a carve-out of the diagnostics division from Altair Health Sciences. The division does $310M revenue with 28% EBITDA margins. We expect 12x-14x multiples given precedent diagnostics transactions. Standalone costs add $15M to SG&A. Bids are due in three weeks.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "MANAGEMENT_PRESENTATION", "BID_TERMS", "MNPI"],
+    "reasoning": "Contains codename, names the parent company, division financials, expected multiples, standalone cost adjustments, and bid timeline.",
+    "regulations": ["SEC Rule 10b-5", "Regulation FD", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Altair Health Sciences"}
+    ],
+    "contextual_entities": ["Project Zenith", "carve-out", "$310M revenue", "28% EBITDA margins", "12x-14x multiple", "$15M standalone costs"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB165",
+    "industry": "investment_banking",
+    "role_perspective": "associate",
+    "prompt": "The breakup fee negotiation on Project Osprey is contentious. Hawthorne Group wants a 2% reverse breakup fee, but the target board is demanding 4% given the regulatory risk. The antitrust review could take 12-18 months due to market concentration in the Northeast corridor.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "BREAKUP_FEE", "BID_TERMS"],
+    "reasoning": "Contains codename, named acquirer, specific breakup fee negotiations, regulatory timeline, and geographic market details.",
+    "regulations": ["SEC Rule 10b-5", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Hawthorne Group"}
+    ],
+    "contextual_entities": ["Project Osprey", "2% vs 4% breakup fee", "reverse breakup fee", "12-18 month antitrust", "Northeast corridor"],
+    "confidence": 0.98
+  },
+  {
+    "id": "IB166",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "Project Valkyrie PIPE memorandum: Citadel is committing $100M, Tiger Global $75M, and Coatue $50M at $12.50 per share with half-ratchet anti-dilution protection. The de-SPAC target is a fintech platform doing $180M ARR with 130% net dollar retention.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["PIPE_TRANSACTION", "DEAL_CODENAME", "SPONSOR_IDENTITY", "MNPI"],
+    "reasoning": "Contains codename, named PIPE investors with commitment sizes, pricing, anti-dilution terms, and target company financial metrics.",
+    "regulations": ["SEC Rule 10b-5", "Securities Exchange Act", "Regulation FD", "NDA"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Citadel"},
+      {"type": "ORGANIZATION", "value": "Tiger Global"},
+      {"type": "ORGANIZATION", "value": "Coatue"}
+    ],
+    "contextual_entities": ["Project Valkyrie", "$100M/$75M/$50M commitments", "$12.50 per share", "half-ratchet", "$180M ARR", "130% NDR"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB167",
+    "industry": "investment_banking",
+    "role_perspective": "vp_banking",
+    "prompt": "Can you put together the football field chart for the Board presentation? We need to show the DCF range ($24-$31), the trading comps range ($22-$28), the precedent transactions range ($26-$33), and the 52-week high/low ($19-$27) for Crestwood Financial's special committee review.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["FAIRNESS_OPINION", "MNPI"],
+    "reasoning": "Names the target company, contains multiple valuation ranges from different methodologies for a special committee review, implying an active transaction.",
+    "regulations": ["SEC Rule 10b-5", "Securities Exchange Act", "NDA"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Crestwood Financial"}
+    ],
+    "contextual_entities": ["football field chart", "DCF $24-$31", "trading comps $22-$28", "precedents $26-$33", "52-week $19-$27", "special committee"],
+    "confidence": 0.98
+  },
+  {
+    "id": "IB168",
+    "industry": "investment_banking",
+    "role_perspective": "director",
+    "prompt": "Venture Equity Partners is launching a tender offer for 51% of Magellan Corp at $44 per share, representing a 28% premium. They plan to follow with a short-form merger at the same price. The 14D-9 needs to be filed within 10 business days. We're advising the board to recommend against.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["BID_TERMS", "MNPI", "ACTIVIST_STRATEGY"],
+    "reasoning": "Contains named bidder and target, tender offer details, premium, follow-on merger plan, regulatory filing timeline, and board recommendation.",
+    "regulations": ["SEC Rule 10b-5", "Securities Exchange Act", "Regulation FD", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Venture Equity Partners"},
+      {"type": "ORGANIZATION", "value": "Magellan Corp"}
+    ],
+    "contextual_entities": ["tender offer", "51% stake", "$44 per share", "28% premium", "short-form merger", "14D-9 filing"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB169",
+    "industry": "investment_banking",
+    "role_perspective": "associate",
+    "prompt": "Project Diamond update: Final round bids came in. Cascade Partners at $2.3B (12.8x EBITDA), Evergreen Capital at $2.1B (11.7x), and Fortuna Advisors consortium at $2.45B (13.6x) but with significant conditionality around the regulatory approval in China.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "BID_TERMS", "SPONSOR_IDENTITY"],
+    "reasoning": "Contains codename, three named bidders with specific bid amounts, implied multiples, and conditionality details for a final round process.",
+    "regulations": ["SEC Rule 10b-5", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Cascade Partners"},
+      {"type": "ORGANIZATION", "value": "Evergreen Capital"},
+      {"type": "ORGANIZATION", "value": "Fortuna Advisors"}
+    ],
+    "contextual_entities": ["Project Diamond", "$2.3B/$2.1B/$2.45B bids", "12.8x/11.7x/13.6x multiples", "China regulatory conditionality"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB170",
+    "industry": "investment_banking",
+    "role_perspective": "restructuring_specialist",
+    "prompt": "The Section 363 auction for Voyager Shipping's fleet assets is scheduled for April 10th. The stalking horse bid from Seatrade Holdings is $430M with a 3% breakup fee and $5M expense reimbursement. Mediterranean Carriers and Pacific Fleet Corp have both indicated interest in submitting overbids.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["RESTRUCTURING_PLAN", "BID_TERMS", "BREAKUP_FEE"],
+    "reasoning": "Names debtor, stalking horse bidder, potential overbidders, auction date, bid amount, breakup fee, and expense reimbursement.",
+    "regulations": ["Securities Exchange Act", "SEC Rule 10b-5", "NDA"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Voyager Shipping"},
+      {"type": "ORGANIZATION", "value": "Seatrade Holdings"},
+      {"type": "ORGANIZATION", "value": "Mediterranean Carriers"},
+      {"type": "ORGANIZATION", "value": "Pacific Fleet Corp"}
+    ],
+    "contextual_entities": ["363 auction", "April 10th", "$430M stalking horse", "3% breakup fee", "$5M expense reimbursement", "overbids"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB171",
+    "industry": "investment_banking",
+    "role_perspective": "md_coverage",
+    "prompt": "Project Monarch is a take-private of Silverleaf Technologies by Warburg Pincus at $72 per share. The go-shop period is 40 days with a tiered breakup fee: 2.5% during go-shop, 3.5% after. The board vote is expected June 15th. We need to file the proxy within 20 days of signing.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "BID_TERMS", "SPONSOR_IDENTITY", "BREAKUP_FEE", "EXCLUSIVITY_TERMS"],
+    "reasoning": "Contains codename, named target and sponsor, price, go-shop terms, tiered breakup fees, board vote date, and proxy timeline.",
+    "regulations": ["SEC Rule 10b-5", "Regulation FD", "Securities Exchange Act", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Silverleaf Technologies"},
+      {"type": "ORGANIZATION", "value": "Warburg Pincus"}
+    ],
+    "contextual_entities": ["Project Monarch", "take-private", "$72 per share", "40-day go-shop", "2.5%/3.5% tiered breakup", "June 15th vote"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB172",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "I'm building the CIM for Project Redwood. The target, Greenfield Organics, has shown 18% revenue CAGR over the last five years with EBITDA growing from $22M to $58M. The CEO, Michael Torres, will need to sign off on the management projections before we send to the buyer universe.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "MANAGEMENT_PRESENTATION", "MNPI"],
+    "reasoning": "Contains codename, names the target company and CEO, includes specific historical financial trajectory, and references CIM preparation for an active process.",
+    "regulations": ["SEC Rule 10b-5", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Greenfield Organics"},
+      {"type": "PERSON", "value": "Michael Torres"}
+    ],
+    "contextual_entities": ["Project Redwood", "CIM", "18% revenue CAGR", "$22M to $58M EBITDA", "management projections"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB173",
+    "industry": "investment_banking",
+    "role_perspective": "vp_banking",
+    "prompt": "The syndication for Project Thunderbolt has cleared. BofA priced the $650M TLB at SOFR + 350 with a 99.5 OID. The $150M revolver is undrawn. Investor demand was 3x oversubscribed. Final allocations go out Monday morning.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "SYNDICATION_TERMS"],
+    "reasoning": "Contains codename, named arranger, exact pricing, OID, facility sizes, oversubscription level, and allocation timeline.",
+    "regulations": ["SEC Rule 10b-5", "FINRA", "NDA"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "BofA"}
+    ],
+    "contextual_entities": ["Project Thunderbolt", "$650M TLB", "SOFR + 350", "99.5 OID", "$150M revolver", "3x oversubscribed"],
+    "confidence": 0.98
+  },
+  {
+    "id": "IB174",
+    "industry": "investment_banking",
+    "role_perspective": "associate",
+    "prompt": "Project Orion's fairness opinion draft concludes that the $56 per share price from Blackwell Capital is fair from a financial point of view to the public shareholders. The DCF midpoint is $54, which provides support. The board meeting to approve is Wednesday at 3pm ET. Do NOT circulate outside the deal team.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["FAIRNESS_OPINION", "DEAL_CODENAME", "BID_TERMS", "SPONSOR_IDENTITY", "MNPI"],
+    "reasoning": "Contains codename, named sponsor, fairness opinion conclusion, specific price and DCF support, board meeting time, and explicit confidentiality warning.",
+    "regulations": ["SEC Rule 10b-5", "Regulation FD", "Securities Exchange Act", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Blackwell Capital"}
+    ],
+    "contextual_entities": ["Project Orion", "fairness opinion", "$56 per share", "$54 DCF midpoint", "Wednesday board meeting", "deal team only"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB175",
+    "industry": "investment_banking",
+    "role_perspective": "restructuring_specialist",
+    "prompt": "Titan Metals is filing a pre-packaged Chapter 11 with support from 78% of first lien holders. The plan converts $800M of first lien debt to equity, reinstates $200M of second lien at par with extended maturity, and wipes out $150M in unsecured claims. Angelo Gordon and Baupost are the key first lien holders driving the plan.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["RESTRUCTURING_PLAN", "CREDITOR_DETAILS"],
+    "reasoning": "Names debtor and key creditors, contains pre-pack voting percentage, treatment of all debt tranches, and identifies plan drivers.",
+    "regulations": ["Securities Exchange Act", "SEC Rule 10b-5", "NDA"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Titan Metals"},
+      {"type": "ORGANIZATION", "value": "Angelo Gordon"},
+      {"type": "ORGANIZATION", "value": "Baupost"}
+    ],
+    "contextual_entities": ["pre-packaged Chapter 11", "78% support", "$800M debt-to-equity", "$200M reinstatement", "$150M unsecured wipeout"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB176",
+    "industry": "investment_banking",
+    "role_perspective": "director",
+    "prompt": "Apex Activist Partners has sent a private letter to the board of Riverside Consumer Products demanding a strategic review. They own 6.8% and threaten a public campaign if we don't engage within 30 days. The letter suggests spinning off the pet care division, which they value at $1.2B standalone.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["ACTIVIST_STRATEGY", "MNPI"],
+    "reasoning": "Names activist and target, contains stake size, private letter details, demands, threat timeline, and specific spinoff valuation.",
+    "regulations": ["SEC Rule 10b-5", "Securities Exchange Act", "Regulation FD", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Apex Activist Partners"},
+      {"type": "ORGANIZATION", "value": "Riverside Consumer Products"}
+    ],
+    "contextual_entities": ["private letter", "6.8% stake", "strategic review demand", "30-day ultimatum", "pet care spinoff", "$1.2B valuation"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB177",
+    "industry": "investment_banking",
+    "role_perspective": "analyst",
+    "prompt": "Project Neptune LBO memo: Carlisle Capital is acquiring NovaTech Solutions for $4.1B. Financing includes $2.5B first lien from Citi/RBC, $500M second lien, and $1.1B equity. Management retains 10% through options vesting over 4 years. The deal closes subject to HSR clearance, expected within 60 days.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["DEAL_CODENAME", "LBO_TERMS", "SPONSOR_IDENTITY", "SYNDICATION_TERMS"],
+    "reasoning": "Contains codename, names sponsor and target, complete capital structure, arranger names, management terms, and regulatory timeline.",
+    "regulations": ["SEC Rule 10b-5", "Regulation FD", "NDA", "Chinese Wall", "FINRA"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Carlisle Capital"},
+      {"type": "ORGANIZATION", "value": "NovaTech Solutions"},
+      {"type": "ORGANIZATION", "value": "Citi"},
+      {"type": "ORGANIZATION", "value": "RBC"}
+    ],
+    "contextual_entities": ["Project Neptune", "$4.1B acquisition", "$2.5B first lien", "$500M second lien", "$1.1B equity", "10% management options", "HSR clearance"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB178",
+    "industry": "investment_banking",
+    "role_perspective": "md_coverage",
+    "prompt": "Project Summit: We need to present to Westfield Corp's board on Tuesday regarding Blackrock's unsolicited $18B bid for the real estate portfolio. The bid implies a 5% cap rate on NOI of $900M. The board is inclined to reject and pursue a REIT conversion instead. Prepare the defense materials.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["BID_TERMS", "MNPI", "DEAL_CODENAME"],
+    "reasoning": "Contains codename, names target and bidder, specific bid amount, cap rate analysis, NOI, board inclination, and alternative strategy.",
+    "regulations": ["SEC Rule 10b-5", "Regulation FD", "Securities Exchange Act", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Westfield Corp"},
+      {"type": "ORGANIZATION", "value": "Blackrock"}
+    ],
+    "contextual_entities": ["Project Summit", "$18B unsolicited bid", "5% cap rate", "$900M NOI", "REIT conversion", "board rejection"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB179",
+    "industry": "investment_banking",
+    "role_perspective": "associate",
+    "prompt": "For Project Eclipse, the merger agreement between Pinnacle Defense Systems and Harbinger Aerospace includes a $280M reverse termination fee payable if antitrust approval is not obtained. The HSR filing is this Friday. Both companies' legal teams at Skadden and Wachtell have signed off on the definitive agreement. Closing is targeted for Q3.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["BID_TERMS", "DEAL_CODENAME", "BREAKUP_FEE", "MNPI"],
+    "reasoning": "Contains codename, names both merger parties and their legal counsel, reverse termination fee, HSR filing date, and closing target.",
+    "regulations": ["SEC Rule 10b-5", "Regulation FD", "Securities Exchange Act", "NDA", "Chinese Wall"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Pinnacle Defense Systems"},
+      {"type": "ORGANIZATION", "value": "Harbinger Aerospace"},
+      {"type": "ORGANIZATION", "value": "Skadden"},
+      {"type": "ORGANIZATION", "value": "Wachtell"}
+    ],
+    "contextual_entities": ["Project Eclipse", "$280M reverse termination fee", "HSR filing Friday", "Q3 closing target", "definitive agreement signed"],
+    "confidence": 0.99
+  },
+  {
+    "id": "IB180",
+    "industry": "investment_banking",
+    "role_perspective": "vp_banking",
+    "prompt": "Project Horizon PIPE update: The $350M PIPE for Vanguard Fintech's SPAC merger with Nexus Payments is anchored by T. Rowe Price ($150M) and Capital Group ($100M). Remaining $100M from family offices. Price is $10.25/share with 1/3 warrant coverage. Registration statement due within 45 days of closing. The SPAC sponsor promotes have been restructured to a 10% earnout at $15/share.",
+    "label": "CRITICAL",
+    "sensitivity_types": ["PIPE_TRANSACTION", "DEAL_CODENAME", "SPONSOR_IDENTITY", "MNPI"],
+    "reasoning": "Contains codename, names SPAC, target, anchor investors, PIPE pricing, warrant coverage, registration timeline, and restructured sponsor economics.",
+    "regulations": ["SEC Rule 10b-5", "Securities Exchange Act", "Regulation FD", "NDA"],
+    "pii_entities": [
+      {"type": "ORGANIZATION", "value": "Vanguard Fintech"},
+      {"type": "ORGANIZATION", "value": "Nexus Payments"},
+      {"type": "ORGANIZATION", "value": "T. Rowe Price"},
+      {"type": "ORGANIZATION", "value": "Capital Group"}
+    ],
+    "contextual_entities": ["Project Horizon", "$350M PIPE", "SPAC merger", "$10.25/share", "1/3 warrant coverage", "10% earnout at $15", "45-day registration"],
+    "confidence": 0.99
+  }
+]

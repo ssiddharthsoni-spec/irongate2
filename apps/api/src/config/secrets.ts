@@ -72,13 +72,30 @@ async function loadFromSecretsManager(): Promise<AppSecrets> {
 // ---------------------------------------------------------------------------
 
 function loadFromEnv(): AppSecrets {
+  const isTest = process.env.NODE_ENV === 'test';
+  const isDev = process.env.NODE_ENV === 'development';
+
+  // In non-dev/test environments, require critical secrets
+  if (!isDev && !isTest) {
+    const missing: string[] = [];
+    if (!process.env.DATABASE_URL) missing.push('DATABASE_URL');
+    if (!process.env.CLERK_SECRET_KEY) missing.push('CLERK_SECRET_KEY');
+    if (!process.env.JWT_SIGNING_KEY) missing.push('JWT_SIGNING_KEY');
+    if (missing.length > 0) {
+      throw new Error(
+        `[FATAL] Required secrets missing: ${missing.join(', ')}. ` +
+        'These must be set in production. The server cannot start without them.',
+      );
+    }
+  }
+
   return {
     databaseUrl:
       process.env.DATABASE_URL ||
-      'postgresql://irongate:irongate_dev@localhost:5432/irongate',
+      (isDev || isTest ? 'postgresql://irongate:irongate_dev@localhost:5432/irongate' : ''),
     redisPassword: process.env.REDIS_PASSWORD || '',
-    clerkSecretKey: process.env.CLERK_SECRET_KEY || 'dev-clerk-secret',
-    jwtSigningKey: process.env.JWT_SIGNING_KEY || 'dev-jwt-signing-key',
+    clerkSecretKey: process.env.CLERK_SECRET_KEY || (isDev || isTest ? `dev-clerk-${process.pid}` : ''),
+    jwtSigningKey: process.env.JWT_SIGNING_KEY || (isDev || isTest ? `dev-jwt-${process.pid}` : ''),
     kmsKeyArn: process.env.KMS_KEY_ARN || undefined,
     webhookSigningSecret: process.env.WEBHOOK_SIGNING_SECRET || undefined,
   };

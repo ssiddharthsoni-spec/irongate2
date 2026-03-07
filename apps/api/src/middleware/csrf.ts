@@ -21,6 +21,11 @@ function getAllowedOrigins(): string[] {
     process.env.DASHBOARD_URL || 'https://irongate-dashboard.vercel.app',
   ];
 
+  // Staging dashboard origin
+  if (process.env.STAGING_DASHBOARD_URL) {
+    origins.push(process.env.STAGING_DASHBOARD_URL);
+  }
+
   if (process.env.NODE_ENV === 'development') {
     origins.push('http://localhost:3000', 'http://localhost:3001');
   }
@@ -52,18 +57,20 @@ export const csrfProtectionMiddleware = createMiddleware(async (c, next) => {
       await next();
       return;
     }
-    if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') {
+    if (process.env.NODE_ENV === 'development') {
+      logger.warn('CSRF: allowing unregistered extension in development mode', { origin });
       await next();
       return;
     }
-    logger.warn('CSRF: request from unregistered extension', { origin });
+    logger.warn('CSRF: request from unregistered extension', { origin, env: process.env.NODE_ENV });
     return c.json({ error: 'Forbidden: unregistered extension origin' }, 403);
   }
 
   // No origin header on state-changing request from browser — suspicious
   if (!origin) {
-    // Allow in development for tools like curl/Postman
+    // Allow in local development only for tools like curl/Postman
     if (process.env.NODE_ENV === 'development') {
+      logger.debug('CSRF: allowing missing Origin in development mode', { method: c.req.method, path: c.req.path });
       await next();
       return;
     }

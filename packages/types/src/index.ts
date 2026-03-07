@@ -300,6 +300,57 @@ export interface FirmConfig {
   llmProviders: LLMProviderConfig[];
 }
 
+// --- Tier Configuration (Confidence Router) ---
+
+export type TierProtocol = 'ollama' | 'openai';
+
+export interface FirmTierConfig {
+  /** Tier 2: Client-side LLM for on-device classification */
+  tier2: {
+    enabled: boolean;
+    endpoint: string;
+    model: string;
+    protocol: TierProtocol;
+    timeoutMs: number;
+  };
+  /** Tier 2.5: Metadata-only classifier (always available, no config needed) */
+  tier25: {
+    enabled: boolean;
+  };
+  /** Tier 3: Server-side classification via /v1/classify */
+  tier3: {
+    enabled: boolean;
+    /** Override classification endpoint (default: same as API base URL) */
+    endpoint?: string;
+    timeoutMs: number;
+  };
+  /** Semantic classifier (embedding-based topic detection) */
+  semantic: {
+    enabled: boolean;
+    /** Pre-computed centroid JSON URL (optional, speeds up cold start) */
+    centroidsUrl?: string;
+  };
+  /** Zone thresholds (allow firms to customize amber/red boundaries) */
+  zoneThresholds: {
+    amberMin: number;  // default 26
+    redMin: number;    // default 61
+  };
+}
+
+export const DEFAULT_FIRM_TIER_CONFIG: FirmTierConfig = {
+  tier2: {
+    enabled: false,
+    endpoint: '',
+    model: '',
+    protocol: 'ollama',
+    timeoutMs: 5000,
+  },
+  tier25: { enabled: true },
+  tier3: { enabled: true, timeoutMs: 5000 },
+  semantic: { enabled: true },
+  zoneThresholds: { amberMin: 26, redMin: 61 },
+};
+
 // --- Messages (Extension <-> Service Worker) ---
 
 export type ExtensionMessage =

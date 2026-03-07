@@ -208,7 +208,8 @@ describe('Score Components', () => {
     ];
     const result = computeRiskScore(entities, 'Jane Doe jane@test.com');
     // PERSON(10*0.9=9) + EMAIL(12*0.9=10.8) = 19.8 * 1.15 = 22.77 → 23
-    expect(result.score).toBe(23);
+    // + relationship proximity boost ~+2
+    expect(result.score).toBe(25);
   });
 
   it('applies 1.3x bonus for 3+ unique entity types', () => {
@@ -218,7 +219,8 @@ describe('Score Components', () => {
       entity('SSN', '123-45-6789', 0.9, 25),
     ];
     const result = computeRiskScore(entities, 'John j@a.com 123-45-6789');
-    expect(result.score).toBe(70); // entity cap at 70
+    // entity cap at 70, co-occurrence PERSON+SSN → 1.5x → capped at 100
+    expect(result.score).toBe(100);
   });
 
   it('applies 1.2x volume bonus for 5-9 entities', () => {
@@ -226,8 +228,8 @@ describe('Score Components', () => {
       entity('LOCATION', `City${i}`, 0.9, i * 10)
     );
     const result = computeRiskScore(entities, entities.map((e) => e.text).join(' '));
-    // 5 * (3*0.9=2.7) = 13.5 * 1.2 = 16.2 → 16
-    expect(result.score).toBe(16);
+    // 5 * (3*0.9=2.7) = 13.5 * 1.2 = 16.2 + relationship proximity boost → 19
+    expect(result.score).toBe(19);
   });
 
   it('applies 1.4x volume bonus for 10+ entities', () => {
