@@ -26,6 +26,8 @@ export interface TierConfig {
   tier2Model: string;
   tier2Protocol: 'ollama' | 'openai';
   tier2TimeoutMs: number;
+  /** Tier 2 (GLiNER): On-device NER model */
+  glinerEnabled: boolean;
   /** Tier 2.5: Metadata-only classifier */
   tier25Enabled: boolean;
   /** Tier 3: Server-side classification */
@@ -46,6 +48,7 @@ export const DEFAULT_TIER_CONFIG: TierConfig = {
   tier2Model: '',
   tier2Protocol: 'ollama',
   tier2TimeoutMs: 5000,
+  glinerEnabled: false,
   tier25Enabled: true,
   tier3Enabled: true,
   tier3Endpoint: '',
@@ -101,6 +104,7 @@ function resolveTierConfig(source: Record<string, any>): TierConfig {
     tier2Model: source.tier2Model ?? DEFAULT_TIER_CONFIG.tier2Model,
     tier2Protocol: source.tier2Protocol ?? DEFAULT_TIER_CONFIG.tier2Protocol,
     tier2TimeoutMs: source.tier2TimeoutMs ?? DEFAULT_TIER_CONFIG.tier2TimeoutMs,
+    glinerEnabled: source.glinerEnabled ?? DEFAULT_TIER_CONFIG.glinerEnabled,
     tier25Enabled: source.tier25Enabled ?? DEFAULT_TIER_CONFIG.tier25Enabled,
     tier3Enabled: source.tier3Enabled ?? DEFAULT_TIER_CONFIG.tier3Enabled,
     tier3Endpoint: source.tier3Endpoint ?? DEFAULT_TIER_CONFIG.tier3Endpoint,

@@ -35,6 +35,11 @@ import { createTier2Adapter, probeTier2, type Tier2Config } from '../detection/t
 import { getSemanticClassifier } from '../detection/semantic-classifier';
 import { sanitizeForClassification } from '../detection/pseudonymizer';
 import { getWeightResolver } from '../detection/weight-resolver';
+import { createDictionaryMatcher, type DictionaryEntry } from '../detection/entity-dictionary';
+import { mergeEntities, dictionaryScoreBoost } from '../detection/entity-merger';
+import { createGLiNERAdapter, type GLiNERAdapterConfig } from '../detection/tier2-gliner-adapter';
+import { createModelRuntime } from '../agent/model-runtime';
+import { createAgentDetector } from '../agent/agent-detector';
 
 // Debug logging — silent in production, enable via: chrome.storage.local.get('ironGateDebug')
 let _IG_DEBUG = false;
@@ -151,6 +156,46 @@ let _suppressionWeights: Partial<Record<string, number>> = {};
 let _suppressionLastFetch = 0;
 const SUPPRESSION_REFRESH_MS = 15 * 60 * 1000; // 15 minutes
 
+// ─── Entity Dictionary (Tier 3) ──────────────────────────────────────────────
+const _dictionaryMatcher = createDictionaryMatcher();
+let _lastDictHash = '';
+
+async function syncEntityDictionary(): Promise<void> {
+  try {
+    const versionResp = await apiRequest<{ hash: string; count: number }>({
+      method: 'GET', path: '/admin/entity-dictionary/version', retries: 1,
+    });
+    if (!versionResp?.hash || versionResp.hash === _lastDictHash) return;
+
+    const exportResp = await apiRequest<{ entities: DictionaryEntry[]; count: number }>({
+      method: 'GET', path: '/admin/entity-dictionary/export', retries: 1,
+    });
+    if (!exportResp?.entities) return;
+
+    _dictionaryMatcher.reload(exportResp.entities);
+    _lastDictHash = versionResp.hash;
+
+    // Persist to local storage for offline use
+    await chrome.storage.local.set({
+      iron_gate_entity_dictionary: exportResp.entities,
+      iron_gate_dict_hash: versionResp.hash,
+    });
+
+    igLog('Entity dictionary synced:', exportResp.count, 'entries');
+  } catch (err) {
+    igLog('Entity dictionary sync error (non-fatal):', err);
+  }
+}
+
+// Load cached dictionary on startup
+chrome.storage.local.get(['iron_gate_entity_dictionary', 'iron_gate_dict_hash'], (result) => {
+  if (result.iron_gate_entity_dictionary?.length) {
+    _dictionaryMatcher.reload(result.iron_gate_entity_dictionary);
+    _lastDictHash = result.iron_gate_dict_hash || '';
+    igLog('Dictionary loaded from cache:', result.iron_gate_entity_dictionary.length, 'entries');
+  }
+});
+
 async function refreshSuppressionRules(): Promise<void> {
   if (Date.now() - _suppressionLastFetch < SUPPRESSION_REFRESH_MS) return;
   try {
@@ -209,6 +254,18 @@ function getConfidenceRouter(config: import('../managed-config').ResolvedConfig)
     igLog('Confidence router: Tier 2 enabled —', tier2Config.model, 'at', tier2Config.endpoint);
   }
 
+  // Tier 2 (GLiNER): On-device NER model via offscreen document
+  // Gated behind feature flag tier2_ner and managed config localNer.enabled
+  if (tierConfig.glinerEnabled || (config as any).localNer?.enabled) {
+    const glinerConfig: GLiNERAdapterConfig = {
+      enabled: true,
+      confidenceThreshold: (config as any).localNer?.confidenceThreshold ?? 0.5,
+      timeoutMs: (config as any).localNer?.timeoutMs ?? 10000,
+    };
+    adapters.push(createGLiNERAdapter(glinerConfig));
+    igLog('Confidence router: Tier 2 GLiNER NER enabled');
+  }
+
   // Tier 2.5: Metadata classifier (always available unless explicitly disabled)
   if (tierConfig.tier25Enabled !== false) {
     adapters.push(createMetadataClassifierAdapter(
@@ -241,6 +298,27 @@ function getConfidenceRouter(config: import('../managed-config').ResolvedConfig)
 // Reset router when config changes so it picks up new tier settings
 function resetConfidenceRouter(): void {
   _confidenceRouter = null;
+  _agentDetector = null;
+}
+
+// ─── Local Agent Detector (context-aware entity detection) ───────────────────
+// Uses an LLM to deeply understand text context and identify entities that
+// regex and NER models miss. The LLM reads the text and outputs structured
+// entity annotations — it never rewrites or modifies the text.
+let _agentDetector: ReturnType<typeof createAgentDetector> | null = null;
+
+function getAgentDetector(config: import('../managed-config').ResolvedConfig) {
+  if (_agentDetector) return _agentDetector;
+
+  const runtime = createModelRuntime({
+    clientLlmEndpoint: config.localLLM?.endpoint,
+    clientLlmModel: config.localLLM?.model,
+    apiBaseUrl: config.apiUrl || undefined,
+    apiKey: config.apiKey || undefined,
+  });
+  _agentDetector = createAgentDetector(runtime);
+
+  return _agentDetector;
 }
 
 // ─── Compliance Profile Cache ─────────────────────────────────────────────────
@@ -505,46 +583,118 @@ async function handleMessage(
     case 'PROMPT_DETECTED': {
       const { text, aiToolId, captureMethod } = message.payload;
       igLog('Prompt captured from', aiToolId, 'via', captureMethod, 'length:', text.length);
+      const config = await resolveConfig();
 
-      // ── Local detection: regex PII + secret scanning ──
+      // ────────────────────────────────────────────────────────────────────
+      // Detection Pipeline: Agent-First, Regex-Supplement
+      //
+      // 1. ALWAYS: Regex for structured patterns (SSN, CC, API keys, etc.)
+      //    These are format-based — regex is better than any LLM at these.
+      //
+      // 2. ALWAYS: Secret scanner (API keys, tokens, credentials)
+      //
+      // 3. ALWAYS: Entity dictionary (admin-configured, Aho-Corasick)
+      //
+      // 4. PRIMARY: LLM Agent detector — understands context, classifies
+      //    entities correctly (Goldman Sachs = ORG not PERSON), catches
+      //    codenames, indirect identifiers, implied PII.
+      //    If LLM unavailable → regex fills in for name/org/location detection.
+      //
+      // 5. MERGE: Agent entities + regex structured patterns + dictionary
+      //    Agent is authoritative for names/orgs/context.
+      //    Regex is authoritative for SSN/CC/API keys/format patterns.
+      //    Dictionary overrides both (admin-curated = ground truth).
+      // ────────────────────────────────────────────────────────────────────
+
+      // Step 1: Regex for structured patterns (always runs, < 5ms)
       const regexEntities = detectWithRegex(text);
       const secrets = scanForSecrets(text);
 
-      // Merge secret hits into the entity list so the scorer sees them
-      const allEntities = [
-        ...regexEntities,
+      const structuredEntities: import('../detection/types').DetectedEntity[] = [
         ...secrets.map((s) => ({
           type: s.type,
           text: s.text,
           start: s.start,
           end: s.end,
           confidence: s.confidence,
-          source: s.source as 'regex',
+          source: 'regex' as const,
         })),
       ];
 
-      // ── Local LLM detection (enterprise, optional) ──
-      // Runs on-premise — no PII leaves the machine/network.
-      const config = await resolveConfig();
+      // Separate regex results: structured patterns (regex is better) vs. name/org detection
+      const detector = getAgentDetector(config);
+      const regexSuperiorTypes = detector.REGEX_SUPERIOR_TYPES;
+      for (const e of regexEntities) {
+        if (regexSuperiorTypes.has(e.type)) {
+          structuredEntities.push(e); // Keep — regex is authoritative for these
+        }
+      }
+
+      // Step 2: Dictionary matching (always, < 2ms)
+      const dictEntities: import('../detection/types').DetectedEntity[] = [];
+      if (_dictionaryMatcher.isLoaded()) {
+        const dictMatches = _dictionaryMatcher.search(text);
+        if (dictMatches.length > 0) {
+          dictEntities.push(..._dictionaryMatcher.toDetectedEntities(dictMatches));
+          igLog('Dictionary matched', dictMatches.length, 'entities');
+        }
+      }
+
+      // Step 3: LLM Agent detection — PRIMARY for names, orgs, context
+      let agentEntities: import('../detection/types').DetectedEntity[] = [];
+      let agentAvailable = false;
+      try {
+        agentAvailable = await detector.isAvailable();
+        if (agentAvailable) {
+          agentEntities = await detector.detect(text, structuredEntities, {
+            mode: 'primary',
+            timeoutMs: 5000,
+            minConfidence: 0.5,
+          });
+          igLog('Agent detected', agentEntities.length, 'entities (primary mode)');
+        }
+      } catch (err) {
+        igLog('Agent detector error (falling back to regex):', err);
+      }
+
+      // Step 4: If agent unavailable, use regex for ALL entity types (fallback)
+      if (!agentAvailable) {
+        for (const e of regexEntities) {
+          if (!regexSuperiorTypes.has(e.type)) {
+            // These are the name/org/location entities that regex caught
+            // Less accurate than agent, but better than nothing
+            structuredEntities.push(e);
+          }
+        }
+        igLog('Agent unavailable — using regex fallback for all entity types');
+      }
+
+      // Step 5: Legacy local LLM detection (enterprise, if configured separately)
       if (config.localLLM) {
         try {
           const llmResult = await detectWithLocalLLM(text, config.localLLM);
           if (llmResult.available && llmResult.entities.length > 0) {
-            // Deduplicate: skip LLM entities that overlap with existing regex detections
             for (const llmEntity of llmResult.entities) {
-              const overlaps = allEntities.some(e =>
+              const overlaps = agentEntities.some(e =>
                 e.start < llmEntity.end && e.end > llmEntity.start
               );
               if (!overlaps) {
-                allEntities.push(llmEntity);
+                agentEntities.push(llmEntity);
               }
             }
-            igLog('Local LLM added', llmResult.entities.length, 'entities in', llmResult.latencyMs, 'ms');
+            igLog('Local LLM added', llmResult.entities.length, 'entities');
           }
         } catch (err) {
           igLog('Local LLM detection error (non-fatal):', err);
         }
       }
+
+      // Step 6: Merge all sources
+      // Priority: dictionary > agent > regex structured
+      const mergeSources: import('../detection/types').DetectedEntity[][] = [structuredEntities];
+      if (agentEntities.length > 0) mergeSources.push(agentEntities);
+      if (dictEntities.length > 0) mergeSources.push(dictEntities);
+      const allEntities = mergeEntities(...mergeSources);
 
       // ── ML classification (Pro+ only) ──
       const mlResult = await classifyIfPro(text);
@@ -559,10 +709,16 @@ async function handleMessage(
       const rawSensitivity = computeScore(text, allEntities,
         Object.keys(mergedWeights).length > 0 ? mergedWeights : undefined);
 
+      // Apply dictionary score boost — known entities from admin dictionary
+      // should escalate the sensitivity score even if regex scored low.
+      const dictBoost = dictionaryScoreBoost(
+        allEntities.filter(e => e.source === 'dictionary')
+      );
+
       // If ML says CRITICAL but regex says low, boost the score.
       // Create a new object instead of mutating — prevents downstream surprises.
-      let finalScore = rawSensitivity.score;
-      let finalLevel = rawSensitivity.level;
+      let finalScore = Math.min(100, rawSensitivity.score + dictBoost);
+      let finalLevel = scoreToLevel(finalScore);
       if (mlResult && mlResult.label === 'CRITICAL' && finalScore < 60) {
         finalScore = 60;
         finalLevel = scoreToLevel(finalScore);
@@ -643,6 +799,8 @@ async function handleMessage(
       }
 
       // Generate pseudonymized version for transparency view
+      // Simple find-replace — deterministic, fast (< 1ms)
+      // Agent handles DETECTION (above), not rewriting.
       const pseudoResult = pseudonymizeLocal(text, allEntities);
 
       // Track stats for trial banner (serialized to prevent race conditions)
@@ -1351,6 +1509,9 @@ async function syncPolicies(): Promise<void> {
 
     igLog('Policies synced', { updatedAt: response.updatedAt });
 
+    // Sync entity dictionary (Tier 3) alongside policies
+    syncEntityDictionary().catch(err => igLog('Dict sync error:', err));
+
     // Broadcast to all content scripts
     chrome.tabs.query({}, (tabs) => {
       for (const tab of tabs) {
@@ -1564,9 +1725,21 @@ function inlineFetchInterceptor() {
     return;
   }
 
-  if (_debug) console.log('[Iron Gate INLINE] 🔧 Installing inline fetch interceptor (fallback)...');
+  if (_debug) console.log('[Iron Gate INLINE] Installing inline fetch interceptor (fallback)...');
+
+  // Generate cryptographic nonce for message authentication
+  const _nonce = crypto.getRandomValues(new Uint8Array(16))
+    .reduce((s: string, b: number) => s + b.toString(16).padStart(2, '0'), '');
+
+  function igPostMessage(data: Record<string, unknown>): void {
+    window.postMessage({ ...data, _nonce }, window.location.origin);
+  }
 
   let mode: 'audit' | 'proxy' = 'proxy';
+
+  // Persistent forward/reverse maps for conversation consistency
+  const forwardMap: Record<string, string> = {};  // original → pseudonym
+  const reverseMap: Record<string, string> = {};  // pseudonym → original
 
   // Listen for mode changes
   window.addEventListener('message', (e: MessageEvent) => {
@@ -1576,7 +1749,7 @@ function inlineFetchInterceptor() {
       if (_debug) console.log('[Iron Gate INLINE] Mode set to:', mode);
     }
   });
-  window.postMessage({ type: 'IRON_GATE_REQUEST_MODE' }, window.location.origin);
+  igPostMessage({ type: 'IRON_GATE_REQUEST_MODE' });
 
   // ── Entity Detection Patterns ──
   const PATTERNS: Array<{ type: string; re: RegExp }> = [
@@ -1683,12 +1856,13 @@ function inlineFetchInterceptor() {
     const sorted = [...entities].sort((a, b) => b.start - a.start);
     const mappings: Array<{original: string; pseudonym: string; type: string}> = [];
     let result = text;
-    const seen = new Map<string, string>();
     for (const entity of sorted) {
-      let pseudonym = seen.get(entity.text);
+      // Reuse existing pseudonym for consistency across messages
+      let pseudonym = forwardMap[entity.text];
       if (!pseudonym) {
         pseudonym = generateRealisticFake(entity.type, entity.text);
-        seen.set(entity.text, pseudonym);
+        forwardMap[entity.text] = pseudonym;
+        reverseMap[pseudonym] = entity.text;
       }
       result = result.substring(0, entity.start) + pseudonym + result.substring(entity.end);
       if (!mappings.find(m => m.original === entity.text)) {
@@ -1768,16 +1942,15 @@ function inlineFetchInterceptor() {
     return null;
   }
 
-  function quickScore(entities: Array<{type: string}>): string {
+  function quickScore(entities: Array<{type: string}>): { level: string; score: number } {
     const HIGH = ['SSN', 'CREDIT_CARD', 'API_KEY', 'AWS_CREDENTIAL', 'PRIVATE_KEY'];
     let score = 0;
     for (const e of entities) {
       score += HIGH.includes(e.type) ? 25 : 10;
     }
-    if (score >= 86) return 'critical';
-    if (score >= 61) return 'high';
-    if (score >= 26) return 'medium';
-    return 'low';
+    const capped = Math.min(score, 100);
+    const level = capped >= 86 ? 'critical' : capped >= 61 ? 'high' : capped >= 26 ? 'medium' : 'low';
+    return { level, score: capped };
   }
 
   // ── Patch fetch ──
@@ -1820,29 +1993,28 @@ function inlineFetchInterceptor() {
     if (_debug) console.log('[Iron Gate INLINE] Intercepted fetch to', url.substring(0, 60), '— mode:', mode, ', entities:', entities.length);
 
     if (mode === 'proxy' && entities.length > 0) {
-      const level = quickScore(entities);
+      const { level, score } = quickScore(entities);
       const { maskedText, mappings } = pseudonymize(promptText, entities);
       const modifiedBody = replacePrompt(bodyString, promptText, maskedText);
 
       if (modifiedBody) {
-        if (_debug) console.log('[Iron Gate INLINE] ✅ PROXY: Pseudonymized', entities.length, 'entities (', level, ')');
-        if (_debug) console.log('[Iron Gate INLINE] Original:', promptText.length, 'chars');
-        if (_debug) console.log('[Iron Gate INLINE] Masked:', maskedText.length, 'chars');
+        if (_debug) console.log('[Iron Gate INLINE] PROXY: Pseudonymized', entities.length, 'entities (', level, ')');
 
         // SECURITY: hash prompt before postMessage — no raw PII over postMessage
         (async () => {
           const _d = new TextEncoder().encode(promptText);
           const _b = await crypto.subtle.digest('SHA-256', _d);
           const _ph = Array.from(new Uint8Array(_b)).map(b => b.toString(16).padStart(2, '0')).join('');
-          window.postMessage({
+          igPostMessage({
             type: 'IRON_GATE_INTERCEPTED',
             promptHash: _ph,
             promptLength: promptText.length,
             maskedPrompt: maskedText,
-            mappings: mappings.map(m => ({ pseudonym: m.pseudonym, type: m.type, length: m.original.length })),
+            mappings: mappings.map(m => ({ original: m.original, pseudonym: m.pseudonym, type: m.type, length: m.original.length })),
             entityCount: entities.length,
             level,
-          }, window.location.origin);
+            score,
+          });
         })();
 
         const modifiedInit: RequestInit = {
@@ -1859,21 +2031,22 @@ function inlineFetchInterceptor() {
     }
 
     if (mode === 'audit' && entities.length > 0) {
-      const level = quickScore(entities);
+      const { level, score } = quickScore(entities);
       const { maskedText, mappings } = pseudonymize(promptText, entities);
       (async () => {
         const _d = new TextEncoder().encode(promptText);
         const _b = await crypto.subtle.digest('SHA-256', _d);
         const _ph = Array.from(new Uint8Array(_b)).map(b => b.toString(16).padStart(2, '0')).join('');
-        window.postMessage({
+        igPostMessage({
           type: 'IRON_GATE_AUDIT',
           promptHash: _ph,
           promptLength: promptText.length,
           maskedPrompt: maskedText,
-          mappings: mappings.map(m => ({ pseudonym: m.pseudonym, type: m.type, length: m.original.length })),
+          mappings: mappings.map(m => ({ original: m.original, pseudonym: m.pseudonym, type: m.type, length: m.original.length })),
           entityCount: entities.length,
           level,
-        }, window.location.origin);
+          score,
+        });
       })();
     }
 
@@ -1895,8 +2068,8 @@ function inlineFetchInterceptor() {
   const ok = window.fetch === patchedFetch;
   (window as any).__IRON_GATE_MAIN_WORLD = ok ? 'active-inline' : 'failed';
   (window as any).__IRON_GATE_FETCH_PATCHED = ok;
-  window.postMessage({ type: 'IRON_GATE_HEARTBEAT', version: 'inline-0.1', timestamp: Date.now(), mode }, window.location.origin);
-  if (_debug) console.log('[Iron Gate INLINE]', ok ? '✅ Inline fetch interceptor ACTIVE' : '❌ Fetch patch FAILED');
+  igPostMessage({ type: 'IRON_GATE_HEARTBEAT', version: 'inline-0.1', timestamp: Date.now(), mode });
+  if (_debug) console.log('[Iron Gate INLINE]', ok ? 'Inline fetch interceptor ACTIVE' : 'Fetch patch FAILED');
 }
 
 chrome.webNavigation.onCommitted.addListener(async (details) => {
@@ -1967,6 +2140,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     });
 
     if (checkResult?.result === 'active') return; // Already injected
+    if (checkResult?.result === 'active-inline') return; // Inline fallback active — don't double-inject
     if (checkResult?.result === 'loading') return; // Init in progress — don't double-inject
 
     igLog('tabs.onUpdated fallback: injecting into tab', tabId, `(state: ${checkResult?.result})`, `(${tab.url?.substring(0, 60)})`);

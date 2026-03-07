@@ -209,8 +209,8 @@ describe('Mapping structure and integrity', () => {
       expect(m.original).toBeTruthy();
       expect(m.pseudonym).toBeTruthy();
       expect(m.type).toBeTruthy();
-      // Pseudonym should match the bracket token format [TYPE-N]
-      expect(m.pseudonym).toMatch(/^\[.+-\d+\]$/);
+      // Pseudonym should be different from original (realistic fake)
+      expect(m.pseudonym).not.toBe(m.original);
     }
   });
 

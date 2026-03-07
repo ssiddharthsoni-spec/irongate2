@@ -845,7 +845,9 @@ function generateFake(type: string, original: string): string {
         const prefix = original.startsWith('$') ? '$' : '';
         return prefix + formatted + suffix;
       }
-      return original; // Can't parse, return original
+      // Fallback: randomize digits and letters to prevent leaking unparseable amounts
+      return original.replace(/\d/g, () => Math.floor(_secureRandom() * 10).toString())
+                     .replace(/[a-zA-Z]/g, c => String.fromCharCode(c.charCodeAt(0) + Math.floor(_randBetween(-3, 3))));
     }
 
     case 'PERCENTAGE': {
@@ -858,7 +860,7 @@ function generateFake(type: string, original: string): string {
         const hasDecimal = numMatch[1].includes('.');
         return (hasDecimal ? shifted.toFixed(1) : Math.round(shifted).toString()) + '%';
       }
-      return original;
+      return Math.floor(_randBetween(10, 90)) + '%';
     }
 
     case 'DATE': {
@@ -883,7 +885,16 @@ function generateFake(type: string, original: string): string {
         const dStr = numDate[3].length === 2 ? d.toString().padStart(2, '0') : d.toString();
         return mStr + numDate[2] + dStr + numDate[2] + numDate[4];
       }
-      return original;
+      // ISO dates (YYYY-MM-DD) and other formats
+      const isoDate = original.match(/^(\d{4})([\/\-])(\d{1,2})\2(\d{1,2})$/);
+      if (isoDate) {
+        const y = parseInt(isoDate[1]) + Math.floor(_randBetween(-2, 2));
+        const m = Math.max(1, Math.min(12, parseInt(isoDate[3]) + Math.floor(_randBetween(-2, 3))));
+        const d = Math.max(1, Math.min(28, parseInt(isoDate[4]) + Math.floor(_randBetween(-5, 5))));
+        return y + isoDate[2] + m.toString().padStart(2, '0') + isoDate[2] + d.toString().padStart(2, '0');
+      }
+      // Last resort: randomize digits to prevent leak
+      return original.replace(/\d/g, () => Math.floor(_secureRandom() * 10).toString());
     }
 
     case 'FISCAL_PERIOD': {
@@ -893,7 +904,14 @@ function generateFake(type: string, original: string): string {
         const shifted = ((parseInt(qMatch[2]) + Math.floor(_randBetween(1, 3)) - 1) % 4) + 1;
         return qMatch[1] + shifted + original.substring(2);
       }
-      return original;
+      // FY2024 → FY20XX (shift year)
+      const fyMatch = original.match(/^(FY\s*'?)(\d{2,4})$/i);
+      if (fyMatch) {
+        const year = parseInt(fyMatch[2]);
+        const shifted = year + Math.floor(_randBetween(-2, 2));
+        return fyMatch[1] + shifted;
+      }
+      return original.replace(/\d/g, () => Math.floor(_secureRandom() * 10).toString());
     }
 
     case 'EMAIL': {
@@ -988,13 +1006,60 @@ function generateFake(type: string, original: string): string {
       return original.replace(/\d/g, () => Math.floor(_secureRandom() * 10).toString());
     }
 
-    default:
-      // Fallback: randomize any digits and keep structure, instead of bracket token
-      // which leaks the entity type name to the LLM
-      if (/\d/.test(original)) {
-        return original.replace(/\d/g, () => Math.floor(_secureRandom() * 10).toString());
+    case 'API_KEY':
+    case 'AWS_CREDENTIAL':
+    case 'GCP_CREDENTIAL':
+    case 'AUTH_TOKEN': {
+      // Fully replace with a safe placeholder — preserve length and prefix only
+      const prefixMatch = original.match(/^([a-zA-Z_\-]{2,10}[-_])/);
+      const prefix = prefixMatch ? prefixMatch[1] : 'key-';
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+      const fakeLen = Math.max(16, original.length - prefix.length);
+      let fake = prefix;
+      for (let i = 0; i < fakeLen; i++) fake += chars[Math.floor(_secureRandom() * chars.length)];
+      return fake;
+    }
+
+    case 'DATABASE_URI': {
+      // Replace with a safe fake URI preserving the scheme
+      const scheme = original.match(/^([a-z+]+:\/\/)/)?.[1] || 'db://';
+      return scheme + 'testuser:fakepwd@db-' + Math.floor(_secureRandom() * 9000 + 1000) + '.example.com:5432/testdb';
+    }
+
+    case 'PRIVATE_KEY': {
+      // Replace entire key material — never leak
+      const headerMatch = original.match(/^(-----BEGIN [A-Z ]+-----)/);
+      const footerMatch = original.match(/(-----END [A-Z ]+-----)$/);
+      if (headerMatch || footerMatch) {
+        const header = headerMatch?.[1] || '-----BEGIN PRIVATE KEY-----';
+        const footer = footerMatch?.[1] || '-----END PRIVATE KEY-----';
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+        let fakeBody = '';
+        for (let i = 0; i < 64; i++) fakeBody += chars[Math.floor(_secureRandom() * chars.length)];
+        return header + '\n' + fakeBody + '\n' + footer;
       }
-      return original; // Return original rather than [TYPE] bracket
+      // Non-PEM key material: fully randomize
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+      let fake = '';
+      for (let i = 0; i < original.length; i++) fake += chars[Math.floor(_secureRandom() * chars.length)];
+      return fake;
+    }
+
+    default: {
+      // Fallback: randomize digits AND alphabetic characters to prevent any PII leak
+      let result = original;
+      if (/\d/.test(result)) {
+        result = result.replace(/\d/g, () => Math.floor(_secureRandom() * 10).toString());
+      }
+      if (result === original && /[a-zA-Z]/.test(result)) {
+        // No digits were changed — randomize letters too to prevent leak
+        result = result.replace(/[a-zA-Z]/g, c => {
+          const base = c >= 'a' ? 97 : 65;
+          return String.fromCharCode(base + Math.floor(_secureRandom() * 26));
+        });
+      }
+      return result;
+    }
   }
 }
 
@@ -1236,7 +1301,7 @@ function replacePrompt(body: string, originalPrompt: string, replacement: string
         const escapedOrig = jsonStringEscape(originalPrompt);
         const escapedRepl = jsonStringEscape(replacement);
         if (fReq.includes(escapedOrig)) {
-          const modifiedFReq = fReq.replace(escapedOrig, escapedRepl);
+          const modifiedFReq = fReq.split(escapedOrig).join(escapedRepl);
           params.set('f.req', modifiedFReq);
           igLog(`Gemini replacePrompt: single-escaped match`);
           return params.toString();
@@ -1245,14 +1310,14 @@ function replacePrompt(body: string, originalPrompt: string, replacement: string
         const doubleEscapedOrig = jsonStringEscape(escapedOrig);
         const doubleEscapedRepl = jsonStringEscape(escapedRepl);
         if (fReq.includes(doubleEscapedOrig)) {
-          const modifiedFReq = fReq.replace(doubleEscapedOrig, doubleEscapedRepl);
+          const modifiedFReq = fReq.split(doubleEscapedOrig).join(doubleEscapedRepl);
           params.set('f.req', modifiedFReq);
           igLog(`Gemini replacePrompt: double-escaped match`);
           return params.toString();
         }
         // Try raw text match (prompt appears unescaped)
         if (fReq.includes(originalPrompt)) {
-          const modifiedFReq = fReq.replace(originalPrompt, replacement);
+          const modifiedFReq = fReq.split(originalPrompt).join(replacement);
           params.set('f.req', modifiedFReq);
           igLog(`Gemini replacePrompt: raw text match`);
           return params.toString();
@@ -1325,15 +1390,13 @@ function replacePrompt(body: string, originalPrompt: string, replacement: string
 
       if (body.includes(escapedOriginal)) {
         igLog(`Using generic string replacement fallback (${escapedOriginal.length} chars)`);
-        return body.replace(escapedOriginal, escapedReplacement);
+        return body.split(escapedOriginal).join(escapedReplacement);
       }
 
-      // Try with partial match (first 100 chars) for very long prompts
-      // that might be split across fields
-      const shortOriginal = jsonStringEscape(originalPrompt.substring(0, 100));
-      if (shortOriginal.length > 20 && body.includes(shortOriginal)) {
-        igLog(`Using partial string replacement fallback`);
-        return body.split(escapedOriginal).join(escapedReplacement);
+      // Try raw (unescaped) match for prompts encoded differently than expected
+      if (originalPrompt.length > 20 && body.includes(originalPrompt)) {
+        igLog(`Using raw string replacement fallback`);
+        return body.split(originalPrompt).join(replacement);
       }
     }
 
@@ -1522,23 +1585,15 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
 function replacePseudonyms(text: string, reverseMap: Record<string, string>): string {
   let result = text;
   // Sort entries by length descending — longest pseudonyms first to prevent
-  // partial matches (e.g., "04/15/2026" must match before "4/15/2026")
+  // partial matches (e.g., "Adatum Corp" replaces before "Adatum" or "Corp")
   const entries = Object.entries(reverseMap)
     .filter(([k]) => k && k.length >= 2)
     .sort((a, b) => b[0].length - a[0].length);
 
-  // Track replaced regions to prevent overlapping replacements.
-  // When "Adatum Corp" → "Salesforce" replaces a region, "Adatum" and "Corp"
-  // should NOT also try to replace within that same region.
-  let replacedRegions: Array<[number, number]> = [];
-
   for (const [pseudonym, original] of entries) {
     if (pseudonym === original) continue; // Skip identity mappings
 
-    // Build boundary-aware regex.
-    // For alpha pseudonyms, use word boundaries to prevent matching inside words
-    // (e.g., "Corp" should NOT match inside "TechCorp").
-    // For numeric pseudonyms, use non-digit boundaries.
+    // Strategy 1: Boundary-aware exact match (case-sensitive)
     try {
       const escaped = pseudonym.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const startsWithAlpha = /^[a-zA-Z]/.test(pseudonym);
@@ -1548,31 +1603,12 @@ function replacePseudonyms(text: string, reverseMap: Record<string, string>): st
       const prefix = startsWithDigit ? '(?<!\\d)' : startsWithAlpha ? '(?<![a-zA-Z])' : '';
       const suffix = endsWithDigit ? '(?!\\d)' : endsWithAlpha ? '(?![a-zA-Z])' : '';
       const regex = new RegExp(prefix + escaped + suffix, 'g');
-
-      // Replace all non-overlapping matches
-      let match: RegExpExecArray | null;
-      let newResult = '';
-      let lastIdx = 0;
-      regex.lastIndex = 0;
-      while ((match = regex.exec(result)) !== null) {
-        const matchStart = match.index;
-        const matchEnd = matchStart + match[0].length;
-        // Skip if this region overlaps with a previous replacement
-        const overlaps = replacedRegions.some(([s, e]) => matchStart < e && matchEnd > s);
-        if (!overlaps) {
-          newResult += result.substring(lastIdx, matchStart) + original;
-          replacedRegions.push([matchStart, matchStart + original.length]);
-          lastIdx = matchEnd;
-        }
-      }
-      if (lastIdx > 0) {
-        newResult += result.substring(lastIdx);
-        result = newResult;
-        // Recalculate replaced regions offsets after the full replacement pass
-        // (they shifted due to length differences)
+      if (regex.test(result)) {
+        regex.lastIndex = 0;
+        result = result.replace(regex, original);
         continue;
       }
-    } catch { /* regex failed, fall through to simpler strategies */ }
+    } catch { /* regex failed, fall through */ }
 
     // Strategy 2: JSON-escaped match (SSE streams contain JSON-encoded strings)
     const jsonPseudo = jsonStringEscape(pseudonym);
@@ -1593,10 +1629,32 @@ function replacePseudonyms(text: string, reverseMap: Record<string, string>): st
       const suffix = endsWithDigit ? '(?!\\d)' : endsWithAlpha ? '(?![a-zA-Z])' : '';
       const regex = new RegExp(prefix + escaped + suffix, 'gi');
       if (regex.test(result)) {
-        regex.lastIndex = 0; // reset after test()
+        regex.lastIndex = 0;
         result = result.replace(regex, original);
+        continue;
       }
     } catch { /* ignore */ }
+
+    // Strategy 4: Plain substring fallback (no word-boundary requirement).
+    // LLMs sometimes concatenate pseudonyms with adjacent words (no space),
+    // e.g., "Bentworthminimizing" instead of "Bentworth minimizing".
+    // The boundary-aware regex above won't match, leaving pseudonyms visible.
+    // Only for pseudonyms >= 5 chars to avoid false-positive partial matches.
+    if (pseudonym.length >= 5 && result.includes(pseudonym)) {
+      result = result.split(pseudonym).join(original);
+    } else if (pseudonym.length >= 5) {
+      // Case-insensitive plain substring
+      const lowerResult = result.toLowerCase();
+      const lowerPseudo = pseudonym.toLowerCase();
+      if (lowerResult.includes(lowerPseudo)) {
+        // Replace preserving surrounding text
+        let idx = lowerResult.indexOf(lowerPseudo);
+        while (idx !== -1) {
+          result = result.substring(0, idx) + original + result.substring(idx + pseudonym.length);
+          idx = result.toLowerCase().indexOf(lowerPseudo, idx + original.length);
+        }
+      }
+    }
   }
   return result;
 }
@@ -1715,8 +1773,13 @@ function startDomDepseudonymizer(): void {
   // Catch LLM paraphrases of the notice (e.g., "Note: PII has been replaced...")
   const NOTICE_PARAPHRASE = /\*?\*?(?:Note|Notice|Disclaimer|Important)\s*:?\s*(?:All\s+)?(?:personally\s+identifiable\s+information|PII|personal\s+data|sensitive\s+data)\s+(?:has\s+been|was)\s+(?:automatically\s+)?replaced[\s\S]*?(?:fictional|fake|synthetic)\s+equivalents\.?\s*\*?\*?\s*/gi;
 
+  // Cooldown timestamp — observer-triggered scans are suppressed until this time.
+  // Prevents flicker loops where: we mutate → observer fires → re-scan → mutate → …
+  let _domMutationCooldown = 0;
+
   function replaceInTextNode(node: Text): void {
     if (_domReplacing) return; // prevent infinite loop from our own mutations
+    if (isCurrentlyGenerating()) return; // NEVER touch DOM during React render cycle
     if (!node.textContent || node.textContent.length < 2) return;
 
     let text = node.textContent;
@@ -1767,6 +1830,7 @@ function startDomDepseudonymizer(): void {
       let retries = 0;
       const reapply = () => {
         if (retries >= 6 || !node.parentNode) return; // node removed or max retries
+        if (isCurrentlyGenerating()) return; // stop re-applying during React render
         retries++;
         if (node.textContent !== expectedText && node.textContent && node.textContent.length >= 2) {
           // React reverted the text — re-check and re-apply
@@ -1793,10 +1857,6 @@ function startDomDepseudonymizer(): void {
     }
   }
 
-  // Cooldown timestamp — observer-triggered scans are suppressed until this time.
-  // Prevents flicker loops where: we mutate → observer fires → re-scan → mutate → …
-  let _domMutationCooldown = 0;
-
   function scanElement(el: Node): void {
     if (_domReplacing) return;
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
@@ -1808,7 +1868,11 @@ function startDomDepseudonymizer(): void {
 
   // ChatGPT-specific: scan ALL message containers (assistant AND user)
   function scanChatGPTResponses(): void {
-    const hasReverseEntries = Object.keys(currentReverseMap).length > 0;
+    const mapSize = Object.keys(currentReverseMap).length;
+    if (mapSize > 0 && _domReplacementCount <= 3) {
+      const sample = Object.entries(currentReverseMap).slice(0, 3).map(([k, v]) => `"${k.substring(0, 20)}" → "${v.substring(0, 20)}"`).join(', ');
+      igLog(`DOM scan: reverseMap has ${mapSize} entries. Sample: ${sample}`);
+    }
     // Always scan for notice stripping; only scan for de-pseudo if map has entries
     const selectors = [
       // Assistant response containers
@@ -1921,28 +1985,10 @@ function startDomDepseudonymizer(): void {
     if (_generationCheckInterval) return; // Already monitoring
 
     _generationCheckInterval = setInterval(() => {
-      // While still generating, scan COMPLETED messages AND the active streaming
-      // message. Scanning during generation catches pseudonyms in real-time,
-      // preventing the visible flicker when de-pseudo only runs post-generation.
-      if (Object.keys(currentReverseMap).length > 0) {
-        try {
-          // Completed assistant messages
-          const completedMsgs = document.querySelectorAll(
-            '[data-message-author-role="assistant"]:not(:last-of-type)'
-          );
-          for (const msg of completedMsgs) scanElement(msg);
-
-          // Active streaming message — use setTimeout to defer out of any
-          // React commit phase that may be happening in this tick
-          setTimeout(() => {
-            try {
-              const streaming = document.querySelector('[class*="result-streaming"]')
-                || document.querySelector('[data-message-author-role="assistant"]:last-of-type');
-              if (streaming) scanElement(streaming);
-            } catch {}
-          }, 0);
-        } catch {}
-      }
+      // While generating, do NOT scan any DOM elements. React manages ALL message
+      // nodes (not just the streaming one) and mutating any text node during React's
+      // render cycle causes "Failed replaceTextWithDirectives" errors. The multi-pass
+      // sweep after generation completes will catch everything.
 
       if (!isCurrentlyGenerating()) {
         // Generation stopped — clear the monitor
@@ -2247,12 +2293,28 @@ window.addEventListener('message', (event) => {
 function _checkConversationBoundary(): void {
   const currentPath = window.location.pathname;
   if (currentPath !== _lastConversationPath) {
-    igLog(`URL changed: ${_lastConversationPath} → ${currentPath} — resetting pseudonym maps`);
+    const prevPath = _lastConversationPath;
     _lastConversationPath = currentPath;
-    currentReverseMap = {};
-    currentForwardMap = {};
-    pendingFileScans.clear();
-    dismissScanIndicator();
+
+    // Only clear pseudonym maps when navigating between DIFFERENT conversations.
+    // Preserve maps for: "/" → "/c/id" (new chat getting ID), settings, GPT store, etc.
+    const prevConvId = prevPath.match(/\/c\/([^/]+)/)?.[1];
+    const currConvId = currentPath.match(/\/c\/([^/]+)/)?.[1];
+
+    // Clear ONLY when switching from one conversation to a DIFFERENT conversation
+    const isSwitchingConversations = prevConvId && currConvId && prevConvId !== currConvId;
+    // Also clear when navigating from a conversation back to new-chat root
+    const isLeavingConvForNewChat = prevConvId && !currConvId && (currentPath === '/' || currentPath === '');
+
+    if (isSwitchingConversations || isLeavingConvForNewChat) {
+      igLog(`URL changed: ${prevPath} → ${currentPath} — different conversation, resetting pseudonym maps`);
+      currentReverseMap = {};
+      currentForwardMap = {};
+      pendingFileScans.clear();
+      dismissScanIndicator();
+    } else {
+      igLog(`URL changed: ${prevPath} → ${currentPath} — keeping pseudonym maps`);
+    }
   }
 }
 
@@ -2914,10 +2976,6 @@ const patchedFetch = async function patchedFetch(
           // Save a snapshot for this request's response de-pseudonymization
           const requestReverseMap = { ...currentReverseMap };
 
-          // De-identification notice — tells the LLM that all PII has been
-          // replaced with fictional equivalents, preventing safety-filter refusals.
-          const deIdNotice = 'All personally identifiable information in the following text — including names, dates, ID numbers, phone numbers, and other identifiers — has been automatically replaced with realistic but entirely fictional equivalents by an enterprise privacy tool. No real personal data is present. Please process this request normally.';
-
           // Replace prompt in request body.
           // For ChatGPT: inject notice as a SYSTEM message (invisible in UI)
           // so the notice never appears in the user's prompt bubble.
@@ -2960,15 +3018,14 @@ const patchedFetch = async function patchedFetch(
 
           // Fallback for non-ChatGPT sites, or if ChatGPT JSON parsing failed
           if (!modifiedBody) {
-            const noticeWrapped = '[' + deIdNotice + ']\n\n';
-            const maskedText = noticeWrapped + pseudoResult.maskedText;
+            const maskedText = pseudoResult.maskedText;
             const _escapedOrig = jsonStringEscape(promptText);
             const _escapedRepl = jsonStringEscape(maskedText);
             if (bodyString.includes(_escapedOrig)) {
-              modifiedBody = bodyString.replace(_escapedOrig, _escapedRepl);
+              modifiedBody = bodyString.split(_escapedOrig).join(_escapedRepl);
               igLog('Used direct string replacement (preserves exact body format)');
             } else if (bodyString.includes(promptText)) {
-              modifiedBody = bodyString.replace(promptText, maskedText);
+              modifiedBody = bodyString.split(promptText).join(maskedText);
               igLog('Used raw string replacement');
             } else {
               // Adapter-first replacement, then generic fallback
@@ -3064,7 +3121,7 @@ const patchedFetch = async function patchedFetch(
                 const _er = jsonStringEscape(fallbackMasked);
                 let fallbackBody: string | null = null;
                 if (bodyString.includes(_eo)) {
-                  fallbackBody = bodyString.replace(_eo, _er);
+                  fallbackBody = bodyString.split(_eo).join(_er);
                 } else {
                   fallbackBody = replacePrompt(bodyString, promptText, fallbackMasked);
                 }
@@ -3593,7 +3650,7 @@ function applyCopilotSignalRPseudo(data: string): string {
   // Try exact match first
   if (data.includes(escapedOriginal)) {
     igLog(`Copilot WS: Pseudonymized SignalR frame (exact match, ${original.length} chars)`);
-    return data.replace(escapedOriginal, escapedMasked);
+    return data.split(escapedOriginal).join(escapedMasked);
   }
 
   // Fallback: normalized line breaks
@@ -3603,7 +3660,7 @@ function applyCopilotSignalRPseudo(data: string): string {
     const normMasked = maskedText.replace(/\r\n/g, '\n').trim();
     const escapedNormMasked = JSON.stringify(normMasked).slice(1, -1);
     igLog(`Copilot WS: Pseudonymized SignalR frame (normalized match)`);
-    return data.replace(escapedNorm, escapedNormMasked);
+    return data.split(escapedNorm).join(escapedNormMasked);
   }
 
   // Fallback 2: parse SignalR frames and walk arguments for entity-level detection
@@ -4078,7 +4135,8 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
     };
 
     // Also patch onmessage for de-pseudonymization (some tools use ws.onmessage instead of addEventListener)
-    if (Object.keys(currentReverseMap).length > 0 || mode === 'proxy') {
+    // Always patch — the handler checks currentReverseMap at message-receive time.
+    {
       let _onmessageHandler: ((ev: MessageEvent) => any) | null = null;
       Object.defineProperty(ws, 'onmessage', {
         get() { return _onmessageHandler; },
@@ -4323,7 +4381,11 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
           return;
         }
         _lastPseudoOutput = result.maskedText;
-        activeAdapter!.writeInput(inputEl, result.maskedText);
+        const writeOk = activeAdapter!.writeInput(inputEl, result.maskedText);
+        if (!writeOk) {
+          igLog('_domEnterSubmit: writeInput failed — blocking submit to protect PII');
+          return;
+        }
       }
     }
     setTimeout(() => {

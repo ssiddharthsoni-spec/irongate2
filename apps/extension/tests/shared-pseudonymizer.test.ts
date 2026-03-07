@@ -5,14 +5,18 @@
  * same-byte-length mode, overlap handling, and round-trip integrity.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   pseudonymize,
-  depseudonymize,
+  depseudonymizeWithMap,
   pseudonymizeSameLength,
+  resetMaps,
 } from '../src/shared/pseudonymizer';
 import { detectEntities } from '../src/shared/scanner';
 import type { DetectedEntity } from '../src/detection/types';
+
+// Reset global maps before each test to prevent cross-test contamination
+beforeEach(() => { resetMaps(); });
 
 // ─── Helper ─────────────────────────────────────────────────────────────────
 
@@ -23,19 +27,20 @@ function entity(type: string, text: string, start: number): DetectedEntity {
 // ─── Basic Pseudonymization ─────────────────────────────────────────────────
 
 describe('Basic Pseudonymization', () => {
-  it('replaces a single email with [EMAIL-1]', () => {
+  it('replaces a single email with realistic fake', () => {
     const text = 'Contact john@example.com for details.';
     const entities = detectEntities(text);
     const result = pseudonymize(text, entities);
     expect(result.maskedText).not.toContain('john@example.com');
-    expect(result.maskedText).toMatch(/\[EMAIL-\d+\]/);
+    expect(result.mappings.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('replaces SSN with [SSN-1]', () => {
+  it('replaces SSN with realistic fake', () => {
     const entities = [entity('SSN', '123-45-6789', 5)];
     const result = pseudonymize('SSN: 123-45-6789', entities);
-    expect(result.maskedText).toContain('[SSN-1]');
     expect(result.maskedText).not.toContain('123-45-6789');
+    expect(result.mappings.length).toBe(1);
+    expect(result.mappings[0].type).toBe('SSN');
   });
 
   it('replaces multiple entity types', () => {
@@ -45,10 +50,9 @@ describe('Basic Pseudonymization', () => {
       entity('SSN', '123-45-6789', 21),
     ];
     const result = pseudonymize(text, entities);
-    expect(result.maskedText).toContain('[PERSON-1]');
-    expect(result.maskedText).toContain('[SSN-1]');
     expect(result.maskedText).not.toContain('John Smith');
     expect(result.maskedText).not.toContain('123-45-6789');
+    expect(result.mappings.length).toBe(2);
   });
 
   it('returns original text when no entities', () => {
@@ -92,14 +96,14 @@ describe('Deterministic Pseudonyms', () => {
     expect(aliceMap!.pseudonym).not.toBe(bobMap!.pseudonym);
   });
 
-  it('uses incrementing counters per type', () => {
+  it('assigns unique pseudonyms per entity', () => {
     const entities = [
       entity('EMAIL', 'a@b.com', 0),
       entity('EMAIL', 'c@d.com', 15),
     ];
     const result = pseudonymize('a@b.com then c@d.com', entities);
-    expect(result.mappings.some((m) => m.pseudonym === '[EMAIL-1]')).toBe(true);
-    expect(result.mappings.some((m) => m.pseudonym === '[EMAIL-2]')).toBe(true);
+    expect(result.mappings.length).toBe(2);
+    expect(result.mappings[0].pseudonym).not.toBe(result.mappings[1].pseudonym);
   });
 });
 
@@ -111,24 +115,24 @@ describe('De-pseudonymization', () => {
     const entities = detectEntities(text);
     const result = pseudonymize(text, entities);
 
-    const restored = depseudonymize(result.maskedText, result.mappings);
+    const restored = depseudonymizeWithMap(result.maskedText, result.mappings);
     expect(restored).toContain('john@example.com');
   });
 
   it('restores original text from plain object map', () => {
     const map = { '[PERSON-1]': 'John Smith', '[EMAIL-1]': 'john@test.com' };
     const masked = '[PERSON-1] can be reached at [EMAIL-1].';
-    const restored = depseudonymize(masked, map);
+    const restored = depseudonymizeWithMap(masked, map);
     expect(restored).toBe('John Smith can be reached at john@test.com.');
   });
 
   it('handles empty mapping gracefully', () => {
-    const result = depseudonymize('No changes here.', []);
+    const result = depseudonymizeWithMap('No changes here.', []);
     expect(result).toBe('No changes here.');
   });
 
   it('handles empty object map gracefully', () => {
-    const result = depseudonymize('No changes here.', {});
+    const result = depseudonymizeWithMap('No changes here.', {});
     expect(result).toBe('No changes here.');
   });
 
@@ -143,7 +147,7 @@ describe('De-pseudonymization', () => {
     }
 
     // Restore
-    const restored = depseudonymize(pseudo.maskedText, pseudo.mappings);
+    const restored = depseudonymizeWithMap(pseudo.maskedText, pseudo.mappings);
     for (const m of pseudo.mappings) {
       expect(restored).toContain(m.original);
     }
@@ -214,14 +218,16 @@ describe('Overlap Handling', () => {
     const text = 'john@test.com is the contact.';
     const entities = [entity('EMAIL', 'john@test.com', 0)];
     const result = pseudonymize(text, entities);
-    expect(result.maskedText.startsWith('[EMAIL-1]')).toBe(true);
+    expect(result.maskedText).not.toContain('john@test.com');
+    expect(result.maskedText).toContain(' is the contact.');
   });
 
   it('handles entity at end of string', () => {
     const text = 'Contact: john@test.com';
     const entities = [entity('EMAIL', 'john@test.com', 9)];
     const result = pseudonymize(text, entities);
-    expect(result.maskedText.endsWith('[EMAIL-1]')).toBe(true);
+    expect(result.maskedText).not.toContain('john@test.com');
+    expect(result.maskedText).toContain('Contact: ');
   });
 });
 
@@ -235,7 +241,8 @@ describe('Mapping Structure', () => {
 
     for (const m of result.mappings) {
       expect(m.original).toBeTruthy();
-      expect(m.pseudonym).toMatch(/\[.+\]/);
+      expect(m.pseudonym).toBeTruthy();
+      expect(m.pseudonym).not.toBe(m.original);
       expect(m.type).toBeTruthy();
     }
   });

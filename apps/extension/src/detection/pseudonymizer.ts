@@ -151,6 +151,128 @@ function evictIfNeeded(): void {
   }
 }
 
+// ─── Identity Resolution ─────────────────────────────────────────────────────
+
+/**
+ * Resolve entity identities: group entities where one's text is a substring
+ * of another and both share the same type. Map them all to the same pseudonym.
+ *
+ * Example: "Sarah" and "Sarah Chen" both type PERSON → same fake identity.
+ * "Ms. Chen" and "Sarah Chen" → same identity (shared word "Chen").
+ *
+ * Must be called BEFORE the main replacement loop so that the forward map
+ * is pre-populated with consistent mappings.
+ */
+export function resolveIdentities(entities: DetectedEntity[]): void {
+  // Group entities by type
+  const byType = new Map<string, DetectedEntity[]>();
+  for (const e of entities) {
+    const list = byType.get(e.type) || [];
+    list.push(e);
+    byType.set(e.type, list);
+  }
+
+  for (const [, group] of byType) {
+    // Get unique normalized texts, sorted longest first
+    const texts = [...new Set(group.map(e => e.text.trim()))];
+    texts.sort((a, b) => b.length - a.length);
+
+    // Build identity clusters: texts that share a substring relationship
+    const clusters: string[][] = [];
+    const assigned = new Set<string>();
+
+    for (const longer of texts) {
+      if (assigned.has(longer)) continue;
+
+      const cluster = [longer];
+      assigned.add(longer);
+
+      for (const shorter of texts) {
+        if (assigned.has(shorter)) continue;
+        if (shorter === longer) continue;
+
+        // Check if shorter is a substring of longer
+        if (longer.toLowerCase().includes(shorter.toLowerCase())) {
+          cluster.push(shorter);
+          assigned.add(shorter);
+          continue;
+        }
+
+        // Check if they share a significant word (3+ chars)
+        const longerWords = longer.split(/\s+/).filter(w => w.length >= 3);
+        const shorterWords = shorter.split(/\s+/).filter(w => w.length >= 3);
+        const shared = longerWords.some(w =>
+          shorterWords.some(s => w.toLowerCase() === s.toLowerCase())
+        );
+        if (shared) {
+          cluster.push(shorter);
+          assigned.add(shorter);
+        }
+      }
+
+      if (cluster.length > 1) {
+        clusters.push(cluster);
+      }
+    }
+
+    // For each cluster, ensure all texts map to the same pseudonym
+    for (const cluster of clusters) {
+      // The canonical form is the longest text (most complete name)
+      const canonical = cluster[0]; // already sorted longest first
+
+      // If canonical already has a mapping, use it for all
+      const existingPseudo = forwardMap.get(canonical);
+      if (existingPseudo) {
+        for (const text of cluster) {
+          if (!forwardMap.has(text)) {
+            forwardMap.set(text, existingPseudo);
+            // Don't add to reverse map — canonical already points there
+          }
+        }
+      }
+      // If any member has a mapping, use that for all
+      else {
+        let pseudonym: string | undefined;
+        for (const text of cluster) {
+          pseudonym = forwardMap.get(text);
+          if (pseudonym) break;
+        }
+        if (pseudonym) {
+          for (const text of cluster) {
+            if (!forwardMap.has(text)) {
+              forwardMap.set(text, pseudonym);
+            }
+          }
+        }
+        // If none have mappings yet, the main loop will handle the canonical,
+        // and we just need to ensure the shorter forms get the same one.
+        // We'll set a marker and resolve after the canonical is generated.
+        else {
+          // Store cluster for post-generation resolution
+          _pendingClusters.push(cluster);
+        }
+      }
+    }
+  }
+}
+
+let _pendingClusters: string[][] = [];
+
+function resolvePendingClusters(): void {
+  for (const cluster of _pendingClusters) {
+    const canonical = cluster[0];
+    const pseudonym = forwardMap.get(canonical);
+    if (pseudonym) {
+      for (let i = 1; i < cluster.length; i++) {
+        if (!forwardMap.has(cluster[i])) {
+          forwardMap.set(cluster[i], pseudonym);
+        }
+      }
+    }
+  }
+  _pendingClusters = [];
+}
+
 // ─── Core Pseudonymizer ──────────────────────────────────────────────────────
 
 /**
@@ -159,6 +281,7 @@ function evictIfNeeded(): void {
  * - Deterministic: same entity text → same pseudonym across calls
  * - Code-fence aware: skips entities in code blocks (except secrets)
  * - Session-persistent: forward/reverse maps survive across prompts
+ * - Identity-resolved: "Sarah" and "Sarah Chen" → same fake identity
  */
 export function pseudonymizeLocal(
   text: string,
@@ -176,6 +299,9 @@ export function pseudonymizeLocal(
   let skippedInCode = 0;
 
   evictIfNeeded();
+
+  // Resolve identity clusters so "Sarah" and "Sarah Chen" get the same pseudonym
+  resolveIdentities(entities);
 
   // Sort entities by start position descending (replacements don't shift earlier positions)
   const sorted = [...entities].sort((a, b) => b.start - a.start);
@@ -211,6 +337,9 @@ export function pseudonymizeLocal(
 
     maskedText = maskedText.substring(0, entity.start) + pseudonym + maskedText.substring(entity.end);
   }
+
+  // Resolve any pending identity clusters now that canonical forms have pseudonyms
+  resolvePendingClusters();
 
   mappings.reverse();
   return { maskedText, mappings, skippedInCode };

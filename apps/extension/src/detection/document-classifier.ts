@@ -19,7 +19,8 @@ export type DocumentType =
   | 'government_doc'
   | 'energy_report'
   | 'real_estate_doc'
-  | 'education_record';
+  | 'education_record'
+  | 'public_content';
 
 export const DOCUMENT_TYPE_MULTIPLIERS: Record<DocumentType, number> = {
   casual_question: 0.5,
@@ -37,6 +38,7 @@ export const DOCUMENT_TYPE_MULTIPLIERS: Record<DocumentType, number> = {
   energy_report: 1.6,
   real_estate_doc: 1.5,
   education_record: 1.8,
+  public_content: 0.3,
 };
 
 interface ClassificationResult {
@@ -202,6 +204,46 @@ export function classifyDocument(text: string): ClassificationResult {
   if (/\b(Title\s+IX|disciplinary|IRB|accreditation|NCAA|tenure)\b/i.test(text)) {
     scores.education_record = (scores.education_record || 0) + 3;
     signals.push('education_compliance');
+  }
+
+  // --- Public Content (press releases, public filings, generic advice) ---
+  if (/\b(for\s+immediate\s+release|press\s+release|publicly\s+(?:filed|available|released|disclosed)|public\s+record|this\s+(?:information|filing)\s+is\s+(?:a\s+)?public)\b/i.test(text)) {
+    scores.public_content = (scores.public_content || 0) + 5;
+    signals.push('public_release');
+  }
+  if (/\b(available\s+(?:at|on)\s+\w+\.(?:com|gov|org|edu)|now\s+playing|visit\s+\w+\.com|open\s+to\s+all)\b/i.test(text)) {
+    scores.public_content = (scores.public_content || 0) + 3;
+    signals.push('public_availability');
+  }
+  // Generic advice/tips/educational (no specific individuals)
+  if (/\b(\d+\s+tips?\s+for|how\s+to\s+(?:manage|improve|prevent|reduce)|consult\s+your\s+(?:doctor|healthcare|physician|advisor)|always\s+consult)\b/i.test(text)) {
+    scores.public_content = (scores.public_content || 0) + 4;
+    signals.push('generic_advice');
+  }
+  // Job postings with generic structure
+  if (/\b(how\s+to\s+apply|we\s+are\s+an?\s+equal\s+opportunity|send\s+your\s+resume|requirements?:|nice\s+to\s+have:)\b/i.test(text)) {
+    scores.public_content = (scores.public_content || 0) + 4;
+    signals.push('job_posting');
+  }
+  // Public listing/catalog language
+  if (/\b(for\s+sale:|list\s+price:|days\s+on\s+market|MLS#|now\s+recruiting|open\s+(?:enrollment|house))\b/i.test(text)) {
+    scores.public_content = (scores.public_content || 0) + 4;
+    signals.push('public_listing');
+  }
+  // Published CVE / public security advisory
+  if (/\b(patches?\s+(?:are\s+)?available|has\s+been\s+publicly\s+disclosed|fixed\s+in|workaround:)\b/i.test(text)) {
+    scores.public_content = (scores.public_content || 0) + 3;
+    signals.push('public_advisory');
+  }
+  // Public regulatory/government filings
+  if (/\b(public\s+comments?\s+(?:due|period)|this\s+(?:schedule|filing|document)\s+is\s+a\s+public)\b/i.test(text)) {
+    scores.public_content = (scores.public_content || 0) + 4;
+    signals.push('public_filing');
+  }
+  // No PII indicators present in the text (reinforces public content)
+  if ((scores.public_content || 0) >= 3 && !/\b(SSN|DOB|date\s+of\s+birth|social\s+security|confidential|privileged|do\s+not\s+(?:share|distribute|forward))\b/i.test(text)) {
+    scores.public_content = (scores.public_content || 0) + 2;
+    signals.push('no_confidential_markers');
   }
 
   // Find the type with highest score

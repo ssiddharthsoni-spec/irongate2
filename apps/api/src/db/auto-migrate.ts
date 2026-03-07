@@ -405,6 +405,29 @@ const migrations: string[] = [
     END IF;
   END $$`,
 
+  // --- entity_dictionaries table (Tier 3 detection) ---
+  `CREATE TABLE IF NOT EXISTS entity_dictionaries (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    firm_id UUID NOT NULL REFERENCES firms(id),
+    category VARCHAR(50) NOT NULL,
+    name VARCHAR(500) NOT NULL,
+    aliases JSONB DEFAULT '[]',
+    metadata JSONB DEFAULT '{}',
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    updated_at TIMESTAMP NOT NULL DEFAULT now(),
+    UNIQUE(firm_id, category, name)
+  )`,
+
+  // --- RLS for entity_dictionaries ---
+  `ALTER TABLE entity_dictionaries ENABLE ROW LEVEL SECURITY`,
+  `DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'entity_dict_isolation' AND tablename = 'entity_dictionaries') THEN
+      EXECUTE 'CREATE POLICY entity_dict_isolation ON entity_dictionaries FOR ALL USING (firm_id = app.current_firm_id())';
+    END IF;
+  END $$`,
+
   // --- incidents table ---
   `CREATE TABLE IF NOT EXISTS incidents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

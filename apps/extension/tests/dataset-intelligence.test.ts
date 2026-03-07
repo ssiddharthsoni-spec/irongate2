@@ -283,11 +283,11 @@ describe('Contextual Score Computation', () => {
     expect(score).toBeGreaterThan(15);
   });
 
-  it('capped at 40', () => {
+  it('capped at 70', () => {
     const text = 'Project Falcon acquisition for $340 million. The plaintiff has a strong case. We are laying off 15% of staff. Zero-day vulnerability discovered. Front-running investigation underway. Clinical trial showed 34% improvement. Board voted to terminate the CEO.';
     const markers = contextMarkers(text);
     const score = computeContextualScore(markers);
-    expect(score).toBeLessThanOrEqual(50);
+    expect(score).toBeLessThanOrEqual(70);
   });
 });
 

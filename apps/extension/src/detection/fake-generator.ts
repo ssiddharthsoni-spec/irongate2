@@ -262,24 +262,53 @@ export function generateFake(type: string, original: string): string {
 
     // Secrets — use obvious placeholders so they never leak
     case 'API_KEY':
-      return 'sk-test-' + 'x'.repeat(32);
     case 'AWS_CREDENTIAL':
-      return 'AKIAIOSFODNN7EXAMPLE';
     case 'GCP_CREDENTIAL':
-      return 'test-gcp-key-example-000000';
-    case 'DATABASE_URI':
-      return 'postgres://user:pass@localhost:5432/testdb';
-    case 'PRIVATE_KEY':
-      return '-----BEGIN TEST KEY-----\nTESTKEYDATA\n-----END TEST KEY-----';
-    case 'AUTH_TOKEN':
-      return 'test_token_' + 'x'.repeat(24);
-
-    default:
-      // Fallback: randomize digits, preserve structure
-      if (/\d/.test(original)) {
-        return original.replace(/\d/g, () => Math.floor(secureRandom() * 10).toString());
+    case 'AUTH_TOKEN': {
+      // Fully replace with a safe placeholder — preserve prefix style only
+      const prefixMatch = original.match(/^([a-zA-Z_\-]{2,10}[-_])/);
+      const prefix = prefixMatch ? prefixMatch[1] : 'key-';
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+      const fakeLen = Math.max(16, original.length - prefix.length);
+      let fake = prefix;
+      for (let i = 0; i < fakeLen; i++) fake += chars[Math.floor(secureRandom() * chars.length)];
+      return fake;
+    }
+    case 'DATABASE_URI': {
+      const scheme = original.match(/^([a-z+]+:\/\/)/)?.[1] || 'db://';
+      return scheme + 'testuser:fakepwd@db-' + Math.floor(secureRandom() * 9000 + 1000) + '.example.com:5432/testdb';
+    }
+    case 'PRIVATE_KEY': {
+      const headerMatch = original.match(/^(-----BEGIN [A-Z ]+-----)/);
+      const footerMatch = original.match(/(-----END [A-Z ]+-----)$/);
+      if (headerMatch || footerMatch) {
+        const header = headerMatch?.[1] || '-----BEGIN PRIVATE KEY-----';
+        const footer = footerMatch?.[1] || '-----END PRIVATE KEY-----';
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+        let fakeBody = '';
+        for (let i = 0; i < 64; i++) fakeBody += chars[Math.floor(secureRandom() * chars.length)];
+        return header + '\n' + fakeBody + '\n' + footer;
       }
-      return original;
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+      let fake = '';
+      for (let i = 0; i < original.length; i++) fake += chars[Math.floor(secureRandom() * chars.length)];
+      return fake;
+    }
+
+    default: {
+      // Fallback: randomize digits AND letters to prevent any PII leak
+      let result = original;
+      if (/\d/.test(result)) {
+        result = result.replace(/\d/g, () => Math.floor(secureRandom() * 10).toString());
+      }
+      if (result === original && /[a-zA-Z]/.test(result)) {
+        result = result.replace(/[a-zA-Z]/g, c => {
+          const base = c >= 'a' ? 97 : 65;
+          return String.fromCharCode(base + Math.floor(secureRandom() * 26));
+        });
+      }
+      return result;
+    }
   }
 }
 

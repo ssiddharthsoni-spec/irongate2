@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import crypto from 'crypto';
 import { db } from '../db/client';
-import { firms, users, clientMatters, weightOverrides, firmPlugins, events, subscriptions, featureFlags, departments, departmentPolicies, incidents } from '../db/schema';
+import { firms, users, clientMatters, weightOverrides, firmPlugins, events, subscriptions, featureFlags, departments, departmentPolicies, incidents, entityDictionaries } from '../db/schema';
 import { eq, and, gte, sql, desc } from 'drizzle-orm';
 import { invalidateDepartmentPolicyCache } from '../middleware/department-policy';
 import { analyzePatterns, getProposals, approveProposal, rejectProposal } from '../services/inference-engine';
@@ -1315,4 +1315,229 @@ adminRoutes.get('/zone-analytics-full', async (c) => {
   const days = Number(c.req.query('days') || 30);
   const result = await getZoneAnalytics(firmId, days);
   return c.json(result);
+});
+
+// ---------------------------------------------------------------------------
+// Entity Dictionary (Tier 3 Detection)
+// ---------------------------------------------------------------------------
+
+const entityCategorySchema = z.enum(['person', 'organization', 'project', 'client', 'location', 'custom']);
+
+// RBAC: entity dictionary management requires admin access
+adminRoutes.post('/entity-dictionary', requirePerm('setSensitivityThresholds'));
+adminRoutes.post('/entity-dictionary/bulk', requirePerm('setSensitivityThresholds'));
+adminRoutes.put('/entity-dictionary/:id', requirePerm('setSensitivityThresholds'));
+adminRoutes.delete('/entity-dictionary/:id', requirePerm('setSensitivityThresholds'));
+
+// GET /v1/admin/entity-dictionary — List all entities for firm (paginated, filterable)
+adminRoutes.get('/entity-dictionary', async (c) => {
+  const firmId = c.get('firmId');
+  const limit = Math.min(Math.max(1, parseInt(c.req.query('limit') || '100', 10) || 100), 1000);
+  const offset = Math.max(0, parseInt(c.req.query('offset') || '0', 10) || 0);
+  const categoryFilter = c.req.query('category');
+
+  const conditions = [eq(entityDictionaries.firmId, firmId), eq(entityDictionaries.isActive, true)];
+  if (categoryFilter) {
+    conditions.push(eq(entityDictionaries.category, categoryFilter));
+  }
+
+  const [items, countResult] = await Promise.all([
+    db
+      .select()
+      .from(entityDictionaries)
+      .where(and(...conditions))
+      .orderBy(entityDictionaries.name)
+      .limit(limit)
+      .offset(offset),
+    db
+      .select({ total: sql<number>`count(*)` })
+      .from(entityDictionaries)
+      .where(and(...conditions)),
+  ]);
+
+  return c.json({
+    entities: items,
+    total: Number(countResult[0]?.total || 0),
+    limit,
+    offset,
+  });
+});
+
+// POST /v1/admin/entity-dictionary — Add single entity
+adminRoutes.post('/entity-dictionary', async (c) => {
+  const firmId = c.get('firmId');
+  const userId = c.get('userId');
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+
+  const createSchema = z.object({
+    category: entityCategorySchema,
+    name: z.string().min(1).max(500),
+    aliases: z.array(z.string().max(500)).max(50).optional().default([]),
+    metadata: z.record(z.unknown()).optional().default({}),
+  });
+
+  const parsed = createSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  try {
+    const [created] = await db
+      .insert(entityDictionaries)
+      .values({
+        firmId,
+        category: parsed.data.category,
+        name: sanitizeInput(parsed.data.name),
+        aliases: parsed.data.aliases.map(a => sanitizeInput(a)),
+        metadata: parsed.data.metadata,
+        createdBy: userId,
+      })
+      .returning();
+
+    return c.json(created, 201);
+  } catch (err: any) {
+    if (err?.message?.includes('unique') || err?.message?.includes('duplicate')) {
+      return c.json({ error: 'Entity with this name and category already exists' }, 409);
+    }
+    throw err;
+  }
+});
+
+// POST /v1/admin/entity-dictionary/bulk — Bulk import entities (up to 10,000)
+adminRoutes.post('/entity-dictionary/bulk', async (c) => {
+  const firmId = c.get('firmId');
+  const userId = c.get('userId');
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+
+  const bulkSchema = z.object({
+    entities: z.array(z.object({
+      category: entityCategorySchema,
+      name: z.string().min(1).max(500),
+      aliases: z.array(z.string().max(500)).max(50).optional().default([]),
+      metadata: z.record(z.unknown()).optional().default({}),
+    })).min(1).max(10000),
+  });
+
+  const parsed = bulkSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const values = parsed.data.entities.map(e => ({
+    firmId,
+    category: e.category,
+    name: sanitizeInput(e.name),
+    aliases: e.aliases.map(a => sanitizeInput(a)),
+    metadata: e.metadata,
+    createdBy: userId,
+  }));
+
+  // Insert in batches of 500 to avoid query size limits
+  let inserted = 0;
+  let skipped = 0;
+  const batchSize = 500;
+  for (let i = 0; i < values.length; i += batchSize) {
+    const batch = values.slice(i, i + batchSize);
+    try {
+      const result = await db
+        .insert(entityDictionaries)
+        .values(batch)
+        .onConflictDoNothing({ target: [entityDictionaries.firmId, entityDictionaries.category, entityDictionaries.name] })
+        .returning();
+      inserted += result.length;
+      skipped += batch.length - result.length;
+    } catch {
+      skipped += batch.length;
+    }
+  }
+
+  return c.json({ inserted, skipped, total: values.length }, 201);
+});
+
+// PUT /v1/admin/entity-dictionary/:id — Update entity
+adminRoutes.put('/entity-dictionary/:id', async (c) => {
+  const firmId = c.get('firmId');
+  const id = c.req.param('id');
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+
+  const updateSchema = z.object({
+    category: entityCategorySchema.optional(),
+    name: z.string().min(1).max(500).optional(),
+    aliases: z.array(z.string().max(500)).max(50).optional(),
+    metadata: z.record(z.unknown()).optional(),
+    isActive: z.boolean().optional(),
+  });
+
+  const parsed = updateSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const updates: Record<string, any> = { updatedAt: new Date() };
+  if (parsed.data.category !== undefined) updates.category = parsed.data.category;
+  if (parsed.data.name !== undefined) updates.name = sanitizeInput(parsed.data.name);
+  if (parsed.data.aliases !== undefined) updates.aliases = parsed.data.aliases.map(a => sanitizeInput(a));
+  if (parsed.data.metadata !== undefined) updates.metadata = parsed.data.metadata;
+  if (parsed.data.isActive !== undefined) updates.isActive = parsed.data.isActive;
+
+  const [updated] = await db
+    .update(entityDictionaries)
+    .set(updates)
+    .where(and(eq(entityDictionaries.id, id), eq(entityDictionaries.firmId, firmId)))
+    .returning();
+
+  if (!updated) return c.json({ error: 'Entity not found' }, 404);
+  return c.json(updated);
+});
+
+// DELETE /v1/admin/entity-dictionary/:id — Soft delete (set isActive=false)
+adminRoutes.delete('/entity-dictionary/:id', async (c) => {
+  const firmId = c.get('firmId');
+  const id = c.req.param('id');
+
+  const [updated] = await db
+    .update(entityDictionaries)
+    .set({ isActive: false, updatedAt: new Date() })
+    .where(and(eq(entityDictionaries.id, id), eq(entityDictionaries.firmId, firmId)))
+    .returning();
+
+  if (!updated) return c.json({ error: 'Entity not found' }, 404);
+  return c.json({ deleted: true, id });
+});
+
+// GET /v1/admin/entity-dictionary/export — Export all active entities as JSON (for extension sync)
+adminRoutes.get('/entity-dictionary/export', async (c) => {
+  const firmId = c.get('firmId');
+
+  const items = await db
+    .select({
+      id: entityDictionaries.id,
+      category: entityDictionaries.category,
+      name: entityDictionaries.name,
+      aliases: entityDictionaries.aliases,
+      metadata: entityDictionaries.metadata,
+    })
+    .from(entityDictionaries)
+    .where(and(eq(entityDictionaries.firmId, firmId), eq(entityDictionaries.isActive, true)))
+    .orderBy(entityDictionaries.category, entityDictionaries.name);
+
+  return c.json({ entities: items, count: items.length });
+});
+
+// GET /v1/admin/entity-dictionary/version — Returns hash of current dictionary (change detection)
+adminRoutes.get('/entity-dictionary/version', async (c) => {
+  const firmId = c.get('firmId');
+
+  // Compute a hash based on count + latest update timestamp
+  const [stats] = await db
+    .select({
+      count: sql<number>`count(*)`,
+      latestUpdate: sql<string>`max(updated_at)`,
+    })
+    .from(entityDictionaries)
+    .where(and(eq(entityDictionaries.firmId, firmId), eq(entityDictionaries.isActive, true)));
+
+  const count = Number(stats?.count || 0);
+  const latest = stats?.latestUpdate || '';
+  const hashInput = `${firmId}:${count}:${latest}`;
+  const hash = crypto.createHash('sha256').update(hashInput).digest('hex').substring(0, 16);
+
+  return c.json({ hash, count });
 });

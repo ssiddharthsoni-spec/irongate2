@@ -556,6 +556,24 @@ export const apiKeys = pgTable('api_keys', {
   index('api_keys_hash_idx').on(table.keyHash),
 ]);
 
+// --- Entity Dictionaries (admin-configured per-firm entity lists for Tier 3 detection) ---
+export const entityDictionaries = pgTable('entity_dictionaries', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  category: varchar('category', { length: 50 }).notNull(), // 'person' | 'organization' | 'project' | 'client' | 'location' | 'custom'
+  name: varchar('name', { length: 500 }).notNull(),
+  aliases: jsonb('aliases').default([]),
+  metadata: jsonb('metadata').default({}),
+  isActive: boolean('is_active').notNull().default(true),
+  createdBy: uuid('created_by').references(() => users.id),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => [
+  index('entity_dict_firm_idx').on(table.firmId),
+  index('entity_dict_category_idx').on(table.firmId, table.category),
+  unique('entity_dict_firm_cat_name_uniq').on(table.firmId, table.category, table.name),
+]);
+
 // --- Breach Log (SOC 2 / HIPAA breach notification tracking) ---
 export const breachLog = pgTable('breach_log', {
   id: uuid('id').primaryKey().defaultRandom(),

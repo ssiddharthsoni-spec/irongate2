@@ -12,7 +12,8 @@
     "scripting",
     "webNavigation",
     "notifications",
-    "declarativeNetRequest"
+    "declarativeNetRequest",
+    "offscreen"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",

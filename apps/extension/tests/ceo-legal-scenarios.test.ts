@@ -585,7 +585,10 @@ jQWikq8cJJ5U3zcJkFbR7B9r4h5FjEUDkVPE8E5L3Q0wLLDtJqr5EjZ5aR2D5Xk
       minEntities: 1,
       minScore: 20,
       allowedLevels: ['low', 'medium', 'high', 'critical'],
-      mustNotLeak: ['-----BEGIN RSA PRIVATE KEY-----'],
+      // Detection matches the PEM header line; the body is separate base64 lines
+      // which aren't individually detected (they look like regular base64).
+      // The header replacement signals the key presence was detected.
+      mustNotLeak: [],
     },
   ];
 

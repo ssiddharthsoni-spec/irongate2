@@ -13,6 +13,7 @@ export {
   depseudonymize,
   depseudonymizeWithMap,
   sanitizeMappingsForTransit,
+  resolveIdentities,
   getForwardMap,
   getReverseMap,
   getReverseMapObject,

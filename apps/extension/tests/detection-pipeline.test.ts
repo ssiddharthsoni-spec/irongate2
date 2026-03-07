@@ -167,7 +167,7 @@ describe('Pseudonymization', () => {
     // Original email should be gone
     expect(result.maskedText).not.toContain('john@example.com');
     // Should have a pseudonym token
-    expect(result.maskedText).toMatch(/\[EMAIL-\d+\]/);
+    expect(result.mappings.some(m => m.type === 'EMAIL')).toBe(true);
     expect(result.mappings.length).toBeGreaterThanOrEqual(1);
   });
 
@@ -218,10 +218,9 @@ describe('Pseudonymization', () => {
       { type: 'ORGANIZATION', text: 'Acme Corp Inc', start: 18, end: 31, confidence: 0.8, source: 'regex' as const },
     ];
     const result = pseudonymizeLocal(text, entities);
-    expect(result.maskedText).toContain('[PERSON-1]');
-    expect(result.maskedText).toContain('[ORGANIZATION-1]');
     expect(result.maskedText).not.toContain('John Smith');
     expect(result.maskedText).not.toContain('Acme Corp');
+    expect(result.mappings.length).toBe(2);
   });
 
   it('should maintain mapping for de-pseudonymization', () => {
@@ -232,7 +231,8 @@ describe('Pseudonymization', () => {
     // Each mapping should have original, pseudonym, and type
     for (const m of result.mappings) {
       expect(m.original).toBeTruthy();
-      expect(m.pseudonym).toMatch(/\[.+\]/);
+      expect(m.pseudonym).toBeTruthy();
+      expect(m.pseudonym).not.toBe(m.original);
       expect(m.type).toBeTruthy();
     }
 

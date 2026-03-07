@@ -4,6 +4,7 @@
  */
 
 import type { DetectedEntity } from './types';
+import { isKnownNonPII } from './known-phrases';
 
 interface RegexPattern {
   type: string;
@@ -37,14 +38,63 @@ const REGEX_PATTERNS: RegexPattern[] = [
   {
     type: 'PERSON',
     pattern: /\b(?:for|from|to|by|with|about|cc|re|dear|hi|hey|hello|regarding)\s+[A-Z][a-z]{2,15}\s+[A-Z][a-z]{2,15}\b/gi,
-    confidence: 0.75,
+    confidence: 0.65,
     contextual: true,
   },
   // ── Organization Names ────────────────────────────────────────────────
+  // Multi-word capitalized names with common org suffixes
   {
     type: 'ORGANIZATION',
-    pattern: /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Inc|Corp|LLC|Ltd|LLP|Associates|Partners|Group|Foundation|Hospital|Center|University|College|Bank|Insurance)\b\.?/g,
+    pattern: /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Inc|Corp|Corporation|LLC|Ltd|LLP|Associates|Partners|Group|Foundation|Hospital|Center|Centre|University|College|Bank|Insurance|Industries|Enterprises|Holdings|Capital|Trust|Fund|Technologies|Tech|Solutions|Services|Consulting|Management|Investments|Advisors|Advisory|Labs|Laboratories|Media|Energy|Resources|Dynamics|Systems|International|Global|Worldwide|Agency|Commission|Authority|Bureau|Institute|Council|Society|Government|Aerospace|Aviation|Defense|Pharma|Pharmaceuticals|Mining|Logistics|Motors|Financial|Securities|Exchange|Telecom|Communications|Networks|Electric|Petroleum|Oil|Gas)\b\.?/g,
     confidence: 0.8,
+  },
+  // Law firms: "Name & Name" or "Name, Name & Name" patterns
+  {
+    type: 'ORGANIZATION',
+    pattern: /\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]+)*\s*&\s*[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]+)*\b/g,
+    confidence: 0.75,
+  },
+  // Organizations after contextual keywords (multi-word names)
+  {
+    type: 'ORGANIZATION',
+    pattern: /\b(?:company|firm|corporation|organization|entity|employer|contractor|vendor|supplier|client|subsidiary|parent\s+company|activist(?:\s+fund)?|investor|fund|bank|lender)\s*(?::|called|named|is|,)?\s+[A-Z][a-z]+(?:\s+(?:[A-Z][a-z]+|&|No\.\s*\d+|of|the|and))+\b/gi,
+    confidence: 0.75,
+    contextual: true,
+  },
+  // Organizations after contextual keywords (single-word names like "Blackstone", "ModaGlobal")
+  {
+    type: 'ORGANIZATION',
+    pattern: /\b(?:company|firm|corporation|organization|entity|employer|contractor|vendor|supplier|client|subsidiary|parent\s+company|activist(?:\s+fund)?|investor|fund|bank|lender|PE\s+firm|PE\s+owner|backed\s+by|acquired\s+by|owned\s+by)\s*(?::|called|named|is|,)?\s+([A-Z][a-zA-Z]{2,})\b/gi,
+    confidence: 0.7,
+    contextual: true,
+  },
+  // CamelCase single-word company names (ModaGlobal, DeepSeek, OpenAI, etc.)
+  // Requires at least 2 capital letters within the word
+  {
+    type: 'ORGANIZATION',
+    pattern: /\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b/g,
+    confidence: 0.6,
+  },
+  // "with/from/at/by + ALLCAPS + Capitalized" org names (JP Morgan, BNP Paribas)
+  {
+    type: 'ORGANIZATION',
+    pattern: /\b(?:with|from|at|by|to)\s+[A-Z]{2,5}\s+[A-Z][a-z]{2,}\b/gi,
+    confidence: 0.7,
+    contextual: true,
+  },
+  // Known financial entity patterns: "Name + Capital/Partners/Asset Management"
+  // Also handles single-word names before role descriptors
+  {
+    type: 'ORGANIZATION',
+    pattern: /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s*(?:,\s*|\s+)(?:is\s+)?(?:considering|planning|executing|proposing|demanding|seeking|offering)\b/gi,
+    confidence: 0.5,
+    contextual: true,
+  },
+  // Stock tickers: (TSX: THI), (NYSE: AAPL), NASDAQ: TSLA
+  {
+    type: 'TICKER',
+    pattern: /\(?\b(?:TSX|NYSE|NASDAQ|LSE|ASX|HKEX|JSE|BSE|NSE|TSE|KRX|SGX|AMEX|OTC)\s*:\s*[A-Z]{1,5}\b\)?/g,
+    confidence: 0.85,
   },
   // ── Employee / Record IDs ─────────────────────────────────────────────
   {
@@ -120,6 +170,45 @@ const REGEX_PATTERNS: RegexPattern[] = [
     type: 'MONETARY_AMOUNT',
     pattern: /\b\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?\s?(?:dollars?|USD|EUR|GBP|million|billion)\b/gi,
     confidence: 0.8,
+  },
+  // ── Percentages (only with business-sensitive context) ──────────────
+  // Standalone percentages are too common to flag universally.
+  // Only catch when paired with sensitive context like ownership, stakes, reductions, targets.
+  {
+    type: 'PERCENTAGE',
+    pattern: /\b\d{1,3}(?:\.\d{1,2})?%\s*(?:stake|interest|ownership|reduction|target|threshold|cap|floor|bonus|commission|royalty|fee|discount|premium|margin|EBITDA|equity|dilution|vesting|of\s+(?:current|total|gross|net|revenue|EBITDA|assets|income))\b/gi,
+    confidence: 0.75,
+  },
+  {
+    type: 'PERCENTAGE',
+    pattern: /\b(?:stake|interest|ownership|reduction|target|cap|floor|EBITDA|equity|dilution|vesting|divestiture|allocation|share|bonus|inventory|revenue|margin|cost|debt)\s+(?:of\s+|by\s+)?\d{1,3}(?:\.\d{1,2})?%/gi,
+    confidence: 0.75,
+  },
+  // "by N%" after reduction verbs: "reducing by 80%", "cut by 30%", "decreased by 15%"
+  {
+    type: 'PERCENTAGE',
+    pattern: /\b(?:reduc\w+|cut\w*|decreas\w+|increas\w+|grow\w*|rais\w+|lower\w*|slash\w*|trim\w*|shrink\w*|expand\w*)\b[^.]{0,30}\b(\d{1,3}(?:\.\d{1,2})?%)/gi,
+    confidence: 0.7,
+  },
+  // ── Named Locations (geographic, facilities) ────────────────────────
+  // "Lake/River/Mount/Fort/Port + Name" patterns
+  {
+    type: 'LOCATION',
+    pattern: /\b(?:Lake|River|Mount|Fort|Port|Cape|Gulf|Bay|Isle|Island|Valley|Creek|Falls|Canyon|Peak|Ridge|Point|Harbor|Harbour)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b/g,
+    confidence: 0.7,
+  },
+  // "Name + Lake/River/Mountain/Dam/Pond/Reservoir" patterns
+  {
+    type: 'LOCATION',
+    pattern: /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s+(?:Lake|River|Mountain|Dam|Pond|Reservoir|Creek|Falls|Canyon|Basin|Ridge|Valley|Harbor|Harbour|Bay|Strait|Channel|Forest|Park|Mine|Quarry|Field)\b/g,
+    confidence: 0.7,
+  },
+  // ── Project / Code Names ────────────────────────────────────────────
+  // Quoted names in business context: "Green Horizon", "Project Phoenix"
+  {
+    type: 'PROJECT_NAME',
+    pattern: /(?<=[""\u201C])[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}(?=[""\u201D])/g,
+    confidence: 0.6,
   },
   // ── Passport Numbers (US format) ──────────────────────────────────────
   {
@@ -459,6 +548,11 @@ function runRegexPatterns(text: string): DetectedEntity[] {
         }
       }
 
+      // Suppress PERSON entities that match known non-PII phrases (companies, places, tech terms)
+      if (type === 'PERSON' && isKnownNonPII(matchText)) {
+        continue;
+      }
+
       const key = `${matchStart}-${matchEnd}-${type}`;
       if (!seen.has(key)) {
         seen.set(key, entities.length);
@@ -516,32 +610,42 @@ export function detectWithRegex(text: string): DetectedEntity[] {
   // Run patterns on original text
   entities.push(...runRegexPatterns(text));
 
+  // Suppress PERSON entities that overlap with ORGANIZATION entities at same span
+  const orgSpans = new Set(
+    entities.filter(e => e.type === 'ORGANIZATION').map(e => `${e.start}-${e.end}`)
+  );
+  const filtered = entities.filter(e => {
+    if (e.type !== 'PERSON') return true;
+    return !orgSpans.has(`${e.start}-${e.end}`);
+  });
+
   // Sort by position in text
-  entities.sort((a, b) => a.start - b.start);
+  filtered.sort((a, b) => a.start - b.start);
 
   // Remove overlapping entities (keep higher confidence)
-  return removeOverlaps(entities);
+  return removeOverlaps(filtered);
 }
 
 function removeOverlaps(entities: DetectedEntity[]): DetectedEntity[] {
   if (entities.length <= 1) return entities;
 
-  const result: DetectedEntity[] = [entities[0]];
+  // Sort by confidence descending, then by span length descending (prefer longer matches)
+  const sorted = [...entities].sort((a, b) => {
+    if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+    return (b.end - b.start) - (a.end - a.start);
+  });
 
-  for (let i = 1; i < entities.length; i++) {
-    const current = entities[i];
-    const last = result[result.length - 1];
+  const kept: DetectedEntity[] = [];
 
-    // Check for overlap
-    if (current.start < last.end) {
-      // Keep the one with higher confidence
-      if (current.confidence > last.confidence) {
-        result[result.length - 1] = current;
-      }
-    } else {
-      result.push(current);
+  for (const entity of sorted) {
+    const overlaps = kept.some(k =>
+      entity.start < k.end && entity.end > k.start
+    );
+    if (!overlaps) {
+      kept.push(entity);
     }
   }
 
-  return result;
+  // Return sorted by position for consistent output
+  return kept.sort((a, b) => a.start - b.start);
 }
