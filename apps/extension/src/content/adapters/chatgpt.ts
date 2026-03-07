@@ -42,8 +42,9 @@ export const ChatGPTAdapter: SiteAdapter = {
 
   fileUploadPatterns: [/\/backend-api\/files/, /files\.oaiusercontent\.com/],
 
-  skipFetchProxy: false, // Fetch proxy is the fallback layer
+  skipFetchProxy: false, // Fetch proxy handles request pseudonymization
   skipXhrProxy: false,
+  skipResponseStreamWrap: true, // ChatGPT SSE includes displayedContentReferences with position offsets — stream replacement corrupts them; DOM observer handles de-pseudo instead
 
   inputSelectors: [
     '#prompt-textarea',

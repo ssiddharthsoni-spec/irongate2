@@ -199,7 +199,7 @@ export function createUnifiedPipeline(runtime?: ModelRuntime, config?: UnifiedPi
         category: m.category,
         weight: m.weight,
         confidence: m.confidence,
-        matched: m.matched,
+        matched: m.matchedText,
       })),
     };
 

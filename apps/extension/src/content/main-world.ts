@@ -1517,6 +1517,17 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
     'bank', 'labs', 'co', 'co.', 'company', 'industries', 'foundation',
   ]);
 
+  // Common English words that appear in fake org names (Alpine Securities, Summit Analytics, etc.)
+  // These must NEVER be reverse-map keys — they'd match normal prose and garble the response.
+  const COMMON_WORD_BLOCKLIST = new Set([
+    'alpine', 'summit', 'horizon', 'coastal', 'beacon', 'pinnacle', 'vertex',
+    'meridian', 'crestline', 'ridgepoint', 'oakmont', 'silverleaf', 'tailspin',
+    'woodgrove', 'northwind', 'contoso', 'adatum', 'fabrikam', 'proseware',
+    'lucerne', 'aurora', 'catalyst', 'zenith', 'atlas', 'nexus', 'titan',
+    'vanguard', 'ember', 'falcon', 'dynamics', 'ventures', 'analytics',
+    'research', 'systems', 'strategies', 'securities', 'media', 'financial',
+  ]);
+
   // Multi-word name variants: LLMs often abbreviate or drop suffixes.
   // "Adatum Corporation" → also map "Adatum"
   // "Emily Rogers" → also map "Rogers", "Emily"
@@ -1524,32 +1535,39 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
   const words = pseudonym.split(/\s+/);
   const origWords = original.split(/\s+/);
   if (words.length >= 2) {
-    // Map the first word ONLY if it's distinctive (not a common suffix)
-    // AND only map it to the corresponding first word of the original (not the whole original)
+    // Map the first word ONLY if:
+    // 1. It's distinctive (not a common suffix or common English word)
+    // 2. The corresponding original word is >= 4 chars (avoid "JP", "GE" etc.)
+    // 3. Map to the FULL original (not just the first word) to prevent garbling
     const firstWord = words[0];
-    if (firstWord.length >= 4 && !map[firstWord] && !ORG_SUFFIX_SET.has(firstWord.toLowerCase())) {
-      map[firstWord] = origWords[0] || original;
+    const firstOrig = origWords[0] || original;
+    if (firstWord.length >= 4 && firstOrig.length >= 4 && !map[firstWord]
+        && !ORG_SUFFIX_SET.has(firstWord.toLowerCase())
+        && !COMMON_WORD_BLOCKLIST.has(firstWord.toLowerCase())) {
+      map[firstWord] = original; // Map to FULL original, not just first word
     }
     // For 3+ word names, also map the first two words
     if (words.length >= 3) {
       const firstTwo = words.slice(0, 2).join(' ');
       if (!map[firstTwo]) {
-        map[firstTwo] = origWords.length >= 2 ? origWords.slice(0, 2).join(' ') : original;
+        map[firstTwo] = original; // Map to FULL original
       }
     }
-    // Map the last word (surname) ONLY if it's NOT a common org suffix.
-    // "Rogers" → "Whitfield" is fine; "Corp" → "Salesforce" is NOT.
+    // Map the last word (surname) ONLY if it's NOT a common suffix/word
+    // AND the corresponding original word is >= 4 chars
     const lastWord = words[words.length - 1];
-    if (lastWord.length >= 4 && !map[lastWord] && !ORG_SUFFIX_SET.has(lastWord.toLowerCase())) {
-      map[lastWord] = origWords[origWords.length - 1] || original;
+    const lastOrig = origWords[origWords.length - 1] || original;
+    if (lastWord.length >= 4 && lastOrig.length >= 4 && !map[lastWord]
+        && !ORG_SUFFIX_SET.has(lastWord.toLowerCase())
+        && !COMMON_WORD_BLOCKLIST.has(lastWord.toLowerCase())) {
+      map[lastWord] = original; // Map to FULL original, not just last word
     }
     // Drop common org suffixes: "Adatum Corporation" → "Adatum"
     const ORG_SUFFIXES = /\s+(Corporation|Corp\.?|Inc\.?|LLC|Ltd\.?|Partners|Group|Holdings|Capital|Enterprises|Associates|International|Technologies|Solutions|Services|Consulting|Management|Investments|Advisors|Advisory|Fund|Trust|Bank|Labs|Co\.?)$/i;
     const withoutSuffix = pseudonym.replace(ORG_SUFFIXES, '');
     if (withoutSuffix !== pseudonym && withoutSuffix.length >= 3) {
-      const origWithoutSuffix = original.replace(ORG_SUFFIXES, '');
-      if (!map[withoutSuffix]) {
-        map[withoutSuffix] = origWithoutSuffix || original;
+      if (!map[withoutSuffix] && !COMMON_WORD_BLOCKLIST.has(withoutSuffix.toLowerCase())) {
+        map[withoutSuffix] = original; // Map to FULL original
       }
     }
   }
@@ -1639,10 +1657,11 @@ function replacePseudonyms(text: string, reverseMap: Record<string, string>): st
     // LLMs sometimes concatenate pseudonyms with adjacent words (no space),
     // e.g., "Bentworthminimizing" instead of "Bentworth minimizing".
     // The boundary-aware regex above won't match, leaving pseudonyms visible.
-    // Only for pseudonyms >= 5 chars to avoid false-positive partial matches.
-    if (pseudonym.length >= 5 && result.includes(pseudonym)) {
+    // Minimum 8 chars to avoid false-positive partial matches on short words.
+    // (Shorter pseudonyms are handled by the boundary-aware strategies above.)
+    if (pseudonym.length >= 8 && result.includes(pseudonym)) {
       result = result.split(pseudonym).join(original);
-    } else if (pseudonym.length >= 5) {
+    } else if (pseudonym.length >= 8) {
       // Case-insensitive plain substring
       const lowerResult = result.toLowerCase();
       const lowerPseudo = pseudonym.toLowerCase();
@@ -1809,9 +1828,19 @@ function startDomDepseudonymizer(): void {
 
     if (changed) {
       _domReplacing = true;
-      _domMutationCooldown = Date.now() + 50; // brief cooldown to skip our own microtask
+      _domMutationCooldown = Date.now() + 100; // cooldown to skip our own microtask
       try {
-        node.textContent = text;
+        // Use replaceChild with a new text node instead of mutating textContent.
+        // React 19's replaceTextWithDirectives tracks specific text node references;
+        // mutating textContent on a tracked node causes reconciliation failures.
+        // Replacing the node entirely avoids the conflict — React loses its reference
+        // but doesn't get a mismatched-content error.
+        if (node.parentNode) {
+          const newNode = document.createTextNode(text);
+          node.parentNode.replaceChild(newNode, node);
+        } else {
+          node.textContent = text;
+        }
       } catch {
         // Swallow errors from React reconciliation conflicts —
         // React may have removed or replaced this node between our check and mutation.
@@ -1846,8 +1875,15 @@ function startDomDepseudonymizer(): void {
           }
           if (fixedText !== current) {
             _domReplacing = true;
-            _domMutationCooldown = Date.now() + 50;
-            try { node.textContent = fixedText; } catch {}
+            _domMutationCooldown = Date.now() + 100;
+            try {
+              if (node.parentNode) {
+                const newNode = document.createTextNode(fixedText);
+                node.parentNode.replaceChild(newNode, node);
+              } else {
+                node.textContent = fixedText;
+              }
+            } catch {}
             _domReplacing = false;
           }
         }
@@ -1996,10 +2032,11 @@ function startDomDepseudonymizer(): void {
         _generationCheckInterval = null;
 
         // Multi-pass scan: React re-renders at unpredictable times after
-        // generation stops. Run passes at staggered intervals. Tight early
-        // pass (50ms) catches the final render almost instantly; later passes
-        // catch delayed React reconciliation (markdown, code highlighting).
-        const scanDelays = [50, 150, 400, 1000, 2000];
+        // generation stops. Run passes at staggered intervals.
+        // First pass at 300ms (not 50ms) to avoid React 19's post-generation
+        // reconciliation (replaceTextWithDirectives). Later passes catch
+        // delayed React reconciliation (markdown, code highlighting).
+        const scanDelays = [300, 600, 1200, 2000, 3500];
         for (const delay of scanDelays) {
           setTimeout(() => {
             if (!isCurrentlyGenerating()) {
@@ -2008,11 +2045,11 @@ function startDomDepseudonymizer(): void {
           }, delay);
         }
 
-        // Reconnect observer after first scan passes
+        // Reconnect observer after first scan pass completes
         setTimeout(() => {
           igLog('DOM de-pseudo: generation complete — reconnecting observer');
           connectObserver();
-        }, 200);
+        }, 500);
       }
     }, 200);
   }
@@ -2903,7 +2940,8 @@ const patchedFetch = async function patchedFetch(
     const skipResponse = await originalFetch.call(window, input, init);
 
     // Wrap response for de-pseudonymization if reverse map has entries
-    if (mode === 'proxy' && Object.keys(currentReverseMap).length > 0) {
+    // BUT skip if adapter opts out of stream wrapping (annotation-offset safety)
+    if (mode === 'proxy' && Object.keys(currentReverseMap).length > 0 && !activeAdapter?.skipResponseStreamWrap) {
       igLog(`De-pseudonymizing response for skipFetchProxy adapter (${Object.keys(currentReverseMap).length} mappings)`);
       return depseudonymizeResponse(skipResponse, { ...currentReverseMap });
     }
@@ -3146,15 +3184,18 @@ const patchedFetch = async function patchedFetch(
             }
 
             // De-pseudonymize the response stream (use snapshot, not mutable global)
-            // Skip for tools with non-standard streaming (SSE, protobuf, nested JSON).
+            // Skip for tools with non-standard streaming (SSE, protobuf, nested JSON)
+            // AND for adapters that set skipResponseStreamWrap (e.g. ChatGPT whose SSE
+            // includes displayedContentReferences with char-offset annotations —
+            // length-changing replacements corrupt these offsets, garbling the render).
             // DOM MutationObserver handles de-pseudonymization for these tools instead.
-            const skipStreamWrap = shouldSkipFetchProxy(url, activeAdapter);
+            const skipStreamWrap = shouldSkipFetchProxy(url, activeAdapter) || !!activeAdapter?.skipResponseStreamWrap;
             if (Object.keys(requestReverseMap).length > 0 && !skipStreamWrap) {
               igLog(`De-pseudonymizing response with ${Object.keys(requestReverseMap).length} mappings`);
               return depseudonymizeResponse(modifiedResponse, requestReverseMap);
             }
             if (skipStreamWrap && Object.keys(requestReverseMap).length > 0) {
-              igLog(`Non-standard streaming tool — skipping response stream wrap, DOM observer will de-pseudonymize`);
+              igLog(`Skipping response stream wrap (adapter: ${activeAdapter?.id || 'none'}) — DOM observer will de-pseudonymize`);
             }
 
             return modifiedResponse;
