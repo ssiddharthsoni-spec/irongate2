@@ -21,6 +21,7 @@ COPY apps/dashboard/package.json apps/dashboard/package.json
 COPY apps/extension/package.json apps/extension/package.json
 COPY apps/gateway/package.json apps/gateway/package.json
 COPY apps/vscode-extension/package.json apps/vscode-extension/package.json
+COPY apps/mcp-proxy/package.json apps/mcp-proxy/package.json
 
 # Install all dependencies
 RUN pnpm install --frozen-lockfile
