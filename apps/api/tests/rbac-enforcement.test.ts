@@ -15,11 +15,11 @@ import type { Role, Permission } from '@iron-gate/crypto';
 describe('Permission Matrix Completeness', () => {
   const allPermissions: Permission[] = Object.keys(ROLES.admin) as Permission[];
 
-  it('should define 26 permissions for admin role', () => {
-    expect(allPermissions.length).toBe(26);
+  it('should define 21 permissions for admin role', () => {
+    expect(allPermissions.length).toBe(21);
   });
 
-  it('admin should have all 26 permissions set to true', () => {
+  it('admin should have all 21 permissions set to true', () => {
     for (const perm of allPermissions) {
       expect(ROLES.admin[perm]).toBe(true);
     }
@@ -35,9 +35,9 @@ describe('Permission Matrix Completeness', () => {
     ]);
   });
 
-  it('user should have 22 permissions set to false', () => {
+  it('user should have 17 permissions set to false', () => {
     const userFalsePerms = allPermissions.filter((p) => ROLES.user[p] === false);
-    expect(userFalsePerms).toHaveLength(22);
+    expect(userFalsePerms).toHaveLength(17);
   });
 
   it('both roles should define the same permission keys', () => {

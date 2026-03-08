@@ -39,7 +39,8 @@ userDataRoutes.get('/export', async (c) => {
       createdAt: events.createdAt,
     })
     .from(events)
-    .where(and(eq(events.userId, userId), eq(events.firmId, firmId)));
+    .where(and(eq(events.userId, userId), eq(events.firmId, firmId)))
+    .limit(50000);
 
   // Fetch user's feedback submissions
   const userFeedback = await db

@@ -7,7 +7,7 @@
 import { Hono } from 'hono';
 import { db } from '../db/client';
 import { firms, users, departments } from '../db/schema';
-import { eq, and, ilike, sql } from 'drizzle-orm';
+import { eq, and, ilike, sql, inArray } from 'drizzle-orm';
 import { logger } from '../lib/logger';
 
 // ---------------------------------------------------------------------------
@@ -248,9 +248,7 @@ scimRoutes.get('/v2/Users', async (c) => {
     const depts = await db
       .select({ id: departments.id, name: departments.name })
       .from(departments)
-      .where(
-        sql`${departments.id} IN ${sql.raw(`('${deptIds.join("','")}')`)}`,
-      );
+      .where(inArray(departments.id, deptIds));
     for (const d of depts) {
       deptMap.set(d.id, d.name);
     }

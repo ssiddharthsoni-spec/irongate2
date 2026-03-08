@@ -1477,12 +1477,17 @@ function quickScore(entities: Array<{ type: string; confidence: number }>): { le
 
   let score = 0;
   for (const e of entities) {
-    score += _ENTITY_WEIGHTS[e.type] ?? 5;
+    score += (_ENTITY_WEIGHTS[e.type] ?? 5) * e.confidence;
   }
 
-  // Diversity bonus — aligned with scorer.ts context scoring
+  // Diversity bonus — aligned with scorer.ts multiplicative bonuses
   const uniqueTypes = new Set(entities.map((e) => e.type)).size;
-  if (uniqueTypes >= 3) score += 15;
+  if (uniqueTypes >= 3) score *= 1.3;
+  else if (uniqueTypes >= 2) score *= 1.15;
+
+  // Count bonus — aligned with scorer.ts
+  if (entities.length >= 10) score *= 1.4;
+  else if (entities.length >= 5) score *= 1.2;
 
   score = Math.min(score, 100);
 
@@ -4088,7 +4093,9 @@ XMLHttpRequest.prototype.send = function(body?: any) {
           }
         }
       } catch (err) {
-        console.warn('[Iron Gate MAIN] XHR proxy error:', err);
+        console.warn('[Iron Gate MAIN] XHR proxy error — blocking to protect sensitive data:', err);
+        // Fail CLOSED: do not send original body with PII
+        return;
       }
     }
 
@@ -4549,15 +4556,14 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
 
                 return _sendResult(modifiedData);
               } else {
-                console.warn(`[Iron Gate MAIN] WS PROXY: replacement FAILED — sending original. method=${replacementMethod}`);
-                // Still report the detection even though replacement failed
+                console.warn(`[Iron Gate MAIN] WS PROXY: replacement FAILED — blocking to protect sensitive data. method=${replacementMethod}`);
+                // Still report the detection even though we're blocking
                 Promise.all([igHash(promptText), minimizeEntitiesForTransit(allEntities)])
                   .then(([ph, me]) => {
                     igPostMessage({
                       type: 'IRON_GATE_AUDIT',
                       promptHash: ph,
                       promptLength: promptText.length,
-                      // SECURITY: raw prompt removed from postMessage — any page script can listen.
                       maskedPrompt: pseudoResult.maskedText,
                       mappings: sanitizeMappingsForTransit(pseudoResult.mappings),
                       entityCount: allEntities.length,
@@ -4566,6 +4572,8 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
                       entities: me,
                     });
                   });
+                // Fail CLOSED: do not send original frame with PII
+                return;
               }
             }
           } else if (strData.length >= 100) {

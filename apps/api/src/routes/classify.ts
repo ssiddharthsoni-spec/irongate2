@@ -15,8 +15,9 @@ import { logger } from '../lib/logger';
 import { classifyWithLLM, classifyWithHeuristic } from '../services/llm-classifier';
 import type { ClassificationRequest } from '../services/llm-classifier';
 import { getSemanticCache } from '../services/semantic-cache';
+import type { AppEnv } from '../types';
 
-const classifyRoutes = new Hono();
+const classifyRoutes = new Hono<AppEnv>();
 
 // ── Request Schema ───────────────────────────────────────────────────────────
 
@@ -25,7 +26,7 @@ const classifyRequestSchema = z.object({
   entityTypeCounts: z.record(z.string(), z.number()),
   tier1Score: z.number().min(0).max(100),
   tier1Level: z.enum(['low', 'medium', 'high', 'critical']),
-  firmId: z.string().min(1),
+  firmId: z.string().min(1).optional(),
 });
 
 // ── POST /classify ───────────────────────────────────────────────────────────
@@ -38,13 +39,15 @@ classifyRoutes.post('/', async (c) => {
     return c.json({ error: 'Invalid request', details: parsed.error.issues }, 400);
   }
 
-  const request: ClassificationRequest = parsed.data;
+  // Use firmId from auth context, not from request body (prevent spoofing)
+  const firmId = c.get('firmId');
+  const request: ClassificationRequest = { ...parsed.data, firmId };
 
   // Validate that sanitized text doesn't contain obvious raw PII
   // (defense-in-depth: the extension should have already sanitized)
   if (containsLikelyRawPII(request.sanitizedText)) {
     logger.warn('Classify endpoint received text with likely raw PII — rejecting', {
-      firmId: request.firmId,
+      firmId,
     });
     return c.json({ error: 'Sanitized text appears to contain raw PII. Use sanitizeForClassification() before sending.' }, 422);
   }

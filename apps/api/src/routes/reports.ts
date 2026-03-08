@@ -11,10 +11,10 @@ function parsePeriodDays(c: any): number {
   const period = c.req.query('period');
   if (period) {
     const match = period.match(/^(\d+)d$/);
-    if (match) return parseInt(match[1]);
+    if (match) return Math.min(parseInt(match[1]), 365);
   }
   const days = c.req.query('days');
-  if (days) return parseInt(days) || 30;
+  if (days) return Math.min(Math.max(1, parseInt(days) || 30), 365);
   return 30;
 }
 

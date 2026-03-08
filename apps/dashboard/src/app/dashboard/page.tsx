@@ -181,7 +181,13 @@ export default function DashboardPage() {
       ['User', 'Prompts', 'Avg Score', 'High Risk Count'],
       ...displayData.topUsers.map(u => [u.displayName, String(u.promptCount), String(u.avgScore), String(u.highRiskCount)]),
     ];
-    const csv = rows.map(r => r.join(',')).join('\n');
+    const csvEscape = (cell: string): string => {
+      if (/[,"\r\n]/.test(cell) || /^[=+\-@\t\r]/.test(cell)) {
+        return `"${cell.replace(/"/g, '""')}"`;
+      }
+      return cell;
+    };
+    const csv = rows.map(r => r.map(c => csvEscape(String(c))).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

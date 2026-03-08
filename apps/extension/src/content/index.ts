@@ -75,7 +75,12 @@ async function encryptAndStore(key: string, map: Record<string, string>): Promis
   const combined = new Uint8Array(12 + encrypted.byteLength);
   combined.set(iv, 0);
   combined.set(new Uint8Array(encrypted), 12);
-  const b64 = btoa(String.fromCharCode(...combined));
+  let binary = '';
+  const chunkSize = 8192;
+  for (let i = 0; i < combined.length; i += chunkSize) {
+    binary += String.fromCharCode(...combined.subarray(i, i + chunkSize));
+  }
+  const b64 = btoa(binary);
   await chrome.storage.session.set({ [key]: b64 });
   return entries;
 }
@@ -215,6 +220,7 @@ window.addEventListener('message', (event) => {
   }
   // Health status from MAIN world — relay to service worker for sidepanel
   if (event.data?.type === 'IRON_GATE_HEALTH') {
+    if (!isValidMainWorldMessage(event.data)) return;
     try {
       chrome.runtime.sendMessage({
         type: 'PROTECTION_STATUS',

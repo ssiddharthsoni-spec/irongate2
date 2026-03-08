@@ -36,10 +36,10 @@ jobs:
 
       - name: Lint packages that have lint scripts
         run: |
-          pnpm --filter @iron-gate/dashboard lint || true
-          pnpm --filter @iron-gate/types lint || true
-          pnpm --filter @iron-gate/config lint || true
-          pnpm --filter @iron-gate/crypto lint || true
+          pnpm --filter @iron-gate/dashboard lint
+          pnpm --filter @iron-gate/types lint
+          pnpm --filter @iron-gate/config lint
+          pnpm --filter @iron-gate/crypto lint
 
   build-packages:
     name: Build Packages
@@ -138,7 +138,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build VS Code extension
-        run: cd apps/vscode-extension && pnpm build
+        run: pnpm turbo build --filter=@iron-gate/vscode-extension
 
   test-api:
     name: Test API
@@ -171,7 +171,7 @@ jobs:
         run: cd apps/api && npx tsc --noEmit
 
       - name: Run API tests
-        run: pnpm --filter @iron-gate/api test || true
+        run: pnpm --filter @iron-gate/api test
 
   test-extension:
     name: Test Extension

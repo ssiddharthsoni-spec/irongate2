@@ -212,12 +212,14 @@ class EventQueue {
       this.isOnline = false;
     }
 
-    // Re-check every 30 seconds
-    setTimeout(() => this.checkOnlineStatus(), 30_000);
-
     // If we just came back online, flush
     if (this.isOnline && this.pendingEvents.length > 0) {
       this.scheduleBatch();
+    }
+
+    // Only re-check if there are pending events (avoid keeping service worker alive)
+    if (this.pendingEvents.length > 0) {
+      setTimeout(() => this.checkOnlineStatus(), 30_000);
     }
   }
 }

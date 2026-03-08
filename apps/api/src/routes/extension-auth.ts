@@ -43,7 +43,10 @@ function getHmacSecret(): string {
   if (secret) return secret;
 
   if (process.env.NODE_ENV === 'production') {
-    console.error('[CRITICAL] No HMAC secret configured. Email verification tokens will use a weak fallback.');
+    // Use crypto.randomUUID() fallback instead of guessable pid
+    const fallback = `emergency-hmac-${crypto.randomUUID()}`;
+    console.error('[CRITICAL] No HMAC secret configured for email verification. Set JWT_SIGNING_KEY or IRON_GATE_SIGNING_SECRET.');
+    return fallback;
   }
   return `dev-hmac-${process.pid}`;
 }

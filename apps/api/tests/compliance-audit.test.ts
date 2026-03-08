@@ -247,7 +247,7 @@ describe('Zero Raw PII in API Payloads', () => {
   it('feedback payloads should use hashes, not raw text', () => {
     const feedbackPayload = JSON.stringify({
       entityType: 'SSN',
-      entityHash: 'a1b2c3d4e5f6'.padEnd(64, '0'),
+      entityHash: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6abcd',
       isCorrect: false,
       correctedType: 'PHONE_NUMBER',
     });

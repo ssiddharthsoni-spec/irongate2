@@ -59,6 +59,15 @@ apiKeyRoutes.post('/', async (c) => {
   });
 
   const parsed = schema.parse(body);
+
+  // Only admins can create admin-scoped API keys
+  if (parsed.scope === 'admin') {
+    const userRole = c.get('userRole');
+    if (userRole !== 'admin') {
+      return c.json({ error: 'Only admins can create admin-scoped API keys' }, 403);
+    }
+  }
+
   const { key, hash, prefix } = generateApiKey();
 
   const expiresAt = parsed.expiresInDays

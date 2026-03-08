@@ -76,7 +76,6 @@ export default function BaaPage() {
 
   useEffect(() => {
     fetchStatus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleSign(e: React.FormEvent) {

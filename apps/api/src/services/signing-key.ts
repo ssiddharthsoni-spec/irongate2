@@ -16,11 +16,14 @@ function resolveSigningSecret(): string {
   if (secret) return secret;
 
   if (process.env.NODE_ENV === 'production') {
+    // Log the error but don't throw — let /health respond so deploys succeed.
+    // Use crypto.randomUUID() instead of guessable pid+timestamp.
+    const fallback = `emergency-${require('crypto').randomUUID()}`;
     console.error(
-      '[CRITICAL] IRON_GATE_SIGNING_SECRET is not set. Audit-chain signing will use a ' +
-      'per-process fallback. Set this in your Render environment variables.',
+      '[CRITICAL] IRON_GATE_SIGNING_SECRET is not set. Audit-chain signatures will be ' +
+      'unverifiable after restart. Set this in your Render environment variables ASAP.',
     );
-    return `emergency-fallback-${process.pid}-${Date.now()}`;
+    return fallback;
   }
 
   console.warn('[WARN] Using dev-only signing secret. Set IRON_GATE_SIGNING_SECRET for production.');

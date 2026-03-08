@@ -78,20 +78,7 @@ export default function ApiKeysPage() {
       setNewKeyName('');
       setShowCreateForm(false);
     } catch {
-      // Demo mode: generate a fake key
-      const fakeKey = `ig_live_${Math.random().toString(36).substring(2, 10)}${Math.random().toString(36).substring(2, 22)}`;
-      const newKey: ApiKey = {
-        id: Date.now().toString(),
-        name: newKeyName.trim(),
-        prefix: fakeKey.substring(0, 12),
-        scope: newKeyScope,
-        createdAt: new Date().toISOString(),
-        lastUsed: null,
-      };
-      setKeys([newKey, ...keys]);
-      setNewlyCreatedKey(fakeKey);
-      setNewKeyName('');
-      setShowCreateForm(false);
+      setError('Failed to create API key. Please try again.');
     } finally {
       setCreating(false);
     }

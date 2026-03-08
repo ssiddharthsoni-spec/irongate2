@@ -219,11 +219,25 @@ export async function apiUploadFile<T>(
     }
   }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: formData,
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 60_000); // 60s for uploads
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new ApiError(408, 'Upload request timed out after 60 seconds');
+    }
+    throw err;
+  }
+  clearTimeout(timeoutId);
 
   if (!response.ok) {
     const errorBody = await response.json().catch(() => ({}));

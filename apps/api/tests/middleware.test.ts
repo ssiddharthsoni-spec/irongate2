@@ -193,20 +193,27 @@ describe('CSRF Protection Middleware', () => {
   });
 
   it('should allow POST from chrome extension', async () => {
-    const { csrfProtectionMiddleware } = await import('../src/middleware/csrf');
-    const app = new Hono();
-    app.use('*', csrfProtectionMiddleware);
-    app.post('/test', (c) => c.json({ ok: true }));
+    const origExtId = process.env.CHROME_EXTENSION_ID;
+    process.env.CHROME_EXTENSION_ID = 'abcdef1234567890';
+    try {
+      const { csrfProtectionMiddleware } = await import('../src/middleware/csrf');
+      const app = new Hono();
+      app.use('*', csrfProtectionMiddleware);
+      app.post('/test', (c) => c.json({ ok: true }));
 
-    const res = await app.request('/test', {
-      method: 'POST',
-      headers: {
-        'Origin': 'chrome-extension://abcdef1234567890',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({}),
-    });
-    expect(res.status).toBe(200);
+      const res = await app.request('/test', {
+        method: 'POST',
+        headers: {
+          'Origin': 'chrome-extension://abcdef1234567890',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(200);
+    } finally {
+      if (origExtId === undefined) delete process.env.CHROME_EXTENSION_ID;
+      else process.env.CHROME_EXTENSION_ID = origExtId;
+    }
   });
 
   it('should allow POST with API key (no origin needed)', async () => {

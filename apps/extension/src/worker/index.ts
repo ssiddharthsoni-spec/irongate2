@@ -710,6 +710,7 @@ async function handleMessage(
 
       // Apply adaptive weights (API-driven) + feedback-based suppression weights
       await refreshSuppressionRules();
+      const tier1Start = performance.now();
       const adaptiveWeights = getWeightResolver().getWeights();
       const mergedWeights = { ...adaptiveWeights, ..._suppressionWeights };
       const rawSensitivity = computeScore(text, allEntities,
@@ -740,7 +741,7 @@ async function handleMessage(
       const router = getConfidenceRouter(config);
       let routingDecision: RoutingDecision | null = null;
       try {
-        routingDecision = await router.route(text, tier1Result, performance.now() - (performance.now()));
+        routingDecision = await router.route(text, tier1Result, performance.now() - tier1Start);
         igLog('Confidence routing:', routingDecision.finalZone,
           'score:', tier1Result.score, '→', routingDecision.finalScore,
           'tiers:', routingDecision.tiersConsulted.map(t => t.source).join(', '));

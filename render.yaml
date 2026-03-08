@@ -26,6 +26,20 @@ services:
         generateValue: true
       - key: IRON_GATE_SIGNING_SECRET
         generateValue: true
+      - key: REDIS_URL
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: ADMIN_KEY_1
+        sync: false
+      - key: ADMIN_KEY_2
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: CHROME_EXTENSION_ID
+        sync: false
 
   # ── Staging API ───────────────────────────────────────────────────────────
   - type: web
