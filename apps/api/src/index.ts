@@ -478,6 +478,8 @@ process.on('uncaughtException', (err) => {
 logger.info('Starting server...', { port, nodeVersion: process.version, pid: process.pid });
 
 import('@hono/node-server').then(({ serve }) => {
+  console.log(`[BOOT] @hono/node-server loaded — binding to 0.0.0.0:${port}`);
+
   const server = serve({ fetch: app.fetch, port, hostname: '0.0.0.0' }, async () => {
     logger.info('Server started', { port, hostname: '0.0.0.0', url: `http://0.0.0.0:${port}` });
 
