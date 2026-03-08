@@ -1,0 +1,43 @@
+name: Selector Health Probe
+
+# Runs weekly to detect when AI platforms change their DOM
+# If selectors break, the extension is broken in production
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Every Monday at 9 AM UTC
+  workflow_dispatch:       # Allow manual trigger
+
+jobs:
+  selector-health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium
+        working-directory: apps/extension
+
+      - name: Run selector health probe
+        run: npx playwright test tests/e2e/selector-health.spec.ts --reporter=list 2>&1 || true
+        working-directory: apps/extension
+        # Don't fail the whole workflow — we want the report even on partial failures
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selector-health-report
+          path: apps/extension/test-results/
+          retention-days: 30

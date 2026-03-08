@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
 import { useApiClient } from '../../lib/api';
 
@@ -51,6 +52,7 @@ const RISK_COLORS = {
 
 export default function DashboardPage() {
   const { apiFetch } = useApiClient();
+  const router = useRouter();
   const { user, isLoaded: isUserLoaded } = useUser();
   // Start with null — show loading skeleton until API responds.
   const [data, setData] = useState<FirmOverview | null>(null);
@@ -66,21 +68,30 @@ export default function DashboardPage() {
   async function fetchDashboardData() {
     try {
       setFetchError(null);
+
+      // Check if user has a firm — if not, redirect to onboarding
+      const firmRes = await apiFetch('/admin/firm');
+      if (!firmRes.ok) {
+        // 404 or 403 = no firm exists for this user → onboarding
+        if (firmRes.status === 404 || firmRes.status === 403) {
+          router.replace('/onboarding');
+          return;
+        }
+      } else {
+        const firm = await firmRes.json();
+        // User is still on the default placeholder firm → needs onboarding
+        if (firm.isDefaultFirm) {
+          router.replace('/onboarding');
+          return;
+        }
+        if (firm.name) setFirmName(firm.name);
+      }
+
       const response = await apiFetch(`/dashboard/overview?days=${timeRange}`);
 
       if (!response.ok) throw new Error('Failed to fetch');
       const json = await response.json();
       setData(json);
-
-      // Fetch firm name if we don't have it yet
-      if (!firmName) {
-        apiFetch('/admin/firm').then(async (r) => {
-          if (r.ok) {
-            const firm = await r.json();
-            if (firm.name) setFirmName(firm.name);
-          }
-        }).catch(() => {});
-      }
     } catch (err: any) {
       setFetchError(err.message || 'Failed to load dashboard data.');
     } finally {

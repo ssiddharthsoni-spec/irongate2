@@ -351,6 +351,134 @@ extensionAuthRoutes.post('/validate-firm-code', async (c) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /enroll — Auto-join a firm using an enrollment code
+// Authenticated via X-API-Key header (existing extension user) or email+deviceId
+// for users who registered but need to switch firms.
+// ---------------------------------------------------------------------------
+extensionAuthRoutes.post('/enroll', async (c) => {
+  const ip = c.req.header('x-forwarded-for') || c.req.header('cf-connecting-ip') || 'unknown';
+  if (!checkRateLimit(`enroll:${ip}`)) {
+    return c.json({ error: 'Too many requests. Please try again later.' }, 429);
+  }
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const schema = z.object({
+    enrollmentCode: z.string().min(1).max(50),
+    extensionVersion: z.string().min(1).max(20),
+  });
+
+  const result = schema.safeParse(body);
+  if (!result.success) {
+    return c.json({ error: 'Validation error', details: result.error.errors }, 400);
+  }
+  const parsed = result.data;
+
+  // Authenticate the caller via X-API-Key header
+  const apiKeyHeader = c.req.header('X-API-Key');
+  if (!apiKeyHeader) {
+    return c.json({ error: 'Missing X-API-Key header. Register first via /register-extension.' }, 401);
+  }
+
+  const keyHash = crypto.createHash('sha256').update(apiKeyHeader).digest('hex');
+
+  try {
+    // 1. Look up the enrollment code in the firms table
+    const [firm] = await db
+      .select({
+        id: firms.id,
+        name: firms.name,
+        mode: firms.mode,
+      })
+      .from(firms)
+      .where(eq(firms.enrollmentCode, parsed.enrollmentCode))
+      .limit(1);
+
+    if (!firm) {
+      return c.json({ error: 'Invalid enrollment code' }, 404);
+    }
+
+    // 2. Look up the user by their API key
+    const [key] = await db
+      .select({
+        id: apiKeys.id,
+        firmId: apiKeys.firmId,
+        createdBy: apiKeys.createdBy,
+        revokedAt: apiKeys.revokedAt,
+      })
+      .from(apiKeys)
+      .where(eq(apiKeys.keyHash, keyHash))
+      .limit(1);
+
+    if (!key || key.revokedAt) {
+      return c.json({ error: 'Invalid or revoked API key' }, 401);
+    }
+
+    const [user] = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        firmId: users.firmId,
+      })
+      .from(users)
+      .where(eq(users.id, key.createdBy))
+      .limit(1);
+
+    if (!user) {
+      return c.json({ error: 'User not found for this API key' }, 404);
+    }
+
+    // 3. If user is already in this firm, return success without changes
+    if (user.firmId === firm.id) {
+      return c.json({
+        firmId: firm.id,
+        firmName: firm.name,
+        mode: firm.mode,
+        message: 'Already enrolled in this firm',
+      });
+    }
+
+    // 4. Associate the user with the firm and update the API key's firmId
+    await db.transaction(async (tx) => {
+      await tx
+        .update(users)
+        .set({ firmId: firm.id, role: 'user', updatedAt: new Date() })
+        .where(eq(users.id, user.id));
+
+      // Move the API key to the new firm so it continues to work
+      await tx
+        .update(apiKeys)
+        .set({ firmId: firm.id })
+        .where(eq(apiKeys.id, key.id));
+    });
+
+    logger.info('User enrolled in firm via enrollment code', {
+      userId: user.id,
+      firmId: firm.id,
+      extensionVersion: parsed.extensionVersion,
+    });
+
+    // 5. Return firm details so the extension can configure itself
+    // Optionally return an existing valid API key for the new firm
+    return c.json({
+      firmId: firm.id,
+      firmName: firm.name,
+      mode: firm.mode,
+    });
+  } catch (err) {
+    logger.error('Enrollment failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return c.json({ error: 'Enrollment failed. Please try again.' }, 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /verify-email — Verify email with HMAC-signed token
 // Upgrades API key scope from read → write on success.
 // ---------------------------------------------------------------------------

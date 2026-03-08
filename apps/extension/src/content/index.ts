@@ -118,6 +118,34 @@ function syncModeToMainWorld(newMode: 'audit' | 'proxy') {
   window.postMessage({ type: 'IRON_GATE_SET_MODE', mode: newMode }, window.location.origin);
 }
 
+// Send private LLM config to MAIN world for Executive Lens routing
+function syncPrivateLlmToMainWorld() {
+  try {
+    chrome.storage.local.get(['localLLMEndpoint', 'localLLMModel'], (result) => {
+      if (result.localLLMEndpoint) {
+        window.postMessage({
+          type: 'IRON_GATE_SET_PRIVATE_LLM',
+          endpoint: result.localLLMEndpoint,
+          model: result.localLLMModel || 'llama3.2:3b',
+        }, window.location.origin);
+      }
+    });
+    // Also check managed storage (enterprise policy)
+    chrome.storage.managed?.get(['localLLMEndpoint', 'localLLMModel'], (result) => {
+      if (chrome.runtime.lastError) return; // managed storage may not exist
+      if (result?.localLLMEndpoint) {
+        window.postMessage({
+          type: 'IRON_GATE_SET_PRIVATE_LLM',
+          endpoint: result.localLLMEndpoint,
+          model: result.localLLMModel || 'llama3.2:3b',
+        }, window.location.origin);
+      }
+    });
+  } catch {
+    // Non-fatal — private LLM routing just won't be available
+  }
+}
+
 // ── Suppress "Extension context invalidated" noise ──────────────────────────
 // Chrome fires this as an uncaught error when callbacks run after a reload.
 // Nothing we can do to prevent it — just silence the console spam.
@@ -138,6 +166,7 @@ self.addEventListener('unhandledrejection', (event) => {
 resolveMode().then((savedMode) => {
   if (!contextAlive) return;
   syncModeToMainWorld(savedMode);
+  syncPrivateLlmToMainWorld();
   igLog('Initial mode from storage:', savedMode);
 }).catch(() => {});
 
@@ -150,6 +179,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
       engine?.updateConfig({ mode: newMode });
       igLog('Mode changed via storage:', newMode, '(area:', area, ')');
     }).catch(() => {});
+  }
+  // Sync private LLM config changes to MAIN world
+  if (changes.localLLMEndpoint || changes.localLLMModel) {
+    syncPrivateLlmToMainWorld();
   }
 });
 

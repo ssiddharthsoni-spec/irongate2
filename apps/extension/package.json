@@ -8,8 +8,10 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:contracts": "vitest run tests/payload-contract.test.ts",
     "test:e2e": "playwright test",
-    "test:e2e:headed": "playwright test --headed"
+    "test:e2e:headed": "playwright test --headed",
+    "test:selector-health": "playwright test tests/e2e/selector-health.spec.ts --headed"
   },
   "dependencies": {
     "@iron-gate/config": "workspace:*",

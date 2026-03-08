@@ -38,6 +38,7 @@ import { getWeightResolver } from '../detection/weight-resolver';
 import { createDictionaryMatcher, type DictionaryEntry } from '../detection/entity-dictionary';
 import { mergeEntities, dictionaryScoreBoost } from '../detection/entity-merger';
 import { createGLiNERAdapter, type GLiNERAdapterConfig } from '../detection/tier2-gliner-adapter';
+import { analyzeWithExecutiveLens, resolveRoute, type ExecutiveLensResult } from '../detection/executive-lens';
 import { createModelRuntime } from '../agent/model-runtime';
 import { createAgentDetector } from '../agent/agent-detector';
 
@@ -803,6 +804,18 @@ async function handleMessage(
       // Agent handles DETECTION (above), not rewriting.
       const pseudoResult = pseudonymizeLocal(text, allEntities);
 
+      // ── Executive Lens: industry-aware routing decision ──
+      // Determines whether to pseudonymize (cloud), route to private LLM,
+      // or passthrough based on industry, entity types, and content signals.
+      const lensResult = analyzeWithExecutiveLens(text, allEntities);
+      const hasPrivateLlm = !!config.localLLM?.endpoint;
+      const executiveRoute = resolveRoute(lensResult, hasPrivateLlm);
+      if (lensResult.industry || lensResult.triggeredRules.length > 0) {
+        igLog('Executive Lens:', lensResult.industry, '→', executiveRoute,
+          lensResult.triggeredRules.length > 0 ? `(rules: ${lensResult.triggeredRules.join(', ')})` : '',
+          lensResult.explanation);
+      }
+
       // Track stats for trial banner (serialized to prevent race conditions)
       incrementStats(allEntities.length, 1);
 
@@ -899,6 +912,13 @@ async function handleMessage(
               action: routedAction ?? (sensitivityResult.level === 'critical' ? 'block' : 'pass'),
               wasEscalated: routingDecision?.wasEscalated ?? false,
               tiersConsulted: routingDecision?.tiersConsulted?.map(t => t.source) ?? ['local-regex-scorer'],
+              // Executive Lens routing
+              executiveRoute,
+              executiveIndustry: lensResult.industry,
+              executiveRules: lensResult.triggeredRules,
+              executiveExplanation: lensResult.explanation,
+              privateLlmEndpoint: executiveRoute === 'private_llm' && config.localLLM ? config.localLLM.endpoint : undefined,
+              privateLlmModel: executiveRoute === 'private_llm' && config.localLLM ? config.localLLM.model : undefined,
             },
           }).catch(() => {});
         }

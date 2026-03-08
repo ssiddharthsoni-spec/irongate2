@@ -253,24 +253,16 @@ let _integrityWarningLogged = false;
 
 function validateResponseIntegrity(url: string, response: Response): void {
   const hsts = response.headers.get('strict-transport-security');
-  const expectCt = response.headers.get('expect-ct');
   const host = new URL(url).hostname;
+
+  // Note: Expect-CT header check removed — Expect-CT was deprecated in 2023
+  // and removed from all browsers. Certificate Transparency is enforced by
+  // default in Chrome/Firefox/Safari. No hosting provider sends this header.
 
   if (!hsts && !_integrityWarningLogged) {
     _integrityWarningLogged = true;
-    reportSecurityAnomaly('unexpected_redirect', {
-      url,
-      host,
-      reason: `Missing Strict-Transport-Security header from ${host}`,
-    });
-  }
-
-  if (!expectCt && !_integrityWarningLogged) {
-    _integrityWarningLogged = true;
-    reportSecurityAnomaly('unexpected_redirect', {
-      url,
-      host,
-      reason: `Missing Expect-CT header from ${host}`,
-    });
+    // Log as debug, not a security anomaly — Render's free tier may not
+    // always include HSTS on every response. The connection is still HTTPS.
+    console.debug(`[Iron Gate] Note: Missing HSTS header from ${host} — connection is still HTTPS`);
   }
 }

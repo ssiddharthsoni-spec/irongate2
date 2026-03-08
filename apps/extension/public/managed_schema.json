@@ -8,24 +8,100 @@
     },
     "apiUrl": {
       "title": "Iron Gate API URL",
-      "description": "The base URL for the Iron Gate API endpoint. Defaults to the production API if not set.",
+      "description": "The base URL for the Iron Gate API endpoint. Defaults to https://irongate-api.onrender.com/v1 if not set.",
       "type": "string"
     },
     "firmMode": {
       "title": "Protection Mode",
-      "description": "Data protection mode. 'audit' = Monitor (detect and log only), 'proxy' = Protect (auto-redact PII before sending).",
+      "description": "Data protection mode. 'audit' = Monitor only (detect and log). 'proxy' = Protect (auto-pseudonymize PII before sending to AI tools).",
       "type": "string",
       "enum": ["audit", "proxy"]
     },
     "firmId": {
       "title": "Firm ID",
-      "description": "The organization's firm identifier for event attribution.",
+      "description": "The organization's firm UUID for event attribution and policy enforcement.",
       "type": "string"
     },
     "firmName": {
       "title": "Organization Name",
-      "description": "Display name for the organization shown in the side panel.",
+      "description": "Display name for the organization shown in the extension side panel.",
       "type": "string"
+    },
+    "enrollmentCode": {
+      "title": "Enrollment Code",
+      "description": "Auto-enrollment code for new users. When set, users are automatically associated with this firm on first launch without manual setup.",
+      "type": "string"
+    },
+    "localLLMEndpoint": {
+      "title": "Private LLM Endpoint",
+      "description": "URL of the organization's on-premise LLM (e.g., http://llm.internal:11434). When set, prompts containing highly sensitive content (as determined by Executive Lens) are routed to this endpoint instead of cloud AI tools.",
+      "type": "string"
+    },
+    "localLLMModel": {
+      "title": "Private LLM Model",
+      "description": "Model name for the private LLM endpoint (e.g., 'llama3.2:3b', 'mistral:7b'). Defaults to 'llama3.2:3b' if not specified.",
+      "type": "string"
+    },
+    "sensitivityThresholdWarn": {
+      "title": "Warning Threshold",
+      "description": "Sensitivity score threshold (0-100) at which users see a warning before sending. Default: 30.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "sensitivityThresholdBlock": {
+      "title": "Block Threshold",
+      "description": "Sensitivity score threshold (0-100) at which prompts are blocked from sending. Default: 80.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "allowedAITools": {
+      "title": "Allowed AI Tools",
+      "description": "Comma-separated list of permitted AI tool domains. If set, only these tools are allowed. Example: 'chatgpt.com,claude.ai'. Leave empty to allow all supported tools.",
+      "type": "string"
+    },
+    "blockedAITools": {
+      "title": "Blocked AI Tools",
+      "description": "Comma-separated list of blocked AI tool domains. Example: 'chat.deepseek.com'. Takes priority over allowedAITools.",
+      "type": "string"
+    },
+    "disableFileUpload": {
+      "title": "Disable File Upload Scanning",
+      "description": "When true, blocks all file uploads to AI tools regardless of sensitivity score.",
+      "type": "boolean"
+    },
+    "complianceFrameworks": {
+      "title": "Active Compliance Frameworks",
+      "description": "Comma-separated compliance frameworks to enforce. Options: GDPR, HIPAA, SOC2, PCI_DSS, CCPA, FERPA, SOX, ITAR. Example: 'HIPAA,SOC2'.",
+      "type": "string"
+    },
+    "siemEndpoint": {
+      "title": "SIEM Endpoint",
+      "description": "URL for forwarding security events to your SIEM (Splunk HEC, Sentinel, QRadar). Events are sent in CEF format.",
+      "type": "string"
+    },
+    "siemToken": {
+      "title": "SIEM Authentication Token",
+      "description": "Bearer token or HEC token for authenticating to the SIEM endpoint.",
+      "type": "string"
+    },
+    "glinerEnabled": {
+      "title": "Enable On-Device ML Detection",
+      "description": "Enable the GLiNER on-device ML model for enhanced entity detection. Requires ~46MB model download. Default: false.",
+      "type": "boolean"
+    },
+    "sessionLockTimeout": {
+      "title": "Session Lock Timeout (minutes)",
+      "description": "Auto-lock the extension after this many minutes of inactivity. User must re-authenticate to continue. Default: 30. Set to 0 to disable.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 480
+    },
+    "disableOverride": {
+      "title": "Disable User Override",
+      "description": "When true, users cannot override block decisions. Prompts exceeding the block threshold are always blocked with no bypass option.",
+      "type": "boolean"
     }
   }
 }

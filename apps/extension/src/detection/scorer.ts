@@ -15,6 +15,7 @@ import { classifyDocument, DOCUMENT_TYPE_MULTIPLIERS } from './document-classifi
 import { analyzeRelationships, computeRelationshipBoost } from './relationship-analyzer';
 import { applyContextAwareDetection } from '../shared/context-analyzer';
 import { detectContextualSensitivity, computeContextualScore, explainContextualMarkers } from './contextual-keywords';
+import { applyIntentSuppression } from './intent-suppression';
 
 export type SensitivityLevel = 'low' | 'medium' | 'high' | 'critical';
 
@@ -146,11 +147,18 @@ export function computeScore(
 ): SensitivityScore {
   const weights: Record<string, number> = { ...ENTITY_WEIGHTS, ...(customWeights || {}) } as Record<string, number>;
 
+  // ── Intent Suppression Layer ──────────────────────────────────────────
+  // Detect when PII is the PURPOSE of the task (horoscope, research,
+  // self-intro) vs. incidental data leakage. Suppress intentional PII
+  // before scoring so it doesn't inflate the sensitivity score.
+  const intentResult = applyIntentSuppression(text, entities);
+  let intentMultiplier = intentResult.scoreMultiplier;
+
   // ── Contextual Intelligence Layer ──────────────────────────────────────
   // Apply context-aware detection: suppress code false positives,
   // adjust confidence based on surrounding context (legal vs casual),
   // and compute co-occurrence multiplier (person + SSN = 1.5x)
-  const contextAware = applyContextAwareDetection(text, entities);
+  const contextAware = applyContextAwareDetection(text, intentResult.entities);
   const contextualEntities = contextAware.entities;
   let coOccurrenceMultiplier = contextAware.scoreMultiplier;
 
@@ -244,11 +252,18 @@ export function computeScore(
     criticalFloor = Math.max(criticalFloor, 61);
   }
 
+  // Safety: don't let intent suppression reduce score when dangerous
+  // contextual keywords are present (M&A deal + "research" shouldn't suppress)
+  if (contextualKeywordScore >= 15) {
+    intentMultiplier = Math.max(intentMultiplier, 1.0);
+  }
+
   // Combine scores with contextual multipliers
   let rawScore =
     (entityScore + volumeScore + contextScore + legalBoost + contextualKeywordScore + relationshipBoost + conversationEscalation + firmKnowledgeBoost) *
     documentTypeMultiplier *
-    coOccurrenceMultiplier;
+    coOccurrenceMultiplier *
+    intentMultiplier;
 
   // Apply critical floor — never let arithmetic under-rate existential risks
   rawScore = Math.max(rawScore, criticalFloor);

@@ -96,7 +96,10 @@ adminRoutes.get('/firm', async (c) => {
     safeConfig.siem = { ...safeConfig.siem, token: `****${safeConfig.siem.token.slice(-4)}` };
   }
 
-  return c.json({ ...firm, config: safeConfig });
+  // Flag if the user is still on the default/placeholder firm (hasn't completed onboarding)
+  const isDefaultFirm = firmId === process.env.DEFAULT_FIRM_ID;
+
+  return c.json({ ...firm, config: safeConfig, isDefaultFirm });
 });
 
 // POST /v1/admin/firm — Create firm during onboarding

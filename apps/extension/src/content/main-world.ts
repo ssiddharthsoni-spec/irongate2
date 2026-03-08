@@ -106,6 +106,10 @@ let mode: 'audit' | 'proxy' = 'proxy';
 let currentReverseMap: Record<string, string> = {};
 let _lastConversationPath: string = window.location.pathname;
 
+// ─── Private LLM config (set via IRON_GATE_SET_PRIVATE_LLM from content script)
+let _privateLlmEndpoint: string | null = null;
+let _privateLlmModel: string | null = null;
+
 // ─── Reverse Map: Encrypted Session Persistence ──────────────────────────────
 // The reverse map (pseudonym → original PII) lives in `currentReverseMap`.
 // On each update, map entries are sent to the content script (extension context)
@@ -164,6 +168,14 @@ window.addEventListener('message', (event) => {
           ? 'color: #f97316; font-weight: bold; font-size: 13px'
           : 'color: #6699ff; font-weight: bold',
       );
+    }
+  }
+  // Receive private LLM config from content script
+  if (event.data?.type === 'IRON_GATE_SET_PRIVATE_LLM') {
+    _privateLlmEndpoint = event.data.endpoint || null;
+    _privateLlmModel = event.data.model || null;
+    if (_privateLlmEndpoint) {
+      igLog('Private LLM configured:', _privateLlmEndpoint, _privateLlmModel);
     }
   }
   // Receive persisted reverse map from content script (after page refresh)
@@ -836,11 +848,21 @@ function generateFake(type: string, original: string): string {
       if (numMatch) {
         const num = parseFloat(numMatch[1]);
         const suffix = numMatch[2] || '';
-        const shifted = num * _randBetween(0.7, 1.35);
-        // Preserve format
+        // Use 0.85-1.35x range to avoid producing very short fakes (e.g., $48→$4)
+        // that are too generic and cause false matches during de-pseudonymization
+        const shifted = num * _randBetween(0.85, 1.35);
+        // Ensure fake has at least as many digits as original to prevent
+        // short pseudonyms like "$4" matching inside "$400", "$4.5B", etc.
+        const origDigitCount = numMatch[1].replace('.', '').length;
+        let formatted: string;
         const hasDecimal = numMatch[1].includes('.');
         const decPlaces = hasDecimal ? (numMatch[1].split('.')[1]?.length || 1) : 0;
-        const formatted = hasDecimal ? shifted.toFixed(decPlaces) : Math.round(shifted).toString();
+        formatted = hasDecimal ? shifted.toFixed(decPlaces) : Math.round(shifted).toString();
+        // Pad if needed to maintain digit count (e.g., 48→41 is OK, 48→4 is not)
+        while (formatted.replace('.', '').length < origDigitCount) {
+          formatted = hasDecimal ? (shifted * 1.1).toFixed(decPlaces) : Math.round(shifted * 1.1).toString();
+          break; // One attempt to bump up
+        }
         // Reconstruct with original prefix style
         const prefix = original.startsWith('$') ? '$' : '';
         return prefix + formatted + suffix;
@@ -1474,6 +1496,156 @@ function quickScore(entities: Array<{ type: string; confidence: number }>): { le
   return { level, score };
 }
 
+// ─── Executive Lens (client-side industry routing) ──────────────────────────
+// Compact version of executive-lens.ts for MAIN world execution.
+// Determines whether to send pseudonymized to cloud, route to private LLM,
+// or passthrough based on industry signals and content analysis.
+
+type RouteDecision = 'pseudonymize' | 'passthrough' | 'private_llm';
+
+const _INDUSTRY_RULES: Record<string, Array<{ name: string; action: RouteDecision; patterns: RegExp[] }>> = {
+  manufacturing: [
+    { name: 'Proprietary Formula', action: 'private_llm', patterns: [
+      /\d+(\.\d+)?%\s*(sodium|potassium|sulfate|chloride|hydroxide|acid)/i,
+      /\bpH\s*[:=]?\s*\d/i, /\bformul(a|ation)\b/i, /\bproprietary\s+(blend|formula|process|recipe)\b/i, /\bviscosity\b/i,
+    ]},
+    { name: 'Process Parameters', action: 'private_llm', patterns: [
+      /\b(reactor|batch|mixing|curing|distill|extrusion)\b.*\b(temp|time|duration)\b/i,
+      /\b\d+\s*(RPM|psi|bar|cP|mPa)\b/i, /\d+\s*°[CF]\b/, /\byield\s*[:=]?\s*\d+(\.\d+)?%/i,
+    ]},
+  ],
+  legal: [
+    { name: 'Litigation Strategy', action: 'private_llm', patterns: [
+      /\b(our|we|firm'?s)\s+(strategy|position|argument|approach|theory)\b/i,
+      /\bwe\s+(plan|intend|will|should)\s+(argue|file|settle|motion|depose)\b/i,
+      /\bsettlement\s+(demand|offer|position|range|authority)\b/i,
+    ]},
+    { name: 'Attorney-Client Privilege', action: 'private_llm', patterns: [
+      /\battorney[- ]client\s+privilege\b/i, /\bprivileged and confidential\b/i, /\bwork product\b/i,
+    ]},
+  ],
+  healthcare: [
+    { name: 'Patient Data (HIPAA)', action: 'pseudonymize', patterns: [
+      /\bpatient\b.*\b(diagnos|condition|medication|treatment|procedure)\b/i, /\bprotected health\b/i, /\bHIPAA\b/i,
+    ]},
+    { name: 'Unpublished Clinical IP', action: 'private_llm', patterns: [
+      /\bproprietary\s+(drug|compound|therapy|formulation|protocol)\b/i, /\bclinical trial\s+(data|results|phase)\b/i,
+    ]},
+  ],
+  finance: [
+    { name: 'MNPI', action: 'private_llm', patterns: [
+      /\bnon-public\b/i, /\bunreleased\b/i, /\bpre-announcement\b/i, /\binsider\b/i,
+      /\bacquisition target\b/i, /\bunder NDA\b/i, /\bcap table\b/i, /\bwire\s+(instructions|transfer)\b/i,
+    ]},
+    { name: 'Client Positions', action: 'private_llm', patterns: [
+      /\d+\s*shares?\s*@\s*\$/i, /\bface value\b/i, /\bcurrent positions\b/i, /\btarget allocation\b/i,
+    ]},
+  ],
+  consulting: [
+    { name: 'Strategic Recommendations', action: 'private_llm', patterns: [
+      /\b(recommend|advise|propose)\b.*\b(divest|acquire|merge|restructur|expand|exit)\b/i,
+      /\bstrategic\s+(assessment|recommendation|option|direction)\b/i,
+      /\bboard\s+(talking points|presentation|meeting|materials)\b/i,
+    ]},
+    { name: 'Competitive Intelligence', action: 'private_llm', patterns: [
+      /\bmarket share\s+(declined|grew|gained|lost|dropped|increased)\b/i,
+      /\bcompetitor\s+(revenue|margin|pricing|strategy|share)\b/i,
+    ]},
+  ],
+  government: [
+    { name: 'Classified Information', action: 'private_llm', patterns: [
+      /\bclassified\b/i, /\btop secret\b/i, /\bSCI\b/, /\bspecial access program\b/i,
+    ]},
+    { name: 'ITAR/Export Control', action: 'private_llm', patterns: [
+      /\bITAR\b/, /\bexport control\b/i, /\bmunitions list\b/i, /\bECCN\b/,
+    ]},
+  ],
+  insurance: [
+    { name: 'Claims Reserves/IBNR', action: 'private_llm', patterns: [
+      /\bclaims?\s+reserve\b/i, /\bIBNR\b/, /\bloss\s+reserve\b/i, /\badverse\s+development\b/i,
+    ]},
+  ],
+  energy: [
+    { name: 'Reserve Data', action: 'private_llm', patterns: [
+      /\b(proved|probable|possible)\s+reserves\b/i, /\bseismic\s+(data|survey|interpretation)\b/i, /\bdecline curve\b/i,
+    ]},
+  ],
+  education: [
+    { name: 'Title IX Matters', action: 'private_llm', patterns: [
+      /\bTitle IX\b/i, /\bsexual\s+(misconduct|harassment|assault)\b/i,
+    ]},
+  ],
+};
+
+const _INDUSTRY_SIGNALS: Record<string, RegExp[]> = {
+  legal: [/\battorney\b/i, /\blitigation\b/i, /\bcounsel\b/i, /\bdeposition\b/i, /\bplaintiff\b/i, /\bdefendant\b/i, /\bprivilege\b/i],
+  healthcare: [/\bpatient\b/i, /\bdiagnos/i, /\bmedication\b/i, /\bMRN\b/, /\bclinical\b/i, /\bHIPAA\b/i],
+  finance: [/\bportfolio\b/i, /\bEBITDA\b/i, /\bacquisition\b/i, /\bvaluation\b/i, /\bIPO\b/i, /\bcap table\b/i],
+  consulting: [/\bengagement\b/i, /\bmarket share\b/i, /\bTAM\b/, /\bSWOT\b/i, /\bboard meeting\b/i],
+  manufacturing: [/\bformul/i, /\bbatch\b/i, /\breactor\b/i, /\bviscosity\b/i, /\bsupplier\b/i, /\bchemical\b/i],
+  insurance: [/\bactuarial\b/i, /\bclaims reserve\b/i, /\bIBNR\b/, /\breinsurance\b/i, /\bcatastrophe model\b/i],
+  energy: [/\breserves\b/i, /\bBOE\b/, /\bseismic\b/i, /\bdrilling\b/i, /\bpipeline\b/i],
+  education: [/\bFERPA\b/, /\bTitle IX\b/i, /\bstudent record\b/i, /\btranscript\b/i],
+  government: [/\bclassified\b/i, /\btop secret\b/i, /\bITAR\b/, /\bexport control\b/i, /\bFedRAMP\b/],
+};
+
+const _CONFIDENTIALITY_PATS: RegExp[] = [
+  /\bprivileged\b/i, /\bconfidential\b/i, /\battorney[- ]client\b/i,
+  /\bwork product\b/i, /\bdo not distribute\b/i, /\bunder seal\b/i, /\bNDA\b/,
+];
+const _COMPUTATION_PATS: RegExp[] = [
+  /\bcalculate\b/i, /\bcompute\b/i, /\btotal\b/i, /\bhow much\b/i,
+  /\bwhat is\b.*\$/i, /\bROI\b/i, /\bbreak[\s-]even\b/i,
+];
+const _PERSON_TYPES = new Set(['PERSON', 'SSN', 'EMAIL', 'CREDIT_CARD', 'PASSPORT_NUMBER', 'DRIVERS_LICENSE', 'MEDICAL_RECORD', 'PHONE_NUMBER']);
+
+function executiveLensRoute(text: string, entities: DetectedEntity[]): { route: RouteDecision; industry: string | null; explanation: string } {
+  // Detect industry
+  let bestIndustry: string | null = null;
+  let bestHits = 0;
+  for (const [ind, pats] of Object.entries(_INDUSTRY_SIGNALS)) {
+    let hits = 0;
+    for (const p of pats) { if (p.test(text)) hits++; }
+    if (hits > bestHits) { bestHits = hits; bestIndustry = ind; }
+  }
+  if (bestHits < 2) bestIndustry = null;
+
+  // Evaluate industry-specific rules
+  const triggered: { name: string; action: RouteDecision }[] = [];
+  if (bestIndustry && _INDUSTRY_RULES[bestIndustry]) {
+    for (const rule of _INDUSTRY_RULES[bestIndustry]) {
+      let hits = 0;
+      for (const p of rule.patterns) { if (p.test(text)) hits++; }
+      if (hits >= 2) triggered.push({ name: rule.name, action: rule.action });
+    }
+  }
+
+  const hasPrivateRule = triggered.some(r => r.action === 'private_llm');
+  const hasPseudoRule = triggered.some(r => r.action === 'pseudonymize');
+  const hasPersons = entities.some(e => _PERSON_TYPES.has(e.type));
+  const isConfidential = _CONFIDENTIALITY_PATS.some(p => p.test(text));
+  const needsCompute = _COMPUTATION_PATS.some(p => p.test(text));
+
+  if (hasPrivateRule) {
+    const rule = triggered.find(r => r.action === 'private_llm')!;
+    return { route: 'private_llm', industry: bestIndustry, explanation: `${bestIndustry}: "${rule.name}" → private LLM` };
+  }
+  if (hasPseudoRule) {
+    const rule = triggered.find(r => r.action === 'pseudonymize')!;
+    return { route: 'pseudonymize', industry: bestIndustry, explanation: `${bestIndustry}: "${rule.name}" → pseudonymize` };
+  }
+  if (hasPersons && needsCompute) {
+    return { route: 'private_llm', industry: bestIndustry, explanation: 'Persons + computation → private LLM' };
+  }
+  if (hasPersons || isConfidential) {
+    return { route: 'pseudonymize', industry: bestIndustry, explanation: hasPersons ? 'Persons detected → pseudonymize' : 'Confidential markers → pseudonymize' };
+  }
+  if (entities.length > 0) {
+    return { route: 'pseudonymize', industry: bestIndustry, explanation: `${entities.length} entities → pseudonymize` };
+  }
+  return { route: 'passthrough', industry: bestIndustry, explanation: 'No sensitive content → passthrough' };
+}
+
 // ─── Response De-pseudonymization ──────────────────────────────────────────
 
 /**
@@ -1718,6 +1890,9 @@ function replacePseudonyms(text: string, reverseMap: Record<string, string>): st
     if (pseudonym === original) continue; // Skip identity mappings
 
     // Strategy 1: Boundary-aware exact match (case-sensitive)
+    // IMPORTANT: Use arrow function as replacer to avoid $ being interpreted
+    // as special replacement patterns ($1, $$, $&, etc.). Without this,
+    // originals containing "$" (like "$48M") produce garbled "$$$$$" output.
     try {
       const escaped = pseudonym.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const startsWithAlpha = /^[a-zA-Z]/.test(pseudonym);
@@ -1729,16 +1904,25 @@ function replacePseudonyms(text: string, reverseMap: Record<string, string>): st
       const regex = new RegExp(prefix + escaped + suffix, 'g');
       if (regex.test(result)) {
         regex.lastIndex = 0;
-        result = result.replace(regex, original);
+        result = result.replace(regex, () => original);
         continue;
       }
     } catch { /* regex failed, fall through */ }
 
     // Strategy 2: JSON-escaped match (SSE streams contain JSON-encoded strings)
+    // Also handles double-escaped JSON (Gemini batchexecute responses use nested escaping)
     const jsonPseudo = jsonStringEscape(pseudonym);
     const jsonOrig = jsonStringEscape(original);
     if (jsonPseudo !== pseudonym && result.includes(jsonPseudo)) {
       result = result.split(jsonPseudo).join(jsonOrig);
+      continue;
+    }
+    // Double-escaped: e.g., "Bentworth" → "Bentworth" (inner) → "Bentworth" (outer)
+    // Gemini wraps responses in f.req with multiple JSON.stringify layers
+    const json2Pseudo = jsonStringEscape(jsonPseudo);
+    const json2Orig = jsonStringEscape(jsonOrig);
+    if (json2Pseudo !== jsonPseudo && result.includes(json2Pseudo)) {
+      result = result.split(json2Pseudo).join(json2Orig);
       continue;
     }
 
@@ -1754,7 +1938,7 @@ function replacePseudonyms(text: string, reverseMap: Record<string, string>): st
       const regex = new RegExp(prefix + escaped + suffix, 'gi');
       if (regex.test(result)) {
         regex.lastIndex = 0;
-        result = result.replace(regex, original);
+        result = result.replace(regex, () => original);
         continue;
       }
     } catch { /* ignore */ }
@@ -1919,12 +2103,14 @@ function startDomDepseudonymizer(): void {
     }
 
     // De-pseudonymize if reverse map has entries.
-    // IMPORTANT: Skip de-pseudo on user message containers — ChatGPT echoes the
-    // pseudonymized text from the server in user bubbles. De-pseudonymizing there
-    // fights React re-renders (server state has pseudonym, we replace with original,
-    // React re-renders with pseudonym → replaceChild duplicates → repeated tokens).
-    // Only de-pseudo assistant/response containers.
-    const isUserMessage = node.parentElement?.closest?.(
+    // For WIRE-LEVEL platforms (ChatGPT, Claude), skip user message containers —
+    // the server echoes pseudonymized text in user bubbles, and de-pseudonymizing
+    // fights React re-renders (server state has pseudonym → replaceChild duplicates).
+    // For DOM PRE-SUBMIT platforms (Gemini, Copilot), we MUST de-pseudo user messages
+    // because the pseudonymized text was written directly to the editor and displayed.
+    const isDomPresubmitPlatform = activeAdapter?.interception === 'dom-presubmit' ||
+      activeAdapter?.interception === 'dom-capture-wire';
+    const isUserMessage = !isDomPresubmitPlatform && node.parentElement?.closest?.(
       '[data-message-author-role="user"], .whitespace-pre-wrap'
     );
     if (!isUserMessage && Object.keys(currentReverseMap).length > 0) {
@@ -2031,17 +2217,31 @@ function startDomDepseudonymizer(): void {
     }
     // Always scan for notice stripping; only scan for de-pseudo if map has entries
     const selectors = [
-      // Assistant response containers
+      // ── Assistant response containers ──
       '[class*="markdown"]',           // ChatGPT markdown response blocks
       '[class*="result-streaming"]',    // actively streaming response
-      '[data-message-author-role="assistant"]', // assistant message blocks
+      '[data-message-author-role="assistant"]', // ChatGPT assistant message blocks
       '.agent-turn',                    // ChatGPT agent turns
       'article',                        // generic article containers
-      '[class*="prose"]',               // prose containers
+      '[class*="prose"]',               // Perplexity / generic prose containers
       'main [class*="text-base"]',      // text content in main area
-      // User message containers (for notice stripping + de-pseudo of echoed text)
-      '[data-message-author-role="user"]', // user message blocks
-      '.whitespace-pre-wrap',           // user message text wrapper
+      // Claude response containers
+      '[data-is-streaming]',            // Claude streaming response
+      '.font-claude-message',           // Claude message blocks
+      '[class*="message-content"]',     // Claude message content
+      // Gemini response containers
+      'model-response',                 // Gemini model response web component
+      '.response-container',            // Gemini response container
+      'message-content',                // Gemini message content web component
+      // Copilot response containers
+      '.ac-container',                  // Copilot adaptive card container
+      '[class*="response"]',            // generic response class
+      // DeepSeek / Poe / Groq / HuggingFace
+      '[class*="answer"]',              // DeepSeek answer blocks
+      '[class*="Message"]',             // Poe message blocks
+      // ── User message containers (notice stripping + de-pseudo for DOM pre-submit) ──
+      '[data-message-author-role="user"]', // ChatGPT user message blocks
+      '.whitespace-pre-wrap',           // ChatGPT user message text wrapper
       '[class*="user-message"]',        // user message class variants
       // Catch-all for main content area
       'main',                           // entire main content
@@ -2053,6 +2253,40 @@ function startDomDepseudonymizer(): void {
           scanElement(el);
         }
       } catch { /* selector may not be valid on all pages */ }
+    }
+
+    // Shadow DOM scan for Copilot — MutationObserver on document.body doesn't
+    // pierce shadow boundaries. Copilot's cib-* web components use shadow roots,
+    // so we must explicitly traverse into them to find response text nodes.
+    if (activeAdapter?.usesShadowDom) {
+      try {
+        scanShadowRoots(document.body);
+      } catch { /* shadow DOM not available */ }
+    }
+  }
+
+  /**
+   * Recursively scan shadow DOM trees for text nodes containing pseudonyms.
+   * Necessary for Copilot and other platforms that use Web Components.
+   */
+  function scanShadowRoots(root: Element): void {
+    // Check this element's shadow root
+    if (root.shadowRoot) {
+      scanElement(root.shadowRoot as unknown as Node);
+      // Also scan shadow root children for nested shadow DOMs
+      const children = root.shadowRoot.querySelectorAll('*');
+      for (const child of children) {
+        if (child.shadowRoot) {
+          scanShadowRoots(child);
+        }
+      }
+    }
+    // Check children in light DOM
+    const lightChildren = root.querySelectorAll('*');
+    for (const child of lightChildren) {
+      if (child.shadowRoot) {
+        scanShadowRoots(child);
+      }
     }
   }
 
@@ -2073,10 +2307,22 @@ function startDomDepseudonymizer(): void {
   function isCurrentlyGenerating(): boolean {
     if (activeAdapter?.isGenerating()) return true;
     return !!(
+      // ChatGPT streaming indicators
       document.querySelector('[class*="result-streaming"]') ||
       document.querySelector('button[aria-label="Stop generating"]') ||
       document.querySelector('button[data-testid="stop-button"]') ||
-      document.querySelector('.response-streaming')
+      document.querySelector('.response-streaming') ||
+      // Claude streaming indicators
+      document.querySelector('[data-is-streaming="true"]') ||
+      document.querySelector('button[aria-label="Stop Response"]') ||
+      // Gemini streaming indicators
+      document.querySelector('.loading-indicator') ||
+      document.querySelector('button[aria-label="Stop"]') ||
+      // Copilot streaming indicators
+      document.querySelector('[aria-label="Stop Responding"]') ||
+      document.querySelector('.typing-indicator') ||
+      // Perplexity streaming indicator
+      document.querySelector('.animate-spin')
     );
   }
 
@@ -2185,9 +2431,12 @@ function startDomDepseudonymizer(): void {
   };
   startObserving();
 
-  // Periodic backstop scan — only when NOT generating, every 1s.
+  // Periodic backstop scan — only when NOT generating.
   // Catches any pseudonyms that leak through stream-level de-pseudo
   // or appear after React re-renders.
+  // Shadow DOM platforms (Copilot, Gemini) need faster scanning (500ms)
+  // because MutationObserver doesn't pierce shadow roots.
+  const backstopInterval = activeAdapter?.usesShadowDom ? 500 : 1000;
   setInterval(() => {
     if (Object.keys(currentReverseMap).length === 0) return;
     if (isCurrentlyGenerating()) return;
@@ -2197,7 +2446,7 @@ function startDomDepseudonymizer(): void {
         try { scanChatGPTResponses(); } catch {}
       }
     }, 50);
-  }, 1000);
+  }, backstopInterval);
 }
 
 // Start the DOM de-pseudonymizer immediately
@@ -2455,8 +2704,33 @@ function _checkConversationBoundary(): void {
 
     // Only clear pseudonym maps when navigating between DIFFERENT conversations.
     // Preserve maps for: "/" → "/c/id" (new chat getting ID), settings, GPT store, etc.
-    const prevConvId = prevPath.match(/\/c\/([^/]+)/)?.[1];
-    const currConvId = currentPath.match(/\/c\/([^/]+)/)?.[1];
+    //
+    // Conversation ID extraction for each platform:
+    //   ChatGPT:    /c/{uuid}
+    //   Claude:     /chat/{uuid}
+    //   Gemini:     /app/{uuid}
+    //   Copilot:    /c/{threadId}
+    //   Perplexity: /search/{uuid}
+    //   DeepSeek:   /a/chat/s/{uuid}
+    //   Poe:        /chat/{botName}/{chatId}
+    const convIdPatterns = [
+      /\/c\/([^/?#]+)/,             // ChatGPT, Copilot
+      /\/chat\/([^/?#]+)/,          // Claude, Poe
+      /\/app\/([^/?#]+)/,           // Gemini
+      /\/search\/([^/?#]+)/,        // Perplexity
+      /\/a\/chat\/s\/([^/?#]+)/,    // DeepSeek
+    ];
+
+    function extractConvId(path: string): string | null {
+      for (const pattern of convIdPatterns) {
+        const m = path.match(pattern);
+        if (m) return m[1];
+      }
+      return null;
+    }
+
+    const prevConvId = extractConvId(prevPath);
+    const currConvId = extractConvId(currentPath);
 
     // Clear ONLY when switching from one conversation to a DIFFERENT conversation
     const isSwitchingConversations = prevConvId && currConvId && prevConvId !== currConvId;
@@ -3123,6 +3397,22 @@ const patchedFetch = async function patchedFetch(
           const { level, score } = quickScore(allEntities);
           const pseudoResult = pseudonymizeLocal(promptText, allEntities);
 
+          // ── Executive Lens: determine routing ──
+          const lensRoute = executiveLensRoute(promptText, allEntities);
+          const effectiveRoute = (lensRoute.route === 'private_llm' && _privateLlmEndpoint)
+            ? 'private_llm' : 'pseudonymize';
+          if (lensRoute.industry || lensRoute.route !== 'pseudonymize') {
+            console.log(
+              `%c[Iron Gate LENS] ${lensRoute.explanation}`,
+              'color: #a855f7; font-weight: bold',
+              effectiveRoute === 'private_llm'
+                ? `→ Routing to private LLM (${_privateLlmEndpoint})`
+                : lensRoute.route === 'private_llm'
+                  ? '→ Private LLM not configured, falling back to pseudonymize'
+                  : '',
+            );
+          }
+
           // Build reverse map for de-pseudonymization (ACCUMULATE, don't replace)
           // This ensures multi-turn conversations can de-pseudonymize across requests
           for (const m of pseudoResult.mappings) {
@@ -3133,6 +3423,87 @@ const patchedFetch = async function patchedFetch(
           igLog(`Reverse map: ${mapEntries.length} entries`);
           // Save a snapshot for this request's response de-pseudonymization
           const requestReverseMap = { ...currentReverseMap };
+
+          // ── Private LLM Routing ──
+          // When Executive Lens routes to private_llm and an endpoint is configured,
+          // send the pseudonymized prompt to the on-premise LLM instead of the AI tool.
+          // The response is de-pseudonymized and injected as if the AI tool responded.
+          if (effectiveRoute === 'private_llm' && _privateLlmEndpoint) {
+            igLog(`PRIVATE LLM: Routing pseudonymized prompt to ${_privateLlmEndpoint}`);
+
+            // Notify content script about the interception
+            const _ph = await igHash(promptText);
+            const _me = await minimizeEntitiesForTransit(allEntities);
+            igPostMessage({
+              type: 'IRON_GATE_INTERCEPTED',
+              promptHash: _ph,
+              promptLength: promptText.length,
+              maskedPrompt: pseudoResult.maskedText,
+              mappings: sanitizeMappingsForTransit(pseudoResult.mappings),
+              entityCount: allEntities.length,
+              level,
+              score,
+              entities: _me,
+              executiveRoute: 'private_llm',
+              executiveIndustry: lensRoute.industry,
+            });
+
+            try {
+              // Build OpenAI-compatible request for private LLM (Ollama, vLLM, etc.)
+              const privateLlmBody = JSON.stringify({
+                model: _privateLlmModel || 'llama3.2:3b',
+                messages: [
+                  { role: 'system', content: 'You are a helpful assistant. The user\'s message may contain pseudonymized names and values for privacy. Respond naturally.' },
+                  { role: 'user', content: pseudoResult.maskedText },
+                ],
+                stream: false,
+              });
+
+              const privateLlmResponse = await originalFetch.call(window, `${_privateLlmEndpoint}/v1/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: privateLlmBody,
+              });
+
+              if (!privateLlmResponse.ok) {
+                console.warn(`[Iron Gate LENS] Private LLM returned ${privateLlmResponse.status} — falling back to cloud pseudonymized`);
+                // Fall through to normal pseudonymized cloud path below
+              } else {
+                const privateLlmData = await privateLlmResponse.json() as any;
+                let responseText = privateLlmData?.choices?.[0]?.message?.content
+                  || privateLlmData?.message?.content  // Ollama format
+                  || '';
+
+                // De-pseudonymize the private LLM response
+                responseText = replacePseudonyms(responseText, requestReverseMap);
+
+                console.log(
+                  `%c[Iron Gate LENS] Private LLM response received and de-pseudonymized`,
+                  'color: #22c55e; font-weight: bold',
+                  `(${responseText.length} chars)`,
+                );
+
+                // Return a synthetic response that the AI tool's frontend can consume.
+                // This is SSE-formatted for ChatGPT compatibility.
+                const syntheticSSE = `data: ${JSON.stringify({
+                  id: 'ig-private-llm',
+                  object: 'chat.completion.chunk',
+                  choices: [{ index: 0, delta: { content: responseText }, finish_reason: 'stop' }],
+                })}\n\ndata: [DONE]\n\n`;
+
+                return new Response(syntheticSSE, {
+                  status: 200,
+                  headers: {
+                    'Content-Type': 'text/event-stream',
+                    'Cache-Control': 'no-cache',
+                  },
+                });
+              }
+            } catch (privateLlmErr) {
+              console.warn('[Iron Gate LENS] Private LLM request failed:', privateLlmErr, '— falling back to cloud pseudonymized');
+              // Fall through to normal pseudonymized cloud path
+            }
+          }
 
           // Replace prompt in request body.
           // For ChatGPT: inject notice as a SYSTEM message (invisible in UI)
@@ -3912,10 +4283,15 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
   // SignalR's internal validation and causes Copilot to hang. Instead,
   // pseudonymization is handled by the WebSocket.prototype.send patch above,
   // which modifies the SignalR frame content without touching instance properties.
+  // NOTE: Copilot WS used to return early here, skipping onmessage/addEventListener
+  // patching. This meant OUTGOING pseudonymization worked (via prototype.send patch)
+  // but INCOMING response de-pseudonymization was completely skipped.
+  // Now we fall through to the standard WS patching below so that Copilot responses
+  // also get de-pseudonymized via the onmessage/addEventListener wrappers.
   const isCopilotWS = activeAdapter?.id === 'copilot' && activeAdapter.isWsEndpoint?.(urlStr);
   if (isCopilotWS) {
-    igLog(`WebSocket opened: ${urlStr.substring(0, 80)} — Copilot/Bing: prototype.send patch will handle pseudonymization`);
-    return ws;
+    igLog(`WebSocket opened: ${urlStr.substring(0, 80)} — Copilot/Bing: prototype.send patch handles outgoing, falling through for response de-pseudo`);
+    // Don't return — fall through to patch onmessage for de-pseudonymization
   }
 
   // Check if this WS endpoint belongs to an AI platform (active or any adapter)
@@ -3925,6 +4301,10 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
   if (isLLM) {
     igLog(`WebSocket opened to LLM: ${urlStr.substring(0, 80)}`);
 
+    // For Copilot, outgoing pseudonymization is handled by WebSocket.prototype.send
+    // patch — do NOT also patch ws.send on the instance (would double-pseudonymize).
+    // For all other platforms, patch ws.send on the instance.
+    if (!isCopilotWS) {
     const originalSend = ws.send.bind(ws);
     ws.send = function(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
       // File upload gate — block WS frames if a high-risk document was detected
@@ -4229,9 +4609,10 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
 
       return _sendResult(strData);
     };
+    } // end if (!isCopilotWS) — skip instance send patch for Copilot
 
     // Response de-pseudonymization via addEventListener
-    // (Copilot/Bing WS connections are returned early — never reach here)
+    // Copilot WS connections now fall through here for response de-pseudo
     let _wsRcvCount = 0;
     let _wsRcvReplaced = 0;
     const originalAddEventListener = ws.addEventListener.bind(ws);
@@ -4270,7 +4651,19 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
               return;
             }
 
-            let resultData = replacePseudonyms(textData, currentReverseMap);
+            // For SignalR (Copilot), process each frame separately to ensure
+            // JSON-escaped pseudonyms within individual frames are properly handled.
+            // SignalR frames are separated by \x1e (record separator).
+            let resultData: string;
+            if (textData.includes('\x1e')) {
+              const frames = textData.split('\x1e');
+              const processedFrames = frames.map(f =>
+                f.length > 5 ? replacePseudonyms(f, currentReverseMap) : f
+              );
+              resultData = processedFrames.join('\x1e');
+            } else {
+              resultData = replacePseudonyms(textData, currentReverseMap);
+            }
 
             if (resultData !== textData) {
               _wsRcvReplaced++;
@@ -4325,7 +4718,17 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
                 return;
               }
 
-              let resultData = replacePseudonyms(textData, currentReverseMap);
+              // SignalR frame-by-frame de-pseudo (same logic as addEventListener handler)
+              let resultData: string;
+              if (textData.includes('\x1e')) {
+                const frames = textData.split('\x1e');
+                const processedFrames = frames.map(f =>
+                  f.length > 5 ? replacePseudonyms(f, currentReverseMap) : f
+                );
+                resultData = processedFrames.join('\x1e');
+              } else {
+                resultData = replacePseudonyms(textData, currentReverseMap);
+              }
               if (resultData !== textData) {
                 igLog(`WS onmessage de-pseudo: REPLACED`);
                 const newEvent = new MessageEvent('message', {

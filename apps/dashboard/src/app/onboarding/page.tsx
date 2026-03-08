@@ -89,8 +89,12 @@ export default function OnboardingPage() {
       try {
         const res = await apiFetch('/admin/firm');
         if (!cancelled && res.ok) {
-          router.replace('/');
-          return;
+          const firm = await res.json();
+          // Only skip onboarding if user already has their own firm (not the default placeholder)
+          if (!firm.isDefaultFirm) {
+            router.replace('/');
+            return;
+          }
         }
       } catch {
         // No firm or API unavailable — continue with onboarding
