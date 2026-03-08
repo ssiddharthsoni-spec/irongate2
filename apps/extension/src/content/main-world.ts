@@ -1936,6 +1936,12 @@ function startDomDepseudonymizer(): void {
       _domReplacementCount++;
       if (_domReplacementCount <= 10) {
         igLog(`DOM de-pseudo: replaced text node (${text.length} chars)`);
+        console.log(
+          `%c[Iron Gate DEBUG] De-pseudonymized text node:`,
+          'color: #00ccff; font-weight: bold',
+          `\n  Before: "${node.textContent?.substring(0, 120)}..."`,
+          `\n  After:  "${text.substring(0, 120)}..."`,
+        );
       }
 
       // Re-apply for several frames to override React re-renders.
@@ -4388,6 +4394,19 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
       `\n  📤 Original: ${text.length} chars`,
       `\n  🔒 Pseudonymized: ${pseudoResult.maskedText.length} chars`,
       `\n  📊 ${allEntities.length} entities, score=${score}, level=${level}`,
+    );
+    // Debug: show what was actually sent and the entity mapping table
+    console.log(
+      `%c[Iron Gate DEBUG] Entity Mappings:`,
+      'color: #ff9900; font-weight: bold',
+    );
+    for (const m of pseudoResult.mappings) {
+      console.log(`  ${m.type}: "${m.original}" → "${m.pseudonym}"`);
+    }
+    console.log(
+      `%c[Iron Gate DEBUG] Pseudonymized text sent to ${adapterName}:`,
+      'color: #ff9900; font-weight: bold',
+      `\n${pseudoResult.maskedText}`,
     );
     // ════════════════════════════════════════════════════════════
 
