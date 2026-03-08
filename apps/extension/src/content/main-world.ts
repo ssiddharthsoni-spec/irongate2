@@ -1588,12 +1588,92 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
     return d + s;
   });
   if (withOrdinal !== pseudonym) map[withOrdinal] = original;
-  // Percentage variants: "21%" → "21 percent"
+  // Percentage variants: "21%" → "21 percent", "21.0%", etc.
   if (pseudonym.endsWith('%')) {
     const noPercent = pseudonym.slice(0, -1).trim();
     map[noPercent + ' percent'] = original;
     map[noPercent + ' %'] = original;
+    // "21%" → "21.0%" and vice versa
+    if (!noPercent.includes('.')) {
+      map[noPercent + '.0%'] = original;
+      map[noPercent + '.0 percent'] = original;
+    } else {
+      const intPart = noPercent.split('.')[0];
+      map[intPart + '%'] = original;
+      map[intPart + ' percent'] = original;
+    }
+    // "approximately 21%" variants
+    const approxPrefixes = ['approximately ', 'about ', 'around ', 'roughly ', 'nearly '];
+    for (const ap of approxPrefixes) {
+      map[ap + pseudonym] = original;
+    }
   }
+  // Monetary amount format variants: "$349M" ↔ "$349 million" ↔ "349M" etc.
+  const moneyMatch = pseudonym.match(/^(\$?)\s*([\d,.]+)\s*(million|billion|M|B|k|K|mn|bn|m|b)?$/i);
+  if (moneyMatch) {
+    const prefix = moneyMatch[1] || '';       // "$" or ""
+    const numStr = moneyMatch[2];             // "349" or "1,200"
+    const suffix = (moneyMatch[3] || '');     // "M", "million", etc.
+
+    // Also parse the original to generate correct original-side variants
+    const origMoneyMatch = original.match(/^(\$?)\s*([\d,.]+)\s*(million|billion|M|B|k|K|mn|bn|m|b)?$/i);
+    const origPrefix = origMoneyMatch?.[1] || '';
+    const origNum = origMoneyMatch?.[2] || original.replace(/[^\d,.]/g, '');
+    const origSuffix = origMoneyMatch?.[3] || '';
+
+    // Suffix expansion map
+    const suffixVariants: Record<string, string[]> = {
+      'm': ['M', 'm', 'million', 'mn', ' million', ' mn', ' M'],
+      'million': ['M', 'm', 'million', 'mn', ' million', ' mn', ' M'],
+      'mn': ['M', 'm', 'million', 'mn', ' million', ' mn', ' M'],
+      'b': ['B', 'b', 'billion', 'bn', ' billion', ' bn', ' B'],
+      'billion': ['B', 'b', 'billion', 'bn', ' billion', ' bn', ' B'],
+      'bn': ['B', 'b', 'billion', 'bn', ' billion', ' bn', ' B'],
+      'k': ['K', 'k', ' thousand', ',000'],
+      '': [''],
+    };
+
+    const normalizedSuffix = suffix.toLowerCase().trim();
+    const variants = suffixVariants[normalizedSuffix] || [suffix];
+
+    for (const sv of variants) {
+      // With $ prefix
+      const pKey = '$' + numStr + sv;
+      if (pKey !== pseudonym && !map[pKey]) map[pKey] = original;
+      // Without $ prefix
+      const nKey = numStr + sv;
+      if (nKey !== pseudonym && !map[nKey]) map[nKey] = original;
+      // With space between number and suffix
+      if (sv && !sv.startsWith(' ') && sv.length > 1) {
+        const sKey = '$' + numStr + ' ' + sv;
+        if (!map[sKey]) map[sKey] = original;
+      }
+    }
+
+    // "approximately $349" / "about $349" / "around $349" — LLMs love these
+    const approxPrefixes = ['approximately ', 'about ', 'around ', 'roughly ', 'nearly '];
+    for (const ap of approxPrefixes) {
+      const apKey = ap + prefix + numStr + suffix;
+      if (!map[apKey]) map[apKey] = original;
+    }
+  }
+
+  // Headcount / plain number variants: "1,200" ↔ "1200", "1,200 employees" etc.
+  const headcountMatch = pseudonym.match(/^([\d,]+)\s*(employees?|staff|people|workers|positions?|roles?|headcount)?$/i);
+  if (headcountMatch && !moneyMatch) {
+    const numPart = headcountMatch[1];
+    const unitPart = headcountMatch[2] || '';
+    // With and without commas
+    const withCommas = numPart.includes(',') ? numPart : numPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    const withoutCommas = numPart.replace(/,/g, '');
+    const suffixVariants = unitPart ? [unitPart, ''] : [''];
+    for (const sv of suffixVariants) {
+      const sep = sv ? ' ' : '';
+      if (!map[withCommas + sep + sv]) map[withCommas + sep + sv] = original;
+      if (!map[withoutCommas + sep + sv]) map[withoutCommas + sep + sv] = original;
+    }
+  }
+
   // Numeric date format variants: "4/15/2026" ↔ "04/15/2026"
   const numDateMatch = pseudonym.match(/^(\d{1,2})([\/\-])(\d{1,2})\2(\d{2,4})$/);
   if (numDateMatch) {
