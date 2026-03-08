@@ -165,11 +165,11 @@ billingRoutes.post('/checkout', async (c) => {
   // Per-seat billing for Pro, flat rate for Team (business)
   let quantity = 1;
   if (tier === 'pro') {
-    const [{ seatCount }] = await db
+    const [seatRow] = await db
       .select({ seatCount: sql<number>`count(*)` })
       .from(users)
       .where(eq(users.firmId, firmId));
-    quantity = Math.max(1, Number(seatCount));
+    quantity = Math.max(1, Number(seatRow?.seatCount ?? 1));
   }
   // Team (business) tier: quantity stays 1 (flat $99/month)
 
@@ -248,7 +248,7 @@ billingRoutes.get('/invoices', async (c) => {
     .limit(limit)
     .offset(offset);
 
-  const [{ count }] = await db
+  const [countRow] = await db
     .select({ count: sql<number>`count(*)` })
     .from(invoices)
     .where(eq(invoices.firmId, firmId));
@@ -256,7 +256,7 @@ billingRoutes.get('/invoices', async (c) => {
   return c.json({
     invoices: rows,
     pagination: {
-      total: Number(count),
+      total: Number(countRow?.count ?? 0),
       limit,
       offset,
     },

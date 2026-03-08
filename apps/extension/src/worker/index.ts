@@ -534,7 +534,12 @@ async function removeTabState(tabId: number): Promise<void> {
 
 // Listen for messages from content scripts
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  handleMessage(message, sender).then(sendResponse);
+  handleMessage(message, sender)
+    .then(sendResponse)
+    .catch((err) => {
+      console.error('[Iron Gate] Message handler error:', err);
+      sendResponse({ error: err instanceof Error ? err.message : String(err) });
+    });
   return true; // Keep channel open for async
 });
 

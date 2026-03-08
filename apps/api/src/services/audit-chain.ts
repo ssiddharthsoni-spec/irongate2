@@ -121,11 +121,15 @@ export async function appendEvent(eventData: EventData): Promise<{ id: string; e
         serverSignature: events.serverSignature,
       });
 
+      if (!inserted || !inserted.eventHash || inserted.chainPosition == null || !inserted.serverSignature) {
+        throw new Error(`Audit chain insert returned incomplete data for firm ${eventData.firmId}`);
+      }
+
       return {
         id: inserted.id,
-        eventHash: inserted.eventHash!,
-        chainPosition: inserted.chainPosition!,
-        serverSignature: inserted.serverSignature!,
+        eventHash: inserted.eventHash,
+        chainPosition: inserted.chainPosition,
+        serverSignature: inserted.serverSignature,
       };
     } catch (err) {
       if (isUniqueViolation(err) && attempt < MAX_RETRIES - 1) {

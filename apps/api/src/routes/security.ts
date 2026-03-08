@@ -342,7 +342,9 @@ securityRoutes.delete('/firm/data', async (c) => {
     .where(eq(firms.id, firmId))
     .limit(1);
 
-  const existingConfig = (firm?.config as Record<string, unknown>) || {};
+  if (!firm) return c.json({ error: 'Firm not found' }, 404);
+
+  const existingConfig = (firm.config as Record<string, unknown>) || {};
 
   await db
     .update(firms)
@@ -416,7 +418,9 @@ securityRoutes.post('/firm/rotate-keys', async (c) => {
     .where(eq(firms.id, firmId))
     .limit(1);
 
-  const existingConfig = (firm?.config as Record<string, unknown>) || {};
+  if (!firm) return c.json({ error: 'Firm not found' }, 404);
+
+  const existingConfig = (firm.config as Record<string, unknown>) || {};
   const currentKeyVersion = (existingConfig.key_version as number) || 1;
   const newKeyVersion = currentKeyVersion + 1;
 
@@ -478,7 +482,9 @@ securityRoutes.post('/firm/public-key', async (c) => {
     .where(eq(firms.id, firmId))
     .limit(1);
 
-  const existingConfig = (firm?.config as Record<string, unknown>) || {};
+  if (!firm) return c.json({ error: 'Firm not found' }, 404);
+
+  const existingConfig = (firm.config as Record<string, unknown>) || {};
 
   await db
     .update(firms)

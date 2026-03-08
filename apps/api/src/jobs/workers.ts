@@ -76,12 +76,20 @@ export function startWorkers(): void {
     'ig:inference',
     async (job) => {
       // Enforce a timeout so one firm's heavy analysis can't block the queue
-      await Promise.race([
-        analyzePatterns(job.data.firmId),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error(`Inference timeout after ${INFERENCE_TIMEOUT_MS}ms`)), INFERENCE_TIMEOUT_MS),
-        ),
-      ]);
+      try {
+        await Promise.race([
+          analyzePatterns(job.data.firmId),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`Inference timeout after ${INFERENCE_TIMEOUT_MS}ms`)), INFERENCE_TIMEOUT_MS),
+          ),
+        ]);
+      } catch (err) {
+        if (err instanceof Error && err.message.includes('timeout')) {
+          logger.warn('Inference job timed out', { firmId: job.data.firmId, timeoutMs: INFERENCE_TIMEOUT_MS });
+        } else {
+          throw err; // Re-throw non-timeout errors for BullMQ retry
+        }
+      }
     },
     {
       connection,

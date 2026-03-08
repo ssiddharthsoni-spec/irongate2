@@ -2437,7 +2437,7 @@ function startDomDepseudonymizer(): void {
   // Shadow DOM platforms (Copilot, Gemini) need faster scanning (500ms)
   // because MutationObserver doesn't pierce shadow roots.
   const backstopInterval = activeAdapter?.usesShadowDom ? 500 : 1000;
-  setInterval(() => {
+  const backstopTimer = setInterval(() => {
     if (Object.keys(currentReverseMap).length === 0) return;
     if (isCurrentlyGenerating()) return;
     if (Date.now() < _domMutationCooldown) return;
@@ -2447,6 +2447,25 @@ function startDomDepseudonymizer(): void {
       }
     }, 50);
   }, backstopInterval);
+
+  // Clean up intervals when the content script is replaced or page navigates away
+  window.addEventListener('iron-gate-cs-replaced', () => {
+    clearInterval(backstopTimer);
+    if (_generationCheckInterval) {
+      clearInterval(_generationCheckInterval);
+      _generationCheckInterval = null;
+    }
+    observer.disconnect();
+  }, { once: true });
+
+  window.addEventListener('pagehide', () => {
+    clearInterval(backstopTimer);
+    if (_generationCheckInterval) {
+      clearInterval(_generationCheckInterval);
+      _generationCheckInterval = null;
+    }
+    observer.disconnect();
+  }, { once: true });
 }
 
 // Start the DOM de-pseudonymizer immediately

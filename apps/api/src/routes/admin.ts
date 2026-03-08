@@ -188,6 +188,8 @@ adminRoutes.put('/firm', async (c) => {
     .where(eq(firms.id, firmId))
     .returning();
 
+  if (!updated) return c.json({ error: 'Firm not found' }, 404);
+
   return c.json(updated);
 });
 
@@ -480,7 +482,8 @@ adminRoutes.put('/siem', async (c) => {
 
   // Store SIEM config in firms.config.siem
   const [firm] = await db.select({ config: firms.config }).from(firms).where(eq(firms.id, firmId)).limit(1);
-  const existingConfig = (firm?.config as Record<string, unknown>) || {};
+  if (!firm) return c.json({ error: 'Firm not found' }, 404);
+  const existingConfig = (firm.config as Record<string, unknown>) || {};
 
   const [updated] = await db
     .update(firms)

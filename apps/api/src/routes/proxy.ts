@@ -150,7 +150,9 @@ proxyRoutes.post('/analyze', async (c) => {
       .where(eq(firms.id, firmId))
       .limit(1);
 
-    const firmConfig = (firm?.config ?? {}) as FirmConfig;
+    if (!firm) return c.json({ error: 'Firm not found' }, 404);
+
+    const firmConfig = (firm.config ?? {}) as FirmConfig;
     const thresholds = firmConfig.thresholds ?? {};
 
     // 2. Detect entities using firm-aware pipeline (regex + plugins + client-matters)
@@ -284,7 +286,9 @@ proxyRoutes.post('/send', async (c) => {
       .where(eq(firms.id, firmId))
       .limit(1);
 
-    const firmConfig = (firm?.config ?? {}) as FirmConfig;
+    if (!firm) return c.json({ error: 'Firm not found' }, 404);
+
+    const firmConfig = (firm.config ?? {}) as FirmConfig;
 
     // 2. Load the pseudonym map for this session and prepare de-pseudonymizer
     const store = new PseudonymStore();
@@ -436,7 +440,9 @@ proxyRoutes.post('/relay', piiSafetyNetMiddleware, async (c) => {
       .where(eq(firms.id, firmId))
       .limit(1);
 
-    const firmConfig = (firm?.config ?? {}) as FirmConfig;
+    if (!firm) return c.json({ error: 'Firm not found' }, 404);
+
+    const firmConfig = (firm.config ?? {}) as FirmConfig;
 
     // 2. Policy enforcement
     const activeFrameworks = firmConfig.complianceFrameworks || [];
