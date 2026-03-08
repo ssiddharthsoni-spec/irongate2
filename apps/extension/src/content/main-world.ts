@@ -1546,35 +1546,45 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
     // 1. It's distinctive (not a common suffix or common English word)
     // 2. The corresponding original word is >= 4 chars (avoid "JP", "GE" etc.)
     // 3. Map to the FULL original (not just the first word) to prevent garbling
+    // GUARD: Never create a fragment mapping where the fragment word appears
+    // inside the original value. This causes recursive expansion:
+    // e.g., "Project" → "Project Horizon" would turn "Project Horizon" →
+    // "Project Horizon Horizon" on each observer cycle.
+    const origLower = original.toLowerCase();
+
     const firstWord = words[0];
     const firstOrig = origWords[0] || original;
     if (firstWord.length >= 4 && firstOrig.length >= 4 && !map[firstWord]
         && !ORG_SUFFIX_SET.has(firstWord.toLowerCase())
-        && !COMMON_WORD_BLOCKLIST.has(firstWord.toLowerCase())) {
-      map[firstWord] = original; // Map to FULL original, not just first word
+        && !COMMON_WORD_BLOCKLIST.has(firstWord.toLowerCase())
+        && !origLower.includes(firstWord.toLowerCase())) {
+      map[firstWord] = original;
     }
     // For 3+ word names, also map the first two words
     if (words.length >= 3) {
       const firstTwo = words.slice(0, 2).join(' ');
-      if (!map[firstTwo]) {
-        map[firstTwo] = original; // Map to FULL original
+      if (!map[firstTwo] && !origLower.includes(firstTwo.toLowerCase())) {
+        map[firstTwo] = original;
       }
     }
-    // Map the last word (surname) ONLY if it's NOT a common suffix/word
-    // AND the corresponding original word is >= 4 chars
+    // Map the last word ONLY if it's NOT a common suffix/word,
+    // the corresponding original word is >= 4 chars,
+    // AND the fragment doesn't appear in the original (prevents recursive expansion)
     const lastWord = words[words.length - 1];
     const lastOrig = origWords[origWords.length - 1] || original;
     if (lastWord.length >= 4 && lastOrig.length >= 4 && !map[lastWord]
         && !ORG_SUFFIX_SET.has(lastWord.toLowerCase())
-        && !COMMON_WORD_BLOCKLIST.has(lastWord.toLowerCase())) {
-      map[lastWord] = original; // Map to FULL original, not just last word
+        && !COMMON_WORD_BLOCKLIST.has(lastWord.toLowerCase())
+        && !origLower.includes(lastWord.toLowerCase())) {
+      map[lastWord] = original;
     }
     // Drop common org suffixes: "Adatum Corporation" → "Adatum"
     const ORG_SUFFIXES = /\s+(Corporation|Corp\.?|Inc\.?|LLC|Ltd\.?|Partners|Group|Holdings|Capital|Enterprises|Associates|International|Technologies|Solutions|Services|Consulting|Management|Investments|Advisors|Advisory|Fund|Trust|Bank|Labs|Co\.?)$/i;
     const withoutSuffix = pseudonym.replace(ORG_SUFFIXES, '');
     if (withoutSuffix !== pseudonym && withoutSuffix.length >= 3) {
-      if (!map[withoutSuffix] && !COMMON_WORD_BLOCKLIST.has(withoutSuffix.toLowerCase())) {
-        map[withoutSuffix] = original; // Map to FULL original
+      if (!map[withoutSuffix] && !COMMON_WORD_BLOCKLIST.has(withoutSuffix.toLowerCase())
+          && !origLower.includes(withoutSuffix.toLowerCase())) {
+        map[withoutSuffix] = original;
       }
     }
   }
@@ -1899,8 +1909,16 @@ function startDomDepseudonymizer(): void {
       if (text !== node.textContent) changed = true;
     }
 
-    // De-pseudonymize if reverse map has entries
-    if (Object.keys(currentReverseMap).length > 0) {
+    // De-pseudonymize if reverse map has entries.
+    // IMPORTANT: Skip de-pseudo on user message containers — ChatGPT echoes the
+    // pseudonymized text from the server in user bubbles. De-pseudonymizing there
+    // fights React re-renders (server state has pseudonym, we replace with original,
+    // React re-renders with pseudonym → replaceChild duplicates → repeated tokens).
+    // Only de-pseudo assistant/response containers.
+    const isUserMessage = node.parentElement?.closest?.(
+      '[data-message-author-role="user"], .whitespace-pre-wrap'
+    );
+    if (!isUserMessage && Object.keys(currentReverseMap).length > 0) {
       const keys = Object.keys(currentReverseMap);
       const textLower = text.toLowerCase();
       const hasMatch = keys.some(key => textLower.includes(key.toLowerCase()));
