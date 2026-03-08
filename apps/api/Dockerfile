@@ -6,8 +6,8 @@ RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 
 WORKDIR /app
 
-# Copy root workspace files
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+# Copy root workspace files (including .npmrc for shamefully-hoist)
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 
 # Copy ALL workspace package.json files — pnpm --frozen-lockfile validates
 # every importer in the lockfile, even ones the API doesn't depend on
@@ -42,6 +42,6 @@ USER irongate
 # Expose port
 EXPOSE 3000
 
-# Start API directly with npx tsx (bypasses pnpm workspace overhead)
-# npx resolves tsx from node_modules reliably regardless of hoisting
-CMD ["npx", "tsx", "apps/api/src/index.ts"]
+# Start API directly via node_modules/.bin/tsx
+# .npmrc has shamefully-hoist=true, so tsx is in root node_modules/.bin/
+CMD ["./node_modules/.bin/tsx", "apps/api/src/index.ts"]

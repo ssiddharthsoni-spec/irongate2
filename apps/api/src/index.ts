@@ -1,4 +1,5 @@
 // Iron Gate API Server
+console.log(`[BOOT] Iron Gate API starting — pid=${process.pid} node=${process.version} PORT=${process.env.PORT || '3000'} at ${new Date().toISOString()}`);
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { bodyLimit } from 'hono/body-limit';
