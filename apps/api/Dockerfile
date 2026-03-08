@@ -1,8 +1,8 @@
 # Pin to specific Node.js 20 LTS release for reproducible builds
 FROM node:20.18-slim
 
-# Install pnpm via corepack
-RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+# Install pnpm directly (corepack has signature verification issues on Node 20.18)
+RUN npm install -g pnpm@9.15.0
 
 WORKDIR /app
 
