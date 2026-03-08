@@ -1,5 +1,5 @@
-# Pin to specific Node.js 20 LTS release for reproducible builds
-FROM node:20.18-slim
+# Pin to exact Node.js patch version for reproducible builds
+FROM node:20.18.3-slim
 
 # Install pnpm directly (corepack has signature verification issues on Node 20.18)
 RUN npm install -g pnpm@9.15.0
@@ -41,6 +41,10 @@ USER irongate
 
 # Expose port
 EXPOSE 3000
+
+# Docker-level healthcheck (Railway/Render also have their own)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD node -e "fetch('http://localhost:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 
 # Start API directly via node_modules/.bin/tsx
 # .npmrc has shamefully-hoist=true, so tsx is in root node_modules/.bin/

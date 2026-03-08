@@ -483,6 +483,15 @@ import('@hono/node-server').then(({ serve }) => {
   const server = serve({ fetch: app.fetch, port, hostname: '0.0.0.0' }, async () => {
     logger.info('Server started', { port, hostname: '0.0.0.0', url: `http://0.0.0.0:${port}` });
 
+    // Self-test: verify the health endpoint actually responds
+    try {
+      const selfCheck = await fetch(`http://localhost:${port}/health`);
+      if (selfCheck.ok) logger.info('Health endpoint self-test passed');
+      else logger.error('Health endpoint self-test FAILED', { status: selfCheck.status });
+    } catch (err) {
+      logger.error('Health endpoint self-test FAILED', { error: err instanceof Error ? err.message : String(err) });
+    }
+
     // Verify database connectivity (non-fatal — health endpoint reports degraded status)
     try {
       await db.execute(sql`SELECT 1`);
