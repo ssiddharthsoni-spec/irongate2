@@ -164,6 +164,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build workspace packages (needed for type-check)
+        run: pnpm turbo build --filter=@iron-gate/types --filter=@iron-gate/config --filter=@iron-gate/crypto
+
       - name: Type-check API
         run: cd apps/api && npx tsc --noEmit
 
@@ -189,6 +192,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages (needed for extension tests)
+        run: pnpm turbo build --filter=@iron-gate/types --filter=@iron-gate/config --filter=@iron-gate/crypto
 
       - name: Run extension tests
         run: pnpm turbo test --filter=@iron-gate/extension

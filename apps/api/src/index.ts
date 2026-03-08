@@ -472,9 +472,11 @@ process.on('uncaughtException', (err) => {
 });
 
 // ── Server startup with graceful shutdown ───────────────────────────────────
+logger.info('Starting server...', { port, nodeVersion: process.version, pid: process.pid });
+
 import('@hono/node-server').then(({ serve }) => {
-  const server = serve({ fetch: app.fetch, port }, async () => {
-    logger.info('Server started', { port, url: `http://localhost:${port}` });
+  const server = serve({ fetch: app.fetch, port, hostname: '0.0.0.0' }, async () => {
+    logger.info('Server started', { port, hostname: '0.0.0.0', url: `http://0.0.0.0:${port}` });
 
     // Verify database connectivity (non-fatal — health endpoint reports degraded status)
     try {
@@ -537,4 +539,8 @@ import('@hono/node-server').then(({ serve }) => {
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+}).catch((err) => {
+  // If @hono/node-server fails to import, log and exit — this is truly fatal
+  console.error('[FATAL] Failed to start HTTP server:', err);
+  process.exit(1);
 });

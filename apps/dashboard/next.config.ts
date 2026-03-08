@@ -11,6 +11,10 @@ const nextConfig: NextConfig = {
     // skip during Next.js build to avoid plugin mismatch.
     ignoreDuringBuilds: true,
   },
+  typescript: {
+    // Type-checking is handled by CI — don't fail Vercel builds on type errors
+    ignoreBuildErrors: true,
+  },
   headers: async () => [
     {
       source: '/(.*)',
