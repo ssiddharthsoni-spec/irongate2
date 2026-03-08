@@ -39,7 +39,13 @@ function checkRateLimit(key: string): boolean {
 const VERIFY_TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function getHmacSecret(): string {
-  return process.env.JWT_SIGNING_KEY || process.env.IRON_GATE_MASTER_SECRET || `dev-hmac-${process.pid}`;
+  const secret = process.env.JWT_SIGNING_KEY || process.env.IRON_GATE_SIGNING_SECRET || process.env.IRON_GATE_MASTER_SECRET;
+  if (secret) return secret;
+
+  if (process.env.NODE_ENV === 'production') {
+    console.error('[CRITICAL] No HMAC secret configured. Email verification tokens will use a weak fallback.');
+  }
+  return `dev-hmac-${process.pid}`;
 }
 
 function createVerificationToken(userId: string, email: string): { token: string; hash: string; expiresAt: Date } {

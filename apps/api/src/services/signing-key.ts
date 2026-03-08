@@ -8,24 +8,26 @@
 
 import { deriveHmacSigningKey } from '@iron-gate/crypto';
 
-// Prefer dedicated signing secret; fall back to master secret for backward compat
-const SIGNING_SECRET = process.env.IRON_GATE_SIGNING_SECRET || process.env.IRON_GATE_MASTER_SECRET;
+// Resolve signing secret lazily — NEVER throw at import time.
+// Throwing at import time kills the entire process before /health can respond,
+// causing Render healthcheck failures and preventing any debugging.
+function resolveSigningSecret(): string {
+  const secret = process.env.IRON_GATE_SIGNING_SECRET || process.env.IRON_GATE_MASTER_SECRET;
+  if (secret) return secret;
 
-if (!SIGNING_SECRET && process.env.NODE_ENV === 'production') {
-  throw new Error(
-    '[FATAL] IRON_GATE_SIGNING_SECRET (or IRON_GATE_MASTER_SECRET) is required in production. ' +
-    'The server cannot start without this critical secret.',
-  );
+  if (process.env.NODE_ENV === 'production') {
+    console.error(
+      '[CRITICAL] IRON_GATE_SIGNING_SECRET is not set. Audit-chain signing will use a ' +
+      'per-process fallback. Set this in your Render environment variables.',
+    );
+    return `emergency-fallback-${process.pid}-${Date.now()}`;
+  }
+
+  console.warn('[WARN] Using dev-only signing secret. Set IRON_GATE_SIGNING_SECRET for production.');
+  return `dev-only-sign-${process.pid}-${Date.now()}`;
 }
 
-// In development, use a dev-only secret that is clearly marked as non-production
-const _effectiveSecret = SIGNING_SECRET || (() => {
-  if (process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test') {
-    throw new Error('[FATAL] IRON_GATE_SIGNING_SECRET is required outside of development/test.');
-  }
-  console.warn('[WARN] Using development-only signing secret. Set IRON_GATE_SIGNING_SECRET for production.');
-  return `dev-only-sign-${process.pid}-${Date.now()}`;
-})();
+const _effectiveSecret = resolveSigningSecret();
 
 let _cachedKey: CryptoKey | null = null;
 

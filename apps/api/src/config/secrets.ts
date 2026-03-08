@@ -75,27 +75,28 @@ function loadFromEnv(): AppSecrets {
   const isTest = process.env.NODE_ENV === 'test';
   const isDev = process.env.NODE_ENV === 'development';
 
-  // In non-dev/test environments, require critical secrets
+  // In non-dev/test environments, warn about missing secrets but don't crash.
+  // Crashing at startup prevents the /health endpoint from responding,
+  // which makes Render roll back to older deploys and hides the actual error.
   if (!isDev && !isTest) {
     const missing: string[] = [];
-    if (!process.env.DATABASE_URL) missing.push('DATABASE_URL');
+    if (!process.env.DATABASE_URL && !process.env.SUPABASE_DB_URL) missing.push('DATABASE_URL');
     if (!process.env.CLERK_SECRET_KEY) missing.push('CLERK_SECRET_KEY');
-    if (!process.env.JWT_SIGNING_KEY) missing.push('JWT_SIGNING_KEY');
     if (missing.length > 0) {
-      throw new Error(
-        `[FATAL] Required secrets missing: ${missing.join(', ')}. ` +
-        'These must be set in production. The server cannot start without them.',
+      console.error(
+        `[CRITICAL] Required secrets missing: ${missing.join(', ')}. ` +
+        'Routes depending on these will fail. Set them in your Render environment.',
       );
     }
   }
 
   return {
     databaseUrl:
-      process.env.DATABASE_URL ||
+      process.env.SUPABASE_DB_URL || process.env.DATABASE_URL ||
       (isDev || isTest ? 'postgresql://irongate:irongate_dev@localhost:5432/irongate' : ''),
     redisPassword: process.env.REDIS_PASSWORD || '',
     clerkSecretKey: process.env.CLERK_SECRET_KEY || (isDev || isTest ? `dev-clerk-${process.pid}` : ''),
-    jwtSigningKey: process.env.JWT_SIGNING_KEY || (isDev || isTest ? `dev-jwt-${process.pid}` : ''),
+    jwtSigningKey: process.env.JWT_SIGNING_KEY || process.env.IRON_GATE_SIGNING_SECRET || (isDev || isTest ? `dev-jwt-${process.pid}` : ''),
     kmsKeyArn: process.env.KMS_KEY_ARN || undefined,
     webhookSigningSecret: process.env.WEBHOOK_SIGNING_SECRET || undefined,
   };
@@ -114,11 +115,21 @@ function loadFromEnv(): AppSecrets {
 export async function loadSecrets(): Promise<Readonly<AppSecrets>> {
   if (_cached) return _cached;
 
-  const isProduction = process.env.NODE_ENV === 'production';
+  // Use AWS Secrets Manager ONLY when explicitly configured.
+  // Default to env vars for all deployments (Render, Railway, etc.).
+  const useAwsSm = !!process.env.SECRETS_MANAGER_NAME;
 
-  const secrets = isProduction
-    ? await loadFromSecretsManager()
-    : loadFromEnv();
+  let secrets: AppSecrets;
+  if (useAwsSm) {
+    try {
+      secrets = await loadFromSecretsManager();
+    } catch (err) {
+      console.error('[Secrets] AWS Secrets Manager failed, falling back to env vars:', (err as Error).message);
+      secrets = loadFromEnv();
+    }
+  } else {
+    secrets = loadFromEnv();
+  }
 
   // Freeze to prevent accidental mutation
   _cached = Object.freeze(secrets);

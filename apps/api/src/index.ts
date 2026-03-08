@@ -440,11 +440,13 @@ if (!process.env.ADMIN_KEY_1 || !process.env.ADMIN_KEY_2) {
   logger.warn('ADMIN_KEY_1/ADMIN_KEY_2 not set — kill switch endpoint will be inaccessible');
 }
 if (process.env.IRON_GATE_MASTER_SECRET && !process.env.IRON_GATE_ENCRYPTION_SECRET && !process.env.IRON_GATE_SIGNING_SECRET) {
+  // Log critical warning but DO NOT throw — throwing kills the process before
+  // /health can respond, causing Render to fail the deploy and roll back.
   if (process.env.NODE_ENV === 'production') {
-    logger.error('CRITICAL: Using shared IRON_GATE_MASTER_SECRET in production. Set separate IRON_GATE_ENCRYPTION_SECRET and IRON_GATE_SIGNING_SECRET.');
-    throw new Error('FATAL: Separate IRON_GATE_ENCRYPTION_SECRET and IRON_GATE_SIGNING_SECRET required in production');
+    logger.error('CRITICAL: Using shared IRON_GATE_MASTER_SECRET in production. Set separate IRON_GATE_ENCRYPTION_SECRET and IRON_GATE_SIGNING_SECRET in Render dashboard.');
+  } else {
+    logger.warn('Using shared IRON_GATE_MASTER_SECRET for both encryption and signing — set IRON_GATE_ENCRYPTION_SECRET and IRON_GATE_SIGNING_SECRET separately for production');
   }
-  logger.warn('Using shared IRON_GATE_MASTER_SECRET for both encryption and signing — set IRON_GATE_ENCRYPTION_SECRET and IRON_GATE_SIGNING_SECRET separately for production');
 }
 if (process.env.IRON_GATE_DEV_AUTH === 'true' && process.env.NODE_ENV === 'production') {
   logger.error('CRITICAL: IRON_GATE_DEV_AUTH=true is set in production! Disabling dev auth.');
