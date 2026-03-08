@@ -110,7 +110,7 @@ async function initEncryptionKey(firmId: string, encryptionSalt?: string): Promi
   const masterSecret = await getOrCreateMasterSecret(firmId);
   const salt = encryptionSalt
     ? hexToUint8(encryptionSalt)
-    : new TextEncoder().encode(firmId.padEnd(16, '0').slice(0, 16));
+    : crypto.getRandomValues(new Uint8Array(16));
 
   encryptionKey = await deriveKey(masterSecret, salt);
 

@@ -63,6 +63,8 @@ export interface FirmLLMConfig {
 // SSRF Protection — block private/internal network URLs
 // ---------------------------------------------------------------------------
 
+// NOTE: URL.hostname strips brackets from IPv6 addresses, so patterns must
+// match the bare address (without brackets).
 const PRIVATE_HOSTNAME_PATTERNS = [
   /^localhost$/i,
   /^127\./,
@@ -71,17 +73,19 @@ const PRIVATE_HOSTNAME_PATTERNS = [
   /^192\.168\./,
   /^169\.254\./,
   /^0\./,
-  // IPv6 loopback and private ranges (with and without brackets)
+  // IPv6 loopback
   /^::1$/,
-  /^\[::1\]$/,
+  // IPv6 unspecified
   /^::$/,
-  /^\[::\]$/,
-  /^\[?::ffff:/i,             // IPv4-mapped IPv6 (e.g., ::ffff:127.0.0.1)
-  /^\[?0{0,4}:{0,2}0{0,4}:{0,2}0{0,4}:{0,2}0{0,4}:{0,2}0{0,4}:{0,2}0{0,4}:{0,2}0{0,4}:{0,2}0{0,3}1\]?$/, // Full form ::1
-  /^\[?fe80:/i,
-  /^\[?fc00:/i,
-  /^\[?fd00:/i,
-  /^\[?ff00:/i,               // Multicast
+  // IPv4-mapped IPv6 (e.g., ::ffff:127.0.0.1) — no brackets, URL.hostname strips them
+  /^::ffff:/i,
+  // Full-form IPv6 loopback (0000:0000:...:0001 and variants)
+  /^0{0,4}:{0,2}0{0,4}:{0,2}0{0,4}:{0,2}0{0,4}:{0,2}0{0,4}:{0,2}0{0,4}:{0,2}0{0,4}:{0,2}0{0,3}1$/,
+  // IPv6 private/link-local ranges — no bracket prefix
+  /^fe80:/i,
+  /^fc00:/i,
+  /^fd00:/i,
+  /^ff00:/i,                   // Multicast
   /\.internal$/i,
   /\.local$/i,
   /\.localhost$/i,

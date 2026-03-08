@@ -3,7 +3,7 @@ import { z } from 'zod';
 import crypto from 'crypto';
 import { db } from '../db/client';
 import { firms, users, subscriptions, apiKeys, emailVerificationTokens } from '../db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, isNull } from 'drizzle-orm';
 import { logger } from '../lib/logger';
 
 export const extensionAuthRoutes = new Hono();
@@ -539,11 +539,20 @@ extensionAuthRoutes.post('/verify-email', async (c) => {
 
     // Atomic upgrade: mark token used, verify user, upgrade API key scope
     await db.transaction(async (tx) => {
-      // Mark token as used
-      await tx
+      // Atomically mark token as verified only if not already done (prevents race condition)
+      const [updated] = await tx
         .update(emailVerificationTokens)
         .set({ verifiedAt: new Date() })
-        .where(eq(emailVerificationTokens.id, tokenRecord.id));
+        .where(and(
+          eq(emailVerificationTokens.id, tokenRecord.id),
+          isNull(emailVerificationTokens.verifiedAt)
+        ))
+        .returning({ id: emailVerificationTokens.id });
+
+      if (!updated) {
+        // Another request already verified this token
+        return c.json({ error: 'Email already verified', emailVerified: true }, 400);
+      }
 
       // Mark user as verified
       await tx

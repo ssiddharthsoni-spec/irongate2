@@ -42,5 +42,6 @@ USER irongate
 # Expose port
 EXPOSE 3000
 
-# Start API with tsx (resolves workspace packages from source)
-CMD ["pnpm", "--filter=@iron-gate/api", "start"]
+# Start API directly with npx tsx (bypasses pnpm workspace overhead)
+# npx resolves tsx from node_modules reliably regardless of hoisting
+CMD ["npx", "tsx", "apps/api/src/index.ts"]

@@ -8,6 +8,9 @@ import { sha256, hmacSign, hmacVerify } from '@iron-gate/crypto';
 import { getSigningKey } from '../services/signing-key';
 import type { AppEnv } from '../types';
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isValidUuid(id: string): boolean { return UUID_REGEX.test(id); }
+
 export const auditRoutes = new Hono<AppEnv>();
 
 // GET /v1/audit/verify — Verify chain integrity + signature stats for firm
@@ -36,6 +39,7 @@ auditRoutes.get('/verify', async (c) => {
 // GET /v1/audit/verify-signature/:eventId — Verify single event signature
 auditRoutes.get('/verify-signature/:eventId', async (c) => {
   const eventId = c.req.param('eventId');
+  if (!isValidUuid(eventId)) return c.json({ error: 'Invalid ID format' }, 400);
   const firmId = c.get('firmId');
 
   const [event] = await db
@@ -180,6 +184,16 @@ auditRoutes.get('/export/worm', async (c) => {
   const startDate = c.req.query('startDate');
   const endDate = c.req.query('endDate');
 
+  // Validate date formats
+  if (startDate) {
+    const d = new Date(startDate);
+    if (isNaN(d.getTime())) return c.json({ error: 'Invalid startDate format' }, 400);
+  }
+  if (endDate) {
+    const d = new Date(endDate);
+    if (isNaN(d.getTime())) return c.json({ error: 'Invalid endDate format' }, 400);
+  }
+
   // Build query conditions
   const conditions = [eq(events.firmId, firmId)];
   if (startDate) conditions.push(gte(events.createdAt, new Date(startDate)));
@@ -259,7 +273,7 @@ auditRoutes.get('/export/worm', async (c) => {
 auditRoutes.get('/chain', async (c) => {
   const firmId = c.get('firmId');
   const limit = Math.max(1, Math.min(parseInt(c.req.query('limit') || '50') || 50, 100));
-  const offset = Math.max(0, parseInt(c.req.query('offset') || '0') || 0);
+  const offset = Math.min(1_000_000, Math.max(0, parseInt(c.req.query('offset') || '0') || 0));
 
   const results = await db
     .select({

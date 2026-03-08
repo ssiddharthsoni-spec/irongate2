@@ -8,6 +8,10 @@ import { appendEvent } from '../services/audit-chain';
 import type { AppEnv } from '../types';
 import { logger } from '../lib/logger';
 
+function escapeHtml(str: string): string {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const ALLOWED_EXTENSIONS = new Set(['pdf', 'docx', 'xlsx', 'txt', 'csv', 'pptx', 'rtf', 'html', 'md', 'json']);
 
@@ -25,7 +29,7 @@ documentRoutes.post('/scan', async (c) => {
     }
 
     // 2. Validate file type and size
-    const fileName = file.name || 'unknown';
+    const fileName = escapeHtml(file.name || 'unknown');
     const extension = fileName.split('.').pop()?.toLowerCase() || '';
 
     if (!ALLOWED_EXTENSIONS.has(extension)) {

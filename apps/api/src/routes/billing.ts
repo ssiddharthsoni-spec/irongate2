@@ -238,7 +238,7 @@ billingRoutes.get('/invoices', async (c) => {
   const firmId = c.get('firmId');
 
   const limit = Math.max(1, Math.min(parseInt(c.req.query('limit') || '25') || 25, 100));
-  const offset = Math.max(0, parseInt(c.req.query('offset') || '0') || 0);
+  const offset = Math.min(1_000_000, Math.max(0, parseInt(c.req.query('offset') || '0') || 0));
 
   const rows = await db
     .select()

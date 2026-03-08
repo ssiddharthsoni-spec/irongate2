@@ -118,11 +118,22 @@ export async function apiRequest<T>(options: RequestOptions): Promise<T> {
         }
       }
 
-      const response = await fetch(url, {
-        method,
-        headers,
-        body: body ? JSON.stringify(body) : undefined,
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30_000);
+
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method,
+          headers,
+          body: body ? JSON.stringify(body) : undefined,
+          signal: controller.signal,
+        });
+      } catch (fetchErr) {
+        clearTimeout(timeoutId);
+        throw fetchErr;
+      }
+      clearTimeout(timeoutId);
 
       // Verify expected security headers are present (defense in depth)
       if (attempt === 0) {

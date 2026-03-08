@@ -34,23 +34,36 @@ function validateWebhookUrl(url: string): void {
 // ── Application-layer encryption for webhook secrets ─────────────────────────
 // Prefer dedicated encryption secret; fall back to master secret for backward compat
 const ENCRYPTION_SECRET = process.env.IRON_GATE_ENCRYPTION_SECRET
-  || process.env.IRON_GATE_MASTER_SECRET || '';
+  || process.env.IRON_GATE_MASTER_SECRET;
+
+if (!ENCRYPTION_SECRET) {
+  console.error('[CRITICAL] No encryption secret set — webhook secrets will be stored in plaintext. Set IRON_GATE_ENCRYPTION_SECRET.');
+}
+
 const WEBHOOK_KEY_SALT = new TextEncoder().encode('ig-webhook-secret-enc-v1');
 let _webhookEncKey: CryptoKey | null = null;
 
 async function getWebhookEncKey(): Promise<CryptoKey> {
   if (_webhookEncKey) return _webhookEncKey;
-  if (!ENCRYPTION_SECRET) throw new Error('IRON_GATE_ENCRYPTION_SECRET (or IRON_GATE_MASTER_SECRET) is required for webhook encryption');
+  if (!ENCRYPTION_SECRET) throw new Error('No encryption secret available');
   _webhookEncKey = await deriveKey(ENCRYPTION_SECRET, WEBHOOK_KEY_SALT);
   return _webhookEncKey;
 }
 
 async function encryptSecret(plaintext: string): Promise<string> {
+  if (!ENCRYPTION_SECRET) {
+    logger.warn('Webhook secret stored in plaintext — no IRON_GATE_ENCRYPTION_SECRET configured');
+    return plaintext;
+  }
   const key = await getWebhookEncKey();
   return encrypt(plaintext, key);
 }
 
 async function decryptSecret(ciphertext: string): Promise<string> {
+  if (!ENCRYPTION_SECRET) {
+    logger.warn('Returning webhook secret as plaintext — no IRON_GATE_ENCRYPTION_SECRET configured');
+    return ciphertext;
+  }
   const key = await getWebhookEncKey();
   return decrypt(ciphertext, key);
 }

@@ -18,6 +18,9 @@ import { logger } from '../lib/logger';
 import { sanitizeInput } from '../lib/sanitize';
 import type { AppEnv } from '../types';
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isValidUuid(id: string): boolean { return UUID_REGEX.test(id); }
+
 export const enterpriseRoutes = new Hono<AppEnv>();
 
 // ============================================================================
@@ -435,6 +438,7 @@ enterpriseRoutes.get('/roi', async (c) => {
 enterpriseRoutes.get('/webhook-deliveries/:webhookId', async (c) => {
   const firmId = c.get('firmId');
   const webhookId = c.req.param('webhookId');
+  if (!isValidUuid(webhookId)) return c.json({ error: 'Invalid ID format' }, 400);
 
   // Verify webhook belongs to firm
   const [wh] = await db
@@ -446,7 +450,7 @@ enterpriseRoutes.get('/webhook-deliveries/:webhookId', async (c) => {
   if (!wh) return c.json({ error: 'Webhook not found' }, 404);
 
   const limit = Math.min(100, parseInt(c.req.query('limit') || '50'));
-  const offset = parseInt(c.req.query('offset') || '0');
+  const offset = Math.min(1_000_000, Math.max(0, parseInt(c.req.query('offset') || '0') || 0));
 
   const deliveries = await db
     .select()
