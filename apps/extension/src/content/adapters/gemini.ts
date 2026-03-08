@@ -15,7 +15,8 @@ import type { SiteAdapter } from './base';
  */
 
 /** Deep querySelector that pierces open Shadow DOMs */
-function deepQuery(root: Document | Element | ShadowRoot, selector: string): HTMLElement | null {
+function deepQuery(root: Document | Element | ShadowRoot, selector: string, depth = 0): HTMLElement | null {
+  if (depth > 10) return null; // Prevent runaway recursion in deeply nested Shadow DOMs
   try {
     const el = root.querySelector(selector) as HTMLElement;
     if (el) return el;
@@ -24,7 +25,7 @@ function deepQuery(root: Document | Element | ShadowRoot, selector: string): HTM
   for (let i = 0; i < children.length; i++) {
     const sr = (children[i] as any).shadowRoot;
     if (sr) {
-      const found = deepQuery(sr, selector);
+      const found = deepQuery(sr, selector, depth + 1);
       if (found) return found;
     }
   }

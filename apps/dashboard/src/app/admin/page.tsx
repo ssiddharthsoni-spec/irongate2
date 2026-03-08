@@ -94,8 +94,11 @@ export default function AdminPage() {
       // Skip header row if it looks like a header
       const startIndex = lines[0]?.toLowerCase().includes('clientname') ? 1 : 0;
 
+      // Strip CSV formula injection characters (=, +, -, @, tab, carriage return)
+      const sanitizeCsvCell = (cell: string): string => cell.replace(/^[=+\-@\t\r]+/, '');
+
       const matters = lines.slice(startIndex).map((line) => {
-        const parts = line.split(',').map((p) => p.trim());
+        const parts = line.split(',').map((p) => sanitizeCsvCell(p.trim()));
         return {
           clientName: parts[0] || '',
           matterNumber: parts[1] || '',

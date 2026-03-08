@@ -85,13 +85,16 @@ function incrementStats(entities: number, scans: number): void {
   _statsFlushTimer = setTimeout(flushStats, 200);
 }
 
+let _statsIsFlushing = false;
 async function flushStats(): Promise<void> {
+  if (_statsIsFlushing) return;
+  _statsIsFlushing = true;
   const entityDelta = _pendingEntityDelta;
   const scanDelta = _pendingScanDelta;
   _pendingEntityDelta = 0;
   _pendingScanDelta = 0;
   _statsFlushTimer = null;
-  if (entityDelta === 0 && scanDelta === 0) return;
+  if (entityDelta === 0 && scanDelta === 0) { _statsIsFlushing = false; return; }
 
   try {
     const data = await chrome.storage.local.get([TOTAL_ENTITIES_DETECTED, WEEKLY_SCAN_COUNT]);
@@ -103,6 +106,8 @@ async function flushStats(): Promise<void> {
     // Re-add deltas on failure so they're retried on next flush
     _pendingEntityDelta += entityDelta;
     _pendingScanDelta += scanDelta;
+  } finally {
+    _statsIsFlushing = false;
   }
 }
 
@@ -534,11 +539,13 @@ async function removeTabState(tabId: number): Promise<void> {
 
 // Listen for messages from content scripts
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  let responded = false;
+  const safeRespond = (val: any) => { if (!responded) { responded = true; sendResponse(val); } };
   handleMessage(message, sender)
-    .then(sendResponse)
+    .then(safeRespond)
     .catch((err) => {
       console.error('[Iron Gate] Message handler error:', err);
-      sendResponse({ error: err instanceof Error ? err.message : String(err) });
+      safeRespond({ error: err instanceof Error ? err.message : String(err) });
     });
   return true; // Keep channel open for async
 });
@@ -758,7 +765,7 @@ async function handleMessage(
       // HIPAA + MEDICAL_RECORD = block, regardless of score.
       await refreshComplianceProfile();
       const complianceResult = enforceCompliance(allEntities);
-      if (complianceResult.blocked) {
+      if (complianceResult?.blocked) {
         igLog('COMPLIANCE BLOCK:', complianceResult.reason);
 
         // Queue event with complianceOverride flag
@@ -1841,8 +1848,9 @@ function inlineFetchInterceptor() {
       case 'MONETARY_AMOUNT': {
         const cleaned = original.replace(/[,$\s]/g, '');
         const m = cleaned.match(/^(\d+(?:\.\d+)?)\s*(million|billion|M|B|k|K|dollars?|USD|EUR|GBP)?/i);
-        if (m) {
+        if (m && m[1]) {
           const num = parseFloat(m[1]);
+          if (isNaN(num)) return original;
           const suffix = m[2] || '';
           const factor = 0.7 + Math.random() * 0.65;
           const shifted = num * factor;
@@ -1904,7 +1912,8 @@ function inlineFetchInterceptor() {
       // ChatGPT backend: { messages: [{ content: { parts: [...] } }] }
       if (parsed?.messages?.[0]?.content?.parts) {
         const last = parsed.messages[parsed.messages.length - 1];
-        return last.content.parts.join('\n');
+        if (last?.content?.parts) return last.content.parts.join('\n');
+        return parsed.messages[0].content.parts.join('\n');
       }
       // OpenAI / Anthropic: { messages: [{ role, content }] }
       if (parsed?.messages && Array.isArray(parsed.messages)) {
@@ -1938,7 +1947,12 @@ function inlineFetchInterceptor() {
       // ChatGPT backend
       if (parsed?.messages?.[0]?.content?.parts) {
         const lastIdx = parsed.messages.length - 1;
-        parsed.messages[lastIdx].content.parts = [replacement];
+        const lastMsg = parsed.messages[lastIdx];
+        if (lastMsg?.content?.parts) {
+          lastMsg.content.parts = [replacement];
+        } else if (lastMsg) {
+          lastMsg.content = { content_type: 'text', parts: [replacement] };
+        }
         return JSON.stringify(parsed);
       }
       // OpenAI / Anthropic messages
@@ -2196,6 +2210,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   igLog('Tab closed:', tabId);
   lastPromptTextByTab.delete(tabId);
   lastBroadcastByTab.delete(tabId);
+  lastBroadcastScoreByTab.delete(tabId);
   removeTabState(tabId);
 });
 

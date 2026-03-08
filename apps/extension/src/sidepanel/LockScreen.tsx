@@ -37,7 +37,7 @@ export function LockScreen({ onUnlock }: LockScreenProps) {
 
         if (remaining <= 0) {
           // Exponential backoff lockout
-          const backoffMs = BASE_BACKOFF_MS * Math.pow(2, Math.min(attemptsRef.current - MAX_ATTEMPTS, 5));
+          const backoffMs = BASE_BACKOFF_MS * Math.pow(2, Math.min(attemptsRef.current - MAX_ATTEMPTS, 4)); // Max ~32s
           setLockedOut(true);
           setError(`Too many attempts. Try again in ${Math.ceil(backoffMs / 1000)}s.`);
           lockoutTimerRef.current = setTimeout(() => {

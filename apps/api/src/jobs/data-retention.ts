@@ -140,7 +140,7 @@ export async function runRetentionCleanup(): Promise<RetentionCleanupResult> {
     const heartbeatsResult = await db.execute(sql`
       DELETE FROM extension_heartbeats
       WHERE firm_id = ${firmId}
-        AND last_seen_at < NOW() - MAKE_INTERVAL(days => ${retentionDays})
+        AND received_at < NOW() - MAKE_INTERVAL(days => ${retentionDays})
     `);
     result.heartbeatsDeleted += extractRowCount(heartbeatsResult);
   }

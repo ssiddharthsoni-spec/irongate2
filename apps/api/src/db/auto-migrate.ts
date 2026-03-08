@@ -456,6 +456,24 @@ const migrations: string[] = [
       EXECUTE 'CREATE POLICY incidents_isolation ON incidents FOR ALL USING (firm_id = app.current_firm_id())';
     END IF;
   END $$`,
+
+  // --- Heartbeat upsert: one row per user (prevents 144K rows/day at 500 users) ---
+  `DO $$ BEGIN
+    -- Deduplicate existing heartbeats: keep only latest per user
+    DELETE FROM extension_heartbeats a
+      USING extension_heartbeats b
+      WHERE a.user_id = b.user_id AND a.received_at < b.received_at;
+    -- Add unique constraint if missing
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'extension_heartbeats_user_id_unique') THEN
+      ALTER TABLE extension_heartbeats ADD CONSTRAINT extension_heartbeats_user_id_unique UNIQUE (user_id);
+    END IF;
+  END $$`,
+
+  // --- Performance indexes for 500-user scale ---
+  `CREATE INDEX IF NOT EXISTS events_action_idx ON events(action)`,
+  `CREATE INDEX IF NOT EXISTS events_firm_action_idx ON events(firm_id, action)`,
+  `CREATE INDEX IF NOT EXISTS events_prompt_hash_idx ON events(prompt_hash)`,
+  `CREATE INDEX IF NOT EXISTS users_email_idx ON users(email)`,
 ];
 
 /** Arbitrary but consistent advisory lock ID for migration coordination */

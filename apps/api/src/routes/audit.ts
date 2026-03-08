@@ -96,7 +96,7 @@ auditRoutes.get('/verify-signatures', async (c) => {
     .from(events)
     .where(eq(events.firmId, firmId))
     .orderBy(asc(events.chainPosition))
-    .limit(10000);
+    .limit(1000);
 
   const signingKey = await getSigningKey();
   let totalEvents = 0;

@@ -217,10 +217,12 @@ app.get('/health/metrics', async (c) => {
   const adminKey = c.req.header('X-Admin-Key-1');
   const metricsKey = process.env.METRICS_API_KEY;
 
-  // Require at least one form of authentication
+  // Require at least one form of authentication (constant-time comparison)
   const isAuthed =
-    (apiKey && metricsKey && apiKey === metricsKey) ||
-    (adminKey && process.env.ADMIN_KEY_1 && adminKey === process.env.ADMIN_KEY_1);
+    (apiKey && metricsKey && apiKey.length === metricsKey.length &&
+      crypto.timingSafeEqual(Buffer.from(apiKey), Buffer.from(metricsKey))) ||
+    (adminKey && process.env.ADMIN_KEY_1 && adminKey.length === process.env.ADMIN_KEY_1.length &&
+      crypto.timingSafeEqual(Buffer.from(adminKey), Buffer.from(process.env.ADMIN_KEY_1)));
 
   if (!isAuthed) {
     return c.json({ error: 'Unauthorized: Provide X-API-Key or X-Admin-Key-1' }, 401);

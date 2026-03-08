@@ -68,7 +68,8 @@ function extractPromptFromPayload(body: any): string | null {
     // ChatGPT backend format: { action, messages: [{ content: { parts } }] }
     if (parsed?.messages?.[0]?.content?.parts) {
       const lastMsg = parsed.messages[parsed.messages.length - 1];
-      return lastMsg.content.parts.join('\n');
+      if (lastMsg?.content?.parts) return lastMsg.content.parts.join('\n');
+      return parsed.messages[0].content.parts.join('\n');
     }
 
     // Anthropic format: { messages: [{ role, content }] } (same as OpenAI)
@@ -239,7 +240,12 @@ function replacePromptInPayload(body: any, replacement: string): any {
     // ChatGPT backend format: { action, messages: [{ content: { parts: [...] } }] }
     if (parsed?.messages?.[0]?.content?.parts) {
       const lastIdx = parsed.messages.length - 1;
-      parsed.messages[lastIdx].content.parts = [replacement];
+      const lastMsg = parsed.messages[lastIdx];
+      if (lastMsg?.content?.parts) {
+        lastMsg.content.parts = [replacement];
+      } else if (lastMsg) {
+        lastMsg.content = { content_type: 'text', parts: [replacement] };
+      }
       return parsed;
     }
 

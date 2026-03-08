@@ -97,22 +97,33 @@ async function getManagedValues(): Promise<Record<string, any> | null> {
   }
 }
 
+function safeBool(val: any, fallback: boolean): boolean {
+  return typeof val === 'boolean' ? val : fallback;
+}
+function safeNum(val: any, fallback: number, min: number, max: number): number {
+  const n = typeof val === 'number' ? val : fallback;
+  return Math.max(min, Math.min(max, n));
+}
+function safeStr(val: any, fallback: string): string {
+  return typeof val === 'string' ? val : fallback;
+}
+
 function resolveTierConfig(source: Record<string, any>): TierConfig {
   return {
-    tier2Enabled: source.tier2Enabled ?? DEFAULT_TIER_CONFIG.tier2Enabled,
-    tier2Endpoint: source.tier2Endpoint ?? DEFAULT_TIER_CONFIG.tier2Endpoint,
-    tier2Model: source.tier2Model ?? DEFAULT_TIER_CONFIG.tier2Model,
-    tier2Protocol: source.tier2Protocol ?? DEFAULT_TIER_CONFIG.tier2Protocol,
-    tier2TimeoutMs: source.tier2TimeoutMs ?? DEFAULT_TIER_CONFIG.tier2TimeoutMs,
-    glinerEnabled: source.glinerEnabled ?? DEFAULT_TIER_CONFIG.glinerEnabled,
-    tier25Enabled: source.tier25Enabled ?? DEFAULT_TIER_CONFIG.tier25Enabled,
-    tier3Enabled: source.tier3Enabled ?? DEFAULT_TIER_CONFIG.tier3Enabled,
-    tier3Endpoint: source.tier3Endpoint ?? DEFAULT_TIER_CONFIG.tier3Endpoint,
-    tier3TimeoutMs: source.tier3TimeoutMs ?? DEFAULT_TIER_CONFIG.tier3TimeoutMs,
-    semanticEnabled: source.semanticEnabled ?? DEFAULT_TIER_CONFIG.semanticEnabled,
-    semanticCentroidsUrl: source.semanticCentroidsUrl ?? DEFAULT_TIER_CONFIG.semanticCentroidsUrl,
-    amberMinScore: source.amberMinScore ?? DEFAULT_TIER_CONFIG.amberMinScore,
-    redMinScore: source.redMinScore ?? DEFAULT_TIER_CONFIG.redMinScore,
+    tier2Enabled: safeBool(source.tier2Enabled, DEFAULT_TIER_CONFIG.tier2Enabled),
+    tier2Endpoint: safeStr(source.tier2Endpoint, DEFAULT_TIER_CONFIG.tier2Endpoint),
+    tier2Model: safeStr(source.tier2Model, DEFAULT_TIER_CONFIG.tier2Model),
+    tier2Protocol: source.tier2Protocol === 'openai' ? 'openai' : DEFAULT_TIER_CONFIG.tier2Protocol,
+    tier2TimeoutMs: safeNum(source.tier2TimeoutMs, DEFAULT_TIER_CONFIG.tier2TimeoutMs, 1000, 30000),
+    glinerEnabled: safeBool(source.glinerEnabled, DEFAULT_TIER_CONFIG.glinerEnabled),
+    tier25Enabled: safeBool(source.tier25Enabled, DEFAULT_TIER_CONFIG.tier25Enabled),
+    tier3Enabled: safeBool(source.tier3Enabled, DEFAULT_TIER_CONFIG.tier3Enabled),
+    tier3Endpoint: safeStr(source.tier3Endpoint, DEFAULT_TIER_CONFIG.tier3Endpoint),
+    tier3TimeoutMs: safeNum(source.tier3TimeoutMs, DEFAULT_TIER_CONFIG.tier3TimeoutMs, 1000, 30000),
+    semanticEnabled: safeBool(source.semanticEnabled, DEFAULT_TIER_CONFIG.semanticEnabled),
+    semanticCentroidsUrl: safeStr(source.semanticCentroidsUrl, DEFAULT_TIER_CONFIG.semanticCentroidsUrl),
+    amberMinScore: safeNum(source.amberMinScore, DEFAULT_TIER_CONFIG.amberMinScore, 0, 100),
+    redMinScore: safeNum(source.redMinScore, DEFAULT_TIER_CONFIG.redMinScore, 0, 100),
   };
 }
 

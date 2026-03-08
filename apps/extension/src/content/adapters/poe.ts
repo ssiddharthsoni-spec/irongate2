@@ -89,18 +89,15 @@ export const PoeAdapter: SiteAdapter = {
   },
 };
 
-function findLongestString(obj: any, maxDepth: number): string | null {
+function findLongestString(obj: any, maxDepth: number, seen?: Set<any>): string | null {
   if (maxDepth <= 0) return null;
   if (typeof obj === 'string' && obj.length >= 20) return obj;
-  if (Array.isArray(obj)) {
-    let best: string | null = null;
-    for (const item of obj) { const f = findLongestString(item, maxDepth - 1); if (f && (!best || f.length > best.length)) best = f; }
-    return best;
-  }
-  if (obj && typeof obj === 'object') {
-    let best: string | null = null;
-    for (const v of Object.values(obj)) { const f = findLongestString(v, maxDepth - 1); if (f && (!best || f.length > best.length)) best = f; }
-    return best;
-  }
-  return null;
+  if (!obj || typeof obj !== 'object') return null;
+  if (!seen) seen = new Set();
+  if (seen.has(obj)) return null;
+  seen.add(obj);
+  const items = Array.isArray(obj) ? obj : Object.values(obj);
+  let best: string | null = null;
+  for (const item of items) { const f = findLongestString(item, maxDepth - 1, seen); if (f && (!best || f.length > best.length)) best = f; }
+  return best;
 }

@@ -49,6 +49,7 @@ export const users = pgTable('users', {
 }, (table) => [
   index('users_firm_id_idx').on(table.firmId),
   index('users_clerk_id_idx').on(table.clerkId),
+  index('users_email_idx').on(table.email),
 ]);
 
 // --- Departments ---
@@ -118,6 +119,9 @@ export const events = pgTable('events', {
   index('events_ai_tool_id_idx').on(table.aiToolId),
   index('events_firm_created_idx').on(table.firmId, table.createdAt),
   index('events_firm_chain_idx').on(table.firmId, table.chainPosition),
+  index('events_action_idx').on(table.action),
+  index('events_firm_action_idx').on(table.firmId, table.action),
+  index('events_prompt_hash_idx').on(table.promptHash),
   unique('events_firm_chain_position_uniq').on(table.firmId, table.chainPosition),
 ]);
 
@@ -318,7 +322,7 @@ export const killSwitch = pgTable('kill_switch', {
 
 export const extensionHeartbeats = pgTable('extension_heartbeats', {
   id: uuid('id').primaryKey().defaultRandom(),
-  userId: uuid('user_id').notNull().references(() => users.id),
+  userId: uuid('user_id').notNull().references(() => users.id).unique(),
   firmId: uuid('firm_id').notNull().references(() => firms.id),
   extensionVersion: varchar('extension_version', { length: 20 }).notNull(),
   activePlatform: varchar('active_platform', { length: 100 }),
@@ -330,7 +334,6 @@ export const extensionHeartbeats = pgTable('extension_heartbeats', {
   errorsLast5Min: integer('errors_last_5_min'),
   receivedAt: timestamp('received_at').notNull().defaultNow(),
 }, (table) => [
-  index('heartbeats_user_idx').on(table.userId),
   index('heartbeats_firm_idx').on(table.firmId),
   index('heartbeats_received_idx').on(table.receivedAt),
 ]);

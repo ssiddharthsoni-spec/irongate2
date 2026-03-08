@@ -17,7 +17,7 @@
 const IV_LENGTH = 12; // 96-bit IV for AES-GCM
 const AUTH_TAG_LENGTH = 128; // 128-bit auth tag (in bits)
 const DEK_LENGTH = 32; // 256-bit DEK
-const PBKDF2_ITERATIONS = 100_000;
+const PBKDF2_ITERATIONS = 600_000;
 
 // Static salt used to derive local master keys from firm IDs.
 // In production, the master key lives in AWS KMS and this is unused.

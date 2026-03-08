@@ -183,9 +183,14 @@ class EventQueue {
 
       if (!stored || !Array.isArray(stored)) return;
 
-      if (stored.length > 0) {
-        this.pendingEvents = stored;
-        igLog('Restored', stored.length, 'events from storage');
+      // Validate restored events have required fields
+      const valid = stored.filter((e: any) =>
+        e && typeof e.id === 'string' && typeof e.timestamp === 'number' && e.data
+      );
+      if (valid.length > 0) {
+        this.pendingEvents = valid;
+        igLog('Restored', valid.length, 'events from storage');
+        if (valid.length < stored.length) igLog('Dropped', stored.length - valid.length, 'corrupt events');
         this.scheduleBatch();
       }
     } catch (error) {

@@ -109,7 +109,8 @@ export async function getProposals(firmId: string) {
         eq(inferredEntities.status, 'pending'),
       ),
     )
-    .orderBy(desc(inferredEntities.confidence));
+    .orderBy(desc(inferredEntities.confidence))
+    .limit(500);
 }
 
 /**

@@ -188,24 +188,20 @@ export const CopilotAdapter: SiteAdapter = {
   },
 
   // Internal helper: recursively walk an object to find the longest string > 50 chars
-  _walkForText(obj: any): string | null {
+  _walkForText(obj: any, maxDepth = 10, seen?: Set<any>): string | null {
+    if (maxDepth <= 0) return null;
     if (typeof obj === 'string' && obj.length > 50) return obj;
-    if (Array.isArray(obj)) {
-      let best: string | null = null;
-      for (const item of obj) {
-        const found = this._walkForText(item);
-        if (found && (!best || found.length > best.length)) best = found;
-      }
-      return best;
+    if (!obj || typeof obj !== 'object') return null;
+    // Cycle detection
+    if (!seen) seen = new Set();
+    if (seen.has(obj)) return null;
+    seen.add(obj);
+    const items = Array.isArray(obj) ? obj : Object.values(obj);
+    let best: string | null = null;
+    for (const item of items) {
+      const found = this._walkForText(item, maxDepth - 1, seen);
+      if (found && (!best || found.length > best.length)) best = found;
     }
-    if (obj && typeof obj === 'object') {
-      let best: string | null = null;
-      for (const val of Object.values(obj)) {
-        const found = this._walkForText(val);
-        if (found && (!best || found.length > best.length)) best = found;
-      }
-      return best;
-    }
-    return null;
+    return best;
   },
-} as SiteAdapter & { _walkForText(obj: any): string | null };
+} as SiteAdapter & { _walkForText(obj: any, maxDepth?: number, seen?: Set<any>): string | null };

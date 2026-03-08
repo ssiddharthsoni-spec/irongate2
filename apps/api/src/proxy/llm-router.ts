@@ -161,11 +161,21 @@ export class LLMRouter {
       route: request.route,
     });
 
+    const LLM_TIMEOUT_MS = 30_000;
+    const withTimeout = <T>(promise: Promise<T>): Promise<T> => {
+      return Promise.race([
+        promise,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('LLM provider timeout after 30s')), LLM_TIMEOUT_MS)
+        ),
+      ]);
+    };
+
     const breaker = CIRCUIT_BREAKERS[providerConfig.provider];
     if (breaker) {
-      return breaker.execute(() => provider.send(request, providerConfig));
+      return breaker.execute(() => withTimeout(provider.send(request, providerConfig)));
     }
-    return provider.send(request, providerConfig);
+    return withTimeout(provider.send(request, providerConfig));
   }
 
   /**

@@ -217,13 +217,13 @@ adminRoutes.post('/client-matters', async (c) => {
 
   const matterSchema = z.object({
     matters: z.array(z.object({
-      clientName: z.string(),
-      aliases: z.array(z.string()).optional().default([]),
-      matterNumber: z.string().optional(),
-      matterDescription: z.string().optional(),
-      parties: z.array(z.string()).optional().default([]),
+      clientName: z.string().max(500),
+      aliases: z.array(z.string().max(200)).max(50).optional().default([]),
+      matterNumber: z.string().max(100).optional(),
+      matterDescription: z.string().max(2000).optional(),
+      parties: z.array(z.string().max(200)).max(100).optional().default([]),
       sensitivityLevel: z.enum(['low', 'medium', 'high', 'critical']).optional().default('medium'),
-    })),
+    })).max(10000),
   });
 
   const parsed = matterSchema.parse(body);
@@ -243,16 +243,18 @@ adminRoutes.post('/client-matters', async (c) => {
   return c.json({ imported: inserted.length });
 });
 
-// GET /v1/admin/client-matters — List client/matters
+// GET /v1/admin/client-matters — List client/matters (paginated)
 adminRoutes.get('/client-matters', async (c) => {
   const firmId = c.get('firmId');
+  const limit = Math.min(Math.max(1, parseInt(c.req.query('limit') || '100')), 1000);
+  const offset = Math.max(0, parseInt(c.req.query('offset') || '0'));
 
-  const matters = await db
-    .select()
-    .from(clientMatters)
-    .where(eq(clientMatters.firmId, firmId));
+  const [matters, [countResult]] = await Promise.all([
+    db.select().from(clientMatters).where(eq(clientMatters.firmId, firmId)).limit(limit).offset(offset),
+    db.select({ total: sql<number>`count(*)` }).from(clientMatters).where(eq(clientMatters.firmId, firmId)),
+  ]);
 
-  return c.json(matters);
+  return c.json({ matters, total: Number(countResult?.total || 0), limit, offset });
 });
 
 // GET /v1/admin/weight-overrides — Get firm weight overrides

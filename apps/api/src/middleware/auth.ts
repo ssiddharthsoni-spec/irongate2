@@ -9,7 +9,7 @@ import { logger } from '../lib/logger';
 // TTL Cache — entries auto-expire to prevent stale auth data
 // ---------------------------------------------------------------------------
 
-const MAX_CACHE_ENTRIES = 5_000;
+const MAX_CACHE_ENTRIES = 20_000;
 
 class TTLMap<K, V> {
   private map = new Map<K, { value: V; expiresAt: number }>();

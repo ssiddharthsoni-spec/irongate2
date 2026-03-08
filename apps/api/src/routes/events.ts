@@ -332,7 +332,7 @@ eventsRoutes.post('/batch', async (c) => {
 eventsRoutes.get('/', async (c) => {
   const firmId = c.get('firmId');
   const limit = Math.max(1, Math.min(parseInt(c.req.query('limit') || '50') || 50, 100));
-  const offset = Math.min(1_000_000, Math.max(0, parseInt(c.req.query('offset') || '0') || 0));
+  const offset = Math.min(10_000, Math.max(0, parseInt(c.req.query('offset') || '0') || 0));
   const minScore = c.req.query('minScore');
   const aiToolId = c.req.query('aiToolId');
   const startDate = c.req.query('startDate');
@@ -377,6 +377,10 @@ eventsRoutes.get('/', async (c) => {
 // GET /v1/events/:id — Single event (uses read replica)
 eventsRoutes.get('/:id', async (c) => {
   const id = c.req.param('id');
+  // Validate UUID format to prevent malformed queries
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    return c.json({ error: 'Invalid event ID format' }, 400);
+  }
   const firmId = c.get('firmId');
 
   const [event] = await dbRead

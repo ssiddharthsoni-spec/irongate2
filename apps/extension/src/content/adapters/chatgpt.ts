@@ -81,7 +81,8 @@ export const ChatGPTAdapter: SiteAdapter = {
       // ChatGPT backend: { messages: [{ content: { parts: [...] } }] }
       if (parsed?.messages?.[0]?.content?.parts) {
         const last = parsed.messages[parsed.messages.length - 1];
-        return last.content.parts.join('\n');
+        if (last?.content?.parts) return last.content.parts.join('\n');
+        return parsed.messages[0].content.parts.join('\n');
       }
 
       // OpenAI API: { messages: [{ role, content }] }
@@ -114,7 +115,13 @@ export const ChatGPTAdapter: SiteAdapter = {
       // ChatGPT backend format
       if (parsed?.messages?.[0]?.content?.parts) {
         const lastIdx = parsed.messages.length - 1;
-        parsed.messages[lastIdx].content.parts = [replacement];
+        const lastMsg = parsed.messages[lastIdx];
+        if (lastMsg?.content?.parts) {
+          lastMsg.content.parts = [replacement];
+        } else if (lastMsg) {
+          // Last message lacks content.parts — set content directly
+          lastMsg.content = { content_type: 'text', parts: [replacement] };
+        }
         return JSON.stringify(parsed);
       }
 
@@ -262,7 +269,8 @@ export const ChatGPTAdapter: SiteAdapter = {
       // Check for messages-style payload
       if (parsed?.messages?.[0]?.content?.parts) {
         const last = parsed.messages[parsed.messages.length - 1];
-        return last.content.parts.join('\n');
+        if (last?.content?.parts) return last.content.parts.join('\n');
+        return parsed.messages[0].content.parts.join('\n');
       }
       if (parsed?.message?.content?.parts) {
         return parsed.message.content.parts.join('\n');

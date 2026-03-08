@@ -379,23 +379,22 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
     start() {
       console.log(`[Iron Gate] Starting capture engine for ${detector.name}`);
 
-      // 1. Install fetch interceptor FIRST (needs to be before page scripts)
-      fetchCleanup = installFetchInterceptor(onFetchRequest, onFileInFormData, createBodyTransformer());
+      // Each installer is wrapped in try-catch to prevent partial initialization.
+      // If one fails, the others still run — fail-open on capture, not fail-closed on the whole engine.
+      try { fetchCleanup = installFetchInterceptor(onFetchRequest, onFileInFormData, createBodyTransformer()); }
+      catch (e) { console.error('[Iron Gate] Fetch interceptor install failed:', e); }
 
-      // 2. Start DOM observer for real-time typing
-      domObserver = createDOMObserver(detector, onPromptChange, onPromptCleared);
+      try { domObserver = createDOMObserver(detector, onPromptChange, onPromptCleared); }
+      catch (e) { console.error('[Iron Gate] DOM observer install failed:', e); }
 
-      // 3. Install submit handler
-      submitHandler = installSubmitHandler(detector, {
-        mode: config.mode,
-        onSubmit,
-      });
+      try { submitHandler = installSubmitHandler(detector, { mode: config.mode, onSubmit }); }
+      catch (e) { console.error('[Iron Gate] Submit handler install failed:', e); }
 
-      // 4. Start clipboard monitor
-      clipboardMonitor = createClipboardMonitor(detector, onPaste);
+      try { clipboardMonitor = createClipboardMonitor(detector, onPaste); }
+      catch (e) { console.error('[Iron Gate] Clipboard monitor install failed:', e); }
 
-      // 5. Start file upload monitor
-      fileUploadMonitor = createFileUploadMonitor(onFileUpload);
+      try { fileUploadMonitor = createFileUploadMonitor(onFileUpload); }
+      catch (e) { console.error('[Iron Gate] File upload monitor install failed:', e); }
 
       console.log(`[Iron Gate] Capture engine started for ${detector.name}`);
     },

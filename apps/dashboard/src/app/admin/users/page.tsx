@@ -57,7 +57,13 @@ export default function UsersPage() {
   // ---------------------------------------------------------------------------
   async function handleInvite(e: React.FormEvent) {
     e.preventDefault();
-    if (!inviteEmail.trim()) return;
+    const email = inviteEmail.trim();
+    if (!email) return;
+    // Basic email format validation
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+      setInviteMessage({ type: 'error', text: 'Please enter a valid email address.' });
+      return;
+    }
 
     try {
       setInviting(true);

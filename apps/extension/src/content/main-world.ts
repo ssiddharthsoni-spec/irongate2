@@ -1211,7 +1211,8 @@ function extractPrompt(body: any): string | null {
     // ChatGPT backend: { messages: [{ content: { parts: [...] } }] }
     if (parsed?.messages?.[0]?.content?.parts) {
       const last = parsed.messages[parsed.messages.length - 1];
-      return last.content.parts.join('\n');
+      if (last?.content?.parts) return last.content.parts.join('\n');
+      return parsed.messages[0].content.parts.join('\n');
     }
 
     // OpenAI / Anthropic / generic: { messages: [{ role, content }] }
@@ -1366,7 +1367,12 @@ function replacePrompt(body: string, originalPrompt: string, replacement: string
     // ChatGPT backend format
     if (parsed?.messages?.[0]?.content?.parts) {
       const lastIdx = parsed.messages.length - 1;
-      parsed.messages[lastIdx].content.parts = [replacement];
+      const lastMsg = parsed.messages[lastIdx];
+      if (lastMsg?.content?.parts) {
+        lastMsg.content.parts = [replacement];
+      } else if (lastMsg) {
+        lastMsg.content = { content_type: 'text', parts: [replacement] };
+      }
       return JSON.stringify(parsed);
     }
 
@@ -1980,6 +1986,10 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
   }
 
   const mapKeys = Object.keys(reverseMap);
+  if (mapKeys.length === 0) {
+    igLog('depseudonymizeResponse: no mappings — returning response as-is');
+    return response;
+  }
   igLog(`depseudonymizeResponse: wrapping stream with ${mapKeys.length} mappings`);
 
   const reader = response.body.getReader();

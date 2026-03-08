@@ -25,7 +25,7 @@ const heartbeatSchema = z.object({
       mainWorldLoaded: z.boolean().optional(),
       apiReachable: z.boolean().optional(),
       queueDraining: z.boolean().optional(),
-      errorsLast5Min: z.number().int().min(0).optional(),
+      errorsLast5Min: z.number().int().min(0).max(10000).optional(),
     })
     .optional(),
 });
@@ -48,25 +48,42 @@ heartbeatRoutes.post('/', async (c) => {
   const { extensionVersion, activePlatform, mode, queueDepth, healthStatus } = parsed.data;
 
   try {
-    // Update user's last-seen timestamp
-    await db
-      .update(users)
-      .set({ updatedAt: new Date() })
-      .where(and(eq(users.id, userId), eq(users.firmId, firmId)));
+    const now = new Date();
+    // Run user update + heartbeat upsert in parallel
+    await Promise.all([
+      // Update user's last-seen timestamp
+      db.update(users)
+        .set({ updatedAt: now })
+        .where(and(eq(users.id, userId), eq(users.firmId, firmId))),
 
-    // Persist heartbeat data
-    await db.insert(extensionHeartbeats).values({
-      userId,
-      firmId,
-      extensionVersion,
-      activePlatform: activePlatform ?? null,
-      mode: mode ?? null,
-      queueDepth: queueDepth ?? null,
-      mainWorldLoaded: healthStatus?.mainWorldLoaded ?? null,
-      apiReachable: healthStatus?.apiReachable ?? null,
-      queueDraining: healthStatus?.queueDraining ?? null,
-      errorsLast5Min: healthStatus?.errorsLast5Min ?? null,
-    });
+      // Upsert heartbeat — keep only the latest per user (prevents unbounded table growth)
+      db.insert(extensionHeartbeats).values({
+        userId,
+        firmId,
+        extensionVersion,
+        activePlatform: activePlatform ?? null,
+        mode: mode ?? null,
+        queueDepth: queueDepth ?? null,
+        mainWorldLoaded: healthStatus?.mainWorldLoaded ?? null,
+        apiReachable: healthStatus?.apiReachable ?? null,
+        queueDraining: healthStatus?.queueDraining ?? null,
+        errorsLast5Min: healthStatus?.errorsLast5Min ?? null,
+        receivedAt: now,
+      }).onConflictDoUpdate({
+        target: extensionHeartbeats.userId,
+        set: {
+          extensionVersion,
+          activePlatform: activePlatform ?? null,
+          mode: mode ?? null,
+          queueDepth: queueDepth ?? null,
+          mainWorldLoaded: healthStatus?.mainWorldLoaded ?? null,
+          apiReachable: healthStatus?.apiReachable ?? null,
+          queueDraining: healthStatus?.queueDraining ?? null,
+          errorsLast5Min: healthStatus?.errorsLast5Min ?? null,
+          receivedAt: now,
+        },
+      }),
+    ]);
 
     logger.debug('Heartbeat received', {
       userId,
