@@ -450,7 +450,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ ok: true });
         break;
       case 'SENSITIVITY_SCORE':
-        badge?.update(message.payload.score, message.payload.level);
+        // Badge disabled — score updates are no-ops
         sendResponse({ ok: true });
         break;
       case 'MODE_CHANGED':
@@ -575,8 +575,9 @@ function initialize() {
       engine = createCaptureEngine(detector);
       engine.start();
 
-      badge = createSensitivityBadge();
-      badge.showStandby(); // Show "Protected" indicator immediately on page load
+      // Badge disabled — the floating "Protected" chip is distracting on AI tool pages
+      // badge = createSensitivityBadge();
+      // badge.showStandby();
       toasts = createCoachingToasts();
 
       // Welcome toast on first load (only once per session)
