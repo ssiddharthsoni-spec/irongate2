@@ -1116,8 +1116,17 @@ function pseudonymizeLocal(text: string, entities: DetectedEntity[]): PseudonymR
       pseudonym = currentForwardMap[normalizedText];
     }
     if (!pseudonym) {
-      // Generate a new realistic fake
-      pseudonym = generateFake(entity.type, normalizedText);
+      // Generate a new realistic fake — ensure uniqueness so two different
+      // originals (e.g., "$8M" revenue, "$5M" profit) never collide on the
+      // same fake value (which would make reverse mapping ambiguous).
+      const usedFakes = new Set(Object.values(currentForwardMap));
+      let candidate = generateFake(entity.type, normalizedText);
+      let attempts = 0;
+      while (usedFakes.has(candidate) && attempts < 5) {
+        candidate = generateFake(entity.type, normalizedText);
+        attempts++;
+      }
+      pseudonym = candidate;
       seen.set(normalizedText, pseudonym);
       currentForwardMap[normalizedText] = pseudonym;
       mappings.push({
