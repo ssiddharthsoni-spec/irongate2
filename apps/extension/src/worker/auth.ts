@@ -14,6 +14,7 @@ function authLog(...args: any[]) { if (_authDebug) console.log('[Iron Gate Auth]
 const TOKEN_STORAGE_KEY = 'iron_gate_auth_token';
 const TOKEN_EXPIRY_KEY = 'iron_gate_token_expiry';
 const ENCRYPTION_KEY_SESSION = 'iron_gate_crypto_key';
+const MASTER_SECRET_STORAGE_KEY = 'iron_gate_master_secret';
 
 interface AuthState {
   token: string | null;
@@ -61,12 +62,52 @@ async function getEncryptionKey(): Promise<CryptoKey | null> {
 }
 
 /**
+ * Get or generate a per-installation cryptographic master secret.
+ * On first call, generates 32 bytes of randomness via crypto.getRandomValues()
+ * and persists it in chrome.storage.session (cleared when browser quits).
+ * Subsequent calls return the cached value.
+ *
+ * This replaces the old deterministic `iron-gate-${firmId}` scheme, which was
+ * predictable since firmId is not secret material.
+ */
+async function getOrCreateMasterSecret(firmId: string): Promise<string> {
+  // 1. Try session storage (survives service worker restart within same browser session)
+  try {
+    const stored = await chrome.storage.session.get(MASTER_SECRET_STORAGE_KEY);
+    const entry = stored[MASTER_SECRET_STORAGE_KEY];
+    if (entry && entry.firmId === firmId && typeof entry.secret === 'string') {
+      return entry.secret;
+    }
+  } catch {
+    // Session storage unavailable — will generate fresh
+  }
+
+  // 2. Generate a new cryptographically random secret
+  const secretBytes = crypto.getRandomValues(new Uint8Array(32));
+  const secret = btoa(String.fromCharCode(...secretBytes));
+
+  // 3. Persist in session storage (survives SW restart, cleared on browser quit)
+  try {
+    await chrome.storage.session.set({
+      [MASTER_SECRET_STORAGE_KEY]: { firmId, secret },
+    });
+  } catch {
+    // If session storage is unavailable, the secret lives in memory only.
+    // It will be regenerated on SW restart, which means stored credentials
+    // will fail to decrypt and the user will need to re-authenticate —
+    // safe behavior (fail-closed).
+  }
+
+  return secret;
+}
+
+/**
  * Set up encryption key when the user logs in.
  * Called from setCredentials() with the firm's encryption salt.
  */
 async function initEncryptionKey(firmId: string, encryptionSalt?: string): Promise<void> {
-  // Derive key from firmId + salt
-  const masterSecret = `iron-gate-${firmId}`;
+  // Derive key from a cryptographically random secret + salt
+  const masterSecret = await getOrCreateMasterSecret(firmId);
   const salt = encryptionSalt
     ? hexToUint8(encryptionSalt)
     : new TextEncoder().encode(firmId.padEnd(16, '0').slice(0, 16));
@@ -262,7 +303,7 @@ export async function clearCredentials(): Promise<void> {
   ]);
 
   try {
-    await chrome.storage.session.remove(ENCRYPTION_KEY_SESSION);
+    await chrome.storage.session.remove([ENCRYPTION_KEY_SESSION, MASTER_SECRET_STORAGE_KEY]);
   } catch {
     // Session storage may not be available
   }
