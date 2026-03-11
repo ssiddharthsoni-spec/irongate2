@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 
 interface LockScreenProps {
   onUnlock: () => void;
@@ -15,6 +15,13 @@ export function LockScreen({ onUnlock }: LockScreenProps) {
   const attemptsRef = useRef(0);
   const lockoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Clean up lockout timer on unmount to prevent setState on dead component
+  useEffect(() => {
+    return () => {
+      if (lockoutTimerRef.current) clearTimeout(lockoutTimerRef.current);
+    };
+  }, []);
+
   const handleUnlock = useCallback(async () => {
     if (!pin.trim() || checking || lockedOut) return;
 
@@ -23,6 +30,11 @@ export function LockScreen({ onUnlock }: LockScreenProps) {
 
     try {
       // Send API key to service worker for server-side verification
+      if (!chrome.runtime?.id) {
+        setError('Extension context lost — please reload the extension');
+        setChecking(false);
+        return;
+      }
       const resp = await chrome.runtime.sendMessage({
         type: 'UNLOCK_SESSION',
         payload: { apiKey: pin.trim() },

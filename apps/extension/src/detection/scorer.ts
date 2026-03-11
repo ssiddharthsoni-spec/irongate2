@@ -2,6 +2,22 @@
  * Sensitivity Scoring Algorithm
  * Takes raw entity detection results and produces a 0-100 sensitivity score.
  *
+ * Scoring model (v2 — multiplicative contextual):
+ *   finalScore = entityRisk × intentWeight × structureMultiplier
+ *     × documentTypeMultiplier × coOccurrenceMultiplier
+ *
+ * New layers (v2):
+ *   - Intent Classifier: classifies prompt intent + direction (inward/outward)
+ *   - Structure Detector: detects tabular/key-value/email/code patterns
+ *   - Entity Contextualizer: tags each entity (credential/public/self/3rd-party/internal)
+ *
+ * Preserved safety guards:
+ *   - Critical floor (SSN/credentials → minimum "high")
+ *   - FERPA compliance floor
+ *   - Contextual keyword floor (≥20 → minimum 30)
+ *   - NaN fail-safe (default to HIGH)
+ *   - HIGH_PII immunity from suppression
+ *
  * Score ranges:
  *   0-25:  Low    — Generic queries, no PII
  *  26-60:  Medium — Some identifiable information
@@ -16,7 +32,9 @@ import { analyzeRelationships, computeRelationshipBoost } from './relationship-a
 import { applyContextAwareDetection } from '../shared/context-analyzer';
 import { detectContextualSensitivity, computeContextualScore, explainContextualMarkers } from './contextual-keywords';
 import { applyIntentSuppression } from './intent-suppression';
-
+import { classifyIntent, getIntentWeight } from './intent-classifier';
+import { detectStructure } from './structure-detector';
+import { contextualizeEntities, getContextRiskMultiplier } from './entity-contextualizer';
 export type SensitivityLevel = 'low' | 'medium' | 'high' | 'critical';
 
 export interface SensitivityScore {
@@ -34,8 +52,8 @@ export interface ScoreBreakdown {
   legalBoost: number;
   contextualKeywordScore: number;
   documentTypeMultiplier: number;
-  conversationEscalation: number;
-  firmKnowledgeBoost: number;
+  intentWeight: number;
+  structureMultiplier: number;
 }
 
 // Entity type weights — higher = more sensitive
@@ -143,16 +161,34 @@ const VOLUME_SCORES = {
 export function computeScore(
   text: string,
   entities: DetectedEntity[],
-  customWeights?: Partial<Record<string, number>>
+  customWeights?: Partial<Record<string, number>>,
 ): SensitivityScore {
   const weights: Record<string, number> = { ...ENTITY_WEIGHTS, ...(customWeights || {}) } as Record<string, number>;
 
-  // ── Intent Suppression Layer ──────────────────────────────────────────
+  // ── Layer 1: Intent Classification (v2) ────────────────────────────────
+  // Classify the prompt's intent (what the user is trying to do) and
+  // direction (inward = asking for info, outward = sharing data).
+  const intentClassification = classifyIntent(text);
+  // Only apply intent weight when classification is confident (≥0.7).
+  // Low-confidence classifications (fallback to 'general') should not
+  // shift scores — preserves backward compatibility with existing tests.
+  const rawIntentWeight = getIntentWeight(intentClassification);
+  let intentWeight = intentClassification.confidence >= 0.7
+    ? rawIntentWeight
+    : 1.0;
+
+  // ── Layer 2: Structure Detection (v2) ──────────────────────────────────
+  // Detect if the text contains tabular data, key-value pairs, email
+  // headers, code blocks, etc. Structure amplifies or suppresses score.
+  const structureResult = detectStructure(text);
+  let structureMultiplier = structureResult.multiplier;
+
+  // ── Intent Suppression Layer (v1 — retained for compatibility) ─────────
   // Detect when PII is the PURPOSE of the task (horoscope, research,
   // self-intro) vs. incidental data leakage. Suppress intentional PII
   // before scoring so it doesn't inflate the sensitivity score.
-  const intentResult = applyIntentSuppression(text, entities);
-  let intentMultiplier = intentResult.scoreMultiplier;
+  const intentResult = applyIntentSuppression(text, entities, false);
+  let intentSuppMultiplier = intentResult.scoreMultiplier;
 
   // ── Contextual Intelligence Layer ──────────────────────────────────────
   // Apply context-aware detection: suppress code false positives,
@@ -162,11 +198,40 @@ export function computeScore(
   const contextualEntities = contextAware.entities;
   let coOccurrenceMultiplier = contextAware.scoreMultiplier;
 
+  // ── Layer 3: Entity Contextualization (v2) ─────────────────────────────
+  // Tag each entity with semantic context (credential, public_reference,
+  // self_reference, third_party_private, internal_business).
+  const contextualizedEntities = contextualizeEntities(text, contextualEntities);
+
+  // Compute per-entity context risk adjustment:
+  // Sum of (entity weight × context multiplier) vs (entity weight × 1.0)
+  // gives us an overall entity context factor.
+  // Only apply entity context factor when context classification is
+  // confident (≥0.7). Low-confidence defaults (0.4) should not shift
+  // scores — preserves backward compatibility.
+  let entityContextFactor = 1.0;
+  if (contextualizedEntities.length > 0) {
+    let weightedSum = 0;
+    let baseSum = 0;
+    for (const ce of contextualizedEntities) {
+      const w = weights[ce.type] || 5;
+      const confidence = Number.isFinite(ce.confidence) ? ce.confidence : 0.5;
+      const rawMultiplier = getContextRiskMultiplier(ce);
+      // Only use context multiplier when confident (≥0.7)
+      const effectiveMultiplier = ce.contextConfidence >= 0.7 ? rawMultiplier : 1.0;
+      baseSum += w * confidence;
+      weightedSum += w * confidence * effectiveMultiplier;
+    }
+    if (baseSum > 0) {
+      entityContextFactor = weightedSum / baseSum;
+    }
+  }
+
   // Classify document type for paragraph-level understanding:
   // litigation memo (2.0x), financial data (1.8x), casual question (0.5x), etc.
   const docClassification = classifyDocument(text);
   let documentTypeMultiplier = docClassification.confidence >= 0.25
-    ? DOCUMENT_TYPE_MULTIPLIERS[docClassification.type]
+    ? (DOCUMENT_TYPE_MULTIPLIERS[docClassification.type] ?? 1.0)
     : 1.0;
 
   // Safety: never let document type classification REDUCE score when high-PII
@@ -175,6 +240,14 @@ export function computeScore(
   const hasHighPII = contextualEntities.some(e => HIGH_PII_TYPES.has(e.type));
   if (hasHighPII && documentTypeMultiplier < 1.0) {
     documentTypeMultiplier = 1.0;
+  }
+
+  // Safety: credential_sharing intent or outward direction with high-PII
+  // → never suppress via intent or structure
+  if (hasHighPII) {
+    if (intentWeight < 1.0) intentWeight = 1.0;
+    if (structureMultiplier < 1.0) structureMultiplier = 1.0;
+    entityContextFactor = Math.max(entityContextFactor, 1.0);
   }
 
   // Analyze entity relationships: person+org, org+org (M&A), proximity
@@ -198,19 +271,54 @@ export function computeScore(
   // 5. Contextual keyword score: business-sensitive patterns (deal codenames, MNPI,
   //    litigation strategy, layoff plans, etc.) detected WITHOUT PII entities
   const contextualMarkers = detectContextualSensitivity(text);
-  const contextualKeywordScore = computeContextualScore(contextualMarkers);
+  let contextualKeywordScore = computeContextualScore(contextualMarkers);
 
-  // 6. Conversation escalation (placeholder — requires multi-turn state)
-  const conversationEscalation = 0;
+  // Entity-keyword co-occurrence: when entities appear within 100 chars of a
+  // contextual keyword match, the combination is stronger evidence of real
+  // sensitivity. "John Smith" alone is low risk. "John Smith" + "settlement
+  // authority" = much higher risk.
+  let coOccurrenceBoost = 0;
+  if (contextualMarkers.length > 0 && contextualEntities.length > 0) {
+    const MA_CATEGORIES = new Set(['ma_deal', 'financial_intel', 'insider_trading']);
+    const MEDICAL_CATEGORIES = new Set(['healthcare_phi', 'clinical_trial', 'medical_records']);
 
-  // 7. Firm knowledge boost (placeholder — requires server-side data)
-  const firmKnowledgeBoost = 0;
+    for (const marker of contextualMarkers) {
+      for (const entity of contextualEntities) {
+        const distance = Math.min(
+          Math.abs(entity.start - marker.end),
+          Math.abs(marker.start - entity.end),
+        );
+        if (distance < 100) {
+          // Close proximity between entity and keyword → boost
+          coOccurrenceBoost += 5;
+
+          // High-risk combo bonuses (2.7): specific entity+category pairs
+          // PERSON near M&A/financial keywords = insider trading risk
+          if (entity.type === 'PERSON' && MA_CATEGORIES.has(marker.category)) {
+            coOccurrenceBoost += 10;
+          }
+          // PERSON near medical keywords = PHI risk
+          if (entity.type === 'PERSON' && MEDICAL_CATEGORIES.has(marker.category)) {
+            coOccurrenceBoost += 10;
+          }
+          // ORG near M&A keywords = deal intelligence risk
+          if (entity.type === 'ORGANIZATION' && MA_CATEGORIES.has(marker.category)) {
+            coOccurrenceBoost += 8;
+          }
+        }
+      }
+    }
+    coOccurrenceBoost = Math.min(40, coOccurrenceBoost); // Cap at 40 (raised for combos)
+  }
 
   // Safety: if contextual keywords indicate high sensitivity, don't let
-  // document type classification or co-occurrence multiplier reduce the score
+  // any multiplier reduce the score
   if (contextualKeywordScore >= 15) {
     if (documentTypeMultiplier < 1.0) documentTypeMultiplier = 1.0;
     if (coOccurrenceMultiplier < 1.0) coOccurrenceMultiplier = 1.0;
+    if (intentWeight < 1.0) intentWeight = 1.0;
+    if (structureMultiplier < 1.0) structureMultiplier = 1.0;
+    intentSuppMultiplier = Math.max(intentSuppMultiplier, 1.0);
   }
 
   // ── Critical-Context Override ──────────────────────────────────────────
@@ -252,21 +360,57 @@ export function computeScore(
     criticalFloor = Math.max(criticalFloor, 61);
   }
 
+  // Floor 4: FERPA compliance hard-block — education records (student IDs,
+  // FERPA markers) combined with person entities must always score HIGH.
+  // FERPA violations carry severe federal penalties ($100k+ per incident).
+  const hasFerpaKeywords = contextualMarkers.some(m => m.category === 'education_ferpa');
+  const hasStudentEntity = contextualEntities.some(e =>
+    e.type === 'STUDENT_ID' || e.type === 'EDUCATION_RECORD'
+  );
+  const hasPersonEntity = contextualEntities.some(e => e.type === 'PERSON');
+  if ((hasFerpaKeywords && hasPersonEntity) || hasStudentEntity) {
+    criticalFloor = Math.max(criticalFloor, 61);
+  }
+
   // Safety: don't let intent suppression reduce score when dangerous
   // contextual keywords are present (M&A deal + "research" shouldn't suppress)
   if (contextualKeywordScore >= 15) {
-    intentMultiplier = Math.max(intentMultiplier, 1.0);
+    intentSuppMultiplier = Math.max(intentSuppMultiplier, 1.0);
   }
 
-  // Combine scores with contextual multipliers
+  // Validate multipliers before combining — prevent NaN propagation
+  function safeMultiplier(value: number, fallback: number = 1.0): number {
+    return (Number.isFinite(value) && value >= 0) ? value : fallback;
+  }
+
+  // ── Multiplicative Scoring (v2) ────────────────────────────────────────
+  // finalScore = baseSignals × intentWeight × structureMultiplier
+  //   × entityContextFactor × documentTypeMultiplier × coOccurrenceMultiplier
+  //   × intentSuppMultiplier (v1 compat)
   let rawScore =
-    (entityScore + volumeScore + contextScore + legalBoost + contextualKeywordScore + relationshipBoost + conversationEscalation + firmKnowledgeBoost) *
-    documentTypeMultiplier *
-    coOccurrenceMultiplier *
-    intentMultiplier;
+    (entityScore + volumeScore + contextScore + legalBoost + contextualKeywordScore + relationshipBoost + coOccurrenceBoost) *
+    safeMultiplier(intentWeight) *
+    safeMultiplier(structureMultiplier) *
+    safeMultiplier(entityContextFactor) *
+    safeMultiplier(documentTypeMultiplier) *
+    safeMultiplier(coOccurrenceMultiplier) *
+    safeMultiplier(intentSuppMultiplier);
+
+  // Floor: contextual keywords ≥20 → minimum score of 30
+  // If contextual keywords detect real business-sensitive content, never let the
+  // score fall below "medium" territory regardless of entity suppression.
+  if (contextualKeywordScore >= 20 && rawScore < 30) {
+    rawScore = 30;
+  }
 
   // Apply critical floor — never let arithmetic under-rate existential risks
   rawScore = Math.max(rawScore, criticalFloor);
+
+  // Guard against NaN from multiplier chain — ALWAYS fail safe (high), never fail open (low)
+  if (!Number.isFinite(rawScore)) {
+    console.error('[IronGate Scorer] NaN detected in score chain — defaulting to HIGH (fail-safe)');
+    rawScore = Math.max(criticalFloor, 70);
+  }
 
   // Clamp to 0-100
   const score = Math.min(100, Math.max(0, Math.round(rawScore)));
@@ -289,8 +433,8 @@ export function computeScore(
       legalBoost,
       contextualKeywordScore,
       documentTypeMultiplier,
-      conversationEscalation,
-      firmKnowledgeBoost,
+      intentWeight,
+      structureMultiplier,
     }),
     entities: contextualEntities,
   };
@@ -310,8 +454,9 @@ function computeEntityScore(
 
   for (const entity of entities) {
     const weight = weights[entity.type] || 5;
-    // Scale by confidence
-    score += weight * entity.confidence;
+    // Scale by confidence (guard against NaN/undefined confidence)
+    const confidence = Number.isFinite(entity.confidence) ? entity.confidence : 0.5;
+    score += weight * confidence;
   }
 
   // Entity combination bonus: multiple different entity types = more risky
@@ -423,7 +568,7 @@ function generateExplanation(
     // List entity types found
     const typeDescriptions = Array.from(typeGroups.entries())
       .sort((a, b) => b[1] - a[1])
-      .map(([type, count]) => `${count} ${type.toLowerCase().replace(/_/g, ' ')}${count > 1 ? 's' : ''}`)
+      .map(([type, count]) => `${count} ${(type ?? '').toLowerCase().replace(/_/g, ' ')}${count > 1 ? 's' : ''}`)
       .slice(0, 3);
 
     parts.push(`Detected ${typeDescriptions.join(', ')}`);

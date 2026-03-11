@@ -44,7 +44,6 @@ export const ChatGPTAdapter: SiteAdapter = {
 
   skipFetchProxy: false, // Fetch proxy handles request pseudonymization
   skipXhrProxy: false,
-  skipResponseStreamWrap: true, // ChatGPT SSE includes displayedContentReferences with position offsets — stream replacement corrupts them; DOM observer handles de-pseudo instead
 
   inputSelectors: [
     '#prompt-textarea',

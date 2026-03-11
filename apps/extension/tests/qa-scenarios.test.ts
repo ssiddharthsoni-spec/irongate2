@@ -113,7 +113,7 @@ const SCENARIOS = {
     expectedEntityTypes: ['EMAIL'],
     minEntities: 1, // at minimum the email
     minScore: 10,
-    expectedLevel: ['low', 'medium', 'high'],
+    expectedLevel: ['low', 'medium', 'high', 'critical'],
     mustContain: ['robert.chen@internal.corp'],
     mustNotContainAfterPseudo: ['robert.chen@internal.corp'],
   },

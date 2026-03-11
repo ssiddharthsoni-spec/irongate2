@@ -166,8 +166,9 @@ export function createUnifiedPipeline(runtime?: ModelRuntime, config?: UnifiedPi
           });
           layersUsed.push('agent-detector');
         }
-      } catch {
-        // Agent unavailable — regex covers us
+      } catch (err) {
+        console.warn('[IronGate Pipeline] Agent detector failed:', err instanceof Error ? err.message : String(err));
+        layersUsed.push('agent-detector:failed');
       }
       timings['phase2_agent'] = performance.now() - phase2Start;
     }

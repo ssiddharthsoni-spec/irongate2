@@ -32,6 +32,8 @@ let authState: AuthState = {
 
 // The derived CryptoKey — held in memory while service worker is alive
 let encryptionKey: CryptoKey | null = null;
+// Guard against concurrent getEncryptionKey() calls (TOCTOU race)
+let _encryptionKeyPromise: Promise<CryptoKey | null> | null = null;
 
 // ---------------------------------------------------------------------------
 // Encryption Key Management
@@ -41,24 +43,35 @@ let encryptionKey: CryptoKey | null = null;
  * Initialize the encryption key from session storage or derive a new one.
  * The key is stored in chrome.storage.session (survives SW restart,
  * cleared when browser quits).
+ * Uses a promise guard to prevent concurrent double-derivation.
  */
 async function getEncryptionKey(): Promise<CryptoKey | null> {
   if (encryptionKey) return encryptionKey;
 
-  try {
-    // Try to restore key derivation material from session storage
-    const session = await chrome.storage.session.get(ENCRYPTION_KEY_SESSION);
-    if (session[ENCRYPTION_KEY_SESSION]) {
-      const { masterSecret, salt } = session[ENCRYPTION_KEY_SESSION];
-      const saltBytes = new Uint8Array(salt);
-      encryptionKey = await deriveKey(masterSecret, saltBytes);
-      return encryptionKey;
-    }
-  } catch {
-    // Session storage not available or empty — key will be derived on login
-  }
+  // If another call is already deriving, wait for it instead of double-deriving
+  if (_encryptionKeyPromise) return _encryptionKeyPromise;
 
-  return null;
+  _encryptionKeyPromise = (async () => {
+    try {
+      // Try to restore key derivation material from session storage
+      const session = await chrome.storage.session.get(ENCRYPTION_KEY_SESSION);
+      if (session[ENCRYPTION_KEY_SESSION]) {
+        const { masterSecret, salt } = session[ENCRYPTION_KEY_SESSION];
+        const saltBytes = new Uint8Array(salt);
+        encryptionKey = await deriveKey(masterSecret, saltBytes);
+        return encryptionKey;
+      }
+    } catch {
+      // Session storage not available or empty — key will be derived on login
+    }
+    return null;
+  })();
+
+  try {
+    return await _encryptionKeyPromise;
+  } finally {
+    _encryptionKeyPromise = null;
+  }
 }
 
 /**
@@ -295,12 +308,16 @@ export async function clearCredentials(): Promise<void> {
 
   encryptionKey = null;
 
-  await chrome.storage.local.remove([
-    TOKEN_STORAGE_KEY,
-    TOKEN_EXPIRY_KEY,
-    'iron_gate_firm_id',
-    'iron_gate_user_id',
-  ]);
+  try {
+    await chrome.storage.local.remove([
+      TOKEN_STORAGE_KEY,
+      TOKEN_EXPIRY_KEY,
+      'iron_gate_firm_id',
+      'iron_gate_user_id',
+    ]);
+  } catch {
+    // Storage may not be available during extension shutdown
+  }
 
   try {
     await chrome.storage.session.remove([ENCRYPTION_KEY_SESSION, MASTER_SECRET_STORAGE_KEY]);
@@ -324,10 +341,14 @@ export function isAuthenticated(): boolean {
 }
 
 async function persistAuth(): Promise<void> {
-  await encryptedSet({
-    [TOKEN_STORAGE_KEY]: authState.token,
-    [TOKEN_EXPIRY_KEY]: authState.expiresAt,
-    iron_gate_firm_id: authState.firmId,
-    iron_gate_user_id: authState.userId,
-  });
+  try {
+    await encryptedSet({
+      [TOKEN_STORAGE_KEY]: authState.token,
+      [TOKEN_EXPIRY_KEY]: authState.expiresAt,
+      iron_gate_firm_id: authState.firmId,
+      iron_gate_user_id: authState.userId,
+    });
+  } catch (err) {
+    authLog('Failed to persist auth state:', err);
+  }
 }

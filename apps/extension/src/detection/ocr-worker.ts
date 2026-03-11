@@ -155,7 +155,9 @@ export async function recognizeImage(
     imageWidth = bitmap.width;
     imageHeight = bitmap.height;
     bitmap.close();
-  } catch {}
+  } catch (err) {
+    console.warn('[Iron Gate OCR] Failed to get image dimensions:', err instanceof Error ? err.message : String(err));
+  }
 
   const result = await _worker.recognize(blob);
   const processingTimeMs = performance.now() - startTime;

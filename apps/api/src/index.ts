@@ -161,7 +161,9 @@ app.get('/health', async (c) => {
     }
   }
 
-  return c.json(health);
+  // Return 503 when degraded so load balancers and Docker healthchecks detect the problem
+  const statusCode = health.status === 'ok' ? 200 : 503;
+  return c.json(health, statusCode);
 });
 
 // Kubernetes liveness probe — always returns 200 if process is running
@@ -204,11 +206,23 @@ app.get('/health/ready', async (c) => {
 
 // Mirror health check under /v1 so extension connect works without auth
 app.get('/v1/health', async (c) => {
-  return c.json({
+  const health: Record<string, unknown> = {
     status: 'ok',
     version: '0.2.7',
     timestamp: new Date().toISOString(),
-  });
+  };
+
+  // Quick DB check so extensions know the API is truly functional
+  try {
+    await db.execute(sql`SELECT 1`);
+    health.database = 'connected';
+  } catch {
+    health.database = 'disconnected';
+    health.status = 'degraded';
+  }
+
+  const statusCode = health.status === 'ok' ? 200 : 503;
+  return c.json(health, statusCode);
 });
 
 // Metrics endpoint — gated behind API key or admin key for security
@@ -253,10 +267,11 @@ app.get('/health/metrics', async (c) => {
   }
 });
 
-// API Documentation (no auth)
-app.get('/openapi.json', (c) => c.json(openApiSpec));
-app.get('/docs', (c) => {
-  const html = `<!DOCTYPE html>
+// API Documentation — disabled in production to hide API surface (4.5)
+if (process.env.NODE_ENV !== 'production') {
+  app.get('/openapi.json', (c) => c.json(openApiSpec));
+  app.get('/docs', (c) => {
+    const html = `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/><title>Iron Gate API Docs</title>
 <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.18.2/swagger-ui.css"
   integrity="sha384-rcbEi6xgdPk0iWkAQzT2F3FeBJXdG+ydrawGlfHAFIZG7wU6aKbQaRewysYpmrlW" crossorigin="anonymous"/>
@@ -265,8 +280,9 @@ app.get('/docs', (c) => {
   integrity="sha384-NXtFPpN61oWCuN4D42K6Zd5Rt2+uxeIT36R7kpXBuY9tLnZorzrJ4ykpqwJfgjpZ" crossorigin="anonymous"></script>
 <script>SwaggerUIBundle({ url: '/openapi.json', dom_id: '#swagger-ui' });</script>
 </body></html>`;
-  return c.html(html);
-});
+    return c.html(html);
+  });
+}
 
 // Auth routes — stricter rate limit (20 req/min per IP) to prevent brute-force.
 // Mounted before the global auth middleware because these endpoints self-authenticate.
@@ -289,10 +305,20 @@ app.use('/v1/auth/*', createMiddleware(async (c, next) => {
   if (entry.count > AUTH_RATE_LIMIT) {
     return c.json({ error: 'Too many auth requests — try again later' }, 429);
   }
-  // Periodic cleanup
-  if (authRateCounts.size > 5000) {
+  // Periodic cleanup — evict expired entries every 500 requests to cap memory
+  if (authRateCounts.size > 500) {
     for (const [k, v] of authRateCounts) {
       if (now > v.resetAt) authRateCounts.delete(k);
+    }
+    // Hard cap: if still too large after eviction, drop oldest entries
+    if (authRateCounts.size > 5000) {
+      const excess = authRateCounts.size - 5000;
+      let dropped = 0;
+      for (const k of authRateCounts.keys()) {
+        if (dropped >= excess) break;
+        authRateCounts.delete(k);
+        dropped++;
+      }
     }
   }
   await next();

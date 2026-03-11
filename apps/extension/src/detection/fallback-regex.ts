@@ -41,6 +41,25 @@ const REGEX_PATTERNS: RegexPattern[] = [
     confidence: 0.65,
     contextual: true,
   },
+  // Names followed by action verbs: "John Smith mentioned", "Sarah Chen emailed"
+  {
+    type: 'PERSON',
+    pattern: /\b[A-Z][a-z]{2,15}\s+[A-Z][a-z]{2,15}\s+(?:told|said|mentioned|emailed|called|asked|informed|reported|confirmed|denied|stated|claimed|suggested|proposed|recommended|approved|rejected|signed|authorized)\b/g,
+    confidence: 0.7,
+  },
+  // Names in possessive context: "John Smith's account", "Sarah Chen's file"
+  {
+    type: 'PERSON',
+    pattern: /\b[A-Z][a-z]{2,15}\s+[A-Z][a-z]{2,15}(?:'s|'s)\s+(?:account|file|case|record|report|email|salary|position|team|department|performance|review|contract|agreement)\b/g,
+    confidence: 0.75,
+  },
+  // Names after action verbs (reverse): "told John Smith", "emailed Sarah Chen"
+  {
+    type: 'PERSON',
+    pattern: /\b(?:told|asked|emailed|called|informed|notified|briefed|contacted|assigned|promoted|terminated|hired|fired|invited)\s+[A-Z][a-z]{2,15}\s+[A-Z][a-z]{2,15}\b/gi,
+    confidence: 0.7,
+    contextual: true,
+  },
   // ── Organization Names ────────────────────────────────────────────────
   // Multi-word capitalized names with common org suffixes
   {
@@ -159,6 +178,17 @@ const REGEX_PATTERNS: RegexPattern[] = [
     type: 'DATE',
     pattern: /\b(?:\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})\b/g,
     confidence: 0.7,
+  },
+  // Spelled-out dates: "March 12, 1990", "12 March 1990", "March 12th, 1990"
+  {
+    type: 'DATE',
+    pattern: /\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}\b/gi,
+    confidence: 0.65,
+  },
+  {
+    type: 'DATE',
+    pattern: /\b\d{1,2}(?:st|nd|rd|th)?\s+(?:January|February|March|April|May|June|July|August|September|October|November|December),?\s+\d{4}\b/gi,
+    confidence: 0.65,
   },
   // ── Monetary Amounts ──────────────────────────────────────────────────
   {
@@ -495,6 +525,8 @@ function detectBase64PII(text: string): DetectedEntity[] {
   const b64re = /(?:[A-Za-z0-9+/]{4}){6,125}={0,2}/g;
   let m: RegExpExecArray | null;
   while ((m = b64re.exec(text)) !== null) {
+    // Skip excessively long base64 strings to avoid performance issues
+    if (m[0].length > 2000) continue;
     try {
       const decoded = atob(m[0]);
       // Only flag if decoded text looks like ASCII text with PII markers
@@ -548,6 +580,9 @@ function runRegexPatterns(text: string): DetectedEntity[] {
         }
       }
 
+      // Bounds check: ensure start/end are within text range
+      if (matchStart < 0 || matchEnd > text.length || matchStart >= matchEnd) continue;
+
       // Suppress PERSON entities that match known non-PII phrases (companies, places, tech terms)
       if (type === 'PERSON' && isKnownNonPII(matchText)) {
         continue;
@@ -566,7 +601,8 @@ function runRegexPatterns(text: string): DetectedEntity[] {
         });
       } else {
         // If we already have a match at the same position+type, keep the higher confidence one
-        const existingIdx = seen.get(key)!;
+        const existingIdx = seen.get(key);
+        if (existingIdx === undefined) continue;
         if (entities[existingIdx].confidence < confidence) {
           entities[existingIdx] = {
             type,

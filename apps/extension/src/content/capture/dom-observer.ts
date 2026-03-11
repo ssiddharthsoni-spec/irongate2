@@ -23,55 +23,84 @@ export function createDOMObserver(
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let lastText = '';
   let currentInput: HTMLElement | null = null;
+  let isAttaching = false; // Guard against concurrent attachObserver calls
 
   function handleMutation() {
-    if (!currentInput) return;
+    try {
+      if (!currentInput) return;
 
-    // Debounce at 300ms
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      const text = detector.extractPromptText(currentInput!);
-      if (text !== lastText) {
-        lastText = text;
-        if (text.length > 0) {
-          onPromptChange(text);
-        } else {
-          // Input was cleared — notify so sidepanel resets stale results
-          onPromptCleared?.();
+      // Debounce at 300ms
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        try {
+          if (!currentInput) return;
+          const text = detector.extractPromptText(currentInput);
+          if (text !== lastText) {
+            lastText = text;
+            if (text.length > 0) {
+              onPromptChange(text);
+            } else {
+              // Input was cleared — notify so sidepanel resets stale results
+              onPromptCleared?.();
+            }
+          }
+        } catch (err) {
+          console.warn('[Iron Gate] Mutation debounce handler error:', err);
         }
-      }
-    }, 300);
+      }, 300);
+    } catch (err) {
+      console.warn('[Iron Gate] MutationObserver callback error:', err);
+    }
+  }
+
+  /** Remove listener from the current input element */
+  function detachCurrentInput() {
+    if (currentInput) {
+      currentInput.removeEventListener('input', handleMutation);
+      currentInput = null;
+    }
   }
 
   function attachObserver(input: HTMLElement) {
-    // Disconnect existing observer
-    if (observer) observer.disconnect();
+    // Guard against concurrent calls from polling + navigation check
+    if (isAttaching) return;
+    isAttaching = true;
 
-    // Verify the element is a valid DOM node before observing
-    if (!(input instanceof Node) || !input.isConnected) {
-      console.warn('[Iron Gate] Prompt input is not a valid connected DOM node, skipping');
-      return;
-    }
-
-    currentInput = input;
-    observer = new MutationObserver(handleMutation);
     try {
-      observer.observe(input, {
-        childList: true,
-        subtree: true,
-        characterData: true,
-        attributes: false,
-      });
-    } catch (err) {
-      console.warn('[Iron Gate] Failed to observe prompt input:', err);
-      currentInput = null;
-      return;
+      // Disconnect existing observer
+      if (observer) observer.disconnect();
+
+      // Remove listener from PREVIOUS input before attaching to new one
+      detachCurrentInput();
+
+      // Verify the element is a valid DOM node before observing
+      if (!(input instanceof Node) || !input.isConnected) {
+        console.warn('[Iron Gate] Prompt input is not a valid connected DOM node, skipping');
+        return;
+      }
+
+      currentInput = input;
+      observer = new MutationObserver(handleMutation);
+      try {
+        observer.observe(input, {
+          childList: true,
+          subtree: true,
+          characterData: true,
+          attributes: false,
+        });
+      } catch (err) {
+        console.warn('[Iron Gate] Failed to observe prompt input:', err);
+        currentInput = null;
+        return;
+      }
+
+      // Also listen for 'input' events as a backup
+      input.addEventListener('input', handleMutation);
+
+      console.log('[Iron Gate] DOM observer attached to prompt input');
+    } finally {
+      isAttaching = false;
     }
-
-    // Also listen for 'input' events as a backup
-    input.addEventListener('input', handleMutation);
-
-    console.log('[Iron Gate] DOM observer attached to prompt input');
   }
 
   // Poll for the prompt input element (SPAs render async)
@@ -98,7 +127,8 @@ export function createDOMObserver(
     if (window.location.href !== lastUrl) {
       lastUrl = window.location.href;
       lastText = '';
-      currentInput = null;
+      // Clean up old input listener before clearing reference
+      detachCurrentInput();
       // Re-find the input on navigation
       const input = detector.getPromptInput();
       if (input) {
@@ -111,13 +141,21 @@ export function createDOMObserver(
 
   return {
     disconnect() {
-      if (observer) observer.disconnect();
-      if (pollInterval) clearInterval(pollInterval);
-      if (debounceTimer) clearTimeout(debounceTimer);
-      clearInterval(navigationCheck);
-      if (currentInput) {
-        currentInput.removeEventListener('input', handleMutation);
+      if (observer) {
+        observer.disconnect();
+        observer = null;
       }
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+        debounceTimer = null;
+      }
+      clearInterval(navigationCheck);
+      // Clean up current input listener
+      detachCurrentInput();
     },
   };
 }

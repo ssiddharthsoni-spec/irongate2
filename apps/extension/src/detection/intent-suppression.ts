@@ -55,13 +55,13 @@ const BENIGN_INTENT_PATTERNS: BenignIntentPattern[] = [
   // ── Personal/Creative Tasks ────────────────────────────────────────────
   {
     name: 'horoscope_request',
-    pattern: /\b(?:horoscope|zodiac|astrology|birth\s*chart|natal\s*chart|star\s*sign|sun\s*sign|moon\s*sign|rising\s*sign)\b/i,
-    safeTypes: new Set(['DATE', 'LOCATION']),
+    pattern: /\b(?:horoscope|zodiac|astrology|birth\s*chart|natal\s*chart|star\s*sign|sun\s*sign|moon\s*sign|rising\s*sign|kundli|vedic)\b/i,
+    safeTypes: new Set(['DATE', 'DATE_OF_BIRTH', 'LOCATION', 'PERSON']),
   },
   {
     name: 'birthday_task',
     pattern: /\b(?:birthday\s*(?:card|message|wish|party|gift|plan|invitation)|happy\s*birthday|born\s*on|celebrate\s*(?:my|their|his|her))\b/i,
-    safeTypes: new Set(['DATE', 'PERSON']),
+    safeTypes: new Set(['DATE', 'DATE_OF_BIRTH', 'PERSON']),
   },
   {
     name: 'self_introduction',
@@ -134,6 +134,41 @@ const BENIGN_INTENT_PATTERNS: BenignIntentPattern[] = [
     pattern: /\b(?:how\s+(?:do|can|should|to|would)\s+(?:I|we|you)|steps?\s+(?:to|for)|tutorial|guide\s+(?:for|to|on))\b/i,
     safeTypes: new Set(['ORGANIZATION', 'LOCATION']),
   },
+
+  // ── Formatting / Editing Tasks ──────────────────────────────────────────
+  {
+    name: 'formatting_task',
+    pattern: /\b(?:format|reformat|restructure|reorganize|clean\s+up|fix\s+(?:the\s+)?(?:formatting|grammar|spelling|punctuation|typos?)|proofread|make\s+(?:this|it)\s+(?:look|sound)\s+(?:better|professional|cleaner))\b/i,
+    safeTypes: new Set(['PERSON', 'ORGANIZATION', 'LOCATION', 'DATE', 'EMAIL']),
+  },
+
+  // ── Translation Tasks ──────────────────────────────────────────────────
+  {
+    name: 'translation_task',
+    pattern: /\b(?:translat(?:e|ion)|(?:convert|change)\s+(?:this\s+)?(?:to|into)\s+(?:english|spanish|french|german|chinese|japanese|korean|arabic|hindi|portuguese|italian|russian|dutch|swedish)|in\s+(?:english|spanish|french|german|chinese|japanese|korean))\b/i,
+    safeTypes: new Set(['PERSON', 'ORGANIZATION', 'LOCATION', 'DATE']),
+  },
+
+  // ── Summarization Tasks ────────────────────────────────────────────────
+  {
+    name: 'summarization_task',
+    pattern: /\b(?:summariz(?:e|ation)|(?:give|write|create|provide)\s+(?:a\s+)?(?:summary|synopsis|overview|recap|brief|gist|tldr|tl;dr)|(?:shorten|condense|simplify)\s+(?:this|the\s+following))\b/i,
+    safeTypes: new Set(['PERSON', 'ORGANIZATION', 'LOCATION', 'DATE']),
+  },
+
+  // ── Creative Writing Tasks ──────────────────────────────────────────────
+  {
+    name: 'creative_writing',
+    pattern: /\b(?:write\s+(?:a\s+)?(?:story|poem|song|haiku|limerick|essay|article|blog\s*post|script|dialogue|monologue|speech)|(?:creative|fictional|fantasy|sci[\s-]?fi)\s+(?:writing|story|narrative)|make\s+(?:up|it)\s+(?:a\s+)?(?:story|poem))\b/i,
+    safeTypes: new Set(['PERSON', 'ORGANIZATION', 'LOCATION', 'DATE']),
+  },
+
+  // ── Code Help Tasks ─────────────────────────────────────────────────────
+  {
+    name: 'code_help',
+    pattern: /\b(?:(?:write|create|build|implement|code|develop|debug|fix)\s+(?:a\s+)?(?:function|class|method|script|program|app|component|module|API|endpoint|query)|(?:refactor|optimize|review)\s+(?:this|the|my)\s+(?:code|function|class)|(?:what\s+does|how\s+does)\s+(?:this|the)\s+(?:code|function|method))\b/i,
+    safeTypes: new Set(['PERSON', 'ORGANIZATION', 'LOCATION', 'DATE', 'IP_ADDRESS']),
+  },
 ];
 
 // ─── First-Person Possessive Patterns ────────────────────────────────────────
@@ -183,9 +218,17 @@ const NEVER_SUPPRESS_TYPES = new Set([
  * - First-person must appear in the first sentence
  * - Multiple entities (≥4) = likely a data record, not a casual query
  */
+/**
+ * @param nliBenign - When true, NLI has classified the prompt as benign
+ *   with high confidence. This broadens suppression: ALL safe-type entities
+ *   are suppressed even if no hardcoded regex pattern matched. This eliminates
+ *   the whack-a-mole problem — NLI understands novel benign scenarios
+ *   (e.g., "reformat this text for a presentation") without needing a regex.
+ */
 export function applyIntentSuppression(
   text: string,
   entities: DetectedEntity[],
+  nliBenign: boolean = false,
 ): IntentSuppressionResult {
   if (entities.length === 0) {
     return { entities, scoreMultiplier: 1.0, suppressions: [] };
@@ -194,13 +237,19 @@ export function applyIntentSuppression(
   // GUARD 1: Long texts are likely data dumps / documents, not casual queries.
   // Intent suppression is for "create a horoscope for March 15" not for
   // multi-paragraph legal memos that happen to contain "what is".
-  if (text.length > 500) {
+  // NLI cross-talk: when NLI says benign, relax the length guard slightly
+  // (e.g., a 600-char personal question is still benign).
+  const lengthLimit = nliBenign ? 800 : 500;
+  if (text.length > lengthLimit) {
     return { entities, scoreMultiplier: 1.0, suppressions: [] };
   }
 
   // GUARD 2: Many entities = structured data record, not a casual question.
   // "Who is Elon Musk?" has 1 entity. A DSAR with 8 entities is a data dump.
-  if (entities.length >= 4) {
+  // NLI cross-talk: when NLI says benign, relax the entity count guard
+  // (a personal bio might mention 4-5 names/places and still be benign).
+  const entityLimit = nliBenign ? 6 : 4;
+  if (entities.length >= entityLimit) {
     return { entities, scoreMultiplier: 1.0, suppressions: [] };
   }
 
@@ -222,6 +271,24 @@ export function applyIntentSuppression(
   // Check for first-person context IN THE FIRST SENTENCE only
   const firstSentence = text.substring(0, Math.min(text.length, text.indexOf('.') > 0 ? text.indexOf('.') + 1 : 150));
   const isFirstPerson = FIRST_PERSON_PATTERNS.some(p => p.test(firstSentence));
+
+  // NLI CROSS-TALK: When NLI says benign, treat it AS a matched pattern.
+  // This is the key change that eliminates whack-a-mole: NLI understands
+  // novel benign scenarios without needing a regex for each one.
+  if (nliBenign && matchedPatterns.length === 0 && !isFirstPerson) {
+    // NLI is the pattern match — add all common safe types
+    const nliSafeTypes = new Set(['PERSON', 'DATE', 'DATE_OF_BIRTH', 'LOCATION', 'ORGANIZATION', 'EMAIL']);
+    // But DON'T proceed if the only entity is a NEVER_SUPPRESS type
+    const allNeverSuppress = entities.every(e => NEVER_SUPPRESS_TYPES.has(e.type));
+    if (!allNeverSuppress) {
+      // Treat NLI as a virtual pattern match
+      matchedPatterns.push({
+        name: 'nli_benign',
+        pattern: /./,  // dummy — NLI already matched
+        safeTypes: nliSafeTypes,
+      });
+    }
+  }
 
   if (matchedPatterns.length === 0 && !isFirstPerson) {
     return { entities, scoreMultiplier: 1.0, suppressions: [] };

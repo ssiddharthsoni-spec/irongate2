@@ -72,6 +72,10 @@ export function getConfiguredApiKey(): string | undefined {
   return config.apiKey || undefined;
 }
 
+export function getConfiguredBaseUrl(): string {
+  return config.baseUrl;
+}
+
 export function configureApiClient(newConfig: Partial<ApiClientConfig>) {
   // Only override non-empty values — preserve defaults for unset fields
   for (const [key, value] of Object.entries(newConfig)) {

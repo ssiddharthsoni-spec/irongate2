@@ -167,8 +167,10 @@ export function generateFake(type: string, original: string): string {
       }
       const numDate = original.match(/^(\d{1,2})([\/\-])(\d{1,2})\2(\d{2,4})$/);
       if (numDate) {
-        const m = Math.max(1, Math.min(12, parseInt(numDate[1]) + Math.floor(randBetween(-2, 3))));
-        const d = Math.max(1, Math.min(28, parseInt(numDate[3]) + Math.floor(randBetween(-5, 5))));
+        const mShift = Math.floor(randBetween(1, 4));
+        const dShift = Math.floor(randBetween(1, 10));
+        const m = Math.max(1, Math.min(12, ((parseInt(numDate[1]) - 1 + mShift) % 12) + 1));
+        const d = Math.max(1, Math.min(28, ((parseInt(numDate[3]) - 1 + dShift) % 28) + 1));
         const mStr = numDate[1].length === 2 ? m.toString().padStart(2, '0') : m.toString();
         const dStr = numDate[3].length === 2 ? d.toString().padStart(2, '0') : d.toString();
         return mStr + numDate[2] + dStr + numDate[2] + numDate[4];

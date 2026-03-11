@@ -142,6 +142,52 @@ export class ConversationTracker {
     return 0;
   }
 
+  /**
+   * Slow-boil detection (2.6): cumulative disclosure score.
+   * Tracks total PII exposure across the conversation. An attacker
+   * (or careless user) may drip-feed sensitive info across many turns:
+   *   Turn 1: "John Smith works at Acme" (score 15)
+   *   Turn 2: "His SSN is 123-45-6789" (score 65)
+   *   Turn 3: "He lives at 123 Main St" (score 20)
+   * Individually some are low, but cumulatively it's a full identity.
+   *
+   * Returns a boost (0-25) based on cumulative weighted entity exposure.
+   */
+  getCumulativeDisclosureScore(): number {
+    if (this.turns.length < 2) return 0;
+
+    // Track unique entity types seen across all turns
+    const typesSeen = new Set<string>();
+    let totalWeightedScore = 0;
+
+    for (const turn of this.turns) {
+      for (const entity of turn.entities) {
+        typesSeen.add(entity.type);
+      }
+      // Accumulate normalized scores
+      totalWeightedScore += Math.min(turn.score, 80); // Don't let one critical turn dominate
+    }
+
+    let boost = 0;
+
+    // Diversity bonus: many different entity types across turns = building a profile
+    if (typesSeen.size >= 5) {
+      boost += 15;
+    } else if (typesSeen.size >= 3) {
+      boost += 8;
+    }
+
+    // Cumulative score threshold: conversation total exceeds safe threshold
+    const avgScore = totalWeightedScore / this.turns.length;
+    if (totalWeightedScore > 150 && avgScore > 20) {
+      boost += 10;
+    } else if (totalWeightedScore > 80 && avgScore > 15) {
+      boost += 5;
+    }
+
+    return Math.min(25, boost);
+  }
+
   getTurnCount(): number {
     return this.turns.length;
   }

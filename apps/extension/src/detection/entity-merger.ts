@@ -3,12 +3,10 @@
  *
  * Merges results from:
  *   - Tier 1: Regex-based detection (fallback-regex.ts)
- *   - Tier 2: GLiNER NER model (model-loader.ts)
  *   - Tier 3: Entity dictionary (entity-dictionary.ts)
  *
- * Priority: Dictionary > GLiNER > Regex
+ * Priority: Dictionary > Regex
  * Dictionary entries are ground truth (admin-configured).
- * GLiNER catches novel entities regex misses.
  * Regex is the fallback for well-structured patterns (SSN, email, etc).
  *
  * Deduplication: overlapping spans are resolved by keeping the
@@ -33,8 +31,17 @@ const SOURCE_PRIORITY: Record<string, number> = {
  * Merge entities from multiple detection sources.
  * Deduplicates overlapping spans, preferring higher-priority sources.
  */
+function isValidEntity(e: any): boolean {
+  return (
+    e &&
+    typeof e.start === 'number' && Number.isFinite(e.start) && e.start >= 0 &&
+    typeof e.end === 'number' && Number.isFinite(e.end) && e.end > e.start &&
+    typeof e.type === 'string' && e.type.length > 0
+  );
+}
+
 export function mergeEntities(...sources: DetectedEntity[][]): DetectedEntity[] {
-  const all = sources.flat();
+  const all = sources.flat().filter(isValidEntity);
   if (all.length === 0) return [];
 
   // Sort by start position, then by priority (highest first), then by span length (longest first)

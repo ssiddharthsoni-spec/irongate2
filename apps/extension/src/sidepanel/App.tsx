@@ -181,13 +181,27 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
 
   const [copiedSafe, setCopiedSafe] = useState(false);
   const [copiedDocSafe, setCopiedDocSafe] = useState(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyDocTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const apiKeySavedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const listenerInstalledRef = useRef(false);
+
+  // Clean up copy feedback timers on unmount
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      if (copyDocTimerRef.current) clearTimeout(copyDocTimerRef.current);
+      if (apiKeySavedTimerRef.current) clearTimeout(apiKeySavedTimerRef.current);
+    };
+  }, []);
 
   const handleCopySafe = useCallback(async () => {
     if (!inspectorData?.maskedPrompt) return;
     try {
       await navigator.clipboard.writeText(inspectorData.maskedPrompt);
       setCopiedSafe(true);
-      setTimeout(() => setCopiedSafe(false), 2000);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopiedSafe(false), 2000);
     } catch {
       // Fallback for older browsers
       const textarea = document.createElement('textarea');
@@ -199,7 +213,8 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
       document.execCommand('copy');
       document.body.removeChild(textarea);
       setCopiedSafe(true);
-      setTimeout(() => setCopiedSafe(false), 2000);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopiedSafe(false), 2000);
     }
   }, [inspectorData?.maskedPrompt]);
 
@@ -208,7 +223,8 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
     try {
       await navigator.clipboard.writeText(docScanData.redactedText);
       setCopiedDocSafe(true);
-      setTimeout(() => setCopiedDocSafe(false), 2000);
+      if (copyDocTimerRef.current) clearTimeout(copyDocTimerRef.current);
+      copyDocTimerRef.current = setTimeout(() => setCopiedDocSafe(false), 2000);
     } catch {
       const textarea = document.createElement('textarea');
       textarea.value = docScanData.redactedText;
@@ -219,7 +235,8 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
       document.execCommand('copy');
       document.body.removeChild(textarea);
       setCopiedDocSafe(true);
-      setTimeout(() => setCopiedDocSafe(false), 2000);
+      if (copyDocTimerRef.current) clearTimeout(copyDocTimerRef.current);
+      copyDocTimerRef.current = setTimeout(() => setCopiedDocSafe(false), 2000);
     }
   }, [docScanData?.redactedText]);
 
@@ -458,6 +475,10 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
   }, [lastScore]);
 
   useEffect(() => {
+    // Prevent duplicate listeners if useEffect fires twice (React StrictMode)
+    if (listenerInstalledRef.current) return;
+    listenerInstalledRef.current = true;
+
     // Track which tool was last active so we can clear stale detections on tool change
     let previousToolId: string | null = null;
 
@@ -489,7 +510,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
         activeTabIdRef.current = tabId;
 
         // Query the content script for tool status
-        chrome.tabs.sendMessage(tabId, { type: 'GET_STATUS' }, (response) => {
+        try { chrome.tabs.sendMessage(tabId, { type: 'GET_STATUS' }, (response) => {
           // If content script didn't respond, use URL-based fallback
           if (chrome.runtime.lastError) {
             const urlTool = getToolNameFromUrl(tab.url);
@@ -536,7 +557,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
               previousToolId = null;
             }
           }
-        });
+        }); } catch { /* Tab may be closing or extension context invalidated */ }
 
         // Fetch per-tab detection state from service worker
         chrome.runtime.sendMessage(
@@ -580,15 +601,17 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
     const periodicCheck = setInterval(checkCurrentTab, 8000);
 
     // Also re-check when the active tab changes
+    // Track dynamic timers so they can be cleaned up on unmount
+    const dynamicTimers: ReturnType<typeof setTimeout>[] = [];
     const tabListener = (_tabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
       if (changeInfo.status === 'complete') {
-        setTimeout(checkCurrentTab, 500);
+        dynamicTimers.push(setTimeout(checkCurrentTab, 500));
       }
     };
     chrome.tabs.onUpdated.addListener(tabListener);
 
     const activatedListener = () => {
-      setTimeout(checkCurrentTab, 300);
+      dynamicTimers.push(setTimeout(checkCurrentTab, 300));
     };
     chrome.tabs.onActivated.addListener(activatedListener);
 
@@ -707,7 +730,9 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
     chrome.runtime.onMessage.addListener(messageListener);
 
     return () => {
+      listenerInstalledRef.current = false;
       retryTimers.forEach(clearTimeout);
+      dynamicTimers.forEach(clearTimeout);
       clearInterval(periodicCheck);
       chrome.runtime.onMessage.removeListener(messageListener);
       chrome.tabs.onUpdated.removeListener(tabListener);
@@ -736,7 +761,9 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
       await saveApiKey(key);
       try {
         await chrome.runtime.sendMessage({ type: 'SET_API_KEY', payload: { apiKey: key } });
-      } catch {}
+      } catch (err) {
+        console.warn('[IronGate] SET_API_KEY message failed:', err instanceof Error ? err.message : String(err));
+      }
 
       // Test connection to API
       const url = apiUrlDraft.replace(/\/+$/, '');
@@ -947,7 +974,9 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
                 chrome.storage.local.set({ firmMode: 'proxy' });
                 try {
                   chrome.runtime.sendMessage({ type: 'MODE_CHANGED', payload: { mode: 'proxy' } });
-                } catch {}
+                } catch (err) {
+                  console.warn('[IronGate] MODE_CHANGED message failed:', err instanceof Error ? err.message : String(err));
+                }
               }}
               className="w-full py-3 px-4 text-sm font-semibold text-white bg-iron-600 rounded-lg hover:bg-iron-700 transition-colors mt-auto"
             >
@@ -1111,7 +1140,8 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
                   payload: { apiKey: apiKeyDraft },
                 }).catch(() => {});
                 setApiKeySaved(true);
-                setTimeout(() => setApiKeySaved(false), 2000);
+                if (apiKeySavedTimerRef.current) clearTimeout(apiKeySavedTimerRef.current);
+                apiKeySavedTimerRef.current = setTimeout(() => setApiKeySaved(false), 2000);
               }}
               className={`px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
                 apiKeySaved

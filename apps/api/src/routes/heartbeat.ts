@@ -108,6 +108,6 @@ heartbeatRoutes.post('/', async (c) => {
       error: err instanceof Error ? err.message : String(err),
       userId,
     });
-    return c.json({ ok: true, recorded: false, serverTime: new Date().toISOString() });
+    return c.json({ ok: false, recorded: false, error: 'Heartbeat processing failed', serverTime: new Date().toISOString() }, 500);
   }
 });

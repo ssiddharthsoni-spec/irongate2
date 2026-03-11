@@ -595,3 +595,30 @@ export const breachLog = pgTable('breach_log', {
   index('breach_log_firm_idx').on(table.firmId),
   index('breach_log_firm_created_idx').on(table.firmId, table.createdAt),
 ]);
+
+// --- Conversation State (for server-side processing mode) ---
+export const conversationState = pgTable('conversation_state', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  sessionId: text('session_id').notNull(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  userId: uuid('user_id'),
+  /** Cumulative entity types seen across turns (JSON array of strings) */
+  entityTypesSeen: jsonb('entity_types_seen').default([]),
+  /** Number of turns in this conversation */
+  turnCount: integer('turn_count').notNull().default(0),
+  /** Cumulative weighted score across all turns */
+  cumulativeScore: real('cumulative_score').notNull().default(0),
+  /** Highest score seen in any single turn */
+  peakScore: real('peak_score').notNull().default(0),
+  /** Whether this conversation has been escalated (slow-boil detected) */
+  escalated: boolean('escalated').notNull().default(false),
+  /** Last intent classification */
+  lastIntent: text('last_intent'),
+  /** Last activity timestamp */
+  lastActivity: timestamp('last_activity').notNull().defaultNow(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  index('conv_state_session_idx').on(table.sessionId),
+  index('conv_state_firm_idx').on(table.firmId),
+  unique('conv_state_session_firm').on(table.sessionId, table.firmId),
+]);

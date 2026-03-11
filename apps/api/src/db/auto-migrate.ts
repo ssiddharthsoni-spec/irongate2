@@ -474,6 +474,33 @@ const migrations: string[] = [
   `CREATE INDEX IF NOT EXISTS events_firm_action_idx ON events(firm_id, action)`,
   `CREATE INDEX IF NOT EXISTS events_prompt_hash_idx ON events(prompt_hash)`,
   `CREATE INDEX IF NOT EXISTS users_email_idx ON users(email)`,
+
+  // --- Conversation state table (server-side processing mode) ---
+  `CREATE TABLE IF NOT EXISTS conversation_state (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id TEXT NOT NULL,
+    firm_id UUID NOT NULL REFERENCES firms(id),
+    user_id UUID,
+    entity_types_seen JSONB DEFAULT '[]',
+    turn_count INTEGER NOT NULL DEFAULT 0,
+    cumulative_score REAL NOT NULL DEFAULT 0,
+    peak_score REAL NOT NULL DEFAULT 0,
+    escalated BOOLEAN NOT NULL DEFAULT false,
+    last_intent TEXT,
+    last_activity TIMESTAMP NOT NULL DEFAULT now(),
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    UNIQUE(session_id, firm_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS conv_state_session_idx ON conversation_state(session_id)`,
+  `CREATE INDEX IF NOT EXISTS conv_state_firm_idx ON conversation_state(firm_id)`,
+
+  // --- RLS for conversation_state ---
+  `ALTER TABLE conversation_state ENABLE ROW LEVEL SECURITY`,
+  `DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'conv_state_isolation' AND tablename = 'conversation_state') THEN
+      EXECUTE 'CREATE POLICY conv_state_isolation ON conversation_state FOR ALL USING (firm_id = app.current_firm_id())';
+    END IF;
+  END $$`,
 ];
 
 /** Arbitrary but consistent advisory lock ID for migration coordination */

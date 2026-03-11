@@ -54,7 +54,9 @@ class EventQueue {
           if (this.pendingEvents.length > 0) this.scheduleBatch();
         }
       });
-    } catch {}
+    } catch (err) {
+      console.warn('[Iron Gate Queue] Failed to register storage listener:', err instanceof Error ? err.message : String(err));
+    }
   }
 
   /**

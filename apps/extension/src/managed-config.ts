@@ -71,6 +71,12 @@ export interface ResolvedConfig {
   localLLM: LocalLLMConfig | null;
   /** Tier configuration for confidence-gated routing */
   tiers: TierConfig;
+  /**
+   * Processing mode: 'local' = all detection in extension (current default),
+   * 'server' = send raw text to API /v1/proxy/process for server-side detection.
+   * Admin-configurable via managed storage or API config.
+   */
+  processingMode: 'local' | 'server';
 }
 
 import { loadApiKey } from './api-key-store';
@@ -83,7 +89,7 @@ const DEFAULT_API_URL = 'https://irongate-api.onrender.com/v1';
 async function getManagedValues(): Promise<Record<string, any> | null> {
   try {
     const managed = await chrome.storage.managed.get([
-      'apiKey', 'apiUrl', 'firmMode', 'firmId', 'firmName',
+      'apiKey', 'apiUrl', 'firmMode', 'firmId', 'firmName', 'processingMode',
       'localLLMEndpoint', 'localLLMModel', 'localLLMEnabled', 'localLLMTimeout',
       'tier2Enabled', 'tier2Endpoint', 'tier2Model', 'tier2Protocol', 'tier2TimeoutMs',
       'tier25Enabled', 'tier3Enabled', 'tier3Endpoint', 'tier3TimeoutMs',
@@ -145,7 +151,7 @@ async function getLocalValues(): Promise<Record<string, any>> {
   const apiKey = await loadApiKey();
   const result = await new Promise<Record<string, any>>((resolve) => {
     chrome.storage.local.get(
-      ['apiBaseUrl', 'firmMode', 'connectionState'],
+      ['apiBaseUrl', 'firmMode', 'connectionState', 'processingMode'],
       (r) => resolve(r),
     );
   });
@@ -169,6 +175,7 @@ export async function resolveConfig(): Promise<ResolvedConfig> {
       isManaged: true,
       localLLM: resolveLocalLLMConfig(managed) || resolveLocalLLMConfig(local),
       tiers: resolveTierConfig(managed),
+      processingMode: managed.processingMode === 'local' ? 'local' : 'server',
     };
   }
 
@@ -181,6 +188,7 @@ export async function resolveConfig(): Promise<ResolvedConfig> {
     isManaged: false,
     localLLM: resolveLocalLLMConfig(local),
     tiers: resolveTierConfig(local),
+    processingMode: local.processingMode === 'local' ? 'local' : 'server',
   };
 }
 

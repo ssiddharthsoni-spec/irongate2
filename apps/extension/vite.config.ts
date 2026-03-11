@@ -4,20 +4,17 @@ import { crx } from '@crxjs/vite-plugin';
 import manifest from './manifest.json';
 import { resolve } from 'path';
 import { readFileSync, writeFileSync, readdirSync } from 'fs';
+import { buildSync } from 'esbuild';
 
 /**
  * Vite plugin that fixes CRXJS MAIN world content script loaders.
  *
  * CRXJS generates loaders that use dynamic import("./module.js") for content scripts.
- * In ISOLATED world, CRXJS uses chrome.runtime.getURL() which works fine.
- * In MAIN world, chrome.runtime is unavailable, so CRXJS falls back to relative paths.
- * Relative paths resolve against the PAGE's origin, not the extension's, causing silent failure.
+ * In MAIN world, chrome.runtime is unavailable, so imports fail silently.
  *
- * This plugin post-processes the build output:
- * 1. Finds MAIN world loader files (named *main-world*loader*.js)
- * 2. Extracts the module filename from the dynamic import
- * 3. Reads the actual module code
- * 4. Replaces the loader with an IIFE containing the inlined module code
+ * Fix: after Vite builds, we use esbuild to re-bundle the main-world module
+ * (and all its dependencies) into a single self-contained IIFE. No import
+ * stripping, no variable collision hacks — esbuild handles it properly.
  */
 function inlineMainWorldPlugin() {
   return {
@@ -38,7 +35,6 @@ function inlineMainWorldPlugin() {
           const loaderCode = readFileSync(loaderPath, 'utf-8');
 
           // Extract the module filename from the dynamic import
-          // Pattern: import("./main-world.ts-HASH.js") or import("./main-world.ts-HASH.js")
           const importMatch = loaderCode.match(/import\(\s*(?:\/\*.*?\*\/\s*)?["']\.\/([^"']+)["']\s*\)/);
 
           if (!importMatch) {
@@ -50,27 +46,31 @@ function inlineMainWorldPlugin() {
           const modulePath = resolve(assetsDir, moduleName);
 
           try {
-            let moduleCode = readFileSync(modulePath, 'utf-8');
+            // Use esbuild to bundle the module + all its dependencies into a
+            // single IIFE. esbuild properly handles variable scoping, tree-shaking,
+            // and minification — no manual regex hacking needed.
+            const result = buildSync({
+              entryPoints: [modulePath],
+              bundle: true,
+              format: 'iife',
+              write: false,
+              minify: true,
+              // Resolve bare imports from the assets directory
+              absWorkingDir: assetsDir,
+              logLevel: 'warning',
+            });
 
-            // Strip any ES module syntax (import/export) since we're inlining into an IIFE
-            // Remove import statements
-            moduleCode = moduleCode.replace(/^\s*import\s+.*?from\s+['"][^'"]+['"];?\s*$/gm, '');
-            moduleCode = moduleCode.replace(/^\s*import\s*\{[^}]*\}\s*from\s+['"][^'"]+['"];?\s*$/gm, '');
-            moduleCode = moduleCode.replace(/^\s*import\s+['"][^'"]+['"];?\s*$/gm, '');
-            // Remove export statements
-            moduleCode = moduleCode.replace(/^\s*export\s*\{[^}]*\};?\s*$/gm, '');
-            moduleCode = moduleCode.replace(/^\s*export\s+default\s+/gm, '');
-            moduleCode = moduleCode.replace(/^\s*export\s+/gm, '');
-
-            // Wrap in IIFE
-            const inlinedCode = `(function(){\n'use strict';\n${moduleCode.trim()}\n})();\n`;
-
-            writeFileSync(loaderPath, inlinedCode);
-            console.log(
-              `[inline-main-world] Inlined ${moduleName} (${moduleCode.length} bytes) into ${loaderName}`
-            );
+            if (result.outputFiles && result.outputFiles.length > 0) {
+              const bundledCode = result.outputFiles[0].text;
+              writeFileSync(loaderPath, bundledCode);
+              console.log(
+                `[inline-main-world] Bundled ${moduleName} → ${loaderName} (${bundledCode.length} bytes, self-contained IIFE)`
+              );
+            } else {
+              console.warn(`[inline-main-world] esbuild produced no output for ${moduleName}`);
+            }
           } catch (err) {
-            console.warn(`[inline-main-world] Could not read module ${moduleName}:`, err);
+            console.warn(`[inline-main-world] esbuild bundle failed for ${moduleName}:`, err);
           }
         }
       } catch (err) {

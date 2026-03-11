@@ -154,7 +154,9 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
       await saveApiKey(data.apiKey);
       try {
         await chrome.runtime.sendMessage({ type: 'SET_API_KEY', payload: { apiKey: data.apiKey } });
-      } catch {}
+      } catch (err) {
+        console.warn('[Iron Gate] SET_API_KEY message failed:', err instanceof Error ? err.message : String(err));
+      }
 
       // Store registration data
       const now = new Date().toISOString();
@@ -176,7 +178,9 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
       // Notify service worker of mode change
       try {
         await chrome.runtime.sendMessage({ type: 'MODE_CHANGED', payload: { mode: selectedMode } });
-      } catch {}
+      } catch (err) {
+        console.warn('[Iron Gate] MODE_CHANGED message failed:', err instanceof Error ? err.message : String(err));
+      }
 
       setRegistrationData({
         tier: data.tier,

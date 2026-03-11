@@ -12,17 +12,34 @@ export const extensionAuthRoutes = new Hono();
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT = 5;
 const RATE_WINDOW = 60_000;
-const RATE_LIMIT_MAX_ENTRIES = 10_000;
+const RATE_LIMIT_MAX_ENTRIES = 2_000;
 
 function checkRateLimit(key: string): boolean {
   const now = Date.now();
   const entry = rateLimitMap.get(key);
   if (!entry || now > entry.resetAt) {
     rateLimitMap.set(key, { count: 1, resetAt: now + RATE_WINDOW });
-    // Periodic cleanup: evict expired entries when map grows too large
-    if (rateLimitMap.size > RATE_LIMIT_MAX_ENTRIES) {
+    // Periodic cleanup: evict expired entries when map grows (lower threshold for earlier cleanup)
+    if (rateLimitMap.size > 500) {
       for (const [k, v] of rateLimitMap) {
         if (now > v.resetAt) rateLimitMap.delete(k);
+      }
+      // Hard cap: evict zero-count entries first, then oldest if still too large
+      if (rateLimitMap.size > RATE_LIMIT_MAX_ENTRIES) {
+        // First pass: remove entries with count=0 (fully consumed)
+        for (const [k, v] of rateLimitMap) {
+          if (v.count === 0) rateLimitMap.delete(k);
+        }
+        // Second pass: drop oldest if still too large
+        if (rateLimitMap.size > RATE_LIMIT_MAX_ENTRIES) {
+          const excess = rateLimitMap.size - RATE_LIMIT_MAX_ENTRIES;
+          let dropped = 0;
+          for (const k of rateLimitMap.keys()) {
+            if (dropped >= excess) break;
+            rateLimitMap.delete(k);
+            dropped++;
+          }
+        }
       }
     }
     return true;
@@ -68,7 +85,13 @@ function verifyToken(token: string): { valid: boolean; userId?: string; email?: 
 
     const hmac = parts.pop()!;
     const payload = parts.join(':');
+
+    // Validate array has enough parts after popping HMAC
+    if (parts.length < 3) return { valid: false };
     const [userId, email, expiryStr] = [parts[0], parts[1], parts[2]];
+
+    // Validate that userId and email are non-empty
+    if (!userId || !email || !expiryStr) return { valid: false };
 
     // Check expiry
     const expiry = parseInt(expiryStr, 10);
@@ -76,7 +99,16 @@ function verifyToken(token: string): { valid: boolean; userId?: string; email?: 
 
     // Verify HMAC (constant-time comparison)
     const expected = crypto.createHmac('sha256', getHmacSecret()).update(payload).digest('hex');
-    if (!crypto.timingSafeEqual(Buffer.from(hmac, 'hex'), Buffer.from(expected, 'hex'))) {
+    if (hmac.length !== expected.length) return { valid: false };
+    let hmacBuf: Buffer;
+    let expectedBuf: Buffer;
+    try {
+      hmacBuf = Buffer.from(hmac, 'hex');
+      expectedBuf = Buffer.from(expected, 'hex');
+    } catch {
+      return { valid: false };
+    }
+    if (!crypto.timingSafeEqual(hmacBuf, expectedBuf)) {
       return { valid: false };
     }
 
@@ -278,14 +310,20 @@ extensionAuthRoutes.post('/register-extension', async (c) => {
       tokenHash: verifyHash,
       expiresAt: verifyExpiry,
     }).catch((err) => {
-      logger.error('Failed to store verification token', { error: err instanceof Error ? err.message : String(err) });
+      logger.error('Failed to store verification token', { userId: registrationResult.userId, email: parsed.email, error: err instanceof Error ? err.message : String(err) });
     });
 
     const verifyUrl = `${dashboardUrl}/verify-email?token=${verifyTokenStr}`;
     import('../services/email').then(({ sendWelcomeEmail, sendVerificationEmail }) => {
-      sendWelcomeEmail(parsed.email, parsed.email.split('@')[0]).catch(() => {});
-      sendVerificationEmail(parsed.email, parsed.email.split('@')[0], verifyUrl).catch(() => {});
-    }).catch(() => {});
+      sendWelcomeEmail(parsed.email, parsed.email.split('@')[0]).catch((err) => {
+        logger.error('Failed to send welcome email', { email: parsed.email, error: err instanceof Error ? err.message : String(err) });
+      });
+      sendVerificationEmail(parsed.email, parsed.email.split('@')[0], verifyUrl).catch((err) => {
+        logger.error('Failed to send verification email', { email: parsed.email, error: err instanceof Error ? err.message : String(err) });
+      });
+    }).catch((err) => {
+      logger.error('Failed to import email service', { error: err instanceof Error ? err.message : String(err) });
+    });
 
     // Only return what the extension needs — never expose internal IDs
     return c.json({
@@ -642,8 +680,12 @@ extensionAuthRoutes.post('/resend-verification', async (c) => {
 
     const verifyUrl = `${dashboardUrl}/verify-email?token=${verifyTokenStr}`;
     import('../services/email').then(({ sendVerificationEmail }) => {
-      sendVerificationEmail(email, email.split('@')[0], verifyUrl).catch(() => {});
-    }).catch(() => {});
+      sendVerificationEmail(email, email.split('@')[0], verifyUrl).catch((err) => {
+        logger.error('Failed to send verification email', { email, error: err instanceof Error ? err.message : String(err) });
+      });
+    }).catch((err) => {
+      logger.error('Failed to import email service', { error: err instanceof Error ? err.message : String(err) });
+    });
 
     return c.json({ message: 'If this email is registered and unverified, a verification link has been sent.' });
   } catch (err) {

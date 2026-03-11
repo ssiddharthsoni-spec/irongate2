@@ -145,13 +145,4 @@ export interface SiteAdapter {
    */
   fileUploadPatterns?: RegExp[];
 
-  /**
-   * Optional: Skip wrapping the response stream for de-pseudonymization.
-   * When true, the DOM MutationObserver handles de-pseudonymization instead.
-   *
-   * Required for platforms like ChatGPT whose SSE streams include position-based
-   * entity annotations (displayedContentReferences). Changing text length in the
-   * stream corrupts annotation offsets, causing garbled rendering.
-   */
-  skipResponseStreamWrap?: boolean;
 }

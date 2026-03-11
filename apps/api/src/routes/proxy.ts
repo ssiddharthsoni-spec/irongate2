@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { db } from '../db/client';
 import { firms } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { Pseudonymizer } from '../proxy/pseudonymizer';
 import type { PseudonymMap } from '../proxy/pseudonymizer';
 import { PseudonymStore } from '../proxy/pseudonym-store';
@@ -13,6 +13,11 @@ import { enqueueWebhook, enqueueSIEM } from '../jobs/enqueue';
 import { logger } from '../lib/logger';
 import type { AppEnv } from '../types';
 import { detectFirmAware, scoreFirmAware } from '../detection';
+import { classifyIntent, getIntentWeight, isQuickPassthrough } from '../detection/intent-classifier';
+import { detectStructure } from '../detection/structure-detector';
+import { contextualizeEntities, getContextRiskMultiplier } from '../detection/entity-contextualizer';
+import type { ContextualizedEntity } from '../detection/entity-contextualizer';
+import { conversationState } from '../db/schema';
 import {
   mergeEntityRules,
   getEffectiveBlockThreshold,
@@ -131,7 +136,7 @@ proxyRoutes.use('*', departmentPolicyMiddleware());
 // New clients should use POST /v1/proxy/relay which accepts pre-pseudonymized text.
 proxyRoutes.post('/analyze', async (c) => {
   c.header('Deprecation', 'true');
-  c.header('Sunset', '2025-06-01');
+  c.header('Sunset', '2026-06-01');
   c.header('Link', '</v1/proxy/relay>; rel="successor-version"');
   logger.warn('Deprecated endpoint called: POST /v1/proxy/analyze', { firmId: c.get('firmId') });
   try {
@@ -268,7 +273,7 @@ proxyRoutes.post('/analyze', async (c) => {
 // New clients should use POST /v1/proxy/relay which handles the full flow.
 proxyRoutes.post('/send', async (c) => {
   c.header('Deprecation', 'true');
-  c.header('Sunset', '2025-06-01');
+  c.header('Sunset', '2026-06-01');
   c.header('Link', '</v1/proxy/relay>; rel="successor-version"');
   logger.warn('Deprecated endpoint called: POST /v1/proxy/send', { firmId: c.get('firmId') });
   try {
@@ -561,6 +566,229 @@ proxyRoutes.post('/relay', piiSafetyNetMiddleware, async (c) => {
       model: llmResult.model,
       provider: llmResult.provider,
       tokensUsed: llmResult.tokensUsed,
+      latencyMs,
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return c.json({ error: 'Validation error', details: error.errors }, 400);
+    }
+    throw error;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /v1/proxy/process — Unified contextual-intelligence endpoint (Model A)
+// ---------------------------------------------------------------------------
+
+const processRequestSchema = z.object({
+  text: z.string().min(1).max(100_000),
+  aiToolId: z.string().optional().default('unknown'),
+  sessionId: z.string().optional(),
+  captureMethod: z.string().optional().default('typed'),
+  platform: z.string().optional().default('unknown'),
+});
+
+proxyRoutes.post('/process', async (c) => {
+  const firmId = c.get('firmId') as string;
+  const start = Date.now();
+
+  try {
+    const parsed = processRequestSchema.parse(await c.req.json());
+    const { text, aiToolId, sessionId, captureMethod, platform } = parsed;
+
+    // ── Fast path: short inward-intent messages skip full detection ──
+    if (isQuickPassthrough(text)) {
+      return c.json({
+        action: 'passthrough',
+        reason: 'quick_passthrough',
+        sensitivityScore: 0,
+        sensitivityLevel: 'low',
+        entities: [],
+        latencyMs: Date.now() - start,
+      });
+    }
+
+    // ── 1. Intent classification ──
+    const intentResult = classifyIntent(text);
+    const intentWeight = intentResult.confidence >= 0.7
+      ? getIntentWeight(intentResult)
+      : 1.0;
+
+    // Non-disclosure intents with high confidence → passthrough
+    const passthroughIntents = new Set([
+      'research', 'creative', 'productivity', 'coding', 'brainstorming',
+    ]);
+    if (
+      passthroughIntents.has(intentResult.intent) &&
+      intentResult.confidence >= 0.8 &&
+      intentWeight <= 0.3
+    ) {
+      return c.json({
+        action: 'passthrough',
+        reason: `intent_${intentResult.intent}`,
+        intent: intentResult,
+        sensitivityScore: 0,
+        sensitivityLevel: 'low',
+        entities: [],
+        latencyMs: Date.now() - start,
+      });
+    }
+
+    // ── 2. Entity detection ──
+    const [firm] = await db.select().from(firms).where(eq(firms.id, firmId)).limit(1);
+    const complianceFramework = (firm?.config as Record<string, unknown>)?.complianceFramework as ComplianceFrameworkId | undefined;
+    const activeFrameworks = complianceFramework ? [complianceFramework] : [];
+    const detectedEntities = await detectFirmAware(text, { firmId });
+
+    // ── 3. Entity contextualization ──
+    const contextualizedEntities = contextualizeEntities(text, detectedEntities);
+    const entityContextFactor = contextualizedEntities.length > 0
+      ? contextualizedEntities.reduce(
+          (acc, e) => acc * getContextRiskMultiplier(e),
+          1.0,
+        ) ** (1 / contextualizedEntities.length) // geometric mean
+      : 1.0;
+    const effectiveEntityContext = entityContextFactor < 0.5 ? entityContextFactor : // strong suppression
+      entityContextFactor > 1.3 ? entityContextFactor : // strong boost
+      1.0; // weak signal → neutral
+
+    // ── 4. Structure detection ──
+    const structureResult = detectStructure(text);
+    const structureMultiplier = structureResult.confidence >= 0.7
+      ? structureResult.multiplier
+      : 1.0;
+
+    // ── 5. Contextual scoring ──
+    const baseScore = await scoreFirmAware(text, detectedEntities, { firmId });
+    const rawScore = baseScore.score * intentWeight * structureMultiplier * effectiveEntityContext;
+    const finalScore = Math.max(0, Math.min(100, Math.round(rawScore)));
+
+    const sensitivityLevel = finalScore >= 86 ? 'critical'
+      : finalScore >= 61 ? 'high'
+      : finalScore >= 26 ? 'medium'
+      : 'low';
+
+    // ── 6. Route decision ──
+    const blockThreshold = getEffectiveBlockThreshold(activeFrameworks);
+    const shouldBlock = finalScore >= blockThreshold;
+    const shouldPseudonymize = finalScore >= 26 && !shouldBlock;
+
+    let action: string;
+    let pseudonymizedText: string | undefined;
+    let reverseMapJson: Record<string, { original: string; pseudonym: string; entityType: string }> | undefined;
+
+    if (shouldBlock) {
+      action = 'blocked';
+    } else if (shouldPseudonymize) {
+      action = 'pseudonymized';
+      const pseudoSessionId = sessionId || crypto.randomUUID();
+      const pseudonymizer = new Pseudonymizer(pseudoSessionId, firmId);
+      const pseudoResult = pseudonymizer.pseudonymize(text, detectedEntities);
+      pseudonymizedText = pseudoResult.maskedText;
+      // Serialize the Map for JSON transport
+      const mapEntries: Record<string, { original: string; pseudonym: string; entityType: string }> = {};
+      for (const [key, entry] of pseudoResult.map.mappings) {
+        mapEntries[key] = {
+          original: entry.original,
+          pseudonym: entry.pseudonym,
+          entityType: entry.entityType,
+        };
+      }
+      reverseMapJson = mapEntries;
+    } else {
+      action = 'passthrough';
+    }
+
+    // ── 7. Audit trail ──
+    const auditAction = shouldBlock ? 'block' as const
+      : shouldPseudonymize ? 'proxy' as const
+      : 'pass' as const;
+    await appendEvent({
+      firmId,
+      userId: 'system',
+      aiToolId,
+      promptHash: '',
+      promptLength: text.length,
+      sensitivityScore: finalScore,
+      sensitivityLevel: sensitivityLevel as 'low' | 'medium' | 'high' | 'critical',
+      action: auditAction,
+      captureMethod,
+      metadata: {
+        intent: intentResult.intent,
+        structureType: structureResult.type,
+        platform,
+        entityCount: detectedEntities.length,
+        source: 'process_endpoint',
+      },
+    });
+
+    enqueueSIEM({
+      firmId,
+      event: {
+        eventId: crypto.randomUUID(), firmId, aiToolId,
+        sensitivityScore: finalScore, sensitivityLevel,
+        action, entityCount: detectedEntities.length,
+        captureMethod,
+        timestamp: new Date().toISOString(),
+      },
+    }).catch((err) => logger.warn('Failed to enqueue process SIEM', {
+      error: err instanceof Error ? err.message : String(err),
+    }));
+
+    // ── 8. Conversation state (slow-boil tracking) ──
+    if (sessionId) {
+      try {
+        const entityTypes = Array.from(new Set(detectedEntities.map(e => e.type)));
+
+        await db.insert(conversationState).values({
+          sessionId,
+          firmId,
+          turnCount: 1,
+          cumulativeScore: finalScore,
+          peakScore: finalScore,
+          entityTypesSeen: entityTypes,
+          lastIntent: intentResult.intent,
+          lastActivity: new Date(),
+        }).onConflictDoUpdate({
+          target: [conversationState.sessionId, conversationState.firmId],
+          set: {
+            turnCount: sql`${conversationState.turnCount} + 1`,
+            cumulativeScore: sql`${conversationState.cumulativeScore} + ${finalScore}`,
+            peakScore: sql`GREATEST(${conversationState.peakScore}, ${finalScore})`,
+            entityTypesSeen: sql`(
+              SELECT jsonb_agg(DISTINCT val)
+              FROM jsonb_array_elements_text(
+                COALESCE(${conversationState.entityTypesSeen}::jsonb, '[]'::jsonb) ||
+                ${JSON.stringify(entityTypes)}::jsonb
+              ) AS val
+            )`,
+            lastIntent: intentResult.intent,
+            lastActivity: new Date(),
+          },
+        });
+      } catch (err) {
+        logger.warn('Failed to update conversation state', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // ── 9. Response ──
+    const latencyMs = Date.now() - start;
+    return c.json({
+      action,
+      sensitivityScore: finalScore,
+      sensitivityLevel,
+      intent: intentResult,
+      structure: { type: structureResult.type, multiplier: structureMultiplier },
+      entityCount: detectedEntities.length,
+      entities: detectedEntities.map(e => ({
+        type: e.type,
+        start: e.start,
+        end: e.end,
+      })),
+      ...(pseudonymizedText !== undefined && { pseudonymizedText }),
+      ...(reverseMapJson !== undefined && { reverseMap: reverseMapJson }),
       latencyMs,
     });
   } catch (error) {

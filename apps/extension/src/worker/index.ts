@@ -5,7 +5,7 @@
 
 import { analyzePrompt, sendProxiedPrompt, handleProxyFlow, analyzeFile } from './proxy-handler';
 import { eventQueue } from './queue';
-import { apiRequest, configureApiClient, getConfiguredApiKey } from './api-client';
+import { apiRequest, configureApiClient, getConfiguredApiKey, getConfiguredBaseUrl } from './api-client';
 import { initAuth, getFirmId, getUserId, getToken } from './auth';
 import { detectWithRegex } from '../detection/fallback-regex';
 import { computeScore, scoreToLevel } from '../detection/scorer';
@@ -14,10 +14,6 @@ import { scanForSecrets } from './detectors/secret-scanner';
 import { resolveConfig, onManagedConfigChanged } from '../managed-config';
 import { saveApiKey, loadApiKey } from '../api-key-store';
 import { recordAttestation, getAuditLog, clearAuditLog } from './audit-trail';
-import {
-  initSessionLock, recordActivity, lockSession, unlockSession,
-  isSessionLocked, handleLockAlarm, getLockTimeout, setLockTimeout,
-} from './session-lock';
 import { initTrialAlarms, handleTrialAlarm } from './trial-notifications';
 import { classifyIfPro, classifyForGhost } from '../detection/ml-classifier';
 import { isPro } from '../shared/tier-gate';
@@ -29,7 +25,7 @@ import {
 } from '../shared/compliance-enforcer';
 import { trackShadowAI, getShadowAIStats } from './shadow-ai-tracker';
 import { detectWithLocalLLM, resetLocalLLMHealth } from './local-llm-detector';
-import { createConfidenceRouter, scoreToZone, type RoutingDecision, type TierAdapter } from '../detection/confidence-router';
+import { createConfidenceRouter, scoreToZone, type RoutingDecision, type TierAdapter, type SignalGateInput } from '../detection/confidence-router';
 import { createMetadataClassifierAdapter } from '../detection/metadata-classifier';
 import { createTier2Adapter, probeTier2, type Tier2Config } from '../detection/tier2-adapter';
 import { getSemanticClassifier } from '../detection/semantic-classifier';
@@ -37,7 +33,8 @@ import { sanitizeForClassification } from '../detection/pseudonymizer';
 import { getWeightResolver } from '../detection/weight-resolver';
 import { createDictionaryMatcher, type DictionaryEntry } from '../detection/entity-dictionary';
 import { mergeEntities, dictionaryScoreBoost } from '../detection/entity-merger';
-import { createGLiNERAdapter, type GLiNERAdapterConfig } from '../detection/tier2-gliner-adapter';
+import { createTier3ServerAdapter } from '../detection/tier3-server-adapter';
+import { ConversationTracker } from '../detection/conversation-tracker';
 import { analyzeWithExecutiveLens, resolveRoute, type ExecutiveLensResult } from '../detection/executive-lens';
 import { createModelRuntime } from '../agent/model-runtime';
 import { createAgentDetector } from '../agent/agent-detector';
@@ -149,7 +146,11 @@ initAuth().then(() => {
 }).catch((err) => igLog('Startup init failed:', err));
 
 // Open side panel on extension icon click
-chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+try {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+} catch {
+  // sidePanel API may not be available in all contexts
+}
 
 // Firm mode tracking — defaults to 'proxy' (Protect mode)
 let firmMode: 'audit' | 'proxy' = 'proxy';
@@ -166,7 +167,48 @@ const SUPPRESSION_REFRESH_MS = 15 * 60 * 1000; // 15 minutes
 const _dictionaryMatcher = createDictionaryMatcher();
 let _lastDictHash = '';
 
+// AES-GCM encryption for dictionary at rest (4.3)
+const DICT_ENC_KEY_NAME = 'ironGateDictKey';
+let _dictCryptoKey: CryptoKey | null = null;
+
+async function getDictEncryptionKey(): Promise<CryptoKey> {
+  if (_dictCryptoKey) return _dictCryptoKey;
+  const stored = await chrome.storage.local.get(DICT_ENC_KEY_NAME);
+  if (stored[DICT_ENC_KEY_NAME]) {
+    const raw = Uint8Array.from(atob(stored[DICT_ENC_KEY_NAME]), c => c.charCodeAt(0));
+    _dictCryptoKey = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
+  } else {
+    _dictCryptoKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+    const raw = await crypto.subtle.exportKey('raw', _dictCryptoKey);
+    await chrome.storage.local.set({ [DICT_ENC_KEY_NAME]: btoa(String.fromCharCode(...new Uint8Array(raw))) });
+  }
+  return _dictCryptoKey;
+}
+
+async function encryptDictionary(entries: DictionaryEntry[]): Promise<string> {
+  const key = await getDictEncryptionKey();
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const data = new TextEncoder().encode(JSON.stringify(entries));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data);
+  const combined = new Uint8Array(iv.length + ct.byteLength);
+  combined.set(iv);
+  combined.set(new Uint8Array(ct), iv.length);
+  return btoa(String.fromCharCode(...combined));
+}
+
+async function decryptDictionary(b64: string): Promise<DictionaryEntry[]> {
+  const key = await getDictEncryptionKey();
+  const combined = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const iv = combined.slice(0, 12);
+  const ct = combined.slice(12);
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+
+let _dictSyncing = false;
 async function syncEntityDictionary(): Promise<void> {
+  if (_dictSyncing) return; // Prevent concurrent syncs (5.3)
+  _dictSyncing = true;
   try {
     const versionResp = await apiRequest<{ hash: string; count: number }>({
       method: 'GET', path: '/admin/entity-dictionary/version', retries: 1,
@@ -181,26 +223,46 @@ async function syncEntityDictionary(): Promise<void> {
     _dictionaryMatcher.reload(exportResp.entities);
     _lastDictHash = versionResp.hash;
 
-    // Persist to local storage for offline use
+    // Persist encrypted to local storage for offline use (4.3)
+    const encrypted = await encryptDictionary(exportResp.entities);
     await chrome.storage.local.set({
-      iron_gate_entity_dictionary: exportResp.entities,
+      iron_gate_entity_dictionary_enc: encrypted,
       iron_gate_dict_hash: versionResp.hash,
     });
+    // Remove legacy unencrypted key
+    await chrome.storage.local.remove('iron_gate_entity_dictionary');
 
-    igLog('Entity dictionary synced:', exportResp.count, 'entries');
+    igLog('Entity dictionary synced:', exportResp.count, 'entries (encrypted)');
   } catch (err) {
     igLog('Entity dictionary sync error (non-fatal):', err);
+  } finally {
+    _dictSyncing = false;
   }
 }
 
 // Load cached dictionary on startup
-chrome.storage.local.get(['iron_gate_entity_dictionary', 'iron_gate_dict_hash'], (result) => {
-  if (result.iron_gate_entity_dictionary?.length) {
-    _dictionaryMatcher.reload(result.iron_gate_entity_dictionary);
-    _lastDictHash = result.iron_gate_dict_hash || '';
-    igLog('Dictionary loaded from cache:', result.iron_gate_entity_dictionary.length, 'entries');
+(async () => {
+  try {
+    const result = await chrome.storage.local.get(['iron_gate_entity_dictionary_enc', 'iron_gate_entity_dictionary', 'iron_gate_dict_hash']);
+    // Prefer encrypted, fall back to legacy unencrypted, then migrate
+    if (result.iron_gate_entity_dictionary_enc) {
+      const entries = await decryptDictionary(result.iron_gate_entity_dictionary_enc);
+      _dictionaryMatcher.reload(entries);
+      _lastDictHash = result.iron_gate_dict_hash || '';
+      igLog('Dictionary loaded from encrypted cache:', entries.length, 'entries');
+    } else if (result.iron_gate_entity_dictionary?.length) {
+      // Migrate unencrypted → encrypted
+      _dictionaryMatcher.reload(result.iron_gate_entity_dictionary);
+      _lastDictHash = result.iron_gate_dict_hash || '';
+      const encrypted = await encryptDictionary(result.iron_gate_entity_dictionary);
+      await chrome.storage.local.set({ iron_gate_entity_dictionary_enc: encrypted });
+      await chrome.storage.local.remove('iron_gate_entity_dictionary');
+      igLog('Dictionary migrated to encrypted storage:', result.iron_gate_entity_dictionary.length, 'entries');
+    }
+  } catch (err) {
+    igLog('Dictionary load error (non-fatal):', err);
   }
-});
+})();
 
 async function refreshSuppressionRules(): Promise<void> {
   if (Date.now() - _suppressionLastFetch < SUPPRESSION_REFRESH_MS) return;
@@ -229,6 +291,21 @@ async function refreshSuppressionRules(): Promise<void> {
   } catch {
     // Fail silently — use cached rules or no suppression
   }
+}
+
+// ─── Conversation Tracker (3.1b) ──────────────────────────────────────────
+// One tracker per tab. Tracks conversation history for signal gate input.
+// If any message in a conversation scored > 40, all follow-ups trigger
+// the signal gate (server classification) regardless of individual score.
+const _conversationTrackers = new Map<number, ConversationTracker>();
+
+function getConversationTracker(tabId: number): ConversationTracker {
+  let tracker = _conversationTrackers.get(tabId);
+  if (!tracker) {
+    tracker = new ConversationTracker();
+    _conversationTrackers.set(tabId, tracker);
+  }
+  return tracker;
 }
 
 // ─── Confidence Router ──────────────────────────────────────────────────────
@@ -260,16 +337,32 @@ function getConfidenceRouter(config: import('../managed-config').ResolvedConfig)
     igLog('Confidence router: Tier 2 enabled —', tier2Config.model, 'at', tier2Config.endpoint);
   }
 
-  // Tier 2 (GLiNER): On-device NER model via offscreen document
-  // Gated behind feature flag tier2_ner and managed config localNer.enabled
-  if (tierConfig.glinerEnabled || (config as any).localNer?.enabled) {
-    const glinerConfig: GLiNERAdapterConfig = {
+  // Tier 3: Server-side AI classification via /v1/classify
+  // Sends pseudonymized+tokenized text to server for GPT-4o-mini analysis.
+  // The server never sees original PII — only [PERSON_1], [ORG_2], etc.
+  if (tierConfig.tier3Enabled !== false) {
+    const tier3Adapter = createTier3ServerAdapter({
+      apiFetch: async (path: string, body: Record<string, unknown>) => {
+        const apiKey = getConfiguredApiKey();
+        if (!apiKey) throw new Error('No API key configured');
+        const baseUrl = getConfiguredBaseUrl();
+        const resp = await fetch(`${baseUrl}${path}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(tierConfig.tier3TimeoutMs || 3000),
+        });
+        if (!resp.ok) throw new Error(`Classify API error: ${resp.status}`);
+        return resp.json();
+      },
+      timeoutMs: tierConfig.tier3TimeoutMs || 3000,
       enabled: true,
-      confidenceThreshold: (config as any).localNer?.confidenceThreshold ?? 0.5,
-      timeoutMs: (config as any).localNer?.timeoutMs ?? 10000,
-    };
-    adapters.push(createGLiNERAdapter(glinerConfig));
-    igLog('Confidence router: Tier 2 GLiNER NER enabled');
+    });
+    adapters.push(tier3Adapter);
+    igLog('Confidence router: Tier 3 server-classify enabled');
   }
 
   // Tier 2.5: Metadata classifier (always available unless explicitly disabled)
@@ -366,45 +459,32 @@ function startKillSwitchEnforcement(apiBaseUrl: string): void {
     killSwitchActive = shouldDisable;
     if (shouldDisable) {
       igLog('KILL SWITCH ACTIVE — all AI tool access blocked');
-      // Update badge on all tabs
-      chrome.tabs.query({}, (tabs) => {
-        for (const tab of tabs) {
-          if (tab.id) {
-            chrome.action.setBadgeText({ text: 'OFF', tabId: tab.id });
-            chrome.action.setBadgeBackgroundColor({ color: '#EF4444', tabId: tab.id });
-          }
-        }
-      });
-      // Notify all content scripts to show block screen
-      chrome.tabs.query({}, (tabs) => {
-        for (const tab of tabs) {
-          if (tab.id && tab.url) {
-            chrome.tabs.sendMessage(tab.id, {
-              type: 'KILL_SWITCH_ACTIVATED',
-              payload: { active: true },
-            }).catch(() => {});
-          }
-        }
-      });
     } else {
       igLog('Kill switch cleared — normal operation resumed');
+    }
+    // Single tab query: update badge + notify content scripts
+    try {
       chrome.tabs.query({}, (tabs) => {
+        if (!chrome.runtime?.id) return;
+        if (chrome.runtime.lastError || !tabs) return;
         for (const tab of tabs) {
-          if (tab.id) {
-            chrome.action.setBadgeText({ text: '', tabId: tab.id });
+          if (!tab.id) continue;
+          if (shouldDisable) {
+            chrome.action.setBadgeText({ text: 'OFF', tabId: tab.id }).catch(() => {});
+            chrome.action.setBadgeBackgroundColor({ color: '#EF4444', tabId: tab.id }).catch(() => {});
+          } else {
+            chrome.action.setBadgeText({ text: '', tabId: tab.id }).catch(() => {});
           }
-        }
-      });
-      chrome.tabs.query({}, (tabs) => {
-        for (const tab of tabs) {
-          if (tab.id && tab.url) {
+          if (tab.url) {
             chrome.tabs.sendMessage(tab.id, {
               type: 'KILL_SWITCH_ACTIVATED',
-              payload: { active: false },
-            }).catch(() => {});
+              payload: { active: shouldDisable },
+            }).catch(() => {}); // Tab may not have content script
           }
         }
       });
+    } catch {
+      // chrome.tabs may not be available
     }
   }, getConfiguredApiKey);
 }
@@ -422,8 +502,8 @@ resolveConfig().then((config) => {
     // Start kill switch enforcement with the configured API URL
     startKillSwitchEnforcement(config.apiUrl || KILL_SWITCH_API_URL);
     // Pre-fetch feedback suppression rules and compliance profile
-    refreshSuppressionRules().catch(() => {});
-    refreshComplianceProfile().catch(() => {});
+    refreshSuppressionRules().catch((err) => igLog('Suppression rules refresh failed:', err));
+    refreshComplianceProfile().catch((err) => igLog('Compliance profile refresh failed:', err));
   } else {
     igLog('Individual mode. Loaded firm mode:', firmMode);
     // Start kill switch enforcement with default API URL
@@ -452,16 +532,22 @@ onManagedConfigChanged((config) => {
   resetLocalLLMHealth();
   resetConfidenceRouter();
   // Relay mode change to all content scripts
-  chrome.tabs.query({}, (tabs) => {
-    for (const tab of tabs) {
-      if (tab.id && tab.url) {
-        chrome.tabs.sendMessage(tab.id, {
-          type: 'MODE_CHANGED',
-          payload: { mode: config.firmMode },
-        }).catch(() => {});
+  try {
+    chrome.tabs.query({}, (tabs) => {
+      if (!chrome.runtime?.id) return;
+      if (chrome.runtime.lastError || !tabs) return;
+      for (const tab of tabs) {
+        if (tab.id && tab.url) {
+          chrome.tabs.sendMessage(tab.id, {
+            type: 'MODE_CHANGED',
+            payload: { mode: config.firmMode },
+          }).catch(() => {});
+        }
       }
-    }
-  });
+    });
+  } catch {
+    // chrome.tabs may not be available during startup
+  }
 });
 
 // ─── Per-Tab State Tracking ──────────────────────────────────────────────────
@@ -491,7 +577,8 @@ async function loadTabStates(): Promise<Record<number, TabState>> {
   try {
     const result = await chrome.storage.session.get(TAB_STATE_KEY);
     return result[TAB_STATE_KEY] || {};
-  } catch {
+  } catch (err) {
+    console.warn('[IronGate] loadTabStates storage read failed:', err instanceof Error ? err.message : String(err));
     return {};
   }
 }
@@ -568,10 +655,42 @@ const SIDEPANEL_ONLY: ReadonlySet<string> = new Set([
 ]);
 
 
+// ── Per-message nonce: prevent replay attacks (4.4) ──────────────────────────
+const _seenNonces = new Set<string>();
+const NONCE_TTL_MS = 60_000; // Nonces expire after 60s
+const NONCE_CLEANUP_INTERVAL = 120_000;
+const _nonceTimestamps = new Map<string, number>();
+
+setInterval(() => {
+  const cutoff = Date.now() - NONCE_TTL_MS;
+  for (const [nonce, ts] of _nonceTimestamps) {
+    if (ts < cutoff) { _seenNonces.delete(nonce); _nonceTimestamps.delete(nonce); }
+  }
+}, NONCE_CLEANUP_INTERVAL);
+
+// Messages that require nonce validation (sensitive operations)
+const NONCE_REQUIRED: ReadonlySet<string> = new Set([
+  'PROMPT_DETECTED', 'PROXY_ANALYZE', 'PROXY_SEND',
+  'FILE_DETECTED', 'CLIPBOARD_DETECTED', 'SET_API_KEY',
+]);
+
 async function handleMessage(
-  message: { type: string; payload?: any },
+  message: { type: string; payload?: any; nonce?: string },
   sender: chrome.runtime.MessageSender
 ): Promise<any> {
+  // Nonce validation for sensitive messages
+  if (NONCE_REQUIRED.has(message.type)) {
+    const nonce = message.nonce;
+    if (nonce && _seenNonces.has(nonce)) {
+      igLog('BLOCKED — replayed nonce:', message.type);
+      return { ok: false, error: 'Replayed message' };
+    }
+    if (nonce) {
+      _seenNonces.add(nonce);
+      _nonceTimestamps.set(nonce, Date.now());
+    }
+  }
+
   // ── Kill switch: block ALL prompt processing when active ──
   const KILL_SWITCH_BLOCKED_TYPES = new Set([
     'PROMPT_DETECTED', 'PROMPT_SUBMITTED', 'PROXY_ANALYZE', 'PROXY_SEND',
@@ -594,9 +713,140 @@ async function handleMessage(
 
   switch (message.type) {
     case 'PROMPT_DETECTED': {
-      const { text, aiToolId, captureMethod } = message.payload;
+      const text = message.payload?.text;
+      const aiToolId = message.payload?.aiToolId;
+      const captureMethod = message.payload?.captureMethod;
+      if (!text || typeof text !== 'string') return { error: 'Invalid prompt payload' };
       igLog('Prompt captured from', aiToolId, 'via', captureMethod, 'length:', text.length);
       const config = await resolveConfig();
+
+      // ════════════════════════════════════════════════════════════════════
+      // SERVER MODE: Offload all detection to API /v1/proxy/process
+      // Only credential scanning runs locally (never send secrets to API).
+      // ════════════════════════════════════════════════════════════════════
+      if (config.processingMode === 'server' && config.apiKey) {
+        // Step 1: Local credential scan (< 2ms, never leaves the browser)
+        const secrets = scanForSecrets(text);
+        if (secrets.length > 0) {
+          igLog('SERVER MODE: credential block —', secrets.length, 'secrets detected locally');
+          const promptHash = await hashText(text);
+          queueEventToApi({
+            aiToolId,
+            promptHash,
+            promptLength: text.length,
+            sensitivityScore: 100,
+            sensitivityLevel: 'critical',
+            entities: secrets.map(s => ({
+              type: s.type, text: s.text, start: s.start, end: s.end,
+              confidence: s.confidence, source: 'regex' as const,
+            })),
+            action: 'block',
+            captureMethod,
+          });
+
+          const blockTabId = sender.tab?.id;
+          if (blockTabId) {
+            chrome.runtime.sendMessage({
+              type: 'SENSITIVITY_SCORE',
+              payload: {
+                score: 100, level: 'critical',
+                entities: secrets.map(s => ({ type: s.type, start: s.start, end: s.end, confidence: s.confidence, source: 'regex' })),
+                aiToolId, tabId: blockTabId,
+                zone: 'RED', action: 'block',
+                realtime: true,
+              },
+            }).catch(() => {});
+            chrome.action.setBadgeText({ text: '!', tabId: blockTabId }).catch(() => {});
+            chrome.action.setBadgeBackgroundColor({ color: '#EF4444', tabId: blockTabId }).catch(() => {});
+          }
+          return { received: true, blocked: true, reason: 'credential_detected' };
+        }
+
+        // Step 2: Send to API for server-side detection
+        try {
+          const apiUrl = config.apiUrl.replace(/\/v1\/?$/, '') + '/v1/proxy/process';
+          const serverResponse = await fetch(apiUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${config.apiKey}`,
+            },
+            body: JSON.stringify({
+              text,
+              aiToolId,
+              sessionId: `tab-${sender.tab?.id ?? 0}`,
+              captureMethod,
+              platform: aiToolId,
+            }),
+            signal: AbortSignal.timeout(10_000),
+          });
+
+          if (!serverResponse.ok) {
+            igLog('SERVER MODE: API error', serverResponse.status, '— falling back to local');
+            // Fall through to local pipeline below
+          } else {
+            const result = await serverResponse.json();
+            igLog('SERVER MODE: API response —', result.action, 'score:', result.sensitivityScore);
+
+            const serverTabId = sender.tab?.id;
+            if (serverTabId) {
+              chrome.runtime.sendMessage({
+                type: 'SENSITIVITY_SCORE',
+                payload: {
+                  score: result.sensitivityScore,
+                  level: result.sensitivityLevel,
+                  entities: result.entities || [],
+                  aiToolId,
+                  tabId: serverTabId,
+                  maskedPrompt: result.pseudonymizedText,
+                  zone: result.sensitivityScore >= 61 ? 'RED' : result.sensitivityScore >= 26 ? 'AMBER' : 'GREEN',
+                  action: result.action === 'blocked' ? 'block' : result.action === 'pseudonymized' ? 'warn' : 'pass',
+                  realtime: true,
+                  serverMode: true,
+                },
+              }).catch(() => {});
+
+              // Badge
+              if (result.entityCount > 0) {
+                const badgeColor = result.sensitivityLevel === 'critical' ? '#EF4444'
+                  : result.sensitivityLevel === 'high' ? '#F59E0B' : '#6366F1';
+                chrome.action.setBadgeText({ text: String(result.entityCount), tabId: serverTabId }).catch(() => {});
+                chrome.action.setBadgeBackgroundColor({ color: badgeColor, tabId: serverTabId }).catch(() => {});
+              } else {
+                chrome.action.setBadgeText({ text: '\u2713', tabId: serverTabId }).catch(() => {});
+                chrome.action.setBadgeBackgroundColor({ color: '#22C55E', tabId: serverTabId }).catch(() => {});
+                setTimeout(() => {
+                  chrome.action.setBadgeText({ text: '', tabId: serverTabId }).catch(() => {});
+                }, 3000);
+              }
+            }
+
+            // Audit trail
+            if (result.sensitivityScore > 0) {
+              const promptHash = await hashText(text);
+              recordAttestation({
+                action: result.action === 'blocked' ? 'block' : result.action === 'pseudonymized' ? 'proxy' : 'pass',
+                entityCount: result.entityCount || 0,
+                promptHash,
+                level: result.sensitivityLevel,
+                score: result.sensitivityScore,
+                aiToolId,
+              }).catch(() => {});
+            }
+
+            return {
+              received: true,
+              blocked: result.action === 'blocked',
+              serverMode: true,
+              ...(result.pseudonymizedText && { pseudonymizedText: result.pseudonymizedText }),
+              ...(result.reverseMap && { reverseMap: result.reverseMap }),
+            };
+          }
+        } catch (err) {
+          igLog('SERVER MODE: fetch failed —', err, '— falling back to local');
+          // Fall through to local pipeline
+        }
+      }
 
       // ────────────────────────────────────────────────────────────────────
       // Detection Pipeline: Agent-First, Regex-Supplement
@@ -709,14 +959,18 @@ async function handleMessage(
       if (dictEntities.length > 0) mergeSources.push(dictEntities);
       const allEntities = mergeEntities(...mergeSources);
 
-      // ── ML classification (Pro+ only) ──
-      const mlResult = await classifyIfPro(text);
+      // ── ML classification + suppression rules + compliance (parallelized) ──
+      // These three async operations are independent — run them concurrently
+      // to save 200-1000ms vs sequential awaits.
+      // Suppression/compliance are fire-and-forget — failures must not kill the pipeline.
+      refreshSuppressionRules().catch((err) => igLog('Suppression rules refresh failed:', err));
+      refreshComplianceProfile().catch((err) => igLog('Compliance profile refresh failed:', err));
+      const mlResult = await classifyIfPro(text).catch(() => null);
       if (mlResult && (mlResult.label === 'SENSITIVE' || mlResult.label === 'CRITICAL')) {
         igLog('ML classified as', mlResult.label, 'confidence:', mlResult.confidence);
       }
 
       // Apply adaptive weights (API-driven) + feedback-based suppression weights
-      await refreshSuppressionRules();
       const tier1Start = performance.now();
       const adaptiveWeights = getWeightResolver().getWeights();
       const mergedWeights = { ...adaptiveWeights, ..._suppressionWeights };
@@ -739,22 +993,41 @@ async function handleMessage(
       }
       const tier1Result = { ...rawSensitivity, score: finalScore, level: finalLevel };
 
-      // ── Confidence-gated routing: escalate amber zone through tiers ──
-      // Green (0-25): pass. Amber (26-60): escalate to Tier 2/2.5/3. Red (61+): block.
-      // The router also applies semantic classification on ALL zones to catch
-      // content that regex/keywords missed (e.g., casual M&A language).
+      // ── Signal Gate + Confidence-gated routing ──────────────────────────
+      // Signal gate: if the local stack found ANY signal, pseudonymize and
+      // send to server for AI classification. No signal = invisible.
+      //
+      // Conversation memory (3.1b): if any message in this conversation
+      // scored > 40, keep the signal gate open for all follow-ups.
+      const tabId = sender.tab?.id ?? 0;
+      const tracker = getConversationTracker(tabId);
+      const conversationBoost = tracker.detectEscalation()
+        + tracker.getCumulativeEntityBoost()
+        + tracker.getContextCarryover();
+
+      const signalGate: SignalGateInput = {
+        entityCount: allEntities.length,
+        contextualKeywordScore: rawSensitivity.breakdown.contextualKeywordScore,
+        documentTypeMultiplier: rawSensitivity.breakdown.documentTypeMultiplier,
+        conversationBoost,
+      };
+
       _routerEntities = allEntities;
       _routerTextLength = text.length;
       const router = getConfidenceRouter(config);
       let routingDecision: RoutingDecision | null = null;
       try {
-        routingDecision = await router.route(text, tier1Result, performance.now() - tier1Start);
+        routingDecision = await router.route(text, tier1Result, performance.now() - tier1Start, signalGate);
         igLog('Confidence routing:', routingDecision.finalZone,
           'score:', tier1Result.score, '→', routingDecision.finalScore,
+          'signal:', signalGate.entityCount > 0 || signalGate.contextualKeywordScore > 0 || conversationBoost > 0 ? 'YES' : 'NO',
           'tiers:', routingDecision.tiersConsulted.map(t => t.source).join(', '));
       } catch (err) {
         igLog('Confidence routing failed (using Tier 1 result):', err);
       }
+
+      // Record this turn in conversation tracker (after scoring)
+      tracker.addTurn(text, allEntities, finalScore);
 
       // Use routed score if available, otherwise fall back to Tier 1
       const sensitivityResult = routingDecision
@@ -763,7 +1036,7 @@ async function handleMessage(
 
       // ── Compliance enforcement: framework-specific blocking ──
       // HIPAA + MEDICAL_RECORD = block, regardless of score.
-      await refreshComplianceProfile();
+      // (refreshComplianceProfile already ran in the parallel batch above)
       const complianceResult = enforceCompliance(allEntities);
       if (complianceResult?.blocked) {
         igLog('COMPLIANCE BLOCK:', complianceResult.reason);
@@ -785,6 +1058,16 @@ async function handleMessage(
           complianceOverride: true,
           complianceFrameworks: complianceResult.activeFrameworks,
         });
+
+        // Cryptographic audit trail — compliance block
+        recordAttestation({
+          action: 'block',
+          entityCount: allEntities.length,
+          promptHash,
+          level: 'critical',
+          score: 100,
+          aiToolId,
+        }).catch(() => {});
 
         // Broadcast block to sidepanel
         const blockTabId = sender.tab?.id;
@@ -859,26 +1142,40 @@ async function handleMessage(
         captureMethod,
       });
 
+      // Cryptographic audit trail — HMAC-signed record for tamper-evidence
+      recordAttestation({
+        action,
+        entityCount: allEntities.length,
+        promptHash,
+        level: sensitivityResult.level,
+        score: sensitivityResult.score,
+        aiToolId,
+      }).catch(() => {});
+
       // ── Positive badge reinforcement ──
       // Show entity count (amber/red) when entities are detected, or a green
       // checkmark when the prompt is clean. This replaces the "silent unless
       // bad" pattern with visible reassurance that protection is active.
       const badgeTabId = sender.tab?.id;
       if (badgeTabId) {
-        if (allEntities.length > 0) {
-          // Entities detected and protected — show shield count
-          const badgeColor = sensitivityResult.level === 'critical' ? '#EF4444'
-            : sensitivityResult.level === 'high' ? '#F59E0B'
-            : '#6366F1'; // indigo for low/medium — "we see it, you're covered"
-          chrome.action.setBadgeText({ text: String(allEntities.length), tabId: badgeTabId });
-          chrome.action.setBadgeBackgroundColor({ color: badgeColor, tabId: badgeTabId });
-        } else {
-          // Clean prompt — brief green checkmark (clears after 3s)
-          chrome.action.setBadgeText({ text: '\u2713', tabId: badgeTabId });
-          chrome.action.setBadgeBackgroundColor({ color: '#22C55E', tabId: badgeTabId });
-          setTimeout(() => {
-            chrome.action.setBadgeText({ text: '', tabId: badgeTabId }).catch(() => {});
-          }, 3000);
+        try {
+          if (allEntities.length > 0) {
+            // Entities detected and protected — show shield count
+            const badgeColor = sensitivityResult.level === 'critical' ? '#EF4444'
+              : sensitivityResult.level === 'high' ? '#F59E0B'
+              : '#6366F1'; // indigo for low/medium — "we see it, you're covered"
+            chrome.action.setBadgeText({ text: String(allEntities.length), tabId: badgeTabId }).catch(() => {});
+            chrome.action.setBadgeBackgroundColor({ color: badgeColor, tabId: badgeTabId }).catch(() => {});
+          } else {
+            // Clean prompt — brief green checkmark (clears after 3s)
+            chrome.action.setBadgeText({ text: '\u2713', tabId: badgeTabId }).catch(() => {});
+            chrome.action.setBadgeBackgroundColor({ color: '#22C55E', tabId: badgeTabId }).catch(() => {});
+            setTimeout(() => {
+              chrome.action.setBadgeText({ text: '', tabId: badgeTabId }).catch(() => {});
+            }, 3000);
+          }
+        } catch {
+          // Badge API may fail if tab was closed
         }
       }
 
@@ -917,7 +1214,7 @@ async function handleMessage(
               aiToolId,
               tabId: pdTabId,
               maskedPrompt: pseudoResult.maskedText,
-              pseudonymMappings: pseudoResult.mappings.map(m => ({ original: m.original, pseudonym: m.pseudonym, type: m.type, length: m.original.length })),
+              pseudonymMappings: pseudoResult.mappings.map(m => ({ pseudonym: m.pseudonym, type: m.type, length: m.original.length })),
               promptHash: await hashText(text),
               promptLength: text.length,
               realtime: true, // Flag so UI can differentiate from submit
@@ -961,6 +1258,7 @@ async function handleMessage(
     // a fetch to an LLM API and detects/pseudonymizes entities.
     case 'SENSITIVITY_SCORE': {
       const payload = message.payload;
+      if (!payload) return { error: 'No payload' };
       const {
         score, level, explanation, entities = [],
         aiToolId, promptHash, promptLength, maskedPrompt, pseudonymMappings,
@@ -1040,7 +1338,7 @@ async function handleMessage(
       // Ghost detection for Basic tier users (fire-and-forget)
       const ghostTabId = ssTabId ?? sender.tab?.id;
       if (ghostTabId && lastPromptTextByTab.has(ghostTabId)) {
-        const cachedText = lastPromptTextByTab.get(ghostTabId)!;
+        const cachedText = lastPromptTextByTab.get(ghostTabId) ?? '';
         lastPromptTextByTab.delete(ghostTabId);
         isPro().then(hasPro => {
           if (!hasPro) {
@@ -1053,13 +1351,14 @@ async function handleMessage(
               }
             }).catch(() => {});
           }
-        });
+        }).catch(() => {});
       }
 
       return { ok: true };
     }
 
     case 'PROMPT_SUBMITTED': {
+      if (!message.payload?.text) return { error: 'Invalid submit payload' };
       const { text, aiToolId, sensitivityScore } = message.payload;
       igLog('Prompt submitted on', aiToolId, 'score:', sensitivityScore);
 
@@ -1097,7 +1396,9 @@ async function handleMessage(
     }
 
     case 'PROXY_ANALYZE': {
+      if (!message.payload) return { error: 'No payload' };
       const { text, aiToolId, sessionId } = message.payload;
+      if (!text || typeof text !== 'string') return { error: 'Invalid proxy analyze payload' };
       igLog('Proxy analyze request for', aiToolId, 'length:', text.length);
 
       try {
@@ -1108,7 +1409,7 @@ async function handleMessage(
           chrome.tabs.sendMessage(sender.tab.id, {
             type: 'PROXY_RESULT',
             payload: result,
-          });
+          }).catch(() => {}); // Tab may be closed
         }
 
         return result;
@@ -1135,7 +1436,7 @@ async function handleMessage(
           chrome.tabs.sendMessage(sender.tab.id, {
             type: 'PROXY_RESPONSE',
             payload: result,
-          });
+          }).catch(() => {}); // Tab may be closed
         }
 
         return result;
@@ -1218,23 +1519,29 @@ async function handleMessage(
       }
       const { mode } = message.payload;
       firmMode = mode;
-      chrome.storage.local.set({ firmMode: mode });
+      chrome.storage.local.set({ firmMode: mode }).catch(() => {});
       igLog('Firm mode changed to:', mode);
 
       // Relay MODE_CHANGED to ALL content scripts on AI tool tabs
       // so they can sync the mode to the MAIN world fetch interceptor
-      chrome.tabs.query({}, (tabs) => {
-        for (const tab of tabs) {
-          if (tab.id && tab.url) {
-            chrome.tabs.sendMessage(tab.id, {
-              type: 'MODE_CHANGED',
-              payload: { mode },
-            }).catch(() => {
-              // Tab doesn't have content script — ignore
-            });
+      try {
+        chrome.tabs.query({}, (tabs) => {
+          if (!chrome.runtime?.id) return;
+          if (chrome.runtime.lastError || !tabs) return;
+          for (const tab of tabs) {
+            if (tab.id && tab.url) {
+              chrome.tabs.sendMessage(tab.id, {
+                type: 'MODE_CHANGED',
+                payload: { mode },
+              }).catch(() => {
+                // Tab doesn't have content script — ignore
+              });
+            }
           }
-        }
-      });
+        });
+      } catch {
+        // chrome.tabs may not be available
+      }
 
       return { ok: true, mode };
     }
@@ -1340,8 +1647,8 @@ async function handleMessage(
 
       // Update badge to indicate protection failure
       if (message.payload?.healthy === false && sender.tab?.id) {
-        chrome.action.setBadgeText({ text: '!', tabId: sender.tab.id });
-        chrome.action.setBadgeBackgroundColor({ color: '#EF4444', tabId: sender.tab.id });
+        chrome.action.setBadgeText({ text: '!', tabId: sender.tab.id }).catch(() => {});
+        chrome.action.setBadgeBackgroundColor({ color: '#EF4444', tabId: sender.tab.id }).catch(() => {});
       }
       return { ok: true };
     }
@@ -1481,7 +1788,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       console.warn('[Iron Gate] Policy sync failed:', err)
     );
     // Refresh compliance profile alongside policy sync
-    refreshComplianceProfile().catch(() => {});
+    refreshComplianceProfile().catch((err) => igLog('Compliance profile refresh failed:', err));
   }
   if (alarm.name === 'heartbeat') {
     igLog('Sending heartbeat');
@@ -1496,7 +1803,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 // Run initial policy sync on startup
-syncPolicies().catch(() => {});
+syncPolicies().catch((err) => igLog('Initial policy sync failed:', err));
 
 /**
  * Policy Sync — fetches firm policies from the API every 15 minutes.
@@ -1535,10 +1842,14 @@ async function syncPolicies(): Promise<void> {
     _lastPolicyHash = policyStr;
 
     // Store in chrome.storage.local
-    await chrome.storage.local.set({
-      iron_gate_policies: response,
-      iron_gate_policies_updated: Date.now(),
-    });
+    try {
+      await chrome.storage.local.set({
+        iron_gate_policies: response,
+        iron_gate_policies_updated: Date.now(),
+      });
+    } catch (err) {
+      console.warn('[IronGate] policy storage write failed:', err instanceof Error ? err.message : String(err));
+    }
 
     igLog('Policies synced', { updatedAt: response.updatedAt });
 
@@ -1546,16 +1857,22 @@ async function syncPolicies(): Promise<void> {
     syncEntityDictionary().catch(err => igLog('Dict sync error:', err));
 
     // Broadcast to all content scripts
-    chrome.tabs.query({}, (tabs) => {
-      for (const tab of tabs) {
-        if (tab.id && tab.url) {
-          chrome.tabs.sendMessage(tab.id, {
-            type: 'POLICIES_UPDATED',
-            payload: { policies: response, updatedAt: Date.now() },
-          }).catch(() => {});
+    try {
+      chrome.tabs.query({}, (tabs) => {
+        if (!chrome.runtime?.id) return;
+        if (chrome.runtime.lastError || !tabs) return;
+        for (const tab of tabs) {
+          if (tab.id && tab.url) {
+            chrome.tabs.sendMessage(tab.id, {
+              type: 'POLICIES_UPDATED',
+              payload: { policies: response, updatedAt: Date.now() },
+            }).catch(() => {});
+          }
         }
-      }
-    });
+      });
+    } catch {
+      // chrome.tabs may not be available
+    }
 
     // Also notify side panel
     chrome.runtime.sendMessage({
@@ -1734,8 +2051,11 @@ chrome.runtime.onInstalled.addListener((details) => {
   igLog('onInstalled:', details.reason);
   if (details.reason === 'install' || details.reason === 'update') {
     // Clear stale API URL on update so new default is used
-    chrome.storage.local.remove('apiBaseUrl');
+    chrome.storage.local.remove('apiBaseUrl').catch(() => {});
     reinjectAllTabs();
+
+    // NLI/GLiNER in-browser ML removed (3.5) — server-side GPT-4o-mini
+    // via Tier 3 adapter replaces both with better accuracy and no 69MB download.
   }
 });
 
@@ -1820,16 +2140,22 @@ function inlineFetchInterceptor() {
     return entities;
   }
 
-  // ── Realistic Fake Data Pools ──
+  // ── Realistic Fake Data Pools (expanded 5.1) ──
   const FAKE_NAMES = [
     'James Mitchell', 'Emily Rogers', 'Robert Chen', 'Anna Peterson',
     'David Kumar', 'Lisa Chang', 'William Taylor', 'Maria Santos',
     'Thomas Garcia', 'Rachel Kim', 'Andrew Watson', 'Diana Walsh',
     'Daniel Price', 'Nicole Foster', 'Christopher Lee', 'Amanda Brooks',
+    'Oscar Lindgren', 'Claire Donovan', 'Rafael Moreno', 'Priya Sharma',
+    'Henrik Andersen', 'Elena Vasquez', 'Kenji Yamamoto', 'Nadia Karim',
+    'Raj Patel', 'Fiona Gallagher', 'Carlos Mendez', 'Leah Goldstein',
+    'Marco Rossi', 'Aisha Okonkwo', 'Felix Bauer', 'Carmen Reyes',
   ];
   const FAKE_EMAILS = [
     'j.mitchell@northwind.com', 'e.rogers@contoso.com', 'r.chen@fabrikam.net',
     'a.peterson@adatum.org', 'd.kumar@proseware.io', 'l.chang@northwind.com',
+    'o.lindgren@meridian.com', 'c.donovan@alpine.io', 'r.moreno@woodgrove.com',
+    'p.sharma@tailspin.net', 'h.andersen@lucerne.org', 'e.vasquez@cascade.io',
   ];
   const fakeCounters: Record<string, number> = {};
   function pickFake(pool: string[], key: string): string {
@@ -2211,6 +2537,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   lastPromptTextByTab.delete(tabId);
   lastBroadcastByTab.delete(tabId);
   lastBroadcastScoreByTab.delete(tabId);
+  _conversationTrackers.delete(tabId);
   removeTabState(tabId);
 });
 

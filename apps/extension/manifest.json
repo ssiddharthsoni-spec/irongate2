@@ -12,8 +12,7 @@
     "scripting",
     "webNavigation",
     "notifications",
-    "declarativeNetRequest",
-    "offscreen"
+    "declarativeNetRequest"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
@@ -118,6 +117,6 @@
     }
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; connect-src https://irongate-api.onrender.com https://irongate-api-staging.onrender.com 'self';"
+    "extension_pages": "script-src 'self'; style-src 'self'; img-src 'self'; object-src 'none'; connect-src https://irongate-api.onrender.com 'self';"
   }
 }

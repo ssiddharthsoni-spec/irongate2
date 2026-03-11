@@ -897,6 +897,18 @@ const CATEGORY_WEIGHTS: Record<ContextualCategory, number> = {
   real_estate_deals: 0.9,
 };
 
+// Negation prefixes that invalidate a keyword match.
+// "there was no breach", "not a merger", "didn't involve any acquisition"
+const NEGATION_PATTERN = /\b(?:no|not|n['']t|never|without|lack(?:s|ing)?|absence\s+of|don['']t|doesn['']t|didn['']t|isn['']t|aren['']t|wasn['']t|weren['']t)\s+$/i;
+
+/**
+ * Check if the 30 chars before a match contain a negation that invalidates it.
+ */
+function isNegated(text: string, matchStart: number): boolean {
+  const lookback = text.substring(Math.max(0, matchStart - 30), matchStart);
+  return NEGATION_PATTERN.test(lookback);
+}
+
 /**
  * Detect contextual sensitivity markers in text.
  * Returns markers with categories, sensitivity types, and score contributions.
@@ -910,10 +922,22 @@ export function detectContextualSensitivity(text: string): ContextualMarker[] {
     kp.pattern.lastIndex = 0;
 
     let match: RegExpExecArray | null;
+    let matchCount = 0;
+    const MAX_MATCHES_PER_PATTERN = 100;
     while ((match = kp.pattern.exec(text)) !== null) {
+      // Guard against zero-length matches causing infinite loops
+      if (match[0].length === 0) {
+        kp.pattern.lastIndex++;
+        continue;
+      }
+      if (++matchCount > MAX_MATCHES_PER_PATTERN) break;
+
       const key = `${kp.sensitivityType}-${match.index}`;
       if (seen.has(key)) continue;
       seen.add(key);
+
+      // Negation check: "no breach", "not a merger" → skip this match
+      if (isNegated(text, match.index)) continue;
 
       markers.push({
         category: kp.category,
@@ -927,6 +951,27 @@ export function detectContextualSensitivity(text: string): ContextualMarker[] {
     }
   }
 
+  // Temporal signal adjustment: past tense ("had a breach last year") is less
+  // actionable than present/future tense ("will acquire", "planning to").
+  // Reduce weight for markers preceded by past-tense signals.
+  const PAST_TENSE_SIGNAL = /\b(?:last\s+(?:year|quarter|month|week)|previously|in\s+\d{4}|years?\s+ago|back\s+(?:in|when)|used\s+to|formerly|historical(?:ly)?)\b/i;
+  const FUTURE_TENSE_SIGNAL = /\b(?:will\s+(?:be|have|launch|announce)|going\s+to|planning\s+to|about\s+to|scheduled\s+(?:for|to)|upcoming|imminent|tomorrow|next\s+(?:week|month|quarter))\b/i;
+
+  for (const marker of markers) {
+    const surroundStart = Math.max(0, marker.start - 80);
+    const surroundEnd = Math.min(text.length, marker.end + 80);
+    const surrounding = text.substring(surroundStart, surroundEnd);
+
+    if (PAST_TENSE_SIGNAL.test(surrounding) && !FUTURE_TENSE_SIGNAL.test(surrounding)) {
+      // Past tense context → reduce weight by 40% (still flagged, but lower score)
+      marker.weight *= 0.6;
+      marker.confidence *= 0.85;
+    } else if (FUTURE_TENSE_SIGNAL.test(surrounding)) {
+      // Future tense context → boost weight by 15% (active MNPI)
+      marker.weight *= 1.15;
+    }
+  }
+
   // Sort by position
   markers.sort((a, b) => a.start - b.start);
 
@@ -937,21 +982,27 @@ export function detectContextualSensitivity(text: string): ContextualMarker[] {
 function deduplicateMarkers(markers: ContextualMarker[]): ContextualMarker[] {
   if (markers.length <= 1) return markers;
 
-  const result: ContextualMarker[] = [markers[0]];
+  const result: ContextualMarker[] = [];
 
-  for (let i = 1; i < markers.length; i++) {
-    const current = markers[i];
-    const last = result[result.length - 1];
-
-    // Overlap check — only deduplicate if same category
-    if (
-      current.category === last.category &&
-      current.start < last.end
-    ) {
-      if (current.weight > last.weight) {
-        result[result.length - 1] = current;
+  for (const current of markers) {
+    // Check for overlap with ANY existing marker in same category (not just adjacent)
+    let merged = false;
+    for (let j = 0; j < result.length; j++) {
+      const existing = result[j];
+      if (
+        current.category === existing.category &&
+        current.start < existing.end &&
+        current.end > existing.start
+      ) {
+        // Overlapping same-category markers — keep the higher weight one
+        if (current.weight > existing.weight) {
+          result[j] = current;
+        }
+        merged = true;
+        break;
       }
-    } else {
+    }
+    if (!merged) {
       result.push(current);
     }
   }

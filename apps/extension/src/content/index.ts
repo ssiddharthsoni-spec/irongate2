@@ -4,6 +4,15 @@ import { createSensitivityBadge } from './ui/sensitivity-badge';
 import { createCoachingToasts, getNextCoachingTip, type CoachingToastHandle } from './ui/coaching-toast';
 import { resolveMode } from '../managed-config';
 
+// ── Double-Injection Guard ───────────────────────────────────────────────────
+// Prevent the same content script version from initializing twice in one page context.
+// This catches cases where Chrome re-runs the same script without a reload.
+const __IG_ALREADY_INJECTED = !!(window as any).__IRON_GATE_CS_INJECTED__;
+if (__IG_ALREADY_INJECTED) {
+  console.warn('[IronGate] Content script already injected, skipping');
+}
+(window as any).__IRON_GATE_CS_INJECTED__ = true;
+
 // ── Duplicate Injection Guard ────────────────────────────────────────────────
 // When the extension reloads and re-injects, the OLD content script may still
 // be partially alive. We use a window marker to detect and clean up old instances.
@@ -38,8 +47,9 @@ async function getSessionKey(): Promise<CryptoKey> {
   // Try to import a previously exported key from session storage
   try {
     const result = await chrome.storage.session.get(SESSION_KEY_NAME);
-    if (result[SESSION_KEY_NAME]) {
+    if (result[SESSION_KEY_NAME] && typeof result[SESSION_KEY_NAME] === 'string') {
       const raw = Uint8Array.from(atob(result[SESSION_KEY_NAME]), c => c.charCodeAt(0));
+      if (raw.length === 0) throw new Error('Empty session key');
       _sessionKey = await crypto.subtle.importKey(
         'raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt'],
       );
@@ -59,7 +69,8 @@ async function getSessionKey(): Promise<CryptoKey> {
   return _sessionKey;
 }
 
-async function encryptAndStore(key: string, map: Record<string, string>): Promise<number> {
+async function encryptAndStore(key: string, map: Record<string, string> | null | undefined): Promise<number> {
+  if (!map) return 0;
   const entries = Object.keys(map).length;
   if (entries === 0) {
     await chrome.storage.session.set({ [key]: null });
@@ -127,6 +138,7 @@ function syncModeToMainWorld(newMode: 'audit' | 'proxy') {
 function syncPrivateLlmToMainWorld() {
   try {
     chrome.storage.local.get(['localLLMEndpoint', 'localLLMModel'], (result) => {
+      if (!chrome.runtime?.id) return;
       if (result.localLLMEndpoint) {
         window.postMessage({
           type: 'IRON_GATE_SET_PRIVATE_LLM',
@@ -137,6 +149,7 @@ function syncPrivateLlmToMainWorld() {
     });
     // Also check managed storage (enterprise policy)
     chrome.storage.managed?.get(['localLLMEndpoint', 'localLLMModel'], (result) => {
+      if (!chrome.runtime?.id) return;
       if (chrome.runtime.lastError) return; // managed storage may not exist
       if (result?.localLLMEndpoint) {
         window.postMessage({
@@ -173,7 +186,9 @@ resolveMode().then((savedMode) => {
   syncModeToMainWorld(savedMode);
   syncPrivateLlmToMainWorld();
   igLog('Initial mode from storage:', savedMode);
-}).catch(() => {});
+}).catch((err) => {
+  igLog('Failed to resolve initial mode:', err);
+});
 
 // Watch for storage changes in both local AND managed areas
 chrome.storage.onChanged.addListener((changes, area) => {
@@ -199,6 +214,24 @@ chrome.storage.onChanged.addListener((changes, area) => {
 let mainWorldAlive = false;
 let _igMainWorldNonce: string | null = null;
 
+// ── Per-message replay prevention ───────────────────────────────────────────
+// Each message from MAIN world carries a unique _mid (crypto.randomUUID()).
+// We track seen IDs and reject duplicates to prevent replay attacks.
+const _seenMessageIds = new Set<string>();
+const _messageIdTimestamps = new Map<string, number>();
+const MESSAGE_ID_TTL_MS = 60_000; // Expire after 1 minute
+
+// Purge expired message IDs every 30 seconds
+setInterval(() => {
+  const now = Date.now();
+  for (const [mid, ts] of _messageIdTimestamps) {
+    if (now - ts > MESSAGE_ID_TTL_MS) {
+      _seenMessageIds.delete(mid);
+      _messageIdTimestamps.delete(mid);
+    }
+  }
+}, 30_000);
+
 function isValidMainWorldMessage(data: any): boolean {
   // Heartbeat establishes the nonce — always accept the first one
   if (data?.type === 'IRON_GATE_HEARTBEAT' && !_igMainWorldNonce && data._nonce) {
@@ -207,11 +240,22 @@ function isValidMainWorldMessage(data: any): boolean {
   }
   // Fail-closed: reject all messages until nonce is established
   if (!_igMainWorldNonce) return false;
-  // All IRON_GATE_* messages must include the valid nonce
-  return data?._nonce === _igMainWorldNonce;
+  // All IRON_GATE_* messages must include the valid session nonce
+  if (data?._nonce !== _igMainWorldNonce) return false;
+  // Per-message ID replay prevention
+  const mid = data?._mid;
+  if (mid) {
+    if (_seenMessageIds.has(mid)) {
+      igLog('REJECTED replayed message:', data?.type, 'mid:', mid);
+      return false;
+    }
+    _seenMessageIds.add(mid);
+    _messageIdTimestamps.set(mid, Date.now());
+  }
+  return true;
 }
 
-window.addEventListener('message', (event) => {
+function handleHeartbeatMessages(event: MessageEvent) {
   if (event.source !== window) return;
   if (event.data?.type === 'IRON_GATE_HEARTBEAT') {
     if (!isValidMainWorldMessage(event.data)) return;
@@ -234,7 +278,8 @@ window.addEventListener('message', (event) => {
       // Extension context may be invalidated
     }
   }
-});
+}
+window.addEventListener('message', handleHeartbeatMessages);
 
 // ── MAIN world injection fallback ────────────────────────────────────────────
 // The manifest's content_scripts with world:"MAIN" is the primary injection method
@@ -301,7 +346,7 @@ function sanitizeString(val: unknown, maxLen: number): string {
 }
 
 // Listen for messages from MAIN world (fetch interception results)
-window.addEventListener('message', (event) => {
+function handleMainWorldMessages(event: MessageEvent) {
   if (event.source !== window) return;
   // Validate origin matches current page
   if (event.origin !== window.location.origin) return;
@@ -470,7 +515,8 @@ window.addEventListener('message', (event) => {
 
     showCoachingFeedback(isProxy ? 'proxy' : 'audit', entityCount, level, score);
   }
-});
+}
+window.addEventListener('message', handleMainWorldMessages);
 
 // Register message listener IMMEDIATELY so sidepanel can always reach us
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -604,6 +650,8 @@ function showCoachingFeedback(mode: 'proxy' | 'audit', entityCount: number, leve
 
 // Initialize detection (may run before DOM is ready, that's OK)
 function initialize() {
+  // Double-injection guard: skip if this script already ran in this page context
+  if (__IG_ALREADY_INJECTED) return;
   try {
     const currentUrl = window.location.href;
     detector = detectAITool(currentUrl);
@@ -622,12 +670,13 @@ function initialize() {
       // Welcome toast on first load (only once per session)
       try {
         chrome.storage.session.get('welcomeShown', (result) => {
+          if (!chrome.runtime?.id) return;
           if (chrome.runtime.lastError) return; // Storage not accessible
           if (!result?.welcomeShown && toasts) {
             toasts.show({
               type: 'shield',
               title: `Iron Gate Active`,
-              message: `Monitoring ${detector!.name} for sensitive data. Your prompts are being scanned in real time.`,
+              message: `Monitoring ${detector?.name ?? 'unknown'} for sensitive data. Your prompts are being scanned in real time.`,
               duration: 4000,
             });
             chrome.storage.session.set({ welcomeShown: true }).catch(() => {});
@@ -689,4 +738,7 @@ window.addEventListener('iron-gate-cs-replaced', () => {
   contextAlive = false;
   engine?.stop();
   clearInterval(contextCheckInterval);
+  // Clean up all message listeners to prevent orphaned handlers
+  window.removeEventListener('message', handleHeartbeatMessages);
+  window.removeEventListener('message', handleMainWorldMessages);
 }, { once: true });

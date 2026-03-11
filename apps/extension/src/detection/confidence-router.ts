@@ -63,6 +63,21 @@ export interface TierAdapter {
   classify(text: string, tier1Result: TierResult): Promise<TierResult>;
 }
 
+/**
+ * Signal detection input — tells the router whether the local stack
+ * found ANY signal that warrants server-side classification.
+ */
+export interface SignalGateInput {
+  /** Number of entities detected by regex/dictionary */
+  entityCount: number;
+  /** Contextual keyword score from contextual-keywords.ts */
+  contextualKeywordScore: number;
+  /** Document type multiplier from document-classifier.ts */
+  documentTypeMultiplier: number;
+  /** Conversation boost from conversation-tracker.ts (0 if no tracker) */
+  conversationBoost: number;
+}
+
 export interface ConfidenceRouterConfig {
   /** Tier adapters in escalation order (lowest tier first) */
   adapters: TierAdapter[];
@@ -76,6 +91,7 @@ export interface ConfidenceRouterConfig {
    * Optional semantic classifier function.
    * Runs on ALL prompts (including green zone) to catch semantically
    * sensitive content that regex/keywords miss.
+   * Now runs BEFORE the signal gate decision (3.1a).
    */
   semanticClassify?: (text: string) => Promise<SemanticClassification>;
 }
@@ -112,13 +128,19 @@ export function createConfidenceRouter(config: ConfidenceRouterConfig) {
 
   /**
    * Route a Tier 1 result through the confidence-gated system.
-   * Higher tiers are only consulted for amber-zone results.
-   * Red-zone results are never downgraded.
+   *
+   * Signal Gate Logic:
+   *   - No signal → GREEN immediately (IronGate is invisible)
+   *   - Signal detected → pseudonymize + send to server for AI classification
+   *   - RED zone → block immediately (no server call needed)
+   *
+   * Higher tiers can only UPGRADE, never downgrade.
    */
   async function route(
     text: string,
     tier1Score: SensitivityScore,
     tier1LatencyMs: number,
+    signalGate?: SignalGateInput,
   ): Promise<RoutingDecision> {
     const tier1Result: TierResult = {
       tier: 1,
@@ -135,20 +157,27 @@ export function createConfidenceRouter(config: ConfidenceRouterConfig) {
     let highestZone = tier1Result.zone;
     let wasEscalated = false;
 
-    // ── Semantic boost (runs on ALL zones, including green) ──────────────
-    // This catches semantically sensitive content that regex missed.
-    // "We want to buy that company before competitors find out" → green by
-    // regex, but the semantic classifier recognizes M&A intent.
+    // RED zone: never escalate, act immediately — skip semantic + tier routing
+    if (tier1Result.zone === 'red') {
+      return buildDecision(highestZone, highestScore, highestLevel, tiersConsulted, false);
+    }
+
+    // ── Semantic classifier (runs BEFORE signal gate decision — 3.1a) ────
+    // Catches semantically sensitive content that regex/keywords miss.
+    // "Keep this between us until Thursday" → zero entities, zero keywords,
+    // but the semantic classifier recognizes the "confidential/embargoed" cluster.
+    let semanticSignal = false;
     if (semanticClassify) {
       try {
         const semantic = await semanticClassify(text);
         if (semantic.totalBoost > 0) {
+          semanticSignal = true;
           const boostedScore = Math.min(100, highestScore + semantic.totalBoost);
           const boostedZone = scoreToZone(boostedScore);
           const boostedLevel = boostedScore <= 25 ? 'low' : boostedScore <= 60 ? 'medium' : boostedScore <= 85 ? 'high' : 'critical';
 
           tiersConsulted.push({
-            tier: 1, // Still Tier 1 (local, no network)
+            tier: 1,
             score: boostedScore,
             level: boostedLevel,
             zone: boostedZone,
@@ -164,29 +193,38 @@ export function createConfidenceRouter(config: ConfidenceRouterConfig) {
           }
         }
       } catch {
-        // Semantic classifier failure is non-fatal
+        // Semantic classifier failure is non-fatal — gate falls back to other signals
       }
     }
 
-    // RED zone: never escalate, act immediately
-    if (tier1Result.zone === 'red') {
-      return buildDecision(highestZone, highestScore, highestLevel, tiersConsulted, false);
+    // If semantic boost pushed us into RED, return immediately
+    if (highestZone === 'red') {
+      return buildDecision(highestZone, highestScore, highestLevel, tiersConsulted, wasEscalated);
     }
 
-    // GREEN zone: pass through (no escalation needed)
-    if (tier1Result.zone === 'green' && !escalateAmber) {
-      return buildDecision(highestZone, highestScore, highestLevel, tiersConsulted, false);
+    // ── Signal Gate (3.1) ─────────────────────────────────────────────────
+    // Determine if ANY signal was detected. No signal = IronGate is invisible.
+    const gate = signalGate || { entityCount: 0, contextualKeywordScore: 0, documentTypeMultiplier: 1.0, conversationBoost: 0 };
+    const signalDetected =
+      gate.entityCount > 0 ||
+      gate.contextualKeywordScore > 0 ||
+      gate.documentTypeMultiplier > 1.0 ||
+      gate.conversationBoost > 0 ||
+      semanticSignal;
+
+    // No signal: pass through immediately (horoscope, code help, weather)
+    if (!signalDetected && highestZone === 'green') {
+      return buildDecision(highestZone, highestScore, highestLevel, tiersConsulted, wasEscalated);
     }
 
-    // AMBER zone (or green with escalation): consult higher tiers
-    if (tier1Result.zone === 'amber' || (tier1Result.zone === 'green' && escalateAmber)) {
-      // Only escalate amber, not green
-      if (tier1Result.zone !== 'amber') {
-        return buildDecision(highestZone, highestScore, highestLevel, tiersConsulted, false);
-      }
-
+    // ── Tier escalation ────────────────────────────────────────────────────
+    // Signal detected (or AMBER/RED): consult higher tiers for AI classification.
+    // GREEN with signal → still send to server for validation.
+    // AMBER → send to server for upgrade/confirm.
+    const shouldEscalate = signalDetected || highestZone === 'amber';
+    if (shouldEscalate) {
       for (const adapter of sortedAdapters) {
-        if (adapter.tier <= 1) continue; // Skip Tier 1 (already done)
+        if (adapter.tier <= 1) continue;
         if (!adapter.isAvailable()) continue;
 
         try {
@@ -195,13 +233,24 @@ export function createConfidenceRouter(config: ConfidenceRouterConfig) {
             timeout(tierTimeoutMs, adapter.tier),
           ]);
 
-          tiersConsulted.push(result);
+          // Validate tier adapter result before using it
+          if (!result || typeof result.score !== 'number' || !Number.isFinite(result.score)) {
+            onTierError?.(adapter.tier, new Error(`Tier ${adapter.tier} returned invalid result`));
+            continue;
+          }
+          const validatedResult: TierResult = {
+            ...result,
+            score: Math.max(0, Math.min(100, result.score)),
+            level: result.level || 'low',
+            zone: scoreToZone(Math.max(0, Math.min(100, result.score))),
+          };
+          tiersConsulted.push(validatedResult);
 
           // Higher tiers can only UPGRADE, never downgrade
-          if (result.score > highestScore) {
-            highestScore = result.score;
-            highestLevel = result.level;
-            highestZone = scoreToZone(result.score);
+          if (validatedResult.score > highestScore) {
+            highestScore = validatedResult.score;
+            highestLevel = validatedResult.level;
+            highestZone = validatedResult.zone;
             wasEscalated = true;
           }
 
@@ -209,7 +258,7 @@ export function createConfidenceRouter(config: ConfidenceRouterConfig) {
           if (highestZone === 'red') break;
         } catch (err) {
           onTierError?.(adapter.tier, err instanceof Error ? err : new Error(String(err)));
-          // Tier failure = continue with current result (fail-open for amber)
+          // Tier failure = continue with current result (fail-open for green/amber)
         }
       }
     }
