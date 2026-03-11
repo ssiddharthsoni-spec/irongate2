@@ -1237,6 +1237,67 @@ async function handleMessage(
       return { received: true };
     }
 
+    // ── SERVER_PROCESS — MAIN world requests server-side pseudonymization ──
+    // Called synchronously from the fetch interceptor; must return quickly.
+    case 'SERVER_PROCESS': {
+      const { text: spText, aiToolId: spAiToolId, requestId: spReqId } = message.payload || {};
+      if (!spText || !spReqId) return { error: 'Missing text or requestId' };
+
+      const config = await resolveConfig();
+      if (config.processingMode !== 'server' || !config.apiKey) {
+        return { error: 'Server mode not active' };
+      }
+
+      try {
+        const apiUrl = config.apiUrl.replace(/\/v1\/?$/, '') + '/v1/proxy/process';
+        const resp = await fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${config.apiKey}`,
+          },
+          body: JSON.stringify({
+            text: spText,
+            aiToolId: spAiToolId || 'unknown',
+            sessionId: `tab-${sender.tab?.id ?? 0}`,
+            captureMethod: 'typed',
+            platform: spAiToolId || 'unknown',
+          }),
+          signal: AbortSignal.timeout(4_000),
+        });
+
+        if (!resp.ok) {
+          return { error: `API ${resp.status}` };
+        }
+
+        const result = await resp.json();
+        igLog('SERVER_PROCESS: API response —', result.action, 'score:', result.sensitivityScore);
+
+        // Build reverse map from server response for de-pseudonymization
+        let reverseMap: Record<string, string> | undefined;
+        if (result.reverseMap) {
+          reverseMap = {};
+          for (const [_key, entry] of Object.entries(result.reverseMap as Record<string, { original: string; pseudonym: string }>)) {
+            reverseMap[entry.pseudonym] = entry.original;
+          }
+        }
+
+        return {
+          result: {
+            action: result.action,
+            pseudonymizedText: result.pseudonymizedText,
+            reverseMap,
+            sensitivityScore: result.sensitivityScore,
+            sensitivityLevel: result.sensitivityLevel,
+            entityCount: result.entityCount || 0,
+          },
+        };
+      } catch (err) {
+        igLog('SERVER_PROCESS: failed —', err);
+        return { error: err instanceof Error ? err.message : String(err) };
+      }
+    }
+
     // ── PROMPT_CLEARED — user emptied the input field ──
     // Broadcast to sidepanel so it resets stale detection results.
     case 'PROMPT_CLEARED': {

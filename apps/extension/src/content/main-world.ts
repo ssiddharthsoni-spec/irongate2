@@ -125,6 +125,43 @@ let _lastConversationPath: string = window.location.pathname;
 let _privateLlmEndpoint: string | null = null;
 let _privateLlmModel: string | null = null;
 
+// ─── Server-mode processing: request/response relay via content script ────────
+// MAIN world can't access chrome APIs, so we relay through the content script
+// which forwards to the service worker → API → back.
+const _serverProcessPending = new Map<string, {
+  resolve: (result: ServerProcessResult) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}>();
+
+interface ServerProcessResult {
+  action: string;
+  pseudonymizedText?: string;
+  reverseMap?: Record<string, string>;
+  sensitivityScore: number;
+  sensitivityLevel: string;
+  entityCount: number;
+}
+
+function requestServerProcess(text: string, aiToolId: string): Promise<ServerProcessResult> {
+  const requestId = crypto.randomUUID();
+  return new Promise<ServerProcessResult>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      _serverProcessPending.delete(requestId);
+      reject(new Error('Server process timeout'));
+    }, 4000); // 4s timeout — enough for warm API, falls back on cold
+
+    _serverProcessPending.set(requestId, { resolve, reject, timer });
+
+    window.postMessage({
+      type: 'IRON_GATE_SERVER_PROCESS_REQUEST',
+      requestId,
+      text,
+      aiToolId,
+    }, window.location.origin);
+  });
+}
+
 // ─── Reverse Map: Encrypted Session Persistence ──────────────────────────────
 // The reverse map (pseudonym → original PII) lives in `currentReverseMap`.
 // On each update, map entries are sent to the content script (extension context)
@@ -198,6 +235,20 @@ window.addEventListener('message', (event) => {
           `%c[Iron Gate MAIN] Processing mode: ${old} → ${processingMode}`,
           'color: #8b5cf6; font-weight: bold',
         );
+      }
+    }
+  }
+  // Server-mode processing response from content script
+  if (event.data?.type === 'IRON_GATE_SERVER_PROCESS_RESPONSE') {
+    const { requestId, result, error } = event.data;
+    const pending = _serverProcessPending.get(requestId);
+    if (pending) {
+      clearTimeout(pending.timer);
+      _serverProcessPending.delete(requestId);
+      if (error) {
+        pending.reject(new Error(error));
+      } else {
+        pending.resolve(result);
       }
     }
   }
@@ -3129,13 +3180,72 @@ const patchedFetch = async function patchedFetch(
       }
 
       if (promptText && promptText.length >= 10) {
-        // ── SERVER MODE: skip local pseudonymization ──
-        // When processingMode='server', the worker sends the raw text to the API
-        // for server-side detection + pseudonymization. MAIN world passes through
-        // the original request unmodified — no local entity detection, no garbling.
+        // ── SERVER MODE: API-side detection + pseudonymization ──
         if (processingMode === 'server') {
-          igLog('SERVER MODE: passing through original request (server handles detection)');
-          return originalFetch.call(window, input, init);
+          try {
+            const serverResult = await requestServerProcess(promptText, activeAdapter?.id || 'unknown');
+            igLog('SERVER MODE: API result —', serverResult.action, 'score:', serverResult.sensitivityScore);
+
+            // Passthrough: no sensitive data detected
+            if (serverResult.action === 'passthrough' || !serverResult.pseudonymizedText) {
+              igLog('SERVER MODE: passthrough — sending original');
+              return originalFetch.call(window, input, init);
+            }
+
+            // Blocked: critical sensitivity
+            if (serverResult.action === 'blocked') {
+              console.log(
+                '%c[Iron Gate] BLOCKED by server — critical sensitivity detected',
+                'color: #ef4444; font-weight: bold; font-size: 14px',
+              );
+              // Return a synthetic error response instead of sending to AI
+              return new Response(JSON.stringify({ error: 'Request blocked by Iron Gate — sensitive data detected' }), {
+                status: 403,
+                headers: { 'Content-Type': 'application/json' },
+              });
+            }
+
+            // Pseudonymized: swap in the pseudonymized text
+            if (serverResult.reverseMap) {
+              for (const [pseudonym, original] of Object.entries(serverResult.reverseMap)) {
+                addReverseMapping(currentReverseMap, pseudonym, original, 'server');
+              }
+            }
+            const requestReverseMap = { ...currentReverseMap };
+
+            const modifiedBody = activeAdapter?.replacePrompt(bodyString, promptText, serverResult.pseudonymizedText)
+              ?? replacePrompt(bodyString, promptText, serverResult.pseudonymizedText);
+
+            if (modifiedBody) {
+              console.log(
+                `%c[Iron Gate WIRE] SERVER PSEUDONYMIZED — ${serverResult.entityCount} entities protected (score: ${serverResult.sensitivityScore})`,
+                'color: #f97316; font-weight: bold; font-size: 13px',
+              );
+
+              // Report to worker for sidepanel
+              igHash(promptText).then(ph => {
+                igPostMessage({
+                  type: 'IRON_GATE_INTERCEPTED',
+                  promptHash: ph,
+                  promptLength: promptText.length,
+                  maskedPrompt: serverResult.pseudonymizedText || '',
+                  mappings: Object.entries(serverResult.reverseMap || {}).map(([p, o]) => ({ pseudonym: p, original: '', type: 'server' })),
+                  entityCount: serverResult.entityCount,
+                  level: serverResult.sensitivityLevel,
+                  score: serverResult.sensitivityScore,
+                  entities: [],
+                });
+              }).catch(() => {});
+
+              // Build modified request with pseudonymized body
+              const newInit = { ...init, body: modifiedBody };
+              const response = await originalFetch.call(window, input, newInit);
+              return depseudonymizeResponse(response, requestReverseMap);
+            }
+          } catch (err) {
+            // Server processing failed — fall through to local pipeline
+            igLog('SERVER MODE: failed, falling back to local —', err);
+          }
         }
 
         // Detect entities
@@ -3813,9 +3923,12 @@ XMLHttpRequest.prototype.send = function(body?: any) {
     }
 
     if (mode === 'proxy') {
-      // SERVER MODE: skip local pseudonymization for XHR too
+      // SERVER MODE: XHR can't be async easily, so pass through for XHR.
+      // Server-mode pseudonymization happens in the fetch interceptor (primary path).
+      // XHR is only used by a few platforms (Gemini batchexecute) and those
+      // typically use dom-presubmit interception anyway.
       if (processingMode === 'server') {
-        igLog('SERVER MODE: XHR pass-through');
+        igLog('SERVER MODE: XHR pass-through (server handles via fetch path)');
         return originalXHRSend.call(this, body);
       }
       try {

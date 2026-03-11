@@ -460,6 +460,34 @@ function handleMainWorldMessages(event: MessageEvent) {
     return;
   }
 
+  // ── Server-mode processing relay ──────────────────────────────────────────
+  // MAIN world requests server-side detection/pseudonymization via the worker.
+  if (event.data?.type === 'IRON_GATE_SERVER_PROCESS_REQUEST') {
+    const { requestId, text, aiToolId } = event.data;
+    if (!requestId || !text) return;
+    try {
+      chrome.runtime.sendMessage({
+        type: 'SERVER_PROCESS',
+        payload: { text, aiToolId, requestId },
+      }, (response) => {
+        if (!chrome.runtime?.id) return;
+        window.postMessage({
+          type: 'IRON_GATE_SERVER_PROCESS_RESPONSE',
+          requestId,
+          result: response?.result || null,
+          error: response?.error || (chrome.runtime.lastError?.message) || null,
+        }, window.location.origin);
+      });
+    } catch {
+      window.postMessage({
+        type: 'IRON_GATE_SERVER_PROCESS_RESPONSE',
+        requestId,
+        error: 'Extension context invalidated',
+      }, window.location.origin);
+    }
+    return;
+  }
+
   // ── Reverse Pseudonym Map Persistence (Encrypted) ────────────────────────
   // MAIN world sends updated reverse map for persistence in chrome.storage.session.
   // Map is encrypted at rest using a session-scoped AES-GCM key to protect PII
