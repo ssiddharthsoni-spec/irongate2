@@ -778,7 +778,7 @@ async function handleMessage(
               captureMethod,
               platform: aiToolId,
             }),
-            signal: AbortSignal.timeout(10_000),
+            signal: AbortSignal.timeout(3_000),
           });
 
           if (!serverResponse.ok) {

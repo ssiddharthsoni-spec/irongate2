@@ -2,7 +2,7 @@ import { detectAITool } from './detectors';
 import { createCaptureEngine } from './capture';
 import { createSensitivityBadge } from './ui/sensitivity-badge';
 import { createCoachingToasts, getNextCoachingTip, type CoachingToastHandle } from './ui/coaching-toast';
-import { resolveMode } from '../managed-config';
+import { resolveMode, resolveConfig } from '../managed-config';
 
 // ── Double-Injection Guard ───────────────────────────────────────────────────
 // Prevent the same content script version from initializing twice in one page context.
@@ -134,6 +134,10 @@ function syncModeToMainWorld(newMode: 'audit' | 'proxy') {
   window.postMessage({ type: 'IRON_GATE_SET_MODE', mode: newMode }, window.location.origin);
 }
 
+function syncProcessingModeToMainWorld(processingMode: 'local' | 'server') {
+  window.postMessage({ type: 'IRON_GATE_SET_PROCESSING_MODE', processingMode }, window.location.origin);
+}
+
 // Send private LLM config to MAIN world for Executive Lens routing
 function syncPrivateLlmToMainWorld() {
   try {
@@ -190,9 +194,22 @@ resolveMode().then((savedMode) => {
   igLog('Failed to resolve initial mode:', err);
 });
 
+// Sync processing mode (local vs server) to MAIN world
+resolveConfig().then((config) => {
+  if (!contextAlive) return;
+  syncProcessingModeToMainWorld(config.processingMode);
+  igLog('Initial processing mode:', config.processingMode);
+}).catch(() => {});
+
 // Watch for storage changes in both local AND managed areas
 chrome.storage.onChanged.addListener((changes, area) => {
   if (!contextAlive) return;
+  if (changes.processingMode) {
+    resolveConfig().then((config) => {
+      syncProcessingModeToMainWorld(config.processingMode);
+      igLog('Processing mode changed:', config.processingMode);
+    }).catch(() => {});
+  }
   if ((area === 'local' && changes.firmMode) || (area === 'managed' && changes.firmMode)) {
     resolveMode().then((newMode) => {
       syncModeToMainWorld(newMode);

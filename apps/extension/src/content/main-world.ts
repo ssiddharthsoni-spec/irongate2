@@ -117,6 +117,7 @@ function igPostMessage(data: Record<string, unknown>): void {
 // ─── State ──────────────────────────────────────────────────────────────────
 
 let mode: 'audit' | 'proxy' = 'proxy';
+let processingMode: 'local' | 'server' = (window as any).__IRON_GATE_PROCESSING_MODE || 'server';
 let currentReverseMap: Record<string, string> = {};
 let _lastConversationPath: string = window.location.pathname;
 
@@ -186,7 +187,20 @@ window.addEventListener('message', (event) => {
       );
     }
   }
-  // NLI verdict handler removed (3.5) — in-browser ML eliminated
+  // Processing mode: 'local' = pseudonymize in MAIN world, 'server' = pass through (API handles it)
+  if (event.data?.type === 'IRON_GATE_SET_PROCESSING_MODE') {
+    if (event.data.processingMode === 'local' || event.data.processingMode === 'server') {
+      const old = processingMode;
+      processingMode = event.data.processingMode;
+      (window as any).__IRON_GATE_PROCESSING_MODE = processingMode;
+      if (old !== processingMode) {
+        console.log(
+          `%c[Iron Gate MAIN] Processing mode: ${old} → ${processingMode}`,
+          'color: #8b5cf6; font-weight: bold',
+        );
+      }
+    }
+  }
   // Receive private LLM config from content script
   if (event.data?.type === 'IRON_GATE_SET_PRIVATE_LLM') {
     _privateLlmEndpoint = event.data.endpoint || null;
@@ -3115,6 +3129,15 @@ const patchedFetch = async function patchedFetch(
       }
 
       if (promptText && promptText.length >= 10) {
+        // ── SERVER MODE: skip local pseudonymization ──
+        // When processingMode='server', the worker sends the raw text to the API
+        // for server-side detection + pseudonymization. MAIN world passes through
+        // the original request unmodified — no local entity detection, no garbling.
+        if (processingMode === 'server') {
+          igLog('SERVER MODE: passing through original request (server handles detection)');
+          return originalFetch.call(window, input, init);
+        }
+
         // Detect entities
         const regexEntities = detectWithRegex(promptText);
         const secrets = scanForSecrets(promptText);
@@ -3790,6 +3813,11 @@ XMLHttpRequest.prototype.send = function(body?: any) {
     }
 
     if (mode === 'proxy') {
+      // SERVER MODE: skip local pseudonymization for XHR too
+      if (processingMode === 'server') {
+        igLog('SERVER MODE: XHR pass-through');
+        return originalXHRSend.call(this, body);
+      }
       try {
         const promptText = activeAdapter?.extractPrompt(bodyStr) ?? extractPrompt(bodyStr);
         if (promptText && promptText.length >= 10) {
