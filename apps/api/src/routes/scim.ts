@@ -348,7 +348,7 @@ scimRoutes.post('/v2/Users', async (c) => {
     })
     .returning();
 
-  logger.info('SCIM user provisioned', { firmId, userId: created.id, email });
+  logger.info('SCIM user provisioned', { firmId, userId: created.id, emailDomain: email.split('@')[1] });
   return c.json(toScimUser(created, null), 201);
 });
 

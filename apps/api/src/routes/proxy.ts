@@ -9,11 +9,12 @@ import { PseudonymStore } from '../proxy/pseudonym-store';
 import { LLMRouter } from '../proxy/llm-router';
 import type { FirmLLMConfig } from '../proxy/llm-router';
 import { appendEvent } from '../services/audit-chain';
-import { enqueueWebhook, enqueueSIEM } from '../jobs/enqueue';
+import { enqueueAudit, enqueueWebhook, enqueueSIEM } from '../jobs/enqueue';
 import { logger } from '../lib/logger';
 import type { AppEnv } from '../types';
 import { detectFirmAware, scoreFirmAware } from '../detection';
-import { classifyIntent, getIntentWeight, isQuickPassthrough } from '../detection/intent-classifier';
+import { classifyIntent, classifyIntentFull, getIntentWeight, isQuickPassthrough } from '../detection/intent-classifier';
+import type { LlmClassifierConfig } from '../detection/intent-classifier';
 import { detectStructure } from '../detection/structure-detector';
 import { contextualizeEntities, getContextRiskMultiplier } from '../detection/entity-contextualizer';
 import type { ContextualizedEntity } from '../detection/entity-contextualizer';
@@ -26,6 +27,41 @@ import {
 import type { ComplianceFrameworkId, EntityAction } from '@iron-gate/config';
 import { departmentPolicyMiddleware, type DepartmentPolicy } from '../middleware/department-policy';
 import { piiSafetyNetMiddleware, scanForUnmaskedPII } from '../middleware/pii-safety-net';
+
+// ---------------------------------------------------------------------------
+// LLM Cost Controls — per-firm daily call budget
+// ---------------------------------------------------------------------------
+
+const LLM_DAILY_BUDGET = parseInt(process.env.LLM_DAILY_BUDGET_PER_FIRM || '500', 10);
+const _llmCallCounts = new Map<string, { count: number; resetAt: number }>();
+
+/** Check and increment LLM call count for a firm. Returns true if within budget. */
+function checkLlmBudget(firmId: string): boolean {
+  const now = Date.now();
+  const entry = _llmCallCounts.get(firmId);
+
+  if (!entry || entry.resetAt < now) {
+    // Start new daily window (resets at next midnight UTC)
+    const midnight = new Date();
+    midnight.setUTCHours(24, 0, 0, 0);
+    _llmCallCounts.set(firmId, { count: 1, resetAt: midnight.getTime() });
+
+    // Evict old entries to prevent memory leak
+    if (_llmCallCounts.size > 5000) {
+      for (const [key, val] of _llmCallCounts) {
+        if (val.resetAt < now) _llmCallCounts.delete(key);
+      }
+    }
+    return true;
+  }
+
+  if (entry.count >= LLM_DAILY_BUDGET) {
+    return false;
+  }
+
+  entry.count++;
+  return true;
+}
 
 // ---------------------------------------------------------------------------
 // Zod schemas
@@ -136,7 +172,7 @@ proxyRoutes.use('*', departmentPolicyMiddleware());
 // New clients should use POST /v1/proxy/relay which accepts pre-pseudonymized text.
 proxyRoutes.post('/analyze', async (c) => {
   c.header('Deprecation', 'true');
-  c.header('Sunset', '2026-06-01');
+  c.header('Sunset', '2027-06-01');
   c.header('Link', '</v1/proxy/relay>; rel="successor-version"');
   logger.warn('Deprecated endpoint called: POST /v1/proxy/analyze', { firmId: c.get('firmId') });
   try {
@@ -273,7 +309,7 @@ proxyRoutes.post('/analyze', async (c) => {
 // New clients should use POST /v1/proxy/relay which handles the full flow.
 proxyRoutes.post('/send', async (c) => {
   c.header('Deprecation', 'true');
-  c.header('Sunset', '2026-06-01');
+  c.header('Sunset', '2027-06-01');
   c.header('Link', '</v1/proxy/relay>; rel="successor-version"');
   logger.warn('Deprecated endpoint called: POST /v1/proxy/send', { firmId: c.get('firmId') });
   try {
@@ -304,11 +340,26 @@ proxyRoutes.post('/send', async (c) => {
       pseudonymizer.loadMap(sessionMap);
     }
 
+    // 2b. Server-side safety check: scan maskedPrompt for unmasked PII
+    // Even though this is deprecated, prevent bypassing protection via tampered route
+    const piiPatterns = [
+      /\b\d{3}-\d{2}-\d{4}\b/,           // SSN
+      /\b(?:sk-|AKIA|AIza)[A-Za-z0-9]{10,}/,  // API keys
+      /(?:mongodb\+srv|postgres(?:ql)?|mysql):\/\//i,  // DB URIs
+    ];
+    const hasRawPII = piiPatterns.some(p => p.test(parsed.maskedPrompt));
+    const effectiveRoute = hasRawPII && parsed.route === 'passthrough'
+      ? 'cloud_masked' as const
+      : parsed.route;
+    if (hasRawPII && parsed.route === 'passthrough') {
+      logger.warn('/proxy/send: overriding passthrough route — raw PII detected in maskedPrompt', { firmId });
+    }
+
     // 3. Send the (potentially pseudonymized) prompt to the appropriate LLM
     const router = new LLMRouter(firmConfig.llm ?? {});
     const llmResult = await router.send({
       prompt: parsed.maskedPrompt,
-      route: parsed.route,
+      route: effectiveRoute,
       model: parsed.model,
       systemPrompt: parsed.systemPrompt,
       maxTokens: parsed.maxTokens,
@@ -577,6 +628,98 @@ proxyRoutes.post('/relay', piiSafetyNetMiddleware, async (c) => {
 });
 
 // ---------------------------------------------------------------------------
+// Name variant generator for de-pseudonymization
+// If pseudonym "Jordan Williams" → generate variants:
+//   "Williams" → original last name, "Jordan" → original first name,
+//   "Mr. Williams" → "Mr. <original last>", "Jordan's" → "<original first>'s"
+// ---------------------------------------------------------------------------
+
+function generateNameVariants(
+  pseudonym: string,
+  original: string,
+): Array<[string, string]> {
+  const variants: Array<[string, string]> = [];
+  const pseudoParts = pseudonym.trim().split(/\s+/);
+  const origParts = original.trim().split(/\s+/);
+
+  if (pseudoParts.length < 2 || origParts.length < 2) return variants;
+
+  const [pseudoFirst, ...pseudoLastParts] = pseudoParts;
+  const pseudoLast = pseudoLastParts.join(' ');
+  const [origFirst, ...origLastParts] = origParts;
+  const origLast = origLastParts.join(' ');
+
+  // Last name alone: "Williams" → original last name
+  variants.push([pseudoLast, origLast]);
+
+  // First name alone: "Jordan" → original first name
+  variants.push([pseudoFirst, origFirst]);
+
+  // Possessives: "Jordan's" → "<first>'s", "Williams's" → "<last>'s"
+  variants.push([`${pseudoFirst}'s`, `${origFirst}'s`]);
+  variants.push([`${pseudoLast}'s`, `${origLast}'s`]);
+  variants.push([`${pseudonym}'s`, `${original}'s`]);
+
+  // Honorifics: "Mr. Williams" → "Mr. <last>", "Ms. Williams" → "Ms. <last>"
+  for (const prefix of ['Mr.', 'Ms.', 'Mrs.', 'Dr.', 'Prof.']) {
+    variants.push([`${prefix} ${pseudoLast}`, `${prefix} ${origLast}`]);
+  }
+
+  return variants;
+}
+
+// ---------------------------------------------------------------------------
+// Response scanning: check AI response for leaked original entity text
+// Before de-pseudonymizing, scan the LLM's response for original values
+// that should NOT appear (the LLM should only have seen pseudonyms).
+// If found, log a compliance alert — this means the LLM somehow knew
+// the real data, which is a serious security concern.
+// ---------------------------------------------------------------------------
+
+export interface ResponseScanResult {
+  hasLeaks: boolean;
+  leaks: Array<{ original: string; entityType: string; position: number }>;
+  unmatchedPseudonyms?: Array<{ pseudonym: string; entityType: string }>;
+}
+
+export function scanResponseForLeaks(
+  responseText: string,
+  reverseMap: Record<string, { original: string; pseudonym: string; entityType: string }>,
+): ResponseScanResult {
+  const leaks: ResponseScanResult['leaks'] = [];
+
+  for (const entry of Object.values(reverseMap)) {
+    // Skip short values (< 4 chars) — too many false positives
+    if (entry.original.length < 4) continue;
+    // Skip variant entries (they're for de-pseudo, not leak detection)
+    if (entry.original === entry.pseudonym) continue;
+
+    const idx = responseText.indexOf(entry.original);
+    if (idx !== -1) {
+      leaks.push({
+        original: entry.original.substring(0, 3) + '***', // Truncate for safety
+        entityType: entry.entityType,
+        position: idx,
+      });
+    }
+  }
+
+  // Check for unmatched pseudonyms (pseudonym still present in response = de-pseudo failure)
+  const unmatchedPseudonyms: Array<{ pseudonym: string; entityType: string }> = [];
+  for (const entry of Object.values(reverseMap)) {
+    if (entry.pseudonym.length < 4) continue;
+    if (responseText.includes(entry.pseudonym)) {
+      unmatchedPseudonyms.push({
+        pseudonym: entry.pseudonym.substring(0, 8) + '...',
+        entityType: entry.entityType,
+      });
+    }
+  }
+
+  return { hasLeaks: leaks.length > 0, leaks, unmatchedPseudonyms };
+}
+
+// ---------------------------------------------------------------------------
 // POST /v1/proxy/process — Unified contextual-intelligence endpoint (Model A)
 // ---------------------------------------------------------------------------
 
@@ -586,6 +729,8 @@ const processRequestSchema = z.object({
   sessionId: z.string().optional(),
   captureMethod: z.string().optional().default('typed'),
   platform: z.string().optional().default('unknown'),
+  wasPasted: z.boolean().optional().default(false),
+  quickCheck: z.boolean().optional().default(false),
 });
 
 proxyRoutes.post('/process', async (c) => {
@@ -594,7 +739,7 @@ proxyRoutes.post('/process', async (c) => {
 
   try {
     const parsed = processRequestSchema.parse(await c.req.json());
-    const { text, aiToolId, sessionId, captureMethod, platform } = parsed;
+    const { text, aiToolId, sessionId, captureMethod, platform, wasPasted, quickCheck } = parsed;
 
     // ── Fast path: short inward-intent messages skip full detection ──
     if (isQuickPassthrough(text)) {
@@ -608,17 +753,75 @@ proxyRoutes.post('/process', async (c) => {
       });
     }
 
-    // ── 1. Intent classification ──
-    const intentResult = classifyIntent(text);
+    // ── PARALLEL: Intent classification + Entity detection + Conversation state ──
+    // These three operations are independent — run them concurrently to cut latency.
+    const withinBudget = checkLlmBudget(firmId);
+    const llmClassifierConfig: LlmClassifierConfig | undefined =
+      process.env.OPENAI_API_KEY && withinBudget
+        ? {
+            apiKey: process.env.OPENAI_API_KEY,
+            baseUrl: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+            model: process.env.INTENT_CLASSIFIER_MODEL || 'gpt-4o-mini',
+            timeoutMs: 1500,
+          }
+        : undefined;
+    if (!withinBudget) {
+      logger.warn('LLM daily budget exceeded for firm', { firmId, budget: LLM_DAILY_BUDGET });
+    }
+
+    // Launch all FOUR expensive operations in parallel — none depend on each other
+    const [intentResult, firmRow, conversationRow, detectedEntitiesEarly] = await Promise.all([
+      // 1. Intent classification (regex → NLP → LLM)
+      classifyIntentFull(text, llmClassifierConfig),
+      // 2. Firm config lookup
+      db.select().from(firms).where(eq(firms.id, firmId)).limit(1),
+      // 3. Conversation state lookup
+      sessionId
+        ? db.select().from(conversationState)
+            .where(sql`${conversationState.sessionId} = ${sessionId} AND ${conversationState.firmId} = ${firmId}`)
+            .limit(1).catch(() => [] as any[])
+        : Promise.resolve([] as any[]),
+      // 4. Entity detection (only needs firmId, runs parallel with intent)
+      detectFirmAware(text, { firmId }),
+    ]);
+
     const intentWeight = intentResult.confidence >= 0.7
       ? getIntentWeight(intentResult)
       : 1.0;
 
-    // Non-disclosure intents with high confidence → passthrough
+    // Conversation state floor
+    let conversationFloor = 0;
+    let sessionEscalated = false;
+    const existing = conversationRow?.[0];
+    if (existing && existing.peakScore >= 30) {
+      conversationFloor = Math.min(30, Math.round(existing.peakScore * 0.4));
+      sessionEscalated = true;
+    }
+
+    // Quick-check mode: intent-only classification for short safe messages
     const passthroughIntents = new Set([
       'research', 'creative', 'productivity', 'coding', 'brainstorming',
     ]);
     if (
+      quickCheck && !sessionEscalated &&
+      passthroughIntents.has(intentResult.intent) &&
+      intentResult.confidence >= 0.7 &&
+      intentResult.direction === 'inward'
+    ) {
+      return c.json({
+        action: 'passthrough',
+        reason: `quick_check_${intentResult.intent}`,
+        intent: intentResult,
+        sensitivityScore: 0,
+        sensitivityLevel: 'low',
+        entities: [],
+        latencyMs: Date.now() - start,
+      });
+    }
+
+    // Non-disclosure intents with high confidence → passthrough
+    if (
+      !sessionEscalated &&
       passthroughIntents.has(intentResult.intent) &&
       intentResult.confidence >= 0.8 &&
       intentWeight <= 0.3
@@ -634,11 +837,16 @@ proxyRoutes.post('/process', async (c) => {
       });
     }
 
-    // ── 2. Entity detection ──
-    const [firm] = await db.select().from(firms).where(eq(firms.id, firmId)).limit(1);
-    const complianceFramework = (firm?.config as Record<string, unknown>)?.complianceFramework as ComplianceFrameworkId | undefined;
+    // ── 2. Entity detection (runs after firm config is available) ──
+    const firm = firmRow?.[0];
+    const firmConfig = (firm?.config as Record<string, unknown>) || {};
+    const complianceFramework = firmConfig.complianceFramework as ComplianceFrameworkId | undefined;
     const activeFrameworks = complianceFramework ? [complianceFramework] : [];
-    const detectedEntities = await detectFirmAware(text, { firmId });
+
+    const firmIntentWeights = firmConfig.intentWeights as Record<string, number> | undefined;
+    const effectiveIntentWeight = firmIntentWeights?.[intentResult.intent] ?? intentWeight;
+
+    const detectedEntities = detectedEntitiesEarly;
 
     // ── 3. Entity contextualization ──
     const contextualizedEntities = contextualizeEntities(text, detectedEntities);
@@ -659,9 +867,11 @@ proxyRoutes.post('/process', async (c) => {
       : 1.0;
 
     // ── 5. Contextual scoring ──
+    const pasteMultiplier = (wasPasted && detectedEntities.length > 0) ? 1.3 : 1.0;
     const baseScore = await scoreFirmAware(text, detectedEntities, { firmId });
-    const rawScore = baseScore.score * intentWeight * structureMultiplier * effectiveEntityContext;
-    const finalScore = Math.max(0, Math.min(100, Math.round(rawScore)));
+    const rawScore = baseScore.score * effectiveIntentWeight * structureMultiplier * effectiveEntityContext * pasteMultiplier;
+    // Apply conversation floor: disclosure sessions keep elevated monitoring
+    const finalScore = Math.max(conversationFloor, Math.min(100, Math.round(rawScore)));
 
     const sensitivityLevel = finalScore >= 86 ? 'critical'
       : finalScore >= 61 ? 'high'
@@ -685,7 +895,7 @@ proxyRoutes.post('/process', async (c) => {
       const pseudonymizer = new Pseudonymizer(pseudoSessionId, firmId);
       const pseudoResult = pseudonymizer.pseudonymize(text, detectedEntities);
       pseudonymizedText = pseudoResult.maskedText;
-      // Serialize the Map for JSON transport
+      // Serialize the Map for JSON transport, including name variants for de-pseudo
       const mapEntries: Record<string, { original: string; pseudonym: string; entityType: string }> = {};
       for (const [key, entry] of pseudoResult.map.mappings) {
         mapEntries[key] = {
@@ -693,21 +903,40 @@ proxyRoutes.post('/process', async (c) => {
           pseudonym: entry.pseudonym,
           entityType: entry.entityType,
         };
+        // Generate variants the LLM might use in its response
+        if (entry.entityType === 'PERSON') {
+          const variants = generateNameVariants(entry.pseudonym, entry.original);
+          for (const [variantPseudo, variantOriginal] of variants) {
+            const vKey = `variant_${key}_${variantPseudo}`;
+            mapEntries[vKey] = {
+              original: variantOriginal,
+              pseudonym: variantPseudo,
+              entityType: entry.entityType,
+            };
+          }
+        }
       }
       reverseMapJson = mapEntries;
     } else {
       action = 'passthrough';
     }
 
-    // ── 7. Audit trail ──
+    // ── 7. Audit trail — durable BullMQ queue (SOC 2 / HIPAA compliant) ──
+    // Audit write is enqueued as a durable job with 5x retry + exponential backoff.
+    // Response returns immediately. Failed jobs land in dead-letter for investigation.
     const auditAction = shouldBlock ? 'block' as const
       : shouldPseudonymize ? 'proxy' as const
       : 'pass' as const;
-    await appendEvent({
+
+    const auditPromptHash = await sha256(text);
+    const entityTypes = Array.from(new Set(detectedEntities.map(e => e.type)));
+
+    enqueueAudit({
       firmId,
       userId: 'system',
       aiToolId,
-      promptHash: '',
+      sessionId,
+      promptHash: auditPromptHash,
       promptLength: text.length,
       sensitivityScore: finalScore,
       sensitivityLevel: sensitivityLevel as 'low' | 'medium' | 'high' | 'critical',
@@ -715,65 +944,45 @@ proxyRoutes.post('/process', async (c) => {
       captureMethod,
       metadata: {
         intent: intentResult.intent,
+        intentDirection: intentResult.direction,
+        intentConfidence: intentResult.confidence,
+        detectedLanguage: intentResult.detectedLanguage || 'en',
         structureType: structureResult.type,
+        structureMultiplier,
+        entityContextFactor: effectiveEntityContext,
+        entityContextTags: contextualizedEntities.map(e => ({
+          type: e.type,
+          context: e.context,
+          contextConfidence: e.contextConfidence,
+        })),
+        pasteMultiplier,
+        intentWeight: effectiveIntentWeight,
+        baseScore: baseScore.score,
         platform,
         entityCount: detectedEntities.length,
+        wasPasted,
         source: 'process_endpoint',
       },
-    });
-
-    enqueueSIEM({
-      firmId,
-      event: {
+      siemEvent: {
         eventId: crypto.randomUUID(), firmId, aiToolId,
         sensitivityScore: finalScore, sensitivityLevel,
         action, entityCount: detectedEntities.length,
         captureMethod,
         timestamp: new Date().toISOString(),
       },
-    }).catch((err) => logger.warn('Failed to enqueue process SIEM', {
+      ...(sessionId ? {
+        conversationUpdate: {
+          sessionId,
+          entityTypes,
+          intent: intentResult.intent,
+        },
+      } : {}),
+    }).catch((err) => logger.error('Failed to enqueue audit job', {
+      firmId,
       error: err instanceof Error ? err.message : String(err),
     }));
 
-    // ── 8. Conversation state (slow-boil tracking) ──
-    if (sessionId) {
-      try {
-        const entityTypes = Array.from(new Set(detectedEntities.map(e => e.type)));
-
-        await db.insert(conversationState).values({
-          sessionId,
-          firmId,
-          turnCount: 1,
-          cumulativeScore: finalScore,
-          peakScore: finalScore,
-          entityTypesSeen: entityTypes,
-          lastIntent: intentResult.intent,
-          lastActivity: new Date(),
-        }).onConflictDoUpdate({
-          target: [conversationState.sessionId, conversationState.firmId],
-          set: {
-            turnCount: sql`${conversationState.turnCount} + 1`,
-            cumulativeScore: sql`${conversationState.cumulativeScore} + ${finalScore}`,
-            peakScore: sql`GREATEST(${conversationState.peakScore}, ${finalScore})`,
-            entityTypesSeen: sql`(
-              SELECT jsonb_agg(DISTINCT val)
-              FROM jsonb_array_elements_text(
-                COALESCE(${conversationState.entityTypesSeen}::jsonb, '[]'::jsonb) ||
-                ${JSON.stringify(entityTypes)}::jsonb
-              ) AS val
-            )`,
-            lastIntent: intentResult.intent,
-            lastActivity: new Date(),
-          },
-        });
-      } catch (err) {
-        logger.warn('Failed to update conversation state', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
-    // ── 9. Response ──
+    // ── 8. Response — sent IMMEDIATELY, audit runs in background ──
     const latencyMs = Date.now() - start;
     return c.json({
       action,
@@ -791,6 +1000,89 @@ proxyRoutes.post('/process', async (c) => {
       ...(reverseMapJson !== undefined && { reverseMap: reverseMapJson }),
       latencyMs,
     });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return c.json({ error: 'Validation error', details: error.errors }, 400);
+    }
+    // Pipeline failure safety: default to AMBER (pseudonymize conservatively)
+    // NEVER default to passthrough — that would let unprotected data through
+    const elapsed = Date.now() - start;
+    logger.error('Pipeline error, defaulting to AMBER (conservative protection)', {
+      firmId, elapsed,
+      error: error instanceof Error ? error.message : String(error),
+      isTimeout: elapsed > 3000,
+    });
+    return c.json({
+      action: 'pseudonymized',
+      reason: elapsed > 3000 ? 'pipeline_timeout' : 'pipeline_error',
+      sensitivityScore: 50,
+      sensitivityLevel: 'medium',
+      warning: 'Detection pipeline encountered an issue, defaulting to conservative protection',
+      latencyMs: elapsed,
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /v1/proxy/scan-response — Scan AI response for leaked original entities
+// Called after de-pseudonymization to verify no original entity text appeared
+// in the LLM's response (which should only contain pseudonyms).
+// ---------------------------------------------------------------------------
+
+const scanResponseSchema = z.object({
+  responseText: z.string().min(1).max(500_000),
+  sessionId: z.string().min(1),
+  reverseMap: z.record(z.object({
+    original: z.string(),
+    pseudonym: z.string(),
+    entityType: z.string(),
+  })),
+});
+
+proxyRoutes.post('/scan-response', async (c) => {
+  const firmId = c.get('firmId') as string;
+
+  try {
+    const parsed = scanResponseSchema.parse(await c.req.json());
+    const result = scanResponseForLeaks(parsed.responseText, parsed.reverseMap);
+
+    if (result.unmatchedPseudonyms && result.unmatchedPseudonyms.length > 0) {
+      logger.warn('Unmatched pseudonyms in AI response (de-pseudo incomplete)', {
+        firmId,
+        sessionId: parsed.sessionId,
+        count: result.unmatchedPseudonyms.length,
+        types: result.unmatchedPseudonyms.map(u => u.entityType),
+      });
+    }
+
+    if (result.hasLeaks) {
+      logger.warn('RESPONSE LEAK DETECTED', {
+        firmId,
+        sessionId: parsed.sessionId,
+        leakCount: result.leaks.length,
+        leakTypes: result.leaks.map(l => l.entityType),
+      });
+
+      await appendEvent({
+        firmId,
+        userId: 'system',
+        aiToolId: 'unknown',
+        promptHash: '',
+        promptLength: 0,
+        sensitivityScore: 100,
+        sensitivityLevel: 'critical',
+        action: 'block',
+        captureMethod: 'response_scan',
+        metadata: {
+          source: 'response_leak_scan',
+          leakCount: result.leaks.length,
+          leakTypes: result.leaks.map(l => l.entityType),
+          sessionId: parsed.sessionId,
+        },
+      });
+    }
+
+    return c.json(result);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return c.json({ error: 'Validation error', details: error.errors }, 400);

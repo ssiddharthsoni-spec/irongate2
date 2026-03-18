@@ -3,241 +3,13 @@
 import React, { useState, useEffect } from 'react';
 import { useApiClient } from '../../lib/api';
 
-function getDemoEvents(): any[] {
-  return [
-    {
-      id: 'demo-evt-001',
-      aiToolId: 'chatgpt',
-      sensitivityScore: 94,
-      sensitivityLevel: 'critical',
-      action: 'block',
-      captureMethod: 'fetch_intercept',
-      createdAt: '2026-02-20T14:32:00.000Z',
-      entities: [
-        { type: 'SSN', length: 11, confidence: 0.98 },
-        { type: 'PRIVILEGE_MARKER', length: 24, confidence: 0.91 },
-        { type: 'PERSON', length: 14, confidence: 0.95 },
-      ],
-      eventHash: 'a3f8c1d4e5b6a7f8c1d4e5b6a7f8c1d4e5b6a7f8c1d4e5b6a7f8c1d4e5b6a7f8',
-      chainPosition: 1,
-      previousHash: '0000000000000000000000000000000000000000000000000000000000000000',
-      userId: 'siddharth.soni@irongate.dev',
-    },
-    {
-      id: 'demo-evt-002',
-      aiToolId: 'claude',
-      sensitivityScore: 87,
-      sensitivityLevel: 'critical',
-      action: 'proxy',
-      captureMethod: 'dom_intercept',
-      createdAt: '2026-02-20T13:15:00.000Z',
-      entities: [
-        { type: 'MATTER_NUMBER', length: 12, confidence: 0.94 },
-        { type: 'PERSON', length: 18, confidence: 0.97 },
-        { type: 'EMAIL', length: 26, confidence: 0.99 },
-      ],
-      eventHash: 'b4e9d2c5f6a7b8e9d2c5f6a7b8e9d2c5f6a7b8e9d2c5f6a7b8e9d2c5f6a7b8e9',
-      chainPosition: 2,
-      previousHash: 'a3f8c1d4e5b6a7f8c1d4e5b6a7f8c1d4e5b6a7f8c1d4e5b6a7f8c1d4e5b6a7f8',
-      userId: 'emily.dawson@irongate.dev',
-    },
-    {
-      id: 'demo-evt-003',
-      aiToolId: 'gemini',
-      sensitivityScore: 72,
-      sensitivityLevel: 'high',
-      action: 'warn',
-      captureMethod: 'fetch_intercept',
-      createdAt: '2026-02-20T11:48:00.000Z',
-      entities: [
-        { type: 'ORGANIZATION', length: 22, confidence: 0.88 },
-        { type: 'CREDIT_CARD', length: 16, confidence: 0.96 },
-      ],
-      eventHash: 'c5f0e3d6a7b8c9f0e3d6a7b8c9f0e3d6a7b8c9f0e3d6a7b8c9f0e3d6a7b8c9f0',
-      chainPosition: 3,
-      previousHash: 'b4e9d2c5f6a7b8e9d2c5f6a7b8e9d2c5f6a7b8e9d2c5f6a7b8e9d2c5f6a7b8e9',
-      userId: 'marcus.rivera@irongate.dev',
-    },
-    {
-      id: 'demo-evt-004',
-      aiToolId: 'copilot',
-      sensitivityScore: 45,
-      sensitivityLevel: 'medium',
-      action: 'warn',
-      captureMethod: 'dom_intercept',
-      createdAt: '2026-02-20T10:22:00.000Z',
-      entities: [
-        { type: 'PERSON', length: 16, confidence: 0.92 },
-        { type: 'ORGANIZATION', length: 19, confidence: 0.85 },
-      ],
-      eventHash: 'd6a1f4e7b8c9d0a1f4e7b8c9d0a1f4e7b8c9d0a1f4e7b8c9d0a1f4e7b8c9d0a1',
-      chainPosition: 4,
-      previousHash: 'c5f0e3d6a7b8c9f0e3d6a7b8c9f0e3d6a7b8c9f0e3d6a7b8c9f0e3d6a7b8c9f0',
-      userId: 'jennifer.hartwell@irongate.dev',
-    },
-    {
-      id: 'demo-evt-005',
-      aiToolId: 'chatgpt',
-      sensitivityScore: 91,
-      sensitivityLevel: 'critical',
-      action: 'block',
-      captureMethod: 'fetch_intercept',
-      createdAt: '2026-02-20T09:05:00.000Z',
-      entities: [
-        { type: 'SSN', length: 11, confidence: 0.99 },
-        { type: 'PERSON', length: 21, confidence: 0.96 },
-        { type: 'EMAIL', length: 30, confidence: 0.98 },
-        { type: 'PRIVILEGE_MARKER', length: 38, confidence: 0.87 },
-      ],
-      eventHash: 'e7b2a5f8c9d0e1b2a5f8c9d0e1b2a5f8c9d0e1b2a5f8c9d0e1b2a5f8c9d0e1b2',
-      chainPosition: 5,
-      previousHash: 'd6a1f4e7b8c9d0a1f4e7b8c9d0a1f4e7b8c9d0a1f4e7b8c9d0a1f4e7b8c9d0a1',
-      userId: 'david.okonkwo@irongate.dev',
-    },
-    {
-      id: 'demo-evt-006',
-      aiToolId: 'claude',
-      sensitivityScore: 33,
-      sensitivityLevel: 'medium',
-      action: 'pass',
-      captureMethod: 'fetch_intercept',
-      createdAt: '2026-02-19T17:40:00.000Z',
-      entities: [
-        { type: 'PERSON', length: 12, confidence: 0.89 },
-      ],
-      eventHash: 'f8c3b6a9d0e1f2c3b6a9d0e1f2c3b6a9d0e1f2c3b6a9d0e1f2c3b6a9d0e1f2c3',
-      chainPosition: 6,
-      previousHash: 'e7b2a5f8c9d0e1b2a5f8c9d0e1b2a5f8c9d0e1b2a5f8c9d0e1b2a5f8c9d0e1b2',
-      userId: 'siddharth.soni@irongate.dev',
-    },
-    {
-      id: 'demo-evt-007',
-      aiToolId: 'gemini',
-      sensitivityScore: 68,
-      sensitivityLevel: 'high',
-      action: 'proxy',
-      captureMethod: 'dom_intercept',
-      createdAt: '2026-02-19T15:12:00.000Z',
-      entities: [
-        { type: 'MATTER_NUMBER', length: 10, confidence: 0.93 },
-        { type: 'ORGANIZATION', length: 28, confidence: 0.91 },
-        { type: 'PERSON', length: 15, confidence: 0.94 },
-      ],
-      eventHash: 'a9d4c7b0e1f2a3d4c7b0e1f2a3d4c7b0e1f2a3d4c7b0e1f2a3d4c7b0e1f2a3d4',
-      chainPosition: 7,
-      previousHash: 'f8c3b6a9d0e1f2c3b6a9d0e1f2c3b6a9d0e1f2c3b6a9d0e1f2c3b6a9d0e1f2c3',
-      userId: 'emily.dawson@irongate.dev',
-    },
-    {
-      id: 'demo-evt-008',
-      aiToolId: 'chatgpt',
-      sensitivityScore: 15,
-      sensitivityLevel: 'low',
-      action: 'pass',
-      captureMethod: 'fetch_intercept',
-      createdAt: '2026-02-19T12:55:00.000Z',
-      entities: [],
-      eventHash: 'b0e5d8c1f2a3b4e5d8c1f2a3b4e5d8c1f2a3b4e5d8c1f2a3b4e5d8c1f2a3b4e5',
-      chainPosition: 8,
-      previousHash: 'a9d4c7b0e1f2a3d4c7b0e1f2a3d4c7b0e1f2a3d4c7b0e1f2a3d4c7b0e1f2a3d4',
-      userId: 'marcus.rivera@irongate.dev',
-    },
-    {
-      id: 'demo-evt-009',
-      aiToolId: 'copilot',
-      sensitivityScore: 78,
-      sensitivityLevel: 'high',
-      action: 'warn',
-      captureMethod: 'dom_intercept',
-      createdAt: '2026-02-19T10:30:00.000Z',
-      entities: [
-        { type: 'CREDIT_CARD', length: 16, confidence: 0.97 },
-        { type: 'PERSON', length: 20, confidence: 0.93 },
-      ],
-      eventHash: 'c1f6e9d2a3b4c5f6e9d2a3b4c5f6e9d2a3b4c5f6e9d2a3b4c5f6e9d2a3b4c5f6',
-      chainPosition: 9,
-      previousHash: 'b0e5d8c1f2a3b4e5d8c1f2a3b4e5d8c1f2a3b4e5d8c1f2a3b4e5d8c1f2a3b4e5',
-      userId: 'jennifer.hartwell@irongate.dev',
-    },
-    {
-      id: 'demo-evt-010',
-      aiToolId: 'claude',
-      sensitivityScore: 55,
-      sensitivityLevel: 'medium',
-      action: 'warn',
-      captureMethod: 'fetch_intercept',
-      createdAt: '2026-02-19T08:18:00.000Z',
-      entities: [
-        { type: 'EMAIL', length: 24, confidence: 0.99 },
-        { type: 'ORGANIZATION', length: 17, confidence: 0.86 },
-      ],
-      eventHash: 'd2a7f0e3b4c5d6a7f0e3b4c5d6a7f0e3b4c5d6a7f0e3b4c5d6a7f0e3b4c5d6a7',
-      chainPosition: 10,
-      previousHash: 'c1f6e9d2a3b4c5f6e9d2a3b4c5f6e9d2a3b4c5f6e9d2a3b4c5f6e9d2a3b4c5f6',
-      userId: 'david.okonkwo@irongate.dev',
-    },
-    {
-      id: 'demo-evt-011',
-      aiToolId: 'chatgpt',
-      sensitivityScore: 82,
-      sensitivityLevel: 'high',
-      action: 'proxy',
-      captureMethod: 'fetch_intercept',
-      createdAt: '2026-02-18T16:45:00.000Z',
-      entities: [
-        { type: 'PRIVILEGE_MARKER', length: 31, confidence: 0.90 },
-        { type: 'MATTER_NUMBER', length: 10, confidence: 0.95 },
-        { type: 'PERSON', length: 13, confidence: 0.92 },
-      ],
-      eventHash: 'e3b8a1f4c5d6e7b8a1f4c5d6e7b8a1f4c5d6e7b8a1f4c5d6e7b8a1f4c5d6e7b8',
-      chainPosition: 11,
-      previousHash: 'd2a7f0e3b4c5d6a7f0e3b4c5d6a7f0e3b4c5d6a7f0e3b4c5d6a7f0e3b4c5d6a7',
-      userId: 'siddharth.soni@irongate.dev',
-    },
-    {
-      id: 'demo-evt-012',
-      aiToolId: 'gemini',
-      sensitivityScore: 21,
-      sensitivityLevel: 'low',
-      action: 'pass',
-      captureMethod: 'dom_intercept',
-      createdAt: '2026-02-18T14:10:00.000Z',
-      entities: [
-        { type: 'PERSON', length: 9, confidence: 0.78 },
-      ],
-      eventHash: 'f4c9b2a5d6e7f8c9b2a5d6e7f8c9b2a5d6e7f8c9b2a5d6e7f8c9b2a5d6e7f8c9',
-      chainPosition: 12,
-      previousHash: 'e3b8a1f4c5d6e7b8a1f4c5d6e7b8a1f4c5d6e7b8a1f4c5d6e7b8a1f4c5d6e7b8',
-      userId: 'emily.dawson@irongate.dev',
-    },
-    {
-      id: 'demo-evt-013',
-      aiToolId: 'claude',
-      sensitivityScore: 95,
-      sensitivityLevel: 'critical',
-      action: 'block',
-      captureMethod: 'fetch_intercept',
-      createdAt: '2026-02-18T11:33:00.000Z',
-      entities: [
-        { type: 'SSN', length: 11, confidence: 0.99 },
-        { type: 'CREDIT_CARD', length: 16, confidence: 0.97 },
-        { type: 'PERSON', length: 17, confidence: 0.96 },
-        { type: 'EMAIL', length: 29, confidence: 0.98 },
-      ],
-      eventHash: 'a5d0c3b6e7f8a9d0c3b6e7f8a9d0c3b6e7f8a9d0c3b6e7f8a9d0c3b6e7f8a9d0',
-      chainPosition: 13,
-      previousHash: 'f4c9b2a5d6e7f8c9b2a5d6e7f8c9b2a5d6e7f8c9b2a5d6e7f8c9b2a5d6e7f8c9',
-      userId: 'marcus.rivera@irongate.dev',
-    },
-  ];
-}
+/* No demo data — dashboard must show real data or clear error state */
 
 export default function EventsPage() {
   const { apiFetch } = useApiClient();
-  const [events, setEvents] = useState<any[]>(getDemoEvents());
+  const [events, setEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedEvent, setSelectedEvent] = useState<any | null>(null);
-  const [isLive, setIsLive] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [filters, setFilters] = useState({
     minScore: '',
@@ -265,12 +37,11 @@ export default function EventsPage() {
       if (!response.ok) throw new Error('Failed to fetch');
       const data = await response.json();
       setEvents(data.events || []);
-      setIsLive(true);
+      setFetchError(null);
     } catch (err) {
       console.error('Failed to fetch events:', err);
-      setIsLive(false);
-      setFetchError('Unable to connect to API. Showing demo data.');
-      // Keep demo data — do not clear events
+      setEvents([]);
+      setFetchError('Unable to connect to API. Check your connection and try again.');
     } finally {
       setLoading(false);
     }
@@ -320,18 +91,18 @@ export default function EventsPage() {
 
   return (
     <div>
-      {/* Demo data banner */}
-      {!isLive && !loading && (
-        <div className="mb-4 flex items-center gap-3 rounded-lg border border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20 px-4 py-3">
-          <svg className="w-5 h-5 text-yellow-600 dark:text-yellow-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+      {/* Error banner */}
+      {fetchError && !loading && (
+        <div className="mb-4 flex items-center gap-3 rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-4 py-3">
+          <svg className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
           </svg>
-          <p className="text-sm text-yellow-800 dark:text-yellow-300 flex-1">
-            <span className="font-medium">Demo Mode</span> — Showing sample data. {fetchError || 'Connect your API to see live events.'}
+          <p className="text-sm text-red-800 dark:text-red-300 flex-1">
+            <span className="font-medium">Connection Error</span> — {fetchError}
           </p>
           <button
             onClick={fetchEvents}
-            className="text-xs font-medium text-yellow-700 dark:text-yellow-300 hover:underline flex-shrink-0"
+            className="ml-4 px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors flex-shrink-0"
           >
             Retry
           </button>

@@ -36,7 +36,10 @@ export const CopilotAdapter: SiteAdapter = {
 
   fileUploadPatterns: [/edgeservices\.bing\.com\/images\/kblob/],
 
-  skipFetchProxy: true,  // SignalR WS handles everything
+  // Copilot uses SignalR over WebSocket for chat — skip fetch/XHR proxy
+  // to avoid interfering with Copilot's internal REST API calls.
+  // Pseudonymization is handled by dom-capture-wire → WS.prototype.send patch.
+  skipFetchProxy: true,
   skipXhrProxy: true,
 
   inputSelectors: [

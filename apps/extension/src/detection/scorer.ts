@@ -108,6 +108,11 @@ const ENTITY_WEIGHTS: Record<string, number> = {
   // Real estate
   PARCEL_NUMBER: 12,
   MLS_NUMBER: 10,
+  // Business metrics (VALUE_TYPES — detected but not pseudonymized)
+  // Low weight: only sensitive when combined with named entities
+  HEADCOUNT: 5,
+  PERCENTAGE: 3,
+  EMPLOYEE_ID: 15,
 };
 
 // Legal context keywords that boost scores
@@ -292,23 +297,23 @@ export function computeScore(
           // Close proximity between entity and keyword → boost
           coOccurrenceBoost += 5;
 
-          // High-risk combo bonuses (2.7): specific entity+category pairs
+          // High-risk combo bonuses: specific entity+category pairs
           // PERSON near M&A/financial keywords = insider trading risk
           if (entity.type === 'PERSON' && MA_CATEGORIES.has(marker.category)) {
-            coOccurrenceBoost += 10;
+            coOccurrenceBoost += 15;
           }
           // PERSON near medical keywords = PHI risk
           if (entity.type === 'PERSON' && MEDICAL_CATEGORIES.has(marker.category)) {
-            coOccurrenceBoost += 10;
+            coOccurrenceBoost += 20;
           }
-          // ORG near M&A keywords = deal intelligence risk
+          // ORG near financial/non-public keywords = deal intelligence risk
           if (entity.type === 'ORGANIZATION' && MA_CATEGORIES.has(marker.category)) {
-            coOccurrenceBoost += 8;
+            coOccurrenceBoost += 20;
           }
         }
       }
     }
-    coOccurrenceBoost = Math.min(40, coOccurrenceBoost); // Cap at 40 (raised for combos)
+    coOccurrenceBoost = Math.min(30, coOccurrenceBoost); // Cap at 30
   }
 
   // Safety: if contextual keywords indicate high sensitivity, don't let
@@ -401,6 +406,13 @@ export function computeScore(
   // score fall below "medium" territory regardless of entity suppression.
   if (contextualKeywordScore >= 20 && rawScore < 30) {
     rawScore = 30;
+  }
+
+  // Floor: contextual keywords ≥35 → minimum score of 50
+  // Strong keyword signal (M&A, medical, legal) deserves solid medium rating
+  // even when entity detection is weak.
+  if (contextualKeywordScore >= 35 && rawScore < 50) {
+    rawScore = 50;
   }
 
   // Apply critical floor — never let arithmetic under-rate existential risks
@@ -542,6 +554,44 @@ export function scoreToLevel(score: number): SensitivityLevel {
   return 'critical';
 }
 
+// ── Human-readable explanation templates ────────────────────────────────────
+// Map entity types to plain English descriptions users can understand.
+const ENTITY_LABELS: Record<string, string> = {
+  PERSON: 'a person\'s name',
+  ORGANIZATION: 'an organization name',
+  SSN: 'a Social Security number',
+  CREDIT_CARD: 'a credit card number',
+  API_KEY: 'an API key or secret',
+  EMAIL: 'an email address',
+  PHONE: 'a phone number',
+  DATE_OF_BIRTH: 'a date of birth',
+  DRIVERS_LICENSE: 'a driver\'s license number',
+  PASSPORT: 'a passport number',
+  BANK_ACCOUNT: 'a bank account number',
+  MEDICAL_RECORD: 'a medical record identifier',
+  STUDENT_ID: 'a student identifier',
+  EDUCATION_RECORD: 'an education record',
+  LOCATION: 'a specific location',
+  IP_ADDRESS: 'an IP address',
+  AWS_KEY: 'an AWS credential',
+  PRIVATE_KEY: 'a private key',
+  DATABASE_URI: 'a database connection string',
+  AMOUNT: 'a financial amount',
+};
+
+const CONTEXT_LABELS: Record<string, string> = {
+  ma_activity: 'merger & acquisition language',
+  deal_terms: 'deal terms or pricing',
+  financial_results: 'non-public financial results',
+  hr_sensitive: 'HR-sensitive content',
+  legal_privilege: 'attorney-client privileged content',
+  medical_clinical: 'medical or clinical information',
+  insider_trading: 'potential insider trading signals',
+  board_governance: 'board-level governance discussion',
+  regulatory_filing: 'pre-public regulatory filing content',
+  compensation: 'compensation or benefits details',
+};
+
 function generateExplanation(
   score: number,
   level: SensitivityLevel,
@@ -558,53 +608,87 @@ function generateExplanation(
   }
 
   const parts: string[] = [];
-
-  if (entities.length > 0) {
-    const typeGroups = new Map<string, number>();
-    for (const entity of entities) {
-      typeGroups.set(entity.type, (typeGroups.get(entity.type) || 0) + 1);
-    }
-
-    // List entity types found
-    const typeDescriptions = Array.from(typeGroups.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([type, count]) => `${count} ${(type ?? '').toLowerCase().replace(/_/g, ' ')}${count > 1 ? 's' : ''}`)
-      .slice(0, 3);
-
-    parts.push(`Detected ${typeDescriptions.join(', ')}`);
+  const typeGroups = new Map<string, number>();
+  for (const entity of entities) {
+    typeGroups.set(entity.type, (typeGroups.get(entity.type) || 0) + 1);
   }
+  const entityTypes = new Set(typeGroups.keys());
 
-  // Add legal context if relevant
+  // ── Human-readable co-occurrence explanations ──
+  // These tell the user WHY the combination is risky, not just what was found.
+  const hasPerson = entityTypes.has('PERSON');
+  const hasOrg = entityTypes.has('ORGANIZATION');
   const lowerText = text.toLowerCase();
-  if (PRIVILEGE_MARKERS.some((m) => lowerText.includes(m))) {
-    parts.push('Contains privilege markers');
+  const hasMAKeywords = /\b(acqui|merger|takeover|buyout|tender offer|due diligence)\b/i.test(text);
+  const hasMedicalKeywords = /\b(diagnosis|patient|treatment|medical|prescription|hipaa)\b/i.test(text);
+  const hasFinancialKeywords = /\b(revenue|ebitda|earnings|valuation|ipo|quarterly)\b/i.test(text);
+  const hasLegalPrivilege = PRIVILEGE_MARKERS.some((m) => lowerText.includes(m));
+
+  let usedCoOccurrence = false;
+  if (hasPerson && hasMAKeywords) {
+    parts.push('This prompt contains a person\'s name alongside M&A language \u2014 this may be material non-public information (MNPI)');
+    usedCoOccurrence = true;
+  } else if (hasPerson && hasMedicalKeywords) {
+    parts.push('This prompt links a named individual to medical information \u2014 this may be protected health information (PHI)');
+    usedCoOccurrence = true;
+  } else if (hasOrg && hasFinancialKeywords) {
+    parts.push('This prompt mentions an organization alongside non-public financial details');
+    usedCoOccurrence = true;
+  } else if (hasPerson && hasLegalPrivilege) {
+    parts.push('This prompt contains names within attorney-client privileged content');
+    usedCoOccurrence = true;
   }
 
-  if (text.length > VOLUME_THRESHOLDS.LONG) {
-    parts.push('Large text volume suggests pasted document');
+  // ── Entity summary (if no co-occurrence matched) ──
+  if (!usedCoOccurrence && entities.length > 0) {
+    const labels = Array.from(typeGroups.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([type, count]) => {
+        const label = ENTITY_LABELS[type] || (type ?? '').toLowerCase().replace(/_/g, ' ');
+        return count > 1 ? `${count} ${label}${label.endsWith('s') ? '' : 's'}` : label;
+      });
+    parts.push(`This prompt contains ${labels.join(', ')}`);
   }
 
-  // Add document type context
+  // ── Privilege markers (standalone, even without co-occurrence) ──
+  if (hasLegalPrivilege && !usedCoOccurrence) {
+    parts.push('Content appears to contain attorney-client privileged material');
+  }
+
+  // ── Document type context ──
   const docTypeLabels: Record<string, string> = {
-    litigation_doc: 'Classified as litigation document',
-    contract_clause: 'Classified as contract/legal clause',
-    financial_data: 'Classified as financial data',
-    client_memo: 'Classified as client memo',
-    meeting_notes: 'Classified as meeting notes',
-    insurance_doc: 'Classified as insurance/actuarial document',
-    medical_record: 'Classified as medical record (HIPAA)',
-    government_doc: 'Classified as government/classified document',
-    energy_report: 'Classified as energy/resources report',
-    real_estate_doc: 'Classified as real estate document',
-    education_record: 'Classified as education record (FERPA)',
+    litigation_doc: 'Content appears to be from a litigation document',
+    contract_clause: 'Content appears to be from a contract or legal agreement',
+    financial_data: 'Content appears to contain financial data',
+    client_memo: 'Content appears to be from a client memo',
+    meeting_notes: 'Content appears to be from meeting notes',
+    insurance_doc: 'Content appears to be from an insurance document',
+    medical_record: 'Content appears to be from a medical record (HIPAA-protected)',
+    government_doc: 'Content appears to be from a government document',
+    energy_report: 'Content appears to be from an energy/resources report',
+    real_estate_doc: 'Content appears to be from a real estate document',
+    education_record: 'Content appears to be from an education record (FERPA-protected)',
   };
   if (documentType && docTypeLabels[documentType]) {
     parts.push(docTypeLabels[documentType]);
   }
 
-  // Add contextual keyword explanation
+  // ── Contextual keyword explanation ──
   if (contextualExplanation) {
     parts.push(contextualExplanation);
+  }
+
+  // ── Volume warning ──
+  if (text.length > VOLUME_THRESHOLDS.LONG) {
+    parts.push('The large text volume suggests a pasted document');
+  }
+
+  // ── Action guidance based on level ──
+  if (level === 'critical') {
+    parts.push('Iron Gate has pseudonymized this content to protect sensitive data');
+  } else if (level === 'high') {
+    parts.push('Consider reviewing before sending to an AI tool');
   }
 
   return parts.join('. ') + '.';

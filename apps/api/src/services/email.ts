@@ -105,7 +105,7 @@ async function sendEmail(to: string, subject: string, html: string): Promise<{ s
   const client = getResend();
 
   if (!client) {
-    logger.warn('Email not sent — RESEND_API_KEY not configured', { to, subject });
+    logger.warn('Email not sent — RESEND_API_KEY not configured', { toRedacted: to.replace(/^[^@]+/, '***'), subject });
     return { success: false, error: 'Email provider not configured (RESEND_API_KEY missing)' };
   }
 

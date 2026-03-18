@@ -39,7 +39,7 @@ type EntityType =
   | 'GCP_CREDENTIAL'
   | 'AZURE_CREDENTIAL';
 
-type Source = 'gliner' | 'regex' | 'presidio' | 'keyword' | 'plugin' | 'client_matter';
+type Source = 'regex' | 'presidio' | 'keyword' | 'plugin' | 'client_matter';
 
 interface DetectedEntity {
   type: EntityType;

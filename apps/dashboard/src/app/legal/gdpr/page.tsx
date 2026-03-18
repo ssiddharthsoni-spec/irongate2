@@ -80,7 +80,7 @@ export default function GdprPage() {
     try {
       setSubmitting(true);
       setError(null);
-      const res = await apiFetch('/enterprise/gdpr/delete', {
+      const res = await apiFetch('/enterprise/request-deletion', {
         method: 'POST',
         body: JSON.stringify({ reason: reason.trim(), confirm: true }),
       });

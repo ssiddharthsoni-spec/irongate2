@@ -12,7 +12,7 @@ import { computeScore, scoreToLevel } from '../detection/scorer';
 import { pseudonymizeLocal } from '../detection/pseudonymizer';
 import { scanForSecrets } from './detectors/secret-scanner';
 import { resolveConfig, onManagedConfigChanged } from '../managed-config';
-import { saveApiKey, loadApiKey } from '../api-key-store';
+import { saveApiKey } from '../api-key-store';
 import { recordAttestation, getAuditLog, clearAuditLog } from './audit-trail';
 import { initTrialAlarms, handleTrialAlarm } from './trial-notifications';
 import { classifyIfPro, classifyForGhost } from '../detection/ml-classifier';
@@ -27,15 +27,14 @@ import { trackShadowAI, getShadowAIStats } from './shadow-ai-tracker';
 import { detectWithLocalLLM, resetLocalLLMHealth } from './local-llm-detector';
 import { createConfidenceRouter, scoreToZone, type RoutingDecision, type TierAdapter, type SignalGateInput } from '../detection/confidence-router';
 import { createMetadataClassifierAdapter } from '../detection/metadata-classifier';
-import { createTier2Adapter, probeTier2, type Tier2Config } from '../detection/tier2-adapter';
+import { createTier2Adapter, type Tier2Config } from '../detection/tier2-adapter';
 import { getSemanticClassifier } from '../detection/semantic-classifier';
-import { sanitizeForClassification } from '../detection/pseudonymizer';
 import { getWeightResolver } from '../detection/weight-resolver';
 import { createDictionaryMatcher, type DictionaryEntry } from '../detection/entity-dictionary';
 import { mergeEntities, dictionaryScoreBoost } from '../detection/entity-merger';
 import { createTier3ServerAdapter } from '../detection/tier3-server-adapter';
-import { ConversationTracker } from '../detection/conversation-tracker';
-import { analyzeWithExecutiveLens, resolveRoute, type ExecutiveLensResult } from '../detection/executive-lens';
+import { ConversationTracker, type ConversationSnapshot } from '../detection/conversation-tracker';
+import { analyzeWithExecutiveLens, resolveRoute } from '../detection/executive-lens';
 import { createModelRuntime } from '../agent/model-runtime';
 import { createAgentDetector } from '../agent/agent-detector';
 
@@ -44,12 +43,21 @@ let _IG_DEBUG = false;
 try { chrome.storage.local.get('ironGateDebug', (r) => { _IG_DEBUG = !!r.ironGateDebug; }); } catch {}
 function igLog(...args: any[]) { if (_IG_DEBUG) console.log('[Iron Gate]', ...args); }
 
-// Cache last prompt text per tab for ghost detection (Basic tier only)
+// Cache last prompt text per tab for ghost detection (Basic tier only).
+// Text is stored briefly and cleared after ghost classification or 30s TTL.
 const lastPromptTextByTab = new Map<number, string>();
+const lastPromptTextTimeByTab = new Map<number, number>();
+const PROMPT_TEXT_TTL_MS = 30_000; // Clear cached raw text after 30s
 
 // Debounce real-time broadcasts: at most once per 500ms per tab
 const lastBroadcastByTab = new Map<number, number>();
 const lastBroadcastScoreByTab = new Map<number, number>();
+// Tracks when an authoritative SENSITIVITY_SCORE (from IRON_GATE_INTERCEPTED relay)
+// was received per tab. PROMPT_DETECTED broadcasts are suppressed for a short window
+// after, so the worker's real-time typing detection doesn't overwrite the MAIN world's
+// authoritative pseudonymization result in the sidepanel.
+const lastAuthoritativeByTab = new Map<number, number>();
+const AUTHORITATIVE_SUPPRESS_MS = 1500; // 1.5 seconds — just enough to prevent PROMPT_CLEARED race
 const BROADCAST_DEBOUNCE_MS = 500;
 
 // Memory-leak guard: cap per-tab Maps so they never grow unbounded.
@@ -58,7 +66,22 @@ const BROADCAST_DEBOUNCE_MS = 500;
 const MAP_HIGH_WATER = 100;
 const MAP_LOW_WATER = 50;
 
-/** Prune a Map to MAP_LOW_WATER entries when it exceeds MAP_HIGH_WATER. */
+/**
+ * LRU-aware Map access: re-inserts entry to mark it as recently used.
+ * JS Maps iterate in insertion order, so re-inserting moves to end.
+ */
+function lruGet<V>(map: Map<number, V>, key: number): V | undefined {
+  const value = map.get(key);
+  if (value !== undefined) {
+    map.delete(key);
+    map.set(key, value);
+  }
+  return value;
+}
+
+/** Prune a Map to MAP_LOW_WATER entries when it exceeds MAP_HIGH_WATER.
+ *  Evicts least-recently-used entries (front of Map iteration order).
+ *  Use lruGet() for reads to keep active entries at the back. */
 function pruneMap<V>(map: Map<number, V>): void {
   if (map.size <= MAP_HIGH_WATER) return;
   const keysToDelete = Array.from(map.keys()).slice(0, map.size - MAP_LOW_WATER);
@@ -173,14 +196,26 @@ let _dictCryptoKey: CryptoKey | null = null;
 
 async function getDictEncryptionKey(): Promise<CryptoKey> {
   if (_dictCryptoKey) return _dictCryptoKey;
-  const stored = await chrome.storage.local.get(DICT_ENC_KEY_NAME);
+  // Store key in session storage — clears on browser close for security.
+  // Falls back to local storage for migration from older versions.
+  const stored = await chrome.storage.session.get(DICT_ENC_KEY_NAME);
   if (stored[DICT_ENC_KEY_NAME]) {
     const raw = Uint8Array.from(atob(stored[DICT_ENC_KEY_NAME]), c => c.charCodeAt(0));
     _dictCryptoKey = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
   } else {
-    _dictCryptoKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
-    const raw = await crypto.subtle.exportKey('raw', _dictCryptoKey);
-    await chrome.storage.local.set({ [DICT_ENC_KEY_NAME]: btoa(String.fromCharCode(...new Uint8Array(raw))) });
+    // Check legacy local storage location
+    const legacy = await chrome.storage.local.get(DICT_ENC_KEY_NAME);
+    if (legacy[DICT_ENC_KEY_NAME]) {
+      const raw = Uint8Array.from(atob(legacy[DICT_ENC_KEY_NAME]), c => c.charCodeAt(0));
+      _dictCryptoKey = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
+      // Migrate to session storage and remove from local
+      await chrome.storage.session.set({ [DICT_ENC_KEY_NAME]: legacy[DICT_ENC_KEY_NAME] });
+      await chrome.storage.local.remove(DICT_ENC_KEY_NAME);
+    } else {
+      _dictCryptoKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+      const raw = await crypto.subtle.exportKey('raw', _dictCryptoKey);
+      await chrome.storage.session.set({ [DICT_ENC_KEY_NAME]: btoa(String.fromCharCode(...new Uint8Array(raw))) });
+    }
   }
   return _dictCryptoKey;
 }
@@ -297,7 +332,12 @@ async function refreshSuppressionRules(): Promise<void> {
 // One tracker per tab. Tracks conversation history for signal gate input.
 // If any message in a conversation scored > 40, all follow-ups trigger
 // the signal gate (server classification) regardless of individual score.
+//
+// Persistence: snapshots saved to chrome.storage.session (no raw PII)
+// so conversation context survives service worker restarts.
 const _conversationTrackers = new Map<number, ConversationTracker>();
+let _trackerPersistTimer: ReturnType<typeof setTimeout> | null = null;
+const TRACKER_PERSIST_DEBOUNCE = 2000; // 2 seconds
 
 function getConversationTracker(tabId: number): ConversationTracker {
   let tracker = _conversationTrackers.get(tabId);
@@ -306,6 +346,47 @@ function getConversationTracker(tabId: number): ConversationTracker {
     _conversationTrackers.set(tabId, tracker);
   }
   return tracker;
+}
+
+/** Debounced persist of all conversation tracker snapshots to session storage */
+function persistConversationTrackers(): void {
+  if (_trackerPersistTimer) clearTimeout(_trackerPersistTimer);
+  _trackerPersistTimer = setTimeout(() => {
+    const snapshots: Record<string, ConversationSnapshot> = {};
+    const now = Date.now();
+    for (const [tabId, tracker] of _conversationTrackers) {
+      const snap = tracker.toSnapshot();
+      // Only persist active conversations (last activity within 30 min)
+      if (now - snap.lastActivity < 30 * 60_000 && snap.turns.length > 0) {
+        snapshots[String(tabId)] = snap;
+      }
+    }
+    chrome.storage.session.set({ _igConvTrackers: snapshots }).catch(() => {});
+  }, TRACKER_PERSIST_DEBOUNCE);
+}
+
+/** Restore conversation trackers from session storage (called on worker start) */
+async function restoreConversationTrackers(): Promise<void> {
+  try {
+    const stored = await chrome.storage.session.get('_igConvTrackers');
+    const snapshots = stored._igConvTrackers as Record<string, ConversationSnapshot> | undefined;
+    if (!snapshots) return;
+    const now = Date.now();
+    let restored = 0;
+    for (const [tabIdStr, snapshot] of Object.entries(snapshots)) {
+      // Skip expired sessions
+      if (now - snapshot.lastActivity > 30 * 60_000) continue;
+      const tabId = parseInt(tabIdStr, 10);
+      if (isNaN(tabId)) continue;
+      _conversationTrackers.set(tabId, ConversationTracker.fromSnapshot(snapshot));
+      restored++;
+    }
+    if (restored > 0) {
+      igLog(`Restored ${restored} conversation tracker(s) from session storage`);
+    }
+  } catch {
+    // Non-fatal — start fresh if restore fails
+  }
 }
 
 // ─── Confidence Router ──────────────────────────────────────────────────────
@@ -563,6 +644,7 @@ interface TabState {
   lastExplanation: string | null;
   lastEntities: any[];
   lastPromptHash?: string;
+  lastPromptLength?: number;
   lastOriginalPrompt?: string;
   lastMaskedPrompt?: string;
   lastPseudonymMappings?: any[];
@@ -610,6 +692,9 @@ async function updateTabState(tabId: number, update: Partial<TabState>): Promise
     lastDetectionTime: 0,
   };
   // Truncate prompts to stay within storage quota (lastPromptHash is always 64 chars, no truncation needed)
+  if (update.lastOriginalPrompt && update.lastOriginalPrompt.length > MAX_PROMPT_STORAGE) {
+    update.lastOriginalPrompt = update.lastOriginalPrompt.substring(0, MAX_PROMPT_STORAGE);
+  }
   if (update.lastMaskedPrompt && update.lastMaskedPrompt.length > MAX_PROMPT_STORAGE) {
     update.lastMaskedPrompt = update.lastMaskedPrompt.substring(0, MAX_PROMPT_STORAGE);
   }
@@ -650,8 +735,9 @@ function isContentScriptSender(sender: chrome.runtime.MessageSender): boolean {
 
 // Messages that are ONLY allowed from the sidepanel (no tab)
 const SIDEPANEL_ONLY: ReadonlySet<string> = new Set([
-  'SET_API_KEY', 'MODE_CHANGED', 'BLOCK_OVERRIDE', 'ENTITY_FEEDBACK',
+  'SET_API_KEY', 'MODE_CHANGED', 'BLOCK_OVERRIDE', 'ENTITY_FEEDBACK', 'PROMPT_FEEDBACK',
   'CLEAR_AUDIT_LOG', 'GET_AUDIT_LOG', 'GET_MANAGED_STATUS', 'GET_SHADOW_AI_STATS',
+  'GET_COMPLIANCE_REPORT',
 ]);
 
 
@@ -671,7 +757,7 @@ setInterval(() => {
 // Messages that require nonce validation (sensitive operations)
 const NONCE_REQUIRED: ReadonlySet<string> = new Set([
   'PROMPT_DETECTED', 'PROXY_ANALYZE', 'PROXY_SEND',
-  'FILE_DETECTED', 'CLIPBOARD_DETECTED', 'SET_API_KEY',
+  'FILE_UPLOAD_DETECTED', 'CLIPBOARD_DETECTED', 'SET_API_KEY',
 ]);
 
 async function handleMessage(
@@ -694,7 +780,7 @@ async function handleMessage(
   // ── Kill switch: block ALL prompt processing when active ──
   const KILL_SWITCH_BLOCKED_TYPES = new Set([
     'PROMPT_DETECTED', 'PROMPT_SUBMITTED', 'PROXY_ANALYZE', 'PROXY_SEND',
-    'FILE_DETECTED', 'CLIPBOARD_DETECTED',
+    'FILE_UPLOAD_DETECTED', 'CLIPBOARD_DETECTED',
   ]);
   if (killSwitchActive && KILL_SWITCH_BLOCKED_TYPES.has(message.type)) {
     igLog('KILL SWITCH — blocked message:', message.type);
@@ -712,140 +798,100 @@ async function handleMessage(
   }
 
   switch (message.type) {
+    // Content script asks for its tab ID (used for per-tab reverse map keying)
+    case 'IRON_GATE_GET_TAB_ID': {
+      return { tabId: sender.tab?.id ?? null };
+    }
+
     case 'PROMPT_DETECTED': {
       const text = message.payload?.text;
       const aiToolId = message.payload?.aiToolId;
       const captureMethod = message.payload?.captureMethod;
       if (!text || typeof text !== 'string') return { error: 'Invalid prompt payload' };
       igLog('Prompt captured from', aiToolId, 'via', captureMethod, 'length:', text.length);
+
+      // Show "checking" indicator on badge while detection runs (11.7)
+      const shimmerTabId = sender.tab?.id;
+      if (shimmerTabId) {
+        chrome.action.setBadgeText({ text: '...', tabId: shimmerTabId }).catch(() => {});
+        chrome.action.setBadgeBackgroundColor({ color: '#6366F1', tabId: shimmerTabId }).catch(() => {});
+      }
+
+      const _pipelineWarnings: string[] = [];
       const config = await resolveConfig();
 
       // ════════════════════════════════════════════════════════════════════
-      // SERVER MODE: Offload all detection to API /v1/proxy/process
-      // Only credential scanning runs locally (never send secrets to API).
+      // REAL-TIME DETECTION: ALWAYS run local detection first for instant
+      // sidepanel feedback, regardless of processingMode. Server mode is
+      // only used for the FETCH interception (pseudonymization at send-time).
+      //
+      // For real-time typing/pasting, local detection gives immediate results.
+      // Server detection runs in background and updates if it finds more.
       // ════════════════════════════════════════════════════════════════════
-      if (config.processingMode === 'server' && config.apiKey) {
-        // Step 1: Local credential scan (< 2ms, never leaves the browser)
-        const secrets = scanForSecrets(text);
-        if (secrets.length > 0) {
-          igLog('SERVER MODE: credential block —', secrets.length, 'secrets detected locally');
-          const promptHash = await hashText(text);
+
+      // Credential scan first — instant, always blocks
+      const secrets = scanForSecrets(text);
+      if (secrets.length > 0) {
+        igLog('Credential block —', secrets.length, 'secrets detected locally');
+        const blockTabId = sender.tab?.id;
+        if (blockTabId) {
+          chrome.runtime.sendMessage({
+            type: 'SENSITIVITY_SCORE',
+            payload: {
+              score: 100, level: 'critical',
+              entities: secrets.map(s => ({ type: s.type, start: s.start, end: s.end, confidence: s.confidence, source: 'regex' })),
+              aiToolId, tabId: blockTabId,
+              zone: 'RED', action: 'block',
+              realtime: true,
+            },
+          }).catch(() => {});
+          chrome.action.setBadgeText({ text: '!', tabId: blockTabId }).catch(() => {});
+          chrome.action.setBadgeBackgroundColor({ color: '#EF4444', tabId: blockTabId }).catch(() => {});
+        }
+
+        // Fire-and-forget: audit trail
+        hashText(text).then(promptHash => {
           queueEventToApi({
-            aiToolId,
-            promptHash,
-            promptLength: text.length,
-            sensitivityScore: 100,
-            sensitivityLevel: 'critical',
+            aiToolId, promptHash, promptLength: text.length,
+            sensitivityScore: 100, sensitivityLevel: 'critical',
             entities: secrets.map(s => ({
               type: s.type, text: s.text, start: s.start, end: s.end,
               confidence: s.confidence, source: 'regex' as const,
             })),
-            action: 'block',
+            action: 'block', captureMethod,
+          });
+        }).catch(() => {});
+
+        return { received: true, blocked: true, reason: 'credential_detected' };
+      }
+
+      // ════════════════════════════════════════════════════════════════════
+      // SHADOW MODE: Run both local AND server, compare results, log
+      // disagreements. Local pipeline is primary (user sees local results).
+      // API call runs in background — results compared after local finishes.
+      // ════════════════════════════════════════════════════════════════════
+      let shadowServerPromise: Promise<{ action: string; score: number } | null> | undefined;
+      if (config.processingMode === 'shadow' && config.apiKey) {
+        const shadowApiUrl = config.apiUrl.replace(/\/v1\/?$/, '') + '/v1/proxy/process';
+        shadowServerPromise = fetch(shadowApiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${config.apiKey}`,
+          },
+          body: JSON.stringify({
+            text,
+            aiToolId,
+            sessionId: `tab-${sender.tab?.id ?? 0}`,
             captureMethod,
-          });
-
-          const blockTabId = sender.tab?.id;
-          if (blockTabId) {
-            chrome.runtime.sendMessage({
-              type: 'SENSITIVITY_SCORE',
-              payload: {
-                score: 100, level: 'critical',
-                entities: secrets.map(s => ({ type: s.type, start: s.start, end: s.end, confidence: s.confidence, source: 'regex' })),
-                aiToolId, tabId: blockTabId,
-                zone: 'RED', action: 'block',
-                realtime: true,
-              },
-            }).catch(() => {});
-            chrome.action.setBadgeText({ text: '!', tabId: blockTabId }).catch(() => {});
-            chrome.action.setBadgeBackgroundColor({ color: '#EF4444', tabId: blockTabId }).catch(() => {});
-          }
-          return { received: true, blocked: true, reason: 'credential_detected' };
-        }
-
-        // Step 2: Send to API for server-side detection
-        try {
-          const apiUrl = config.apiUrl.replace(/\/v1\/?$/, '') + '/v1/proxy/process';
-          const serverResponse = await fetch(apiUrl, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${config.apiKey}`,
-            },
-            body: JSON.stringify({
-              text,
-              aiToolId,
-              sessionId: `tab-${sender.tab?.id ?? 0}`,
-              captureMethod,
-              platform: aiToolId,
-            }),
-            signal: AbortSignal.timeout(3_000),
-          });
-
-          if (!serverResponse.ok) {
-            igLog('SERVER MODE: API error', serverResponse.status, '— falling back to local');
-            // Fall through to local pipeline below
-          } else {
-            const result = await serverResponse.json();
-            igLog('SERVER MODE: API response —', result.action, 'score:', result.sensitivityScore);
-
-            const serverTabId = sender.tab?.id;
-            if (serverTabId) {
-              chrome.runtime.sendMessage({
-                type: 'SENSITIVITY_SCORE',
-                payload: {
-                  score: result.sensitivityScore,
-                  level: result.sensitivityLevel,
-                  entities: result.entities || [],
-                  aiToolId,
-                  tabId: serverTabId,
-                  maskedPrompt: result.pseudonymizedText,
-                  zone: result.sensitivityScore >= 61 ? 'RED' : result.sensitivityScore >= 26 ? 'AMBER' : 'GREEN',
-                  action: result.action === 'blocked' ? 'block' : result.action === 'pseudonymized' ? 'warn' : 'pass',
-                  realtime: true,
-                  serverMode: true,
-                },
-              }).catch(() => {});
-
-              // Badge
-              if (result.entityCount > 0) {
-                const badgeColor = result.sensitivityLevel === 'critical' ? '#EF4444'
-                  : result.sensitivityLevel === 'high' ? '#F59E0B' : '#6366F1';
-                chrome.action.setBadgeText({ text: String(result.entityCount), tabId: serverTabId }).catch(() => {});
-                chrome.action.setBadgeBackgroundColor({ color: badgeColor, tabId: serverTabId }).catch(() => {});
-              } else {
-                chrome.action.setBadgeText({ text: '\u2713', tabId: serverTabId }).catch(() => {});
-                chrome.action.setBadgeBackgroundColor({ color: '#22C55E', tabId: serverTabId }).catch(() => {});
-                setTimeout(() => {
-                  chrome.action.setBadgeText({ text: '', tabId: serverTabId }).catch(() => {});
-                }, 3000);
-              }
-            }
-
-            // Audit trail
-            if (result.sensitivityScore > 0) {
-              const promptHash = await hashText(text);
-              recordAttestation({
-                action: result.action === 'blocked' ? 'block' : result.action === 'pseudonymized' ? 'proxy' : 'pass',
-                entityCount: result.entityCount || 0,
-                promptHash,
-                level: result.sensitivityLevel,
-                score: result.sensitivityScore,
-                aiToolId,
-              }).catch(() => {});
-            }
-
-            return {
-              received: true,
-              blocked: result.action === 'blocked',
-              serverMode: true,
-              ...(result.pseudonymizedText && { pseudonymizedText: result.pseudonymizedText }),
-              ...(result.reverseMap && { reverseMap: result.reverseMap }),
-            };
-          }
-        } catch (err) {
-          igLog('SERVER MODE: fetch failed —', err, '— falling back to local');
-          // Fall through to local pipeline
-        }
+            platform: aiToolId,
+          }),
+          signal: AbortSignal.timeout(5_000),
+        }).then(async (r) => {
+          if (!r.ok) return null;
+          const j = await r.json();
+          return { action: j.action as string, score: j.sensitivityScore as number };
+        }).catch(() => null);
       }
 
       // ────────────────────────────────────────────────────────────────────
@@ -870,11 +916,21 @@ async function handleMessage(
       // ────────────────────────────────────────────────────────────────────
 
       // Step 1: Regex for structured patterns (always runs, < 5ms)
-      const regexEntities = detectWithRegex(text);
-      const secrets = scanForSecrets(text);
+      // Error boundary: regex must never crash the pipeline
+      let regexEntities: import('../detection/types').DetectedEntity[] = [];
+      let localSecrets: ReturnType<typeof scanForSecrets> = [];
+      try {
+        regexEntities = detectWithRegex(text);
+        localSecrets = scanForSecrets(text);
+      } catch (regexErr) {
+        igLog('Regex/secret scan error (continuing with empty results):', regexErr);
+        console.warn('[IronGate] Regex/secret scan failed — detection degraded', regexErr instanceof Error ? regexErr.message : String(regexErr));
+        // Flag degraded detection in the result so the UI can show a warning
+        _pipelineWarnings.push('regex_scan_failed');
+      }
 
       const structuredEntities: import('../detection/types').DetectedEntity[] = [
-        ...secrets.map((s) => ({
+        ...localSecrets.map((s) => ({
           type: s.type,
           text: s.text,
           start: s.start,
@@ -918,6 +974,8 @@ async function handleMessage(
         }
       } catch (err) {
         igLog('Agent detector error (falling back to regex):', err);
+        console.warn('[IronGate] Agent detector failed — falling back to regex-only', err instanceof Error ? err.message : String(err));
+        _pipelineWarnings.push('agent_detector_failed');
       }
 
       // Step 4: If agent unavailable, use regex for ALL entity types (fallback)
@@ -949,6 +1007,7 @@ async function handleMessage(
           }
         } catch (err) {
           igLog('Local LLM detection error (non-fatal):', err);
+          _pipelineWarnings.push('local_llm_failed');
         }
       }
 
@@ -963,9 +1022,19 @@ async function handleMessage(
       // These three async operations are independent — run them concurrently
       // to save 200-1000ms vs sequential awaits.
       // Suppression/compliance are fire-and-forget — failures must not kill the pipeline.
-      refreshSuppressionRules().catch((err) => igLog('Suppression rules refresh failed:', err));
-      refreshComplianceProfile().catch((err) => igLog('Compliance profile refresh failed:', err));
-      const mlResult = await classifyIfPro(text).catch(() => null);
+      refreshSuppressionRules().catch((err) => {
+        igLog('Suppression rules refresh failed:', err);
+        _pipelineWarnings.push('suppression_rules_failed');
+      });
+      refreshComplianceProfile().catch((err) => {
+        igLog('Compliance profile refresh failed:', err);
+        _pipelineWarnings.push('compliance_profile_failed');
+      });
+      const mlResult = await classifyIfPro(text).catch((err) => {
+        igLog('ML classification failed:', err);
+        _pipelineWarnings.push('ml_classification_failed');
+        return null;
+      });
       if (mlResult && (mlResult.label === 'SENSITIVE' || mlResult.label === 'CRITICAL')) {
         igLog('ML classified as', mlResult.label, 'confidence:', mlResult.confidence);
       }
@@ -1003,7 +1072,8 @@ async function handleMessage(
       const tracker = getConversationTracker(tabId);
       const conversationBoost = tracker.detectEscalation()
         + tracker.getCumulativeEntityBoost()
-        + tracker.getContextCarryover();
+        + tracker.getContextCarryover()
+        + tracker.getCumulativeDisclosureScore();
 
       const signalGate: SignalGateInput = {
         entityCount: allEntities.length,
@@ -1028,6 +1098,7 @@ async function handleMessage(
 
       // Record this turn in conversation tracker (after scoring)
       tracker.addTurn(text, allEntities, finalScore);
+      persistConversationTrackers();
 
       // Use routed score if available, otherwise fall back to Tier 1
       const sensitivityResult = routingDecision
@@ -1097,15 +1168,29 @@ async function handleMessage(
 
       // Generate pseudonymized version for transparency view
       // Simple find-replace — deterministic, fast (< 1ms)
-      // Agent handles DETECTION (above), not rewriting.
-      const pseudoResult = pseudonymizeLocal(text, allEntities);
+      // Error boundary: pseudonymization must never crash the pipeline
+      let pseudoResult: ReturnType<typeof pseudonymizeLocal>;
+      try {
+        pseudoResult = pseudonymizeLocal(text, allEntities);
+      } catch (pseudoErr) {
+        igLog('Pseudonymization error (using empty result):', pseudoErr);
+        pseudoResult = { maskedText: text, mappings: [], skippedInCode: 0 };
+      }
 
       // ── Executive Lens: industry-aware routing decision ──
       // Determines whether to pseudonymize (cloud), route to private LLM,
       // or passthrough based on industry, entity types, and content signals.
-      const lensResult = analyzeWithExecutiveLens(text, allEntities);
-      const hasPrivateLlm = !!config.localLLM?.endpoint;
-      const executiveRoute = resolveRoute(lensResult, hasPrivateLlm);
+      let lensResult: ReturnType<typeof analyzeWithExecutiveLens>;
+      let executiveRoute: ReturnType<typeof resolveRoute>;
+      try {
+        lensResult = analyzeWithExecutiveLens(text, allEntities);
+        const hasPrivateLlm = !!config.localLLM?.endpoint;
+        executiveRoute = resolveRoute(lensResult, hasPrivateLlm);
+      } catch (lensErr) {
+        igLog('Executive Lens error (defaulting to cloud):', lensErr);
+        lensResult = { industry: null, triggeredRules: [], explanation: '', confidence: 0 } as any;
+        executiveRoute = 'cloud' as any;
+      }
       if (lensResult.industry || lensResult.triggeredRules.length > 0) {
         igLog('Executive Lens:', lensResult.industry, '→', executiveRoute,
           lensResult.triggeredRules.length > 0 ? `(rules: ${lensResult.triggeredRules.join(', ')})` : '',
@@ -1152,27 +1237,37 @@ async function handleMessage(
         aiToolId,
       }).catch(() => {});
 
-      // ── Positive badge reinforcement ──
+      // ── Badge reinforcement (respects notification preferences) ──
       // Show entity count (amber/red) when entities are detected, or a green
-      // checkmark when the prompt is clean. This replaces the "silent unless
-      // bad" pattern with visible reassurance that protection is active.
+      // checkmark when the prompt is clean. Honors user's notification level preference.
       const badgeTabId = sender.tab?.id;
       if (badgeTabId) {
         try {
-          if (allEntities.length > 0) {
-            // Entities detected and protected — show shield count
+          const notifStore = await chrome.storage.local.get('notification_level');
+          const notifLevel: string = notifStore.notification_level || 'all';
+
+          const isBlock = sensitivityResult.level === 'critical';
+          const isWarning = sensitivityResult.level === 'high' || sensitivityResult.level === 'medium';
+          const shouldShow = notifLevel === 'all'
+            || (notifLevel === 'warnings' && (isWarning || isBlock))
+            || (notifLevel === 'blocks' && isBlock);
+
+          if (shouldShow && allEntities.length > 0) {
             const badgeColor = sensitivityResult.level === 'critical' ? '#EF4444'
               : sensitivityResult.level === 'high' ? '#F59E0B'
-              : '#6366F1'; // indigo for low/medium — "we see it, you're covered"
+              : '#6366F1';
             chrome.action.setBadgeText({ text: String(allEntities.length), tabId: badgeTabId }).catch(() => {});
             chrome.action.setBadgeBackgroundColor({ color: badgeColor, tabId: badgeTabId }).catch(() => {});
-          } else {
+          } else if (notifLevel === 'all' && allEntities.length === 0) {
             // Clean prompt — brief green checkmark (clears after 3s)
             chrome.action.setBadgeText({ text: '\u2713', tabId: badgeTabId }).catch(() => {});
             chrome.action.setBadgeBackgroundColor({ color: '#22C55E', tabId: badgeTabId }).catch(() => {});
             setTimeout(() => {
               chrome.action.setBadgeText({ text: '', tabId: badgeTabId }).catch(() => {});
             }, 3000);
+          } else {
+            // Silent or below threshold — clear badge
+            chrome.action.setBadgeText({ text: '', tabId: badgeTabId }).catch(() => {});
           }
         } catch {
           // Badge API may fail if tab was closed
@@ -1186,11 +1281,28 @@ async function handleMessage(
       const pdTabId = sender.tab?.id;
       if (pdTabId) {
         lastPromptTextByTab.set(pdTabId, text);
+        lastPromptTextTimeByTab.set(pdTabId, Date.now());
         pruneMap(lastPromptTextByTab);
+        // Auto-clear raw PII text after TTL (defense-in-depth)
+        setTimeout(() => {
+          if (lastPromptTextTimeByTab.get(pdTabId) && Date.now() - (lastPromptTextTimeByTab.get(pdTabId) || 0) >= PROMPT_TEXT_TTL_MS - 1000) {
+            lastPromptTextByTab.delete(pdTabId);
+            lastPromptTextTimeByTab.delete(pdTabId);
+          }
+        }, PROMPT_TEXT_TTL_MS);
 
+        // Suppress real-time broadcasts for a window after receiving an authoritative
+        // SENSITIVITY_SCORE from the MAIN world (IRON_GATE_INTERCEPTED relay).
+        // This prevents the worker's own detection from overwriting the MAIN world's
+        // pseudonymization result (which has the correct entity/mapping counts).
+        const authTime = lastAuthoritativeByTab.get(pdTabId) || 0;
         const now = Date.now();
-        const lastBroadcast = lastBroadcastByTab.get(pdTabId) || 0;
-        const prevScore = lastBroadcastScoreByTab.get(pdTabId) ?? -1;
+        if (now - authTime < AUTHORITATIVE_SUPPRESS_MS) {
+          igLog(`PROMPT_DETECTED: suppressed broadcast — authoritative result received ${now - authTime}ms ago`);
+        } else {
+
+        const lastBroadcast = lruGet(lastBroadcastByTab, pdTabId) || 0;
+        const prevScore = lruGet(lastBroadcastScoreByTab, pdTabId) ?? -1;
         // Always broadcast immediately when score DROPS (user removed sensitive data)
         // — stale high scores shouldn't persist. Otherwise debounce normally.
         const scoreDropped = sensitivityResult.score < prevScore;
@@ -1213,9 +1325,12 @@ async function handleMessage(
               })),
               aiToolId,
               tabId: pdTabId,
-              maskedPrompt: pseudoResult.maskedText,
-              pseudonymMappings: pseudoResult.mappings.map(m => ({ pseudonym: m.pseudonym, type: m.type, length: m.original.length })),
-              promptHash: await hashText(text),
+              // NOTE: maskedPrompt and pseudonymMappings are intentionally OMITTED
+              // from real-time typing detection. The Prompt Inspector should only show
+              // data from the authoritative MAIN world path (IRON_GATE_INTERCEPTED),
+              // which has the actual pseudonymization result. The worker's own detection
+              // may differ from the MAIN world's, and its async timing can cause it to
+              // overwrite the correct authoritative data in the sidepanel.
               promptLength: text.length,
               realtime: true, // Flag so UI can differentiate from submit
               zone: routingDecision?.finalZone ?? scoreToZone(sensitivityResult.score),
@@ -1229,80 +1344,176 @@ async function handleMessage(
               executiveExplanation: lensResult.explanation,
               privateLlmEndpoint: executiveRoute === 'private_llm' && config.localLLM ? config.localLLM.endpoint : undefined,
               privateLlmModel: executiveRoute === 'private_llm' && config.localLLM ? config.localLLM.model : undefined,
+              pipelineWarnings: _pipelineWarnings.length > 0 ? _pipelineWarnings : undefined,
             },
           }).catch(() => {});
+
+          // (Storage write moved outside debounce — see below return)
         }
+
+        } // end of authoritative suppression else block
       }
 
-      return { received: true };
+      // ── Shadow mode comparison: compare local vs server results ──
+      if (shadowServerPromise) {
+        shadowServerPromise.then((serverResult) => {
+          if (!serverResult) {
+            igLog('SHADOW MODE: server unavailable — no comparison');
+            return;
+          }
+          const localZone = sensitivityResult.score >= 61 ? 'RED'
+            : sensitivityResult.score >= 26 ? 'AMBER' : 'GREEN';
+          const serverZone = serverResult.score >= 61 ? 'RED'
+            : serverResult.score >= 26 ? 'AMBER' : 'GREEN';
+          const localAction = sensitivityResult.level === 'critical' ? 'block'
+            : allEntities.length > 0 ? 'warn' : 'pass';
+
+          if (localZone !== serverZone || localAction !== serverResult.action) {
+            igLog('SHADOW MODE DISAGREEMENT:',
+              `local=${localZone}/${localAction}(score=${sensitivityResult.score})`,
+              `server=${serverZone}/${serverResult.action}(score=${serverResult.score})`);
+            // Log disagreement to API for analysis
+            queueEventToApi({
+              aiToolId,
+              promptHash: '',
+              promptLength: text.length,
+              sensitivityScore: sensitivityResult.score,
+              sensitivityLevel: sensitivityResult.level,
+              entities: [],
+              action: 'pass',
+              captureMethod: 'shadow_comparison',
+              metadata: {
+                shadowDisagreement: true,
+                localZone, localScore: sensitivityResult.score, localAction,
+                serverZone, serverScore: serverResult.score, serverAction: serverResult.action,
+              },
+            });
+          } else {
+            igLog('SHADOW MODE: agreement —', localZone, '(local:', sensitivityResult.score, 'server:', serverResult.score, ')');
+          }
+        }).catch(() => {});
+      }
+
+      // ── PRIMARY delivery: write to storage for sidepanel ──
+      // chrome.runtime.sendMessage worker→sidepanel is unreliable in MV3.
+      // Storage writes + onChanged listener is the guaranteed delivery path.
+      // NOTE: tabId is intentionally OMITTED — the storage key is singleton,
+      // and including tabId causes the sidepanel to silently drop results when
+      // its activeTabIdRef doesn't match (race condition on tab query timing).
+      chrome.storage.local.set({
+        lastDetectionResult: {
+          score: sensitivityResult.score,
+          level: sensitivityResult.level,
+          entities: allEntities.map((e) => ({
+            type: e.type, start: e.start, end: e.end,
+            confidence: e.confidence, source: e.source,
+          })),
+          aiToolId,
+          realtime: true,
+          _storageTimestamp: Date.now(),
+        },
+      }).catch(() => {});
+
+      return {
+        received: true,
+        pipelineWarnings: _pipelineWarnings.length > 0 ? _pipelineWarnings : undefined,
+      };
     }
 
     // ── SERVER_PROCESS — MAIN world requests server-side pseudonymization ──
     // Called synchronously from the fetch interceptor; must return quickly.
+    // Retry logic: 2 retries with 1s timeout each, then fall through to local.
     case 'SERVER_PROCESS': {
-      const { text: spText, aiToolId: spAiToolId, requestId: spReqId } = message.payload || {};
+      const { text: spText, aiToolId: spAiToolId, requestId: spReqId, wasPasted: spWasPasted } = message.payload || {};
       if (!spText || !spReqId) return { error: 'Missing text or requestId' };
 
       const config = await resolveConfig();
-      if (config.processingMode !== 'server' || !config.apiKey) {
+      if ((config.processingMode !== 'server' && config.processingMode !== 'shadow') || !config.apiKey) {
         return { error: 'Server mode not active' };
       }
 
-      try {
-        const apiUrl = config.apiUrl.replace(/\/v1\/?$/, '') + '/v1/proxy/process';
-        const resp = await fetch(apiUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${config.apiKey}`,
-          },
-          body: JSON.stringify({
-            text: spText,
-            aiToolId: spAiToolId || 'unknown',
-            sessionId: `tab-${sender.tab?.id ?? 0}`,
-            captureMethod: 'typed',
-            platform: spAiToolId || 'unknown',
-          }),
-          signal: AbortSignal.timeout(4_000),
-        });
+      const apiUrl = config.apiUrl.replace(/\/v1\/?$/, '') + '/v1/proxy/process';
+      const isShortSafe = spText.length <= 2000;
+      const MAX_RETRIES = 2;
 
-        if (!resp.ok) {
-          return { error: `API ${resp.status}` };
-        }
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          // Timeout: 2s for first attempt, 1s for retries — keep total under 3s
+          const timeout = attempt === 0 ? 2_000 : 1_000;
+          const resp = await fetch(apiUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${config.apiKey}`,
+            },
+            body: JSON.stringify({
+              text: spText,
+              aiToolId: spAiToolId || 'unknown',
+              sessionId: `tab-${sender.tab?.id ?? 0}`,
+              captureMethod: spWasPasted ? 'pasted' : 'typed',
+              platform: spAiToolId || 'unknown',
+              wasPasted: !!spWasPasted,
+              quickCheck: isShortSafe,
+            }),
+            signal: AbortSignal.timeout(timeout),
+          });
 
-        const result = await resp.json();
-        igLog('SERVER_PROCESS: API response —', result.action, 'score:', result.sensitivityScore);
-
-        // Build reverse map from server response for de-pseudonymization
-        let reverseMap: Record<string, string> | undefined;
-        if (result.reverseMap) {
-          reverseMap = {};
-          for (const [_key, entry] of Object.entries(result.reverseMap as Record<string, { original: string; pseudonym: string }>)) {
-            reverseMap[entry.pseudonym] = entry.original;
+          if (!resp.ok) {
+            if (attempt < MAX_RETRIES && resp.status >= 500) continue; // retry on server errors
+            return { error: `API ${resp.status}` };
           }
-        }
 
-        return {
-          result: {
-            action: result.action,
-            pseudonymizedText: result.pseudonymizedText,
-            reverseMap,
-            sensitivityScore: result.sensitivityScore,
-            sensitivityLevel: result.sensitivityLevel,
-            entityCount: result.entityCount || 0,
-          },
-        };
-      } catch (err) {
-        igLog('SERVER_PROCESS: failed —', err);
-        return { error: err instanceof Error ? err.message : String(err) };
+          const result = await resp.json();
+          igLog('SERVER_PROCESS: API response —', result.action, 'score:', result.sensitivityScore, `(attempt ${attempt + 1})`);
+
+          // Build reverse map from server response for de-pseudonymization
+          let reverseMap: Record<string, string> | undefined;
+          if (result.reverseMap) {
+            reverseMap = {};
+            for (const [_key, entry] of Object.entries(result.reverseMap as Record<string, { original: string; pseudonym: string }>)) {
+              reverseMap[entry.pseudonym] = entry.original;
+            }
+          }
+
+          return {
+            result: {
+              action: result.action,
+              pseudonymizedText: result.pseudonymizedText,
+              reverseMap,
+              sensitivityScore: result.sensitivityScore,
+              sensitivityLevel: result.sensitivityLevel,
+              entityCount: result.entityCount || 0,
+              // Pass through entity types so sidepanel can display what was detected
+              entities: Array.isArray(result.entities) ? result.entities : [],
+            },
+          };
+        } catch (err) {
+          igLog(`SERVER_PROCESS: attempt ${attempt + 1} failed —`, err);
+          if (attempt >= MAX_RETRIES) {
+            return { error: err instanceof Error ? err.message : String(err) };
+          }
+          // Brief pause before retry
+          await new Promise(r => setTimeout(r, 200));
+        }
       }
+
+      return { error: 'All retries exhausted' };
     }
 
     // ── PROMPT_CLEARED — user emptied the input field ──
     // Broadcast to sidepanel so it resets stale detection results.
+    // Suppress for a window after an authoritative SENSITIVITY_SCORE
+    // (from IRON_GATE_INTERCEPTED relay), because ChatGPT clears the input
+    // immediately after submission — we don't want to wipe the inspector
+    // data that was just set from the real pseudonymization result.
     case 'PROMPT_CLEARED': {
       const clearTabId = sender.tab?.id;
       if (clearTabId) {
+        const authTime = lastAuthoritativeByTab.get(clearTabId) || 0;
+        if (Date.now() - authTime < AUTHORITATIVE_SUPPRESS_MS) {
+          igLog(`PROMPT_CLEARED: suppressed — authoritative result active`);
+          return { received: true, suppressed: true };
+        }
         lastPromptTextByTab.delete(clearTabId);
         lastBroadcastByTab.delete(clearTabId);
         lastBroadcastScoreByTab.delete(clearTabId);
@@ -1325,21 +1536,58 @@ async function handleMessage(
         aiToolId, promptHash, promptLength, maskedPrompt, pseudonymMappings,
       } = payload;
 
-      // Only queue to API if this has prompt data (i.e., from content script, not a re-broadcast)
-      if (promptHash) {
+      // Process if this has prompt data from content script (not a re-broadcast).
+      // promptHash may be empty if hashing failed (notifyContentScript fallback) —
+      // still process for sidepanel update, stats, and authoritative suppression.
+      const isFromContentScript = !!sender.tab;
+      const ssTabId = sender.tab?.id || null;
+
+      if (isFromContentScript) {
         igLog('MAIN world event —', aiToolId, 'score:', score, 'level:', level, 'entities:', entities?.length || 0, 'mappings:', pseudonymMappings?.length || 0);
+
+        // Mark this tab as having received an authoritative result from the MAIN world.
+        const authTabId = sender.tab?.id;
+        if (authTabId) {
+          lastAuthoritativeByTab.set(authTabId, Date.now());
+          pruneMap(lastAuthoritativeByTab);
+        }
+      }
+
+      // ── IMMEDIATE: Re-broadcast to sidepanel FIRST — before any async API work ──
+      // sidepanel only receives messages from the worker, NOT from content scripts.
+      // This MUST happen before queueEventToApiMinimized() which can take 2-3s.
+      chrome.runtime.sendMessage({
+        type: 'SENSITIVITY_SCORE',
+        payload: { ...payload, tabId: ssTabId },
+      }).catch(() => {});
+
+      // IMMEDIATE BACKUP: Write to storage so sidepanel picks it up via onChanged
+      try {
+        const storagePayload = {
+          ...payload,
+          tabId: ssTabId,
+          _storageTimestamp: Date.now(),
+        };
+        chrome.storage.local.set({ lastDetectionResult: storagePayload }).catch(() => {});
+      } catch { /* storage write failed — primary path may still work */ }
+
+      // ── DEFERRED: Stats, API reporting, tab state (none of this blocks sidepanel) ──
+      if (isFromContentScript) {
+        // Track stats for daily counter
+        const entityCount = entities?.length || pseudonymMappings?.length || 0;
+        if (entityCount > 0) {
+          incrementStats(entityCount, 1);
+        }
 
         const action = firmMode === 'proxy'
           ? (pseudonymMappings?.length > 0 ? 'proxy' : 'pass')
           : 'pass';
 
-        // Entities arrive pre-minimized (textHash + length) from main-world.ts.
-        // Pass them directly — queueEventToApi will forward without re-hashing.
         const entityList = (entities && entities.length > 0)
           ? entities.map((e: any) => ({
               type: e.type || 'UNKNOWN',
-              text: '', // Placeholder — queueEventToApi will hash (produces empty hash for empty string)
-              textHash: e.textHash, // Pre-computed hash from main-world.ts
+              text: '',
+              textHash: e.textHash,
               length: e.length || 0,
               start: e.start || 0,
               end: e.end || 0,
@@ -1348,53 +1596,49 @@ async function handleMessage(
             }))
           : [];
 
-        // Queue with pre-minimized entities — queueEventToApi detects textHash and skips re-hashing
-        await queueEventToApiMinimized({
-          aiToolId: aiToolId || 'unknown',
-          promptHash,
-          promptLength: promptLength || 0,
-          sensitivityScore: score,
-          sensitivityLevel: level,
-          entities: entityList,
-          action,
-          captureMethod: 'fetch',
-        });
+        // Queue API reporting — fire-and-forget, don't block
+        if (promptHash) {
+          queueEventToApiMinimized({
+            aiToolId: aiToolId || 'unknown',
+            promptHash,
+            promptLength: promptLength || 0,
+            sensitivityScore: score,
+            sensitivityLevel: level,
+            entities: entityList,
+            action,
+            captureMethod: 'fetch',
+          }).catch(() => {});
 
-        // Cryptographic audit trail — HMAC-signed record for tamper-evidence
-        recordAttestation({
-          action,
-          entityCount: entityList.length,
-          promptHash,
-          level,
-          score,
-          aiToolId: aiToolId || 'unknown',
-        }).catch(() => {});
+          recordAttestation({
+            action,
+            entityCount: entityList.length,
+            promptHash,
+            level,
+            score,
+            aiToolId: aiToolId || 'unknown',
+          }).catch(() => {});
+        }
       }
 
-      // Store per-tab state for this detection
-      const ssTabId = sender.tab?.id || null;
-      if (ssTabId && promptHash) {
-        updateTabState(ssTabId, {
-          aiToolId: aiToolId || 'unknown',
-          lastScore: score,
-          lastLevel: level,
-          lastExplanation: explanation,
-          lastEntities: entities || [],
-          lastPromptHash: promptHash,
-          lastOriginalPrompt: payload.originalPrompt || '',
-          lastMaskedPrompt: maskedPrompt,
-          lastPseudonymMappings: pseudonymMappings,
-          detectionCount: ((await getTabState(ssTabId))?.detectionCount || 0) + 1,
-          lastDetectionTime: Date.now(),
+      // Store per-tab state (fire-and-forget)
+      if (ssTabId && isFromContentScript) {
+        getTabState(ssTabId).then(tabState => {
+          updateTabState(ssTabId, {
+            aiToolId: aiToolId || 'unknown',
+            lastScore: score,
+            lastLevel: level,
+            lastExplanation: explanation,
+            lastEntities: entities || [],
+            lastPromptHash: promptHash,
+            lastPromptLength: (payload.originalPrompt || '').length,
+            lastOriginalPrompt: payload.originalPrompt || '',
+            lastMaskedPrompt: maskedPrompt,
+            lastPseudonymMappings: pseudonymMappings,
+            detectionCount: (tabState?.detectionCount || 0) + 1,
+            lastDetectionTime: Date.now(),
+          }).catch(() => {});
         }).catch(() => {});
       }
-
-      // Re-broadcast to sidepanel WITH tab context (sidepanel only receives
-      // messages from the worker, NOT from content scripts)
-      chrome.runtime.sendMessage({
-        type: 'SENSITIVITY_SCORE',
-        payload: { ...payload, tabId: ssTabId },
-      }).catch(() => {});
 
       // Ghost detection for Basic tier users (fire-and-forget)
       const ghostTabId = ssTabId ?? sender.tab?.id;
@@ -1699,6 +1943,30 @@ async function handleMessage(
       }
     }
 
+    case 'PROMPT_FEEDBACK': {
+      const { score, level, entityCount, rating } = message.payload;
+      igLog('Prompt feedback:', rating, 'score:', score, 'level:', level);
+      try {
+        await apiRequest({
+          method: 'POST',
+          path: '/feedback',
+          body: {
+            entityType: '_prompt_level',
+            entityHash: '',
+            isCorrect: rating === 'yes',
+            feedbackType: rating === 'not_sensitive' ? 'not_pii' : (rating === 'yes' ? 'correct' : 'partial_match'),
+            firmId: getFirmId(),
+            userId: getUserId(),
+            metadata: { promptScore: score, promptLevel: level, entityCount },
+          },
+        });
+        return { ok: true };
+      } catch (err) {
+        console.warn('[Iron Gate] Failed to send prompt feedback:', err);
+        return { ok: false };
+      }
+    }
+
     case 'PROTECTION_STATUS': {
       // Relay health status from content script to sidepanel
       chrome.runtime.sendMessage({
@@ -1758,6 +2026,39 @@ async function handleMessage(
     case 'GET_SHADOW_AI_STATS': {
       const stats = await getShadowAIStats();
       return { ok: true, stats };
+    }
+
+    case 'GET_COMPLIANCE_REPORT': {
+      const report = await generateComplianceReport();
+      return { ok: true, report };
+    }
+
+    case 'CLIPBOARD_DETECTED': {
+      const { pastedText, aiToolId, tabId: clipTabId } = message.payload ?? {};
+      if (!pastedText || typeof pastedText !== 'string') return { ok: false, error: 'No pasted text' };
+      igLog('Clipboard paste detected:', pastedText.length, 'chars on', aiToolId);
+
+      // Scan pasted text using the same detection pipeline as PROMPT_DETECTED
+      const clipEntities = detectWithRegex(pastedText);
+      const clipSecrets = scanForSecrets(pastedText);
+      const allClipEntities = [...clipEntities, ...clipSecrets];
+      const clipScore = computeScore(pastedText, allClipEntities);
+
+      if (allClipEntities.length > 0) {
+        const clipHash = await hashText(pastedText);
+        queueEventToApi({
+          aiToolId: aiToolId || 'unknown',
+          promptHash: clipHash,
+          promptLength: pastedText.length,
+          sensitivityScore: clipScore.score,
+          sensitivityLevel: clipScore.level,
+          entities: allClipEntities.map(e => ({ type: e.type, text: e.text, start: e.start, end: e.end, confidence: e.confidence, source: e.source })),
+          action: 'audit',
+          captureMethod: 'clipboard',
+        }).catch(() => {});
+      }
+
+      return { ok: true, score: clipScore.score, level: clipScore.level, entityCount: allClipEntities.length };
     }
 
     default:
@@ -1822,6 +2123,81 @@ async function queueEventToApi(event: {
     sessionId: event.sessionId,
     metadata: meta,
   }).catch((err) => console.warn('[Iron Gate] Failed to queue event:', err));
+}
+
+/**
+ * Generate a client-side compliance report from local detection history.
+ * Aggregates tab states and audit trail data — no PII leaves the device.
+ */
+async function generateComplianceReport(): Promise<Record<string, unknown>> {
+  const tabStates = await loadTabStates();
+  const auditLog = await getAuditLog();
+  const manifest = chrome.runtime.getManifest();
+
+  // Aggregate detection stats
+  let totalDetections = 0;
+  let totalScore = 0;
+  let highRiskCount = 0;
+  const toolUsage: Record<string, number> = {};
+  const entityTypeCounts: Record<string, number> = {};
+  const sensitivityDistribution = { low: 0, medium: 0, high: 0, critical: 0 };
+
+  for (const state of Object.values(tabStates)) {
+    totalDetections += state.detectionCount || 0;
+    if (state.lastScore != null) {
+      totalScore += state.lastScore;
+      if (state.lastScore > 60) highRiskCount++;
+      if (state.lastLevel) {
+        const lvl = state.lastLevel as keyof typeof sensitivityDistribution;
+        if (lvl in sensitivityDistribution) sensitivityDistribution[lvl]++;
+      }
+    }
+    if (state.aiToolName) {
+      toolUsage[state.aiToolName] = (toolUsage[state.aiToolName] || 0) + state.detectionCount;
+    }
+    for (const entity of state.lastEntities || []) {
+      const t = entity.type || 'UNKNOWN';
+      entityTypeCounts[t] = (entityTypeCounts[t] || 0) + 1;
+    }
+  }
+
+  // Audit log summary
+  const auditEntries = Array.isArray(auditLog) ? auditLog : [];
+  const actionCounts: Record<string, number> = {};
+  for (const entry of auditEntries) {
+    const action = (entry as any).action || 'unknown';
+    actionCounts[action] = (actionCounts[action] || 0) + 1;
+  }
+
+  // Feature flags
+  let featureFlags: Record<string, boolean> = {};
+  try {
+    const result = await chrome.storage.local.get('iron_gate_feature_flags');
+    featureFlags = result.iron_gate_feature_flags || {};
+  } catch { /* ignore */ }
+
+  const activeTabs = Object.keys(tabStates).length;
+  const avgScore = totalDetections > 0 ? Math.round(totalScore / activeTabs) : 0;
+
+  return {
+    generatedAt: new Date().toISOString(),
+    extensionVersion: manifest.version,
+    summary: {
+      activeTabs,
+      totalDetections,
+      highRiskDetections: highRiskCount,
+      averageSensitivityScore: avgScore,
+    },
+    sensitivityDistribution,
+    toolUsage,
+    entityTypeCounts,
+    auditSummary: {
+      totalEntries: auditEntries.length,
+      actionBreakdown: actionCounts,
+    },
+    featureFlags,
+    complianceScore: Math.max(0, 100 - highRiskCount * 5),
+  };
 }
 
 // Periodic alarm for flushing event queue
@@ -1914,7 +2290,8 @@ async function syncPolicies(): Promise<void> {
 
     igLog('Policies synced', { updatedAt: response.updatedAt });
 
-    // Sync entity dictionary (Tier 3) alongside policies
+    // Sync feature flags and entity dictionary alongside policies
+    syncFeatureFlags().catch(err => igLog('Feature flag sync error:', err));
     syncEntityDictionary().catch(err => igLog('Dict sync error:', err));
 
     // Broadcast to all content scripts
@@ -1942,6 +2319,61 @@ async function syncPolicies(): Promise<void> {
     }).catch(() => {});
   } catch (error) {
     igLog('Policy sync error:', error);
+  }
+}
+
+/**
+ * Feature Flag Sync — fetches firm feature flags from the API.
+ * Stores them in chrome.storage.local for use by content scripts and sidepanel.
+ */
+let _lastFlagHash = '';
+
+async function syncFeatureFlags(): Promise<void> {
+  const firmId = getFirmId();
+  if (!firmId) return;
+
+  try {
+    const response = await apiRequest<{ flags: Array<{ key: string; enabled: boolean; metadata?: Record<string, unknown> }> }>({
+      method: 'GET',
+      path: '/admin/feature-flags',
+    });
+
+    const flagStr = JSON.stringify(response.flags);
+    if (flagStr === _lastFlagHash) return;
+    _lastFlagHash = flagStr;
+
+    // Convert to a simple key→boolean map for fast lookups
+    const flagMap: Record<string, boolean> = {};
+    const flagMeta: Record<string, Record<string, unknown>> = {};
+    for (const flag of response.flags || []) {
+      flagMap[flag.key] = flag.enabled;
+      if (flag.metadata && Object.keys(flag.metadata).length > 0) {
+        flagMeta[flag.key] = flag.metadata;
+      }
+    }
+
+    await chrome.storage.local.set({
+      iron_gate_feature_flags: flagMap,
+      iron_gate_feature_flags_meta: flagMeta,
+      iron_gate_feature_flags_updated: Date.now(),
+    });
+
+    igLog('Feature flags synced', { count: response.flags?.length || 0 });
+  } catch (err) {
+    igLog('Feature flag sync error:', err);
+  }
+}
+
+/**
+ * Check if a feature flag is enabled. Reads from cached storage.
+ */
+async function isFeatureFlagEnabled(key: string): Promise<boolean> {
+  try {
+    const result = await chrome.storage.local.get('iron_gate_feature_flags');
+    const flags = result.iron_gate_feature_flags as Record<string, boolean> | undefined;
+    return flags?.[key] === true;
+  } catch {
+    return false;
   }
 }
 
@@ -2123,6 +2555,9 @@ chrome.runtime.onInstalled.addListener((details) => {
 // Also re-inject on every service worker startup — covers developer reload
 // (which may not always fire onInstalled with reason='update')
 reinjectAllTabs();
+
+// Restore conversation context from session storage (survives service worker restart)
+restoreConversationTrackers();
 
 /**
  * Self-contained inline fetch interceptor — injected via chrome.scripting.executeScript({ func })
@@ -2596,8 +3031,10 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   igLog('Tab closed:', tabId);
   lastPromptTextByTab.delete(tabId);
+  lastPromptTextTimeByTab.delete(tabId);
   lastBroadcastByTab.delete(tabId);
   lastBroadcastScoreByTab.delete(tabId);
+  lastAuthoritativeByTab.delete(tabId);
   _conversationTrackers.delete(tabId);
   removeTabState(tabId);
 });

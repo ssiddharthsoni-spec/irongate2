@@ -74,9 +74,16 @@ export interface ResolvedConfig {
   /**
    * Processing mode: 'local' = all detection in extension (current default),
    * 'server' = send raw text to API /v1/proxy/process for server-side detection.
+   * 'shadow' = run both modes, compare results, log disagreements (for validation).
    * Admin-configurable via managed storage or API config.
    */
-  processingMode: 'local' | 'server';
+  processingMode: 'local' | 'server' | 'shadow';
+  /**
+   * Server mode rollout percentage (0-100). Only applies when processingMode = 'server'.
+   * Used for gradual rollout: each tab gets randomly assigned based on this percentage.
+   * Default: 100 (all tabs use server mode).
+   */
+  serverModePercent?: number;
 }
 
 import { loadApiKey } from './api-key-store';
@@ -175,7 +182,10 @@ export async function resolveConfig(): Promise<ResolvedConfig> {
       isManaged: true,
       localLLM: resolveLocalLLMConfig(managed) || resolveLocalLLMConfig(local),
       tiers: resolveTierConfig(managed),
-      processingMode: managed.processingMode === 'local' ? 'local' : 'server',
+      processingMode: managed.processingMode === 'server' ? 'server'
+        : managed.processingMode === 'shadow' ? 'shadow' : 'local',
+      serverModePercent: typeof managed.serverModePercent === 'number'
+        ? Math.max(0, Math.min(100, managed.serverModePercent)) : 100,
     };
   }
 
@@ -188,7 +198,10 @@ export async function resolveConfig(): Promise<ResolvedConfig> {
     isManaged: false,
     localLLM: resolveLocalLLMConfig(local),
     tiers: resolveTierConfig(local),
-    processingMode: local.processingMode === 'local' ? 'local' : 'server',
+    processingMode: local.processingMode === 'server' ? 'server'
+      : local.processingMode === 'shadow' ? 'shadow' : 'local',
+    serverModePercent: typeof local.serverModePercent === 'number'
+      ? Math.max(0, Math.min(100, local.serverModePercent)) : 100,
   };
 }
 

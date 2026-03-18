@@ -358,17 +358,17 @@ describe('Score Explanation', () => {
     expect(result.explanation).toContain('No sensitive information');
   });
 
-  it('explains detected entity types', () => {
+  it('explains detected entity types in plain English', () => {
     const entities = [entity('SSN', '123-45-6789', 0.95)];
     const result = computeRiskScore(entities, 'SSN: 123-45-6789');
-    expect(result.explanation.toLowerCase()).toContain('ssn');
+    expect(result.explanation.toLowerCase()).toContain('social security');
   });
 
   it('mentions privilege markers when present', () => {
     const text = 'This is privileged and confidential. SSN: 123-45-6789';
     const entities = detectEntities(text);
     const result = computeRiskScore(entities, text);
-    expect(result.explanation.toLowerCase()).toContain('privilege');
+    expect(result.explanation.toLowerCase()).toContain('privileged');
   });
 
   it('mentions large text volume for long documents', () => {

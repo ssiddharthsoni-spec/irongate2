@@ -2,8 +2,8 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import crypto from 'crypto';
 import { db } from '../db/client';
-import { firms, users, clientMatters, weightOverrides, firmPlugins, events, subscriptions, featureFlags, departments, departmentPolicies, incidents, entityDictionaries } from '../db/schema';
-import { eq, and, gte, sql, desc } from 'drizzle-orm';
+import { firms, users, clientMatters, weightOverrides, firmPlugins, events, subscriptions, featureFlags, departments, departmentPolicies, incidents, entityDictionaries, auditLog, conversationState } from '../db/schema';
+import { eq, and, gte, lte, sql, desc } from 'drizzle-orm';
 import { invalidateDepartmentPolicyCache } from '../middleware/department-policy';
 import { analyzePatterns, getProposals, approveProposal, rejectProposal } from '../services/inference-engine';
 import { computeAdaptiveWeights, getWeightOverrides } from '../services/adaptive-weights';
@@ -16,9 +16,48 @@ import { invalidateUserCache } from '../middleware/auth';
 import { sanitizeInput, sanitizeUrl } from '../lib/sanitize';
 import { requirePerm } from '../middleware/rbac';
 import { mdmRoutes } from './mdm';
+import { logger } from '../lib/logger';
 import type { AppEnv } from '../types';
+import type { Context } from 'hono';
 
 export const adminRoutes = new Hono<AppEnv>();
+
+// ---------------------------------------------------------------------------
+// Audit logging helper — fire-and-forget, never blocks the request
+// ---------------------------------------------------------------------------
+
+function logAdminAction(
+  c: Context<AppEnv>,
+  action: string,
+  resourceType: string,
+  opts?: {
+    resourceId?: string;
+    oldValue?: unknown;
+    newValue?: unknown;
+  },
+) {
+  const firmId = c.get('firmId');
+  const actorId = c.get('userId');
+  const ipAddress = c.req.header('cf-connecting-ip')
+    || c.req.header('x-render-client-ip')
+    || (c.req.header('x-forwarded-for') || '').split(',')[0].trim()
+    || null;
+
+  db.insert(auditLog)
+    .values({
+      firmId,
+      actorId,
+      actorEmail: null, // populated if available via join, not critical
+      action,
+      resourceType,
+      resourceId: opts?.resourceId || null,
+      oldValue: opts?.oldValue != null ? opts.oldValue : null,
+      newValue: opts?.newValue != null ? opts.newValue : null,
+      ipAddress,
+      userAgent: c.req.header('user-agent') || null,
+    })
+    .catch((err) => logger.warn('Audit log insert failed', { error: String(err) }));
+}
 
 // Mount MDM config export sub-routes under /mdm/*
 adminRoutes.route('/mdm', mdmRoutes);
@@ -41,6 +80,11 @@ adminRoutes.post('/client-matters', requirePerm('addCustomEntityPatterns'));
 // Weight overrides (detection tuning)
 adminRoutes.put('/weight-overrides', requirePerm('setSensitivityThresholds'));
 adminRoutes.delete('/weight-overrides/:entityType', requirePerm('setSensitivityThresholds'));
+
+// Intent weight overrides
+adminRoutes.get('/intent-weights', requirePerm('setSensitivityThresholds'));
+adminRoutes.put('/intent-weights', requirePerm('setSensitivityThresholds'));
+adminRoutes.delete('/intent-weights', requirePerm('setSensitivityThresholds'));
 
 // Inferred entity management
 adminRoutes.post('/inferred-entities/analyze', requirePerm('addCustomEntityPatterns'));
@@ -70,6 +114,13 @@ adminRoutes.post('/departments', requirePerm('setSensitivityThresholds'));
 adminRoutes.put('/departments/:id', requirePerm('setSensitivityThresholds'));
 adminRoutes.delete('/departments/:id', requirePerm('removeUsers'));
 adminRoutes.put('/departments/:id/policies', requirePerm('setSensitivityThresholds'));
+
+// Audit log export
+adminRoutes.get('/audit-log/export', requirePerm('viewFirmAnalytics'));
+
+// Session revocation
+adminRoutes.post('/users/:userId/revoke-sessions', requirePerm('removeUsers'));
+adminRoutes.post('/revoke-all-sessions', requirePerm('removeUsers'));
 
 // GET /v1/admin/firm — Get firm configuration
 adminRoutes.get('/firm', async (c) => {
@@ -165,6 +216,7 @@ adminRoutes.post('/firm', async (c) => {
     currentPeriodEnd: trialEnd,
   });
 
+  logAdminAction(c, 'firm.create', 'firm', { resourceId: newFirm.id, newValue: { name: parsed.firmName, mode: parsed.protectionMode } });
   return c.json(newFirm, 201);
 });
 
@@ -190,6 +242,7 @@ adminRoutes.put('/firm', async (c) => {
 
   if (!updated) return c.json({ error: 'Firm not found' }, 404);
 
+  logAdminAction(c, 'firm.update', 'firm', { resourceId: updated.id, newValue: parsed });
   return c.json(updated);
 });
 
@@ -240,6 +293,7 @@ adminRoutes.post('/client-matters', async (c) => {
 
   const inserted = await db.insert(clientMatters).values(values).returning({ id: clientMatters.id });
 
+  logAdminAction(c, 'client_matters.import', 'client_matter', { newValue: { count: inserted.length } });
   return c.json({ imported: inserted.length });
 });
 
@@ -299,6 +353,7 @@ adminRoutes.put('/weight-overrides', async (c) => {
     })
     .returning();
 
+  logAdminAction(c, 'weight_override.upsert', 'weight_override', { newValue: { entityType: parsed.entityType, weight: parsed.weight } });
   return c.json(upserted);
 });
 
@@ -311,6 +366,7 @@ adminRoutes.delete('/weight-overrides/:entityType', async (c) => {
     .delete(weightOverrides)
     .where(and(eq(weightOverrides.firmId, firmId), eq(weightOverrides.entityType, entityType)));
 
+  logAdminAction(c, 'weight_override.delete', 'weight_override', { oldValue: { entityType } });
   return c.json({ ok: true });
 });
 
@@ -329,6 +385,7 @@ adminRoutes.get('/inferred-entities', async (c) => {
 adminRoutes.post('/inferred-entities/analyze', async (c) => {
   const firmId = c.get('firmId');
   const results = await analyzePatterns(firmId);
+  logAdminAction(c, 'inferred_entities.analyze', 'inferred_entity', { newValue: { discovered: results.length } });
   return c.json({ discovered: results.length, results });
 });
 
@@ -351,6 +408,7 @@ adminRoutes.put('/inferred-entities/:id', async (c) => {
     await rejectProposal(id, userId, firmId);
   }
 
+  logAdminAction(c, `inferred_entity.${parsed.action}`, 'inferred_entity', { resourceId: id });
   return c.json({ ok: true });
 });
 
@@ -431,6 +489,7 @@ adminRoutes.post('/webhooks', async (c) => {
   }
 
   const sub = await registerWebhook(firmId, parsed.url, parsed.secret, parsed.eventTypes);
+  logAdminAction(c, 'webhook.create', 'webhook', { resourceId: sub.id, newValue: { url: parsed.url, eventTypes: parsed.eventTypes } });
   return c.json(sub, 201);
 });
 
@@ -442,6 +501,7 @@ adminRoutes.delete('/webhooks/:id', async (c) => {
   if (!deleted) {
     return c.json({ error: 'Webhook not found' }, 404);
   }
+  logAdminAction(c, 'webhook.delete', 'webhook', { resourceId: id });
   return c.json({ ok: true });
 });
 
@@ -496,6 +556,7 @@ adminRoutes.put('/siem', async (c) => {
     .where(eq(firms.id, firmId))
     .returning();
 
+  logAdminAction(c, 'siem.configure', 'siem', { newValue: { provider: parsed.provider, enabled: parsed.enabled, format: parsed.format } });
   return c.json({ ok: true, siem: parsed });
 });
 
@@ -546,6 +607,7 @@ adminRoutes.post('/plugins', async (c) => {
     .returning();
 
   invalidateCache(firmId);
+  logAdminAction(c, 'plugin.create', 'plugin', { resourceId: plugin.id, newValue: { name: parsed.name, version: parsed.version } });
   return c.json(plugin, 201);
 });
 
@@ -573,6 +635,7 @@ adminRoutes.put('/plugins/:id', async (c) => {
   }
 
   invalidateCache(firmId);
+  logAdminAction(c, 'plugin.update', 'plugin', { resourceId: id, newValue: parsed });
   return c.json(updated);
 });
 
@@ -609,6 +672,7 @@ adminRoutes.delete('/plugins/:id', async (c) => {
 
   await db.delete(firmPlugins).where(and(eq(firmPlugins.id, id), eq(firmPlugins.firmId, firmId)));
   invalidateCache(firmId);
+  logAdminAction(c, 'plugin.delete', 'plugin', { resourceId: id });
   return c.json({ ok: true });
 });
 
@@ -620,6 +684,7 @@ adminRoutes.delete('/plugins/:id', async (c) => {
 adminRoutes.post('/recalculate-weights', async (c) => {
   const firmId = c.get('firmId');
   const results = await processFeedback(firmId);
+  logAdminAction(c, 'weights.recalculate', 'weight_override', { newValue: { processed: results.length } });
   return c.json({ processed: results.length, stats: results });
 });
 
@@ -744,7 +809,7 @@ adminRoutes.put('/feature-flags', async (c) => {
     metadata: z.record(z.unknown()).optional(),
   });
   const parsed = schema.safeParse(body);
-  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  if (!parsed.success) return c.json({ error: 'Invalid request body', details: parsed.error.flatten() }, 400);
 
   const [upserted] = await db
     .insert(featureFlags)
@@ -767,6 +832,7 @@ adminRoutes.put('/feature-flags', async (c) => {
     })
     .returning();
 
+  logAdminAction(c, 'feature_flag.upsert', 'feature_flag', { newValue: { key: parsed.data.key, enabled: parsed.data.enabled } });
   return c.json(upserted);
 });
 
@@ -776,6 +842,7 @@ adminRoutes.delete('/feature-flags/:key', async (c) => {
   await db
     .delete(featureFlags)
     .where(and(eq(featureFlags.firmId, firmId), eq(featureFlags.key, key)));
+  logAdminAction(c, 'feature_flag.delete', 'feature_flag', { oldValue: { key } });
   return c.json({ ok: true });
 });
 
@@ -829,7 +896,7 @@ adminRoutes.post('/departments', async (c) => {
   });
 
   const parsed = createSchema.safeParse(body);
-  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  if (!parsed.success) return c.json({ error: 'Invalid request body', details: parsed.error.flatten() }, 400);
 
   // If parentId is given, verify it belongs to the same firm
   if (parsed.data.parentId) {
@@ -854,6 +921,7 @@ adminRoutes.post('/departments', async (c) => {
       })
       .returning();
 
+    logAdminAction(c, 'department.create', 'department', { resourceId: dept.id, newValue: { name: parsed.data.name } });
     return c.json(dept, 201);
   } catch (err: any) {
     if (err?.code === '23505') {
@@ -877,7 +945,7 @@ adminRoutes.put('/departments/:id', async (c) => {
   });
 
   const parsed = updateSchema.safeParse(body);
-  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  if (!parsed.success) return c.json({ error: 'Invalid request body', details: parsed.error.flatten() }, 400);
 
   // Prevent setting parentId to self
   if (parsed.data.parentId === id) {
@@ -899,6 +967,7 @@ adminRoutes.put('/departments/:id', async (c) => {
     return c.json({ error: 'Department not found' }, 404);
   }
 
+  logAdminAction(c, 'department.update', 'department', { resourceId: id, newValue: sanitizedData });
   return c.json(updated);
 });
 
@@ -931,6 +1000,7 @@ adminRoutes.delete('/departments/:id', async (c) => {
   // Invalidate policy cache
   invalidateDepartmentPolicyCache(id);
 
+  logAdminAction(c, 'department.delete', 'department', { resourceId: id });
   return c.json({ ok: true });
 });
 
@@ -973,7 +1043,7 @@ adminRoutes.put('/departments/:id/policies', async (c) => {
   });
 
   const parsed = policySchema.safeParse(body);
-  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  if (!parsed.success) return c.json({ error: 'Invalid request body', details: parsed.error.flatten() }, 400);
 
   // Validate policyValue shape based on policyType
   switch (parsed.data.policyType) {
@@ -1042,6 +1112,7 @@ adminRoutes.put('/departments/:id/policies', async (c) => {
   // Invalidate cache so changes take effect immediately
   invalidateDepartmentPolicyCache(departmentId);
 
+  logAdminAction(c, 'department_policy.upsert', 'department_policy', { resourceId: departmentId, newValue: { policyType: parsed.data.policyType } });
   return c.json(upserted);
 });
 
@@ -1082,6 +1153,7 @@ adminRoutes.post('/scim-token', requirePerm('setSensitivityThresholds'), async (
 
   await db.update(firms).set({ config: updatedConfig, updatedAt: new Date() }).where(eq(firms.id, firmId));
 
+  logAdminAction(c, 'scim_token.generate', 'scim_token');
   return c.json({
     token, // Only returned once — client must store it
     message: 'SCIM token generated. Store this securely — it will not be shown again.',
@@ -1101,6 +1173,7 @@ adminRoutes.delete('/scim-token', requirePerm('setSensitivityThresholds'), async
 
   await db.update(firms).set({ config: existingConfig, updatedAt: new Date() }).where(eq(firms.id, firmId));
 
+  logAdminAction(c, 'scim_token.revoke', 'scim_token');
   return c.json({ ok: true, message: 'SCIM token revoked. Any configured identity provider will lose access.' });
 });
 
@@ -1186,7 +1259,7 @@ adminRoutes.post('/incidents', async (c) => {
   });
 
   const parsed = createSchema.safeParse(body);
-  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  if (!parsed.success) return c.json({ error: 'Invalid request body', details: parsed.error.flatten() }, 400);
 
   const [created] = await db
     .insert(incidents)
@@ -1203,6 +1276,7 @@ adminRoutes.post('/incidents', async (c) => {
     })
     .returning();
 
+  logAdminAction(c, 'incident.create', 'incident', { resourceId: created.id, newValue: { title: parsed.data.title, severity: parsed.data.severity } });
   return c.json(created, 201);
 });
 
@@ -1226,7 +1300,7 @@ adminRoutes.put('/incidents/:id', async (c) => {
   });
 
   const parsed = updateSchema.safeParse(body);
-  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  if (!parsed.success) return c.json({ error: 'Invalid request body', details: parsed.error.flatten() }, 400);
 
   const updates: Record<string, any> = { updatedAt: new Date() };
   if (parsed.data.title !== undefined) updates.title = sanitizeInput(parsed.data.title);
@@ -1253,6 +1327,7 @@ adminRoutes.put('/incidents/:id', async (c) => {
     return c.json({ error: 'Incident not found' }, 404);
   }
 
+  logAdminAction(c, 'incident.update', 'incident', { resourceId: id, newValue: updates });
   return c.json(updated);
 });
 
@@ -1313,6 +1388,7 @@ adminRoutes.post('/federated-aggregation', requirePerm('setSensitivityThresholds
   const body = await c.req.json().catch(() => ({}));
   const periodDays = body.periodDays ?? 90;
   const result = await handleFederatedAggregation(periodDays);
+  logAdminAction(c, 'federated_aggregation.run', 'weight_override', { newValue: { periodDays } });
   return c.json(result);
 });
 
@@ -1386,7 +1462,7 @@ adminRoutes.post('/entity-dictionary', async (c) => {
   });
 
   const parsed = createSchema.safeParse(body);
-  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  if (!parsed.success) return c.json({ error: 'Invalid request body', details: parsed.error.flatten() }, 400);
 
   try {
     const [created] = await db
@@ -1401,6 +1477,7 @@ adminRoutes.post('/entity-dictionary', async (c) => {
       })
       .returning();
 
+    logAdminAction(c, 'entity_dictionary.create', 'entity_dictionary', { resourceId: created.id, newValue: { category: parsed.data.category, name: parsed.data.name } });
     return c.json(created, 201);
   } catch (err: any) {
     if (err?.message?.includes('unique') || err?.message?.includes('duplicate')) {
@@ -1427,7 +1504,7 @@ adminRoutes.post('/entity-dictionary/bulk', async (c) => {
   });
 
   const parsed = bulkSchema.safeParse(body);
-  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  if (!parsed.success) return c.json({ error: 'Invalid request body', details: parsed.error.flatten() }, 400);
 
   const values = parsed.data.entities.map(e => ({
     firmId,
@@ -1457,6 +1534,7 @@ adminRoutes.post('/entity-dictionary/bulk', async (c) => {
     }
   }
 
+  logAdminAction(c, 'entity_dictionary.bulk_import', 'entity_dictionary', { newValue: { inserted, skipped, total: values.length } });
   return c.json({ inserted, skipped, total: values.length }, 201);
 });
 
@@ -1476,7 +1554,7 @@ adminRoutes.put('/entity-dictionary/:id', async (c) => {
   });
 
   const parsed = updateSchema.safeParse(body);
-  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  if (!parsed.success) return c.json({ error: 'Invalid request body', details: parsed.error.flatten() }, 400);
 
   const updates: Record<string, any> = { updatedAt: new Date() };
   if (parsed.data.category !== undefined) updates.category = parsed.data.category;
@@ -1492,6 +1570,7 @@ adminRoutes.put('/entity-dictionary/:id', async (c) => {
     .returning();
 
   if (!updated) return c.json({ error: 'Entity not found' }, 404);
+  logAdminAction(c, 'entity_dictionary.update', 'entity_dictionary', { resourceId: id, newValue: updates });
   return c.json(updated);
 });
 
@@ -1507,6 +1586,7 @@ adminRoutes.delete('/entity-dictionary/:id', async (c) => {
     .returning();
 
   if (!updated) return c.json({ error: 'Entity not found' }, 404);
+  logAdminAction(c, 'entity_dictionary.delete', 'entity_dictionary', { resourceId: id });
   return c.json({ deleted: true, id });
 });
 
@@ -1548,4 +1628,265 @@ adminRoutes.get('/entity-dictionary/version', async (c) => {
   const hash = crypto.createHash('sha256').update(hashInput).digest('hex').substring(0, 16);
 
   return c.json({ hash, count });
+});
+
+// ---------------------------------------------------------------------------
+// Intent Weight Overrides — per-firm overrides for intent classification weights
+// Stored in firm config JSONB under `intentWeights` key
+// ---------------------------------------------------------------------------
+
+const VALID_INTENT_CATEGORIES = [
+  'credential_disclosure', 'data_analysis', 'communication_sharing',
+  'drafting_sensitive', 'brainstorming', 'productivity', 'coding',
+  'creative', 'research', 'general',
+] as const;
+
+const DEFAULT_INTENT_WEIGHTS: Record<string, number> = {
+  credential_disclosure: 2.0,
+  data_analysis: 1.5,
+  communication_sharing: 1.5,
+  drafting_sensitive: 1.3,
+  brainstorming: 0.3,
+  productivity: 0.2,
+  coding: 0.15,
+  creative: 0.15,
+  research: 0.1,
+  general: 1.0,
+};
+
+// GET /v1/admin/intent-weights — Get firm intent weight overrides
+adminRoutes.get('/intent-weights', async (c) => {
+  const firmId = c.get('firmId');
+  const [firm] = await db.select().from(firms).where(eq(firms.id, firmId)).limit(1);
+
+  const config = (firm?.config as Record<string, unknown>) || {};
+  const overrides = (config.intentWeights as Record<string, number>) || {};
+
+  return c.json({
+    defaults: DEFAULT_INTENT_WEIGHTS,
+    overrides,
+    effective: { ...DEFAULT_INTENT_WEIGHTS, ...overrides },
+  });
+});
+
+// PUT /v1/admin/intent-weights — Set intent weight overrides
+adminRoutes.put('/intent-weights', async (c) => {
+  const firmId = c.get('firmId');
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+
+  const schema = z.object({
+    weights: z.record(
+      z.enum(VALID_INTENT_CATEGORIES),
+      z.number().min(0).max(3.0),
+    ),
+  });
+
+  const parsed = schema.parse(body);
+
+  const [firm] = await db.select().from(firms).where(eq(firms.id, firmId)).limit(1);
+  const config = (firm?.config as Record<string, unknown>) || {};
+
+  const updatedConfig = {
+    ...config,
+    intentWeights: { ...(config.intentWeights as Record<string, number> || {}), ...parsed.weights },
+  };
+
+  await db.update(firms).set({
+    config: updatedConfig,
+    updatedAt: new Date(),
+  }).where(eq(firms.id, firmId));
+
+  logAdminAction(c, 'intent_weights.update', 'intent_weights', { newValue: parsed.weights });
+  return c.json({
+    overrides: updatedConfig.intentWeights,
+    effective: { ...DEFAULT_INTENT_WEIGHTS, ...updatedConfig.intentWeights as Record<string, number> },
+  });
+});
+
+// DELETE /v1/admin/intent-weights — Reset intent weights to defaults
+adminRoutes.delete('/intent-weights', async (c) => {
+  const firmId = c.get('firmId');
+
+  const [firm] = await db.select().from(firms).where(eq(firms.id, firmId)).limit(1);
+  const config = (firm?.config as Record<string, unknown>) || {};
+  delete config.intentWeights;
+
+  await db.update(firms).set({
+    config,
+    updatedAt: new Date(),
+  }).where(eq(firms.id, firmId));
+
+  logAdminAction(c, 'intent_weights.reset', 'intent_weights');
+  return c.json({ ok: true, effective: DEFAULT_INTENT_WEIGHTS });
+});
+
+// ---------------------------------------------------------------------------
+// Audit Log Export (CSV / JSON download)
+// ---------------------------------------------------------------------------
+
+// GET /v1/admin/audit-log/export — Export audit log as CSV or JSON file
+adminRoutes.get('/audit-log/export', async (c) => {
+  const firmId = c.get('firmId');
+  const format = (c.req.query('format') || 'json').toLowerCase();
+  const startDate = c.req.query('startDate');
+  const endDate = c.req.query('endDate');
+  const actionFilter = c.req.query('action');
+  const resourceFilter = c.req.query('resourceType');
+
+  if (format !== 'csv' && format !== 'json') {
+    return c.json({ error: 'Invalid format — must be "csv" or "json"' }, 400);
+  }
+
+  // Validate date formats
+  if (startDate && isNaN(new Date(startDate).getTime())) {
+    return c.json({ error: 'Invalid startDate format' }, 400);
+  }
+  if (endDate && isNaN(new Date(endDate).getTime())) {
+    return c.json({ error: 'Invalid endDate format' }, 400);
+  }
+
+  const conditions = [eq(auditLog.firmId, firmId)];
+  if (startDate) conditions.push(gte(auditLog.createdAt, new Date(startDate)));
+  if (endDate) conditions.push(lte(auditLog.createdAt, new Date(endDate)));
+  if (actionFilter) conditions.push(eq(auditLog.action, actionFilter));
+  if (resourceFilter) conditions.push(eq(auditLog.resourceType, resourceFilter));
+
+  const MAX_EXPORT = 10_000;
+  const entries = await db
+    .select()
+    .from(auditLog)
+    .where(and(...conditions))
+    .orderBy(desc(auditLog.createdAt))
+    .limit(MAX_EXPORT);
+
+  if (format === 'csv') {
+    const csvHeaders = [
+      'timestamp', 'actor_email', 'action', 'resource_type',
+      'resource_id', 'ip_address', 'old_value', 'new_value',
+    ];
+    const csvRows = entries.map((e) => {
+      return [
+        e.createdAt ? new Date(e.createdAt as any).toISOString() : '',
+        e.actorEmail || '',
+        e.action || '',
+        e.resourceType || '',
+        e.resourceId || '',
+        e.ipAddress || '',
+        e.oldValue != null ? JSON.stringify(e.oldValue) : '',
+        e.newValue != null ? JSON.stringify(e.newValue) : '',
+      ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',');
+    });
+    const csv = [csvHeaders.join(','), ...csvRows].join('\n');
+    c.header('Content-Disposition', 'attachment; filename="irongate-audit-log.csv"');
+    c.header('Content-Type', 'text/csv');
+    return c.text(csv);
+  }
+
+  // JSON format
+  c.header('Content-Disposition', 'attachment; filename="irongate-audit-log.json"');
+  c.header('Content-Type', 'application/json');
+  return c.json({
+    exportedAt: new Date().toISOString(),
+    firmId,
+    count: entries.length,
+    entries,
+  });
+});
+
+// ---------------------------------------------------------------------------
+// User Session Revocation
+// ---------------------------------------------------------------------------
+
+// POST /v1/admin/users/:userId/revoke-sessions — Revoke all sessions for a user
+adminRoutes.post('/users/:userId/revoke-sessions', async (c) => {
+  const firmId = c.get('firmId');
+  const userId = c.req.param('userId');
+
+  // Verify user belongs to this firm
+  const [targetUser] = await db
+    .select({ id: users.id, email: users.email })
+    .from(users)
+    .where(and(eq(users.id, userId), eq(users.firmId, firmId)))
+    .limit(1);
+
+  if (!targetUser) {
+    return c.json({ error: 'User not found in this firm' }, 404);
+  }
+
+  const deleted = await db
+    .delete(conversationState)
+    .where(and(
+      eq(conversationState.firmId, firmId),
+      eq(conversationState.userId, userId),
+    ))
+    .returning({ id: conversationState.id });
+
+  logAdminAction(c, 'sessions.revoke_user', 'user', {
+    resourceId: userId,
+    newValue: { revokedSessions: deleted.length },
+  });
+
+  return c.json({
+    ok: true,
+    userId,
+    revokedSessions: deleted.length,
+  });
+});
+
+// POST /v1/admin/revoke-all-sessions — Revoke all sessions for the entire firm
+adminRoutes.post('/revoke-all-sessions', async (c) => {
+  const firmId = c.get('firmId');
+
+  const deleted = await db
+    .delete(conversationState)
+    .where(eq(conversationState.firmId, firmId))
+    .returning({ id: conversationState.id });
+
+  logAdminAction(c, 'sessions.revoke_firm', 'firm', {
+    newValue: { revokedSessions: deleted.length },
+  });
+
+  return c.json({
+    ok: true,
+    revokedSessions: deleted.length,
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Audit Log Viewer
+// ---------------------------------------------------------------------------
+
+// GET /v1/admin/audit-log — View admin audit trail (paginated, filterable)
+adminRoutes.get('/audit-log', requirePerm('viewFirmAnalytics'), async (c) => {
+  const firmId = c.get('firmId');
+  const limit = Math.min(Math.max(1, parseInt(c.req.query('limit') || '50', 10) || 50), 200);
+  const offset = Math.max(0, parseInt(c.req.query('offset') || '0', 10) || 0);
+  const actionFilter = c.req.query('action');
+  const resourceFilter = c.req.query('resourceType');
+
+  const conditions = [eq(auditLog.firmId, firmId)];
+  if (actionFilter) conditions.push(eq(auditLog.action, actionFilter));
+  if (resourceFilter) conditions.push(eq(auditLog.resourceType, resourceFilter));
+
+  const [items, countResult] = await Promise.all([
+    db
+      .select()
+      .from(auditLog)
+      .where(and(...conditions))
+      .orderBy(desc(auditLog.createdAt))
+      .limit(limit)
+      .offset(offset),
+    db
+      .select({ total: sql<number>`count(*)` })
+      .from(auditLog)
+      .where(and(...conditions)),
+  ]);
+
+  return c.json({
+    entries: items,
+    total: Number(countResult[0]?.total || 0),
+    limit,
+    offset,
+  });
 });

@@ -377,7 +377,7 @@ async function seed() {
       firmId: firm.id,
       url: 'https://hooks.irongate.dev/audit-events',
       eventTypes: ['event.created', 'event.blocked', 'sensitivity.critical'],
-      secret: 'whsec_dev_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6',
+      secret: `whsec_dev_${Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, '0')).join('')}`,
       isActive: true,
     })
     .returning();

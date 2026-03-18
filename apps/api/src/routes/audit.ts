@@ -155,20 +155,59 @@ auditRoutes.get('/status', async (c) => {
 auditRoutes.get('/export', async (c) => {
   const firmId = c.get('firmId');
 
+  const format = c.req.query('format') || 'json';
+  const startDate = c.req.query('startDate');
+  const endDate = c.req.query('endDate');
+
+  const conditions = [eq(events.firmId, firmId)];
+  if (startDate) conditions.push(gte(events.createdAt, new Date(startDate)));
+  if (endDate) conditions.push(lte(events.createdAt, new Date(endDate)));
+
   const chainEvents = await db
     .select({
       eventHash: events.eventHash,
       previousHash: events.previousHash,
       chainPosition: events.chainPosition,
       timestamp: events.createdAt,
+      sessionId: events.sessionId,
       aiTool: events.aiToolId,
       sensitivityScore: events.sensitivityScore,
       sensitivityLevel: events.sensitivityLevel,
       routeDecision: events.action,
+      captureMethod: events.captureMethod,
+      promptHash: events.promptHash,
+      promptLength: events.promptLength,
+      metadata: events.metadata,
     })
     .from(events)
-    .where(eq(events.firmId, firmId))
+    .where(and(...conditions))
     .orderBy(asc(events.chainPosition));
+
+  if (format === 'csv') {
+    const csvHeaders = [
+      'chainPosition', 'eventHash', 'previousHash', 'timestamp', 'sessionId',
+      'aiTool', 'sensitivityScore', 'sensitivityLevel', 'routeDecision',
+      'captureMethod', 'promptHash', 'promptLength',
+      'intent', 'intentDirection', 'intentConfidence',
+      'structureType', 'structureMultiplier', 'entityCount', 'wasPasted',
+    ];
+    const csvRows = chainEvents.map(e => {
+      const meta = (e.metadata || {}) as Record<string, any>;
+      return [
+        e.chainPosition, e.eventHash, e.previousHash,
+        e.timestamp ? new Date(e.timestamp as any).toISOString() : '',
+        e.sessionId || '', e.aiTool, e.sensitivityScore, e.sensitivityLevel,
+        e.routeDecision, e.captureMethod, e.promptHash, e.promptLength,
+        meta.intent || '', meta.intentDirection || '', meta.intentConfidence || '',
+        meta.structureType || '', meta.structureMultiplier || '',
+        meta.entityCount || '', meta.wasPasted || '',
+      ].map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',');
+    });
+    const csv = [csvHeaders.join(','), ...csvRows].join('\n');
+    c.header('Content-Disposition', 'attachment; filename="irongate-audit-chain.csv"');
+    c.header('Content-Type', 'text/csv');
+    return c.text(csv);
+  }
 
   c.header('Content-Disposition', 'attachment; filename="irongate-audit-chain.json"');
   c.header('Content-Type', 'application/json');

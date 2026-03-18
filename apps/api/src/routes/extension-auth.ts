@@ -310,16 +310,16 @@ extensionAuthRoutes.post('/register-extension', async (c) => {
       tokenHash: verifyHash,
       expiresAt: verifyExpiry,
     }).catch((err) => {
-      logger.error('Failed to store verification token', { userId: registrationResult.userId, email: parsed.email, error: err instanceof Error ? err.message : String(err) });
+      logger.error('Failed to store verification token', { userId: registrationResult.userId, emailDomain: parsed.email.split('@')[1], error: err instanceof Error ? err.message : String(err) });
     });
 
     const verifyUrl = `${dashboardUrl}/verify-email?token=${verifyTokenStr}`;
     import('../services/email').then(({ sendWelcomeEmail, sendVerificationEmail }) => {
       sendWelcomeEmail(parsed.email, parsed.email.split('@')[0]).catch((err) => {
-        logger.error('Failed to send welcome email', { email: parsed.email, error: err instanceof Error ? err.message : String(err) });
+        logger.error('Failed to send welcome email', { emailDomain: parsed.email.split('@')[1], error: err instanceof Error ? err.message : String(err) });
       });
       sendVerificationEmail(parsed.email, parsed.email.split('@')[0], verifyUrl).catch((err) => {
-        logger.error('Failed to send verification email', { email: parsed.email, error: err instanceof Error ? err.message : String(err) });
+        logger.error('Failed to send verification email', { emailDomain: parsed.email.split('@')[1], error: err instanceof Error ? err.message : String(err) });
       });
     }).catch((err) => {
       logger.error('Failed to import email service', { error: err instanceof Error ? err.message : String(err) });
@@ -615,7 +615,6 @@ extensionAuthRoutes.post('/verify-email', async (c) => {
 
     logger.info('Email verified successfully', {
       userId: tokenRecord.userId,
-      email: tokenRecord.email,
     });
 
     return c.json({ emailVerified: true, message: 'Email verified. Your API key now has full access.' });
@@ -681,7 +680,7 @@ extensionAuthRoutes.post('/resend-verification', async (c) => {
     const verifyUrl = `${dashboardUrl}/verify-email?token=${verifyTokenStr}`;
     import('../services/email').then(({ sendVerificationEmail }) => {
       sendVerificationEmail(email, email.split('@')[0], verifyUrl).catch((err) => {
-        logger.error('Failed to send verification email', { email, error: err instanceof Error ? err.message : String(err) });
+        logger.error('Failed to send verification email', { emailDomain: email.split('@')[1], error: err instanceof Error ? err.message : String(err) });
       });
     }).catch((err) => {
       logger.error('Failed to import email service', { error: err instanceof Error ? err.message : String(err) });

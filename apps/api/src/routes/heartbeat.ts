@@ -42,7 +42,7 @@ heartbeatRoutes.post('/', async (c) => {
   const parsed = heartbeatSchema.safeParse(body);
 
   if (!parsed.success) {
-    return c.json({ error: 'Invalid heartbeat data', details: parsed.error.issues }, 400);
+    return c.json({ error: 'Invalid heartbeat data', details: parsed.error.flatten() }, 400);
   }
 
   const { extensionVersion, activePlatform, mode, queueDepth, healthStatus } = parsed.data;

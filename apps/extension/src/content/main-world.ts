@@ -18,6 +18,8 @@
 // The registry auto-selects the active adapter based on the current hostname.
 import { getAdapter, isLLMEndpoint as adapterIsLLMEndpoint, shouldSkipFetchProxy, shouldSkipXhrProxy, getAllAdapters } from './adapters';
 import type { SiteAdapter } from './adapters';
+import { generateFake } from './main-world/fake-data';
+import { detectWithRegex, scanForSecrets, isNaturalLanguage } from './main-world/entity-patterns';
 
 // ─── Full Scoring Pipeline ──────────────────────────────────────────────────
 // Import the REAL scoring pipeline — intent suppression, context analysis,
@@ -34,16 +36,22 @@ import { HIGH_PII_TYPES } from '../detection/types';
 // Uses a crypto-random token stored on a non-enumerable Symbol property
 // so page scripts cannot easily detect or spoof the guard.
 const _IG_GUARD_SYM = Symbol.for('__ig_main_world_guard');
-const _IG_GUARD_STATE = (window as any)[_IG_GUARD_SYM] as { status: string; since: number; token: string } | undefined;
+const _IG_GUARD_STATE = (window as any)[_IG_GUARD_SYM] as { status: string; since: number; token: string; nonce?: string } | undefined;
 
 if (_IG_GUARD_STATE?.status === 'active') {
-  console.log('[Iron Gate MAIN] Already active — skipping duplicate injection');
+  console.log('[Iron Gate MAIN] Already active — re-sending heartbeat for late content script');
+  // CRITICAL: Use the REAL nonce from the active instance, not a fake one.
+  // The content script validates all messages against the nonce from the first
+  // heartbeat it receives. Using a different nonce causes ALL subsequent messages
+  // to be silently rejected by the nonce check.
+  const _activeNonce = _IG_GUARD_STATE.nonce || '';
   window.postMessage({
     type: 'IRON_GATE_HEARTBEAT',
-    version: '0.2.7-dup',
+    version: '0.2.7',
     timestamp: Date.now(),
     mode: (window as any).__IRON_GATE_MODE || 'proxy',
-    _nonce: 'dup',
+    _nonce: _activeNonce,
+    _mid: crypto.randomUUID(),
   }, window.location.origin);
 } else if (_IG_GUARD_STATE?.status === 'loading') {
   const elapsed = Date.now() - (_IG_GUARD_STATE.since || 0);
@@ -69,31 +77,63 @@ async function igHash(text: string): Promise<string> {
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** Minimize entities for safe postMessage — replace raw text with hash + length */
-async function minimizeEntitiesForTransit(entities: Array<{ type: string; text: string; start: number; end: number; confidence: number; source: string }>) {
-  return Promise.all(entities.map(async e => ({
-    type: e.type,
-    textHash: await igHash(e.text),
-    length: e.text.length,
-    start: e.start,
-    end: e.end,
-    confidence: e.confidence,
-    source: e.source,
-  })));
+/**
+ * Send INTERCEPTED/AUDIT notification to content script RELIABLY.
+ * Previously used fire-and-forget Promise.all().then().catch() which silently
+ * dropped messages if hashing failed. Now awaits hashing with fallback —
+ * the message is ALWAYS sent, ensuring the sidepanel always updates.
+ */
+/**
+ * Send detection notification to content script.
+ * NON-BLOCKING: sends the message immediately with minimal entity info,
+ * then computes hashes in background. This prevents blocking the fetch
+ * request to the AI tool — hashing is for reporting only.
+ */
+function notifyContentScript(
+  type: 'IRON_GATE_INTERCEPTED' | 'IRON_GATE_AUDIT',
+  promptText: string,
+  allEntities: Array<{ type: string; text: string; start: number; end: number; confidence: number; source: string }>,
+  maskedText: string,
+  mappings: Array<{ pseudonym: string; type: string; length: number }>,
+  level: string,
+  score: number,
+  extra?: Record<string, unknown>,
+): void {
+  // Send IMMEDIATELY with lightweight entity info — no async hashing
+  const entities = allEntities.map(e => ({
+    type: e.type, start: e.start, end: e.end,
+    confidence: e.confidence, source: e.source, length: e.text.length,
+  }));
+  igPostMessage({
+    type,
+    promptHash: '',  // hash not needed for sidepanel delivery
+    promptLength: promptText.length,
+    // Original prompt IS safe to send via postMessage — it's already visible
+    // in the page DOM (the user typed it). No additional exposure risk.
+    originalPrompt: promptText,
+    maskedPrompt: maskedText,
+    mappings,
+    entityCount: allEntities.length,
+    level,
+    score,
+    entities,
+    ...extra,
+  });
+
+  // Compute hash in background for API reporting (non-blocking)
+  // Only send the hash update — NOT a full duplicate message (avoids double notification)
+  igHash(promptText).then(promptHash => {
+    igPostMessage({
+      type: 'IRON_GATE_HASH_UPDATE' as any,
+      promptHash,
+      promptLength: promptText.length,
+      entityCount: allEntities.length,
+      level,
+      score,
+    });
+  }).catch(() => {});
 }
 
-// ─── Cryptographically Secure Random ────────────────────────────────────────
-// Replace Math.random() with CSPRNG for all fake data generation.
-
-function _secureRandom(): number {
-  const buf = new Uint32Array(1);
-  crypto.getRandomValues(buf);
-  return buf[0] / (0xFFFFFFFF + 1);
-}
-
-function _secureRandBetween(min: number, max: number): number {
-  return min + _secureRandom() * (max - min);
-}
 
 // ─── Challenge-Response Nonce for postMessage Validation ─────────────────────
 // Generates a one-time nonce that the content script must echo back.
@@ -117,7 +157,7 @@ function igPostMessage(data: Record<string, unknown>): void {
 // ─── State ──────────────────────────────────────────────────────────────────
 
 let mode: 'audit' | 'proxy' = 'proxy';
-let processingMode: 'local' | 'server' = (window as any).__IRON_GATE_PROCESSING_MODE || 'server';
+let processingMode: 'local' | 'server' = (window as any).__IRON_GATE_PROCESSING_MODE || 'local';
 let currentReverseMap: Record<string, string> = {};
 let _lastConversationPath: string = window.location.pathname;
 
@@ -141,7 +181,26 @@ interface ServerProcessResult {
   sensitivityScore: number;
   sensitivityLevel: string;
   entityCount: number;
+  entities?: Array<{ type: string; start: number; end: number }>;
 }
+
+// Server process timeout — 2s default. If the API can't respond in 2s, fall
+// back to local detection to avoid blocking the user. Cold starts are rare
+// and the local pipeline is good enough as fallback.
+// Configurable via IRON_GATE_SERVER_TIMEOUT_MS in managed storage.
+let _serverProcessTimeoutMs = 2000;
+
+// Allow timeout to be updated from config sync
+function _updateServerTimeout(ms: number) {
+  if (ms >= 2000 && ms <= 30000) _serverProcessTimeoutMs = ms;
+}
+
+// Listen for timeout config from content script
+window.addEventListener('message', (e) => {
+  if (e.data?.type === 'IRON_GATE_SET_SERVER_TIMEOUT' && typeof e.data.timeoutMs === 'number') {
+    _updateServerTimeout(e.data.timeoutMs);
+  }
+});
 
 function requestServerProcess(text: string, aiToolId: string): Promise<ServerProcessResult> {
   const requestId = crypto.randomUUID();
@@ -149,7 +208,7 @@ function requestServerProcess(text: string, aiToolId: string): Promise<ServerPro
     const timer = setTimeout(() => {
       _serverProcessPending.delete(requestId);
       reject(new Error('Server process timeout'));
-    }, 4000); // 4s timeout — enough for warm API, falls back on cold
+    }, _serverProcessTimeoutMs);
 
     _serverProcessPending.set(requestId, { resolve, reject, timer });
 
@@ -206,8 +265,37 @@ igLog(`🚀 Script loaded at ${new Date().toISOString()} — adapter: ${activeAd
 
 // ─── Communication with content script ──────────────────────────────────────
 
+// ── Reverse nonce: validate messages FROM content script ────────────────────
+// The content script includes a _csNonce in every postMessage. We capture it
+// from the first control message and reject all subsequent messages without it.
+// This prevents malicious page scripts from injecting fake mode changes.
+let _igContentScriptNonce: string | null = null;
+
+function isValidContentScriptMessage(data: any): boolean {
+  if (!data?._csNonce || typeof data._csNonce !== 'string') return false;
+  // Capture nonce from first message
+  if (!_igContentScriptNonce) {
+    _igContentScriptNonce = data._csNonce;
+    return true;
+  }
+  return data._csNonce === _igContentScriptNonce;
+}
+
 window.addEventListener('message', (event) => {
   if (event.source !== window) return;
+  // All IRON_GATE_* control messages from content script must carry a valid nonce
+  const type = event.data?.type;
+  if (type && typeof type === 'string' && type.startsWith('IRON_GATE_') && !type.startsWith('IRON_GATE_HEARTBEAT')) {
+    // Skip nonce check for messages we (MAIN world) sent to ourselves
+    if (event.data?._nonce === _IG_MSG_NONCE) {
+      // This is our own message echoed back — ignore
+      return;
+    }
+    if (!isValidContentScriptMessage(event.data)) {
+      igLog('REJECTED control message without valid content-script nonce:', type);
+      return;
+    }
+  }
   if (event.data?.type === 'IRON_GATE_SET_MODE') {
     // Only accept known mode values — prevents injection of arbitrary modes
     if (event.data.mode !== 'audit' && event.data.mode !== 'proxy') return;
@@ -356,837 +444,9 @@ function isLLMEndpoint(url: string): boolean {
   return false;
 }
 
-// ─── Inlined Entity Detection (from fallback-regex.ts) ──────────────────────
+// ─── Entity Detection (extracted to ./main-world/entity-patterns.ts) ────────
 
-interface DetectedEntity {
-  type: string;
-  text: string;
-  start: number;
-  end: number;
-  confidence: number;
-  source: 'regex';
-}
-
-interface RegexPattern {
-  type: string;
-  pattern: RegExp;
-  confidence: number;
-  contextual?: boolean;
-}
-
-// CamelCase words that are known products/tech terms, NOT real organizations.
-// Prevents false-positive ORGANIZATION detection and pseudonymization flicker.
-const CAMELCASE_ALLOWLIST = new Set([
-  // Iron Gate itself
-  'irongate', 'irongateai',
-  // AI tools the extension monitors
-  'chatgpt', 'openai', 'deepseek', 'copilot', 'huggingface', 'huggingchat',
-  'gemini', 'claude', 'anthropic', 'perplexity', 'phind', 'mistral',
-  // Common tech / product names
-  'javascript', 'typescript', 'postgresql', 'mongodb', 'mysql', 'graphql',
-  'github', 'gitlab', 'bitbucket', 'stackoverflow', 'youtube', 'linkedin',
-  'facebook', 'instagram', 'tiktok', 'snapchat', 'whatsapp', 'telegram',
-  'powerpoint', 'powerbi', 'onenote', 'onedrive', 'sharepoint', 'outlook',
-  'webpack', 'nextjs', 'nodejs', 'expressjs', 'reactjs', 'vuejs', 'angularjs',
-  'tailwindcss', 'tensorflow', 'pytorch', 'jupyter', 'colab',
-  'codecademy', 'freecodecamp', 'leetcode', 'hackerrank',
-  'macos', 'iphone', 'ipad', 'macbook', 'airpods', 'appstore', 'playstore',
-  'dockerfile', 'kubernetes', 'localhost', 'vercel', 'netlify', 'cloudflare',
-  'datadog', 'pagerduty', 'elasticsearch', 'logstash', 'opensearch',
-  'redis', 'dynamodb', 'couchdb', 'firebase', 'supabase', 'cockroachdb',
-  'chatbot', 'midjourney', 'stablediffusion',
-  // Enterprise / business software (common false positives in enterprise prompts)
-  'salesforce', 'hubspot', 'marketo', 'workday', 'servicenow', 'zendesk',
-  'jira', 'confluence', 'asana', 'monday', 'clickup', 'basecamp',
-  'docusign', 'adobesign', 'dropbox', 'slack', 'microsoft', 'google',
-  'quickbooks', 'netsuite', 'sap', 'oracle', 'snowflake', 'databricks',
-  'tableau', 'looker', 'mixpanel', 'amplitude', 'segment', 'twilio',
-  // Infrastructure / DevOps terms
-  'terraform', 'ansible', 'jenkins', 'circleci', 'travisci', 'argocd',
-  'prometheus', 'grafana', 'kibana', 'splunk', 'newrelic', 'sentry',
-  'heroku', 'digitalocean', 'linode', 'vultr', 'hetzner',
-  'nginx', 'apache', 'caddy', 'envoy', 'istio', 'consul', 'nomad',
-  // Programming languages / frameworks
-  'python', 'golang', 'kotlin', 'swift', 'flutter', 'django', 'fastapi',
-  'springboot', 'dotnet', 'blazor', 'svelte', 'nuxtjs', 'gatsby', 'remix',
-  // Finance / legal terms that look like org names
-  'bloomberg', 'reuters', 'moody', 'nasdaq', 'finra',
-]);
-
-const REGEX_PATTERNS: RegexPattern[] = [
-  // Person Names — titled (Dr. John Smith, Mr. Jane Doe)
-  {
-    type: 'PERSON',
-    pattern: /\b(?:Dr|Mr|Mrs|Ms|Prof|Rev|Judge|Hon)\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2}\b/g,
-    confidence: 0.9,
-  },
-  // Person Names — contextual (employee Sarah Chen, patient Maria Gonzalez)
-  {
-    type: 'PERSON',
-    pattern: /\b(?:employee|patient|client|manager|contact|attending|plaintiff|defendant|counsel|attorney|doctor|nurse|therapist|spouse|wife|husband|CEO|CFO|CTO|COO|CMO|VP|director|analyst|engineer)\s*(?::|is|named)?\s+[A-Z][a-z]+\s+[A-Z][a-z]+\b/gi,
-    confidence: 0.85,
-    contextual: true,
-  },
-  // Person Names — before parenthetical contact info: "Sarah Chen (email..." or "Sarah Chen,"
-  {
-    type: 'PERSON',
-    pattern: /\b[A-Z][a-z]{2,15}\s+[A-Z][a-z]{2,15}\s*(?=\(|\[|<|,\s*(?:who|our|the|is|at|from))/g,
-    confidence: 0.8,
-  },
-  // Person Names — after "for" / "from" / "to" / "by" / "with" / "about" / "cc" / "re"
-  {
-    type: 'PERSON',
-    pattern: /\b(?:for|from|to|by|with|about|cc|re|dear|hi|hey|hello|regarding)\s+[A-Z][a-z]{2,15}\s+[A-Z][a-z]{2,15}\b/gi,
-    confidence: 0.75,
-    contextual: true,
-  },
-  // Organization Names
-  {
-    type: 'ORGANIZATION',
-    pattern: /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Inc|Corp|LLC|Ltd|LLP|Associates|Partners|Group|Foundation|Hospital|Center|University|College|Bank|Insurance)\b\.?/g,
-    confidence: 0.8,
-  },
-  // Employee / Record IDs
-  {
-    type: 'EMPLOYEE_ID',
-    pattern: /\b(?:EMP|HR|FMLA|RSU|REQ|WO|PO|INV)[-#]?\d{4,8}\b/g,
-    confidence: 0.85,
-  },
-  // Generic reference numbers with prefix labels
-  {
-    type: 'RECORD_ID',
-    pattern: /\b(?:#(?:RSU|HR|FMLA|EMP|REQ|INV|PO|WO|TKT)[-\u2011]?\d{4,10})\b/g,
-    confidence: 0.8,
-  },
-  // Social Security Numbers
-  {
-    type: 'SSN',
-    pattern: /\b\d{3}-\d{2}-\d{4}\b/g,
-    confidence: 0.95,
-  },
-  {
-    type: 'SSN',
-    pattern: /\b\d{3}\s\d{2}\s\d{4}\b/g,
-    confidence: 0.9,
-  },
-  {
-    type: 'SSN',
-    pattern: /(?<=(?:ssn|social\s*security(?:\s*(?:number|num|no|#))?|ss#)\s*(?:is|:|=|#)?\s*)\d{9}(?!\d)/gi,
-    confidence: 0.95,
-  },
-  // Credit Card Numbers
-  {
-    type: 'CREDIT_CARD',
-    pattern: /\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b/g,
-    confidence: 0.9,
-  },
-  {
-    type: 'CREDIT_CARD',
-    pattern: /\b(?:\d{4}[-\s]){3}\d{4}\b/g,
-    confidence: 0.85,
-  },
-  // Email Addresses
-  {
-    type: 'EMAIL',
-    pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g,
-    confidence: 0.95,
-  },
-  // Phone Numbers (US formats)
-  {
-    type: 'PHONE_NUMBER',
-    pattern: /\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g,
-    confidence: 0.8,
-  },
-  // IP Addresses (IPv4)
-  {
-    type: 'IP_ADDRESS',
-    pattern: /\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g,
-    confidence: 0.9,
-  },
-  // Dates
-  {
-    type: 'DATE',
-    pattern: /\b(?:\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})\b/g,
-    confidence: 0.7,
-  },
-  // Monetary Amounts
-  {
-    type: 'MONETARY_AMOUNT',
-    pattern: /\$\s?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?\s?(?:million|billion|M|B|k|K)?\b/g,
-    confidence: 0.85,
-  },
-  {
-    type: 'MONETARY_AMOUNT',
-    pattern: /\b\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?\s?(?:dollars?|USD|EUR|GBP|million|billion)\b/gi,
-    confidence: 0.8,
-  },
-  // Passport Numbers (US format)
-  {
-    type: 'PASSPORT_NUMBER',
-    pattern: /\b[A-Z]\d{8}\b/g,
-    confidence: 0.6,
-  },
-  // Driver's License
-  {
-    type: 'DRIVERS_LICENSE',
-    pattern: /\b[A-Z]\d{7,8}\b/g,
-    confidence: 0.5,
-  },
-  // Account Numbers
-  {
-    type: 'ACCOUNT_NUMBER',
-    pattern: /\b(?:acct?\.?\s*#?\s*|account\s*#?\s*)\d{6,12}\b/gi,
-    confidence: 0.8,
-  },
-  // Medical Record Numbers
-  {
-    type: 'MEDICAL_RECORD',
-    pattern: /\b(?:MRN|medical\s+record(?:\s+number)?)\s*[:#]?\s*\d{4,10}\b/gi,
-    confidence: 0.85,
-  },
-  // Matter / Case Numbers
-  {
-    type: 'MATTER_NUMBER',
-    pattern: /\b(?:matter|case|docket)\s*(?:#|no\.?|number)?\s*\d{2,4}[-./]\d{3,6}\b/gi,
-    confidence: 0.75,
-  },
-
-  // ─── Business Context Detection (prevents MNPI leakage) ─────────────────
-
-  // Stock tickers with exchange prefix (NYSE: NVTK, NASDAQ: AAPL)
-  {
-    type: 'TICKER',
-    pattern: /\b(?:NYSE|NASDAQ|AMEX|LSE|TSX|NIKKEI|FTSE|DAX|CAC)\s*:\s*[A-Z]{1,5}\b/g,
-    confidence: 0.95,
-  },
-  // Cashtag tickers ($AAPL, $NVTK)
-  {
-    type: 'TICKER',
-    pattern: /\$[A-Z]{2,5}\b/g,
-    confidence: 0.8,
-  },
-
-  // Percentages — critical for financial MNPI (18%, 14.2%, etc.)
-  {
-    type: 'PERCENTAGE',
-    pattern: /\b\d{1,3}(?:\.\d{1,2})?%/g,
-    confidence: 0.8,
-  },
-
-  // Written dates (March 5th, January 2024, December 15, 2025)
-  {
-    type: 'DATE',
-    pattern: /\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+\d{4})?\b/gi,
-    confidence: 0.75,
-  },
-
-  // Fiscal quarters and periods (Q1, Q4 2024, FY2024, H1)
-  {
-    type: 'FISCAL_PERIOD',
-    pattern: /\b(?:[QH][1-4]|FY)\s*(?:'?\d{2,4})?\b/g,
-    confidence: 0.75,
-  },
-
-  // Project / Operation code names (Project Horizon, Operation Nighthawk)
-  {
-    type: 'PROJECT_NAME',
-    pattern: /\b(?:Project|Operation|Initiative|Program|Codename)\s+[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?\b/g,
-    confidence: 0.9,
-  },
-
-  // Organization names — broader suffixes (Elliot Management, Meridian Capital Partners)
-  {
-    type: 'ORGANIZATION',
-    pattern: /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Management|Capital|Partners|Holdings|Securities|Advisors|Consulting|Analytics|Investments|Solutions|Technologies|Financial|Ventures|Research|Services|Labs|Systems|Industries|Dynamics|Media|Health|Pharma|Energy|Realty|Properties)\b/g,
-    confidence: 0.8,
-  },
-
-  // CamelCase company names (NovaTech, DeepSeek, OpenAI, DataDog)
-  {
-    type: 'ORGANIZATION',
-    pattern: /\b[A-Z][a-z]{1,10}[A-Z][a-zA-Z]{1,10}\b/g,
-    confidence: 0.7,
-  },
-
-  // Contextual organization (at/firm/company/investor + Proper Noun, 1-3 words)
-  // No 'i' flag — trigger words must be lowercase, proper nouns must be capitalized
-  {
-    type: 'ORGANIZATION',
-    pattern: /\b(?:at|firm|company|investor|partner|vendor|supplier|competitor|acquirer|subsidiary|conglomerate|startup|unicorn|acquired|acquiring|target)\s*[,:]?\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b/g,
-    confidence: 0.7,
-    contextual: true,
-  },
-
-  // Contextual organization — business activity (discussions with X, deal with X)
-  // No 'i' flag — prevents matching lowercase words as proper nouns
-  {
-    type: 'ORGANIZATION',
-    pattern: /\b(?:discussions?\s+with|partnership\s+with|deal\s+with|investment\s+(?:in|from|by)|acquired\s+by|merger\s+with|contract\s+with|agreement\s+with|lawsuit\s+(?:against|from)|counsel\s+at)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b/g,
-    confidence: 0.75,
-    contextual: true,
-  },
-
-  // Headcount / workforce numbers (340 headcount, 500 employees, 200 layoffs)
-  {
-    type: 'HEADCOUNT',
-    pattern: /\b\d{2,5}\s*(?:headcount|employees?|people|workers|staff|positions|roles|FTEs?|hires?|cuts?|layoffs?|terminations?)\b/gi,
-    confidence: 0.8,
-  },
-
-  // Legal section references (Section 13D, Rule 10b-5, Regulation S-K)
-  {
-    type: 'LEGAL_REFERENCE',
-    pattern: /\b(?:Section|Rule|Regulation|Article|Clause)\s+\d+[A-Za-z]?(?:[-]\d+)?\b/g,
-    confidence: 0.75,
-  },
-
-  // Valuation / market cap amounts without $ sign (3.1B market cap, 1.67B valuation)
-  {
-    type: 'MONETARY_AMOUNT',
-    pattern: /\b\d{1,4}(?:\.\d{1,2})?\s*[BMK]\s*(?:valuation|market\s*cap|revenue|ARR|MRR|EBITDA|profit|loss|deal|round)\b/gi,
-    confidence: 0.8,
-  },
-];
-
-/**
- * Determines whether extracted text looks like natural language (user content)
- * vs protocol/control data (Socket.IO frames, JSON metadata, heartbeats).
- * Used to filter WS frame extraction before running entity detection.
- */
-function isNaturalLanguage(text: string): boolean {
-  const trimmed = text.trim();
-
-  // Too short to be meaningful user content
-  if (trimmed.length < 15) return false;
-
-  // Pure numeric / hex — likely protocol frame IDs or timestamps
-  if (/^[\d\s.,:;%\-+#/\\]+$/.test(trimmed)) return false;
-
-  // JSON structure — protocol metadata, not user text
-  if (/^\s*[\[{]/.test(trimmed) && /[\]}]\s*$/.test(trimmed)) return false;
-
-  // Socket.IO control frames: digits followed by optional JSON
-  if (/^\d{1,3}(\[|$)/.test(trimmed)) return false;
-
-  // Must contain at least one space (natural text has word boundaries)
-  // Exception: very short single-word queries are fine if they look like words
-  if (!trimmed.includes(' ') && trimmed.length < 30) return false;
-
-  // Count ratio of alphanumeric + space chars vs total — protocol data has lots of punctuation/special chars
-  const alphaSpaceCount = (trimmed.match(/[a-zA-Z\s]/g) || []).length;
-  const ratio = alphaSpaceCount / trimmed.length;
-  if (ratio < 0.4) return false;
-
-  return true;
-}
-
-function detectWithRegex(text: string): DetectedEntity[] {
-  const entities: DetectedEntity[] = [];
-  const seen = new Set<string>();
-
-  for (const { type, pattern, confidence, contextual } of REGEX_PATTERNS) {
-    pattern.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    let matchCount = 0;
-    while ((match = pattern.exec(text)) !== null) {
-      if (match[0].length === 0) { pattern.lastIndex++; continue; }
-      if (++matchCount > 500) break;
-      let matchText = match[0];
-      let matchStart = match.index;
-      let matchEnd = match.index + match[0].length;
-
-      if (contextual) {
-        // Extract the proper noun portion (1-3 capitalized words at end of match)
-        const nameMatch = match[0].match(/[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}$/);
-        if (nameMatch) {
-          const nameStart = match[0].lastIndexOf(nameMatch[0]);
-          matchText = nameMatch[0];
-          matchStart = match.index + nameStart;
-          matchEnd = matchStart + matchText.length;
-        } else {
-          // No proper noun found — likely a false positive (e.g., "for the emergency")
-          continue;
-        }
-      }
-
-      // Skip known product/tech names that the CamelCase pattern over-matches
-      if (type === 'ORGANIZATION' && CAMELCASE_ALLOWLIST.has(matchText.toLowerCase())) {
-        continue;
-      }
-
-      const key = `${matchStart}-${matchEnd}-${type}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        entities.push({
-          type,
-          text: matchText,
-          start: matchStart,
-          end: matchEnd,
-          confidence,
-          source: 'regex',
-        });
-      }
-    }
-  }
-
-  entities.sort((a, b) => a.start - b.start);
-  return removeOverlaps(entities);
-}
-
-function removeOverlaps(entities: DetectedEntity[]): DetectedEntity[] {
-  if (entities.length <= 1) return entities;
-  if (!entities[0]) return [];
-  const result: DetectedEntity[] = [entities[0]];
-  for (let i = 1; i < entities.length; i++) {
-    const current = entities[i];
-    const last = result[result.length - 1];
-    if (current.start < last.end) {
-      if (current.confidence > last.confidence) {
-        result[result.length - 1] = current;
-      }
-    } else {
-      result.push(current);
-    }
-  }
-  return result;
-}
-
-// ─── Inlined Secret Scanner (from secret-scanner.ts) ────────────────────────
-
-interface SecretPattern {
-  type: string;
-  patterns: RegExp[];
-  confidence: number;
-}
-
-const SECRET_PATTERNS: SecretPattern[] = [
-  {
-    type: 'API_KEY',
-    patterns: [
-      /\bsk-[a-zA-Z0-9]{20,}\b/g,
-      /\bsk_live_[a-zA-Z0-9]{24,}\b/g,
-      /\bsk-ant-[a-zA-Z0-9\-]{20,}\b/g,
-      /\bghp_[a-zA-Z0-9]{36}\b/g,
-      /\bgho_[a-zA-Z0-9]{36}\b/g,
-      /\bghs_[a-zA-Z0-9]{36}\b/g,
-      /\bxoxb-[0-9]+-[a-zA-Z0-9]+\b/g,
-      /\bxoxp-[0-9]+-[a-zA-Z0-9]+\b/g,
-      /\bSG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}\b/g,
-    ],
-    confidence: 0.95,
-  },
-  {
-    type: 'AWS_CREDENTIAL',
-    patterns: [
-      /\bAKIA[0-9A-Z]{16}\b/g,
-      /\bASIA[0-9A-Z]{16}\b/g,
-    ],
-    confidence: 0.95,
-  },
-  {
-    type: 'GCP_CREDENTIAL',
-    patterns: [
-      /\bAIza[0-9A-Za-z_-]{35}\b/g,
-    ],
-    confidence: 0.9,
-  },
-  {
-    type: 'DATABASE_URI',
-    patterns: [
-      /\b(?:postgres|postgresql|mysql|mongodb|mongodb\+srv|redis):\/\/[^\s"']+/g,
-    ],
-    confidence: 0.95,
-  },
-  {
-    type: 'AUTH_TOKEN',
-    patterns: [
-      /\beyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\b/g,
-    ],
-    confidence: 0.9,
-  },
-  {
-    type: 'PRIVATE_KEY',
-    patterns: [
-      /-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----/g,
-    ],
-    confidence: 0.99,
-  },
-];
-
-function scanForSecrets(text: string): DetectedEntity[] {
-  const secrets: DetectedEntity[] = [];
-  const seen = new Set<string>();
-
-  for (const { type, patterns, confidence } of SECRET_PATTERNS) {
-    for (const pattern of patterns) {
-      pattern.lastIndex = 0;
-      let match: RegExpExecArray | null;
-      let matchCount = 0;
-      while ((match = pattern.exec(text)) !== null) {
-        if (match[0].length === 0) { pattern.lastIndex++; continue; }
-        if (++matchCount > 200) break;
-        const key = `${match.index}-${match.index + match[0].length}-${type}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          secrets.push({
-            type,
-            text: match[0],
-            start: match.index,
-            end: match.index + match[0].length,
-            confidence,
-            source: 'regex',
-          });
-        }
-      }
-    }
-  }
-
-  return secrets;
-}
-
-// ─── Realistic Fake Data Generation ─────────────────────────────────────────
-// Instead of [PERSON-1] tokens which make LLMs respond robotically,
-// we generate realistic-looking fake data. The LLM treats it as real
-// content, responds naturally, and we swap the fakes back in the response.
-
-const FAKE_NAMES_F = [
-  'Emily Rogers', 'Anna Peterson', 'Lisa Chang', 'Maria Santos', 'Rachel Kim',
-  'Diana Walsh', 'Nicole Foster', 'Amanda Brooks', 'Jennifer Liu', 'Stephanie Barnes',
-  'Katherine Hayes', 'Laura Bennett', 'Olivia Porter', 'Samantha Reed', 'Victoria Lane',
-  'Claire Donovan', 'Priya Sharma', 'Elena Vasquez', 'Nadia Karim', 'Ingrid Larsen',
-  'Fiona Gallagher', 'Renee Dupont', 'Leah Goldstein', 'Yuki Tanaka', 'Mei-Lin Wu',
-  'Aisha Okonkwo', 'Carmen Reyes', 'Sonia Petrov', 'Hanna Lindqvist', 'Rosa Bianchi',
-  'Fatima Al-Rashid', 'Kira Novak', 'Chloe Beaumont', 'Daphne Kowalski', 'Vera Nishimura',
-];
-const FAKE_NAMES_M = [
-  'James Mitchell', 'David Kumar', 'Robert Chen', 'William Taylor', 'Thomas Garcia',
-  'Andrew Watson', 'Daniel Price', 'Christopher Lee', 'Michael Brown', 'Steven Park',
-  'Jonathan Reed', 'Matthew Cole', 'Benjamin Hart', 'Patrick Quinn', 'Marcus Webb',
-  'Oscar Lindgren', 'Rafael Moreno', 'Henrik Andersen', 'Tomasz Kowalski', 'Kenji Yamamoto',
-  "Liam O'Brien", 'Dmitri Volkov', 'Raj Patel', 'Emile Fontaine', 'Nikolai Petrov',
-  'Hassan Karimi', 'Sven Johansson', 'Carlos Mendez', 'Marco Rossi', 'Ibrahim Hassan',
-  'Felix Bauer', 'Arjun Reddy', 'Lukas Schneider', 'Wei Zhang', 'Koji Watanabe',
-];
-const FEMALE_FIRST = new Set([
-  'sarah','jennifer','lisa','maria','anna','rachel','diana','nicole','amanda','jessica',
-  'emily','laura','stephanie','katherine','olivia','samantha','victoria','helen','jane','margaret',
-  'susan','karen','nancy','betty','sandra','ashley','dorothy','kimberly','elizabeth','donna',
-  'claire','priya','elena','nadia','ingrid','fiona','renee','leah','yuki','mei-lin',
-  'aisha','carmen','sonia','hanna','rosa','fatima','kira','chloe','daphne','vera',
-]);
-const FAKE_ORGS = [
-  'Northwind Technologies', 'Contoso Holdings', 'Adatum Corp', 'Fabrikam Industries',
-  'Proseware Solutions', 'Woodgrove Financial', 'Tailspin Partners', 'Lucerne Media',
-  'Alpine Securities', 'Meridian Dynamics', 'Coastal Ventures', 'Summit Analytics',
-  'Vertex Research', 'Pinnacle Systems', 'Horizon Labs',
-  'Cascade Innovations', 'Ironwood Partners', 'Granite Point Capital', 'Blueridge Analytics',
-  'Stonebridge Advisors', 'Copperfield Holdings', 'Whitmore Industries', 'Harland & Wolff Inc',
-  'Stratton McKenzie', 'Redwood Dynamics', 'Lakeshore Financial', 'Evergreen Consulting',
-  'Windmere Capital', 'Briarwood Labs', 'Thornfield Systems', 'Sable Creek Partners',
-];
-const FAKE_TICKERS = [
-  'NWND', 'CTSO', 'ADTM', 'FBRK', 'PRWL', 'WDGV', 'TLSP', 'LCNE', 'ALPS', 'MRDX',
-  'CSVT', 'SMTA', 'VTXR', 'PNCL', 'HRZL',
-];
-const FAKE_PROJECTS = [
-  'Project Aurora', 'Project Meridian', 'Project Catalyst', 'Project Zenith',
-  'Project Atlas', 'Project Nexus', 'Project Titan', 'Project Vanguard',
-  'Project Ember', 'Project Falcon',
-];
-const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-
-// Track used fakes to avoid collisions within a session
-const _usedFakes: Record<string, number> = {};
-
-function _pickUnused(pool: string[], type: string): string {
-  if (!_usedFakes[type]) _usedFakes[type] = 0;
-  const idx = _usedFakes[type] % pool.length;
-  _usedFakes[type]++;
-  return pool[idx];
-}
-
-function _isFemaleFirst(name: string): boolean {
-  const first = name.split(/\s+/)[0].toLowerCase();
-  return FEMALE_FIRST.has(first);
-}
-
-function _randBetween(min: number, max: number): number {
-  return _secureRandBetween(min, max);
-}
-
-function generateFake(type: string, original: string): string {
-  switch (type) {
-    case 'PERSON': {
-      const pool = _isFemaleFirst(original) ? FAKE_NAMES_F : FAKE_NAMES_M;
-      const origFirst = original.split(/\s+/)[0].toLowerCase();
-      // Avoid first-name collisions: pick a fake that doesn't share the first name
-      const genderKey = type + (_isFemaleFirst(original) ? '_F' : '_M');
-      let candidate = _pickUnused(pool, genderKey);
-      let attempts = 0;
-      while (candidate.split(/\s+/)[0].toLowerCase() === origFirst && attempts < pool.length) {
-        candidate = _pickUnused(pool, genderKey);
-        attempts++;
-      }
-      return candidate;
-    }
-
-    case 'ORGANIZATION':
-      return _pickUnused(FAKE_ORGS, type);
-
-    case 'TICKER': {
-      // "NYSE: NVTK" → "NYSE: NWND"
-      const m = original.match(/^([A-Z]+\s*:\s*)/);
-      if (m) return m[1] + _pickUnused(FAKE_TICKERS, type);
-      return _pickUnused(FAKE_TICKERS, type);
-    }
-
-    case 'PROJECT_NAME':
-      return _pickUnused(FAKE_PROJECTS, type);
-
-    case 'MONETARY_AMOUNT': {
-      // Preserve magnitude, shift by 0.7-1.4x
-      // Parse: "$47M", "$3.1B", "$150,000", "$28M"
-      const cleaned = original.replace(/[,$\s]/g, '');
-      const numMatch = cleaned.match(/^(\d+(?:\.\d+)?)\s*(million|billion|M|B|k|K|dollars?|USD|EUR|GBP)?/i);
-      if (numMatch) {
-        const num = parseFloat(numMatch[1]);
-        const suffix = numMatch[2] || '';
-        // Use 0.85-1.35x range to avoid producing very short fakes (e.g., $48→$4)
-        // that are too generic and cause false matches during de-pseudonymization
-        const shifted = num * _randBetween(0.85, 1.35);
-        // Ensure fake has at least as many digits as original to prevent
-        // short pseudonyms like "$4" matching inside "$400", "$4.5B", etc.
-        const origDigitCount = numMatch[1].replace('.', '').length;
-        let formatted: string;
-        const hasDecimal = numMatch[1].includes('.');
-        const decPlaces = hasDecimal ? (numMatch[1].split('.')[1]?.length || 1) : 0;
-        formatted = hasDecimal ? shifted.toFixed(decPlaces) : Math.round(shifted).toString();
-        // Pad if needed to maintain digit count (e.g., 48→41 is OK, 48→4 is not)
-        while (formatted.replace('.', '').length < origDigitCount) {
-          formatted = hasDecimal ? (shifted * 1.1).toFixed(decPlaces) : Math.round(shifted * 1.1).toString();
-          break; // One attempt to bump up
-        }
-        // Reconstruct with original prefix style
-        const prefix = original.startsWith('$') ? '$' : '';
-        return prefix + formatted + suffix;
-      }
-      // Fallback: randomize digits and letters to prevent leaking unparseable amounts
-      return original.replace(/\d/g, () => Math.floor(_secureRandom() * 10).toString())
-                     .replace(/[a-zA-Z]/g, c => String.fromCharCode(c.charCodeAt(0) + Math.floor(_randBetween(-3, 3))));
-    }
-
-    case 'PERCENTAGE': {
-      // Offset by ±3-8 percentage points
-      const numMatch = original.match(/(\d+(?:\.\d+)?)/);
-      if (numMatch) {
-        const num = parseFloat(numMatch[1]);
-        const offset = _randBetween(3, 8) * (_secureRandom() > 0.5 ? 1 : -1);
-        const shifted = Math.max(0.1, Math.min(99.9, num + offset));
-        const hasDecimal = numMatch[1].includes('.');
-        return (hasDecimal ? shifted.toFixed(1) : Math.round(shifted).toString()) + '%';
-      }
-      return Math.floor(_randBetween(10, 90)) + '%';
-    }
-
-    case 'DATE': {
-      // Written dates: "March 5th" → shift month and day
-      const dateMatch = original.match(/^(\w+)\s+(\d{1,2})(?:st|nd|rd|th)?(.*)$/i);
-      if (dateMatch) {
-        const monthIdx = MONTHS.findIndex(m => m.toLowerCase() === dateMatch[1].toLowerCase());
-        if (monthIdx >= 0) {
-          const newMonthIdx = (monthIdx + Math.floor(_randBetween(1, 4))) % 12;
-          const newDay = Math.max(1, Math.min(28, parseInt(dateMatch[2]) + Math.floor(_randBetween(-10, 10))));
-          const suffix = newDay === 1 || newDay === 21 || newDay === 31 ? 'st' : newDay === 2 || newDay === 22 ? 'nd' : newDay === 3 || newDay === 23 ? 'rd' : 'th';
-          return MONTHS[newMonthIdx] + ' ' + newDay + suffix + (dateMatch[3] || '');
-        }
-      }
-      // Numeric dates: shift — preserve leading-zero format
-      const numDate = original.match(/^(\d{1,2})([\/\-])(\d{1,2})\2(\d{2,4})$/);
-      if (numDate) {
-        const m = Math.max(1, Math.min(12, parseInt(numDate[1]) + Math.floor(_randBetween(-2, 3))));
-        const d = Math.max(1, Math.min(28, parseInt(numDate[3]) + Math.floor(_randBetween(-5, 5))));
-        // Preserve leading zeros: if original "02" had 2 digits, pad the fake too
-        const mStr = numDate[1].length === 2 ? m.toString().padStart(2, '0') : m.toString();
-        const dStr = numDate[3].length === 2 ? d.toString().padStart(2, '0') : d.toString();
-        return mStr + numDate[2] + dStr + numDate[2] + numDate[4];
-      }
-      // ISO dates (YYYY-MM-DD) and other formats
-      const isoDate = original.match(/^(\d{4})([\/\-])(\d{1,2})\2(\d{1,2})$/);
-      if (isoDate) {
-        const y = parseInt(isoDate[1]) + Math.floor(_randBetween(-2, 2));
-        const m = Math.max(1, Math.min(12, parseInt(isoDate[3]) + Math.floor(_randBetween(-2, 3))));
-        const d = Math.max(1, Math.min(28, parseInt(isoDate[4]) + Math.floor(_randBetween(-5, 5))));
-        return y + isoDate[2] + m.toString().padStart(2, '0') + isoDate[2] + d.toString().padStart(2, '0');
-      }
-      // Last resort: randomize digits to prevent leak
-      return original.replace(/\d/g, () => Math.floor(_secureRandom() * 10).toString());
-    }
-
-    case 'FISCAL_PERIOD': {
-      // Q4 → Q2, Q1 → Q3 (shift by 1-2)
-      const qMatch = original.match(/^([QH])(\d)/);
-      if (qMatch) {
-        const shifted = ((parseInt(qMatch[2]) + Math.floor(_randBetween(1, 3)) - 1) % 4) + 1;
-        return qMatch[1] + shifted + original.substring(2);
-      }
-      // FY2024 → FY20XX (shift year)
-      const fyMatch = original.match(/^(FY\s*'?)(\d{2,4})$/i);
-      if (fyMatch) {
-        const year = parseInt(fyMatch[2]);
-        const shifted = year + Math.floor(_randBetween(-2, 2));
-        return fyMatch[1] + shifted;
-      }
-      return original.replace(/\d/g, () => Math.floor(_secureRandom() * 10).toString());
-    }
-
-    case 'EMAIL': {
-      // Generate from fake name pool
-      const fakeName = _pickUnused(FAKE_NAMES_F.concat(FAKE_NAMES_M), 'EMAIL_NAME');
-      const parts = fakeName.toLowerCase().split(' ');
-      const domains = ['northwind.com', 'contoso.com', 'fabrikam.net', 'adatum.org', 'proseware.io'];
-      const domain = domains[Math.floor(_secureRandom() * domains.length)];
-      return parts[0] + '.' + parts[1] + '@' + domain;
-    }
-
-    case 'SSN': {
-      // Format-preserving random SSN
-      const a = Math.floor(_randBetween(100, 899));
-      const b = Math.floor(_randBetween(10, 99));
-      const c = Math.floor(_randBetween(1000, 9999));
-      // Preserve original format: dashes, spaces, or bare digits
-      if (original.includes('-')) return a + '-' + b + '-' + c;
-      if (original.includes(' ')) return a + ' ' + b + ' ' + c;
-      return '' + a + b + c;
-    }
-
-    case 'PHONE_NUMBER': {
-      const a = Math.floor(_randBetween(200, 899));
-      const b = Math.floor(_randBetween(200, 899));
-      const c = Math.floor(_randBetween(1000, 9999));
-      // Try to preserve format
-      if (original.includes('(')) return '(' + a + ') ' + b + '-' + c;
-      if (original.includes('-')) return a + '-' + b + '-' + c;
-      return a + ' ' + b + ' ' + c;
-    }
-
-    case 'CREDIT_CARD': {
-      // Format-preserving
-      const groups = [
-        Math.floor(_randBetween(4000, 4999)),
-        Math.floor(_randBetween(1000, 9999)),
-        Math.floor(_randBetween(1000, 9999)),
-        Math.floor(_randBetween(1000, 9999)),
-      ];
-      if (original.includes('-')) return groups.join('-');
-      if (original.includes(' ')) return groups.join(' ');
-      return groups.join('');
-    }
-
-    case 'HEADCOUNT': {
-      // "340 headcount" → shift number by ±20%
-      const hcMatch = original.match(/^(\d+)\s*(.*)/);
-      if (hcMatch) {
-        const num = parseInt(hcMatch[1]);
-        const shifted = Math.round(num * _randBetween(0.7, 1.35));
-        return shifted + (hcMatch[2] ? ' ' + hcMatch[2] : '');
-      }
-      return original;
-    }
-
-    case 'LEGAL_REFERENCE': {
-      // "Section 13D" → shift number
-      const lrMatch = original.match(/^(\w+)\s+(\d+)(.*)/);
-      if (lrMatch) {
-        const shifted = parseInt(lrMatch[2]) + Math.floor(_randBetween(2, 8));
-        return lrMatch[1] + ' ' + shifted + (lrMatch[3] || '');
-      }
-      return original;
-    }
-
-    case 'IP_ADDRESS': {
-      const octets = Array.from({ length: 4 }, () => Math.floor(_randBetween(1, 254)));
-      return octets.join('.');
-    }
-
-    case 'EMPLOYEE_ID':
-    case 'RECORD_ID': {
-      // Preserve prefix, randomize digits
-      const idMatch = original.match(/^([A-Z#-]+)(\d+)$/);
-      if (idMatch) {
-        const len = idMatch[2].length;
-        const newNum = Math.floor(_randBetween(10 ** (len - 1), 10 ** len - 1));
-        return idMatch[1] + newNum;
-      }
-      return original;
-    }
-
-    case 'MEDICAL_RECORD': {
-      // Preserve format: "4829-7103" → "XXXX-XXXX", "MRN-12345" → "MRN-XXXXX"
-      return original.replace(/\d/g, () => Math.floor(_secureRandom() * 10).toString());
-    }
-
-    case 'INSURANCE_ID':
-    case 'AUTHORIZATION': {
-      // Preserve format, randomize digits
-      return original.replace(/\d/g, () => Math.floor(_secureRandom() * 10).toString());
-    }
-
-    case 'API_KEY':
-    case 'AWS_CREDENTIAL':
-    case 'GCP_CREDENTIAL':
-    case 'AUTH_TOKEN': {
-      // Fully replace with a safe placeholder — preserve length and prefix only
-      const prefixMatch = original.match(/^([a-zA-Z_\-]{2,10}[-_])/);
-      const prefix = prefixMatch ? prefixMatch[1] : 'key-';
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-      const fakeLen = Math.max(16, original.length - prefix.length);
-      let fake = prefix;
-      for (let i = 0; i < fakeLen; i++) fake += chars[Math.floor(_secureRandom() * chars.length)];
-      return fake;
-    }
-
-    case 'DATABASE_URI': {
-      // Replace with a safe fake URI preserving the scheme
-      const scheme = original.match(/^([a-z+]+:\/\/)/)?.[1] || 'db://';
-      return scheme + 'testuser:fakepwd@db-' + Math.floor(_secureRandom() * 9000 + 1000) + '.example.com:5432/testdb';
-    }
-
-    case 'PRIVATE_KEY': {
-      // Replace entire key material — never leak
-      const headerMatch = original.match(/^(-----BEGIN [A-Z ]+-----)/);
-      const footerMatch = original.match(/(-----END [A-Z ]+-----)$/);
-      if (headerMatch || footerMatch) {
-        const header = headerMatch?.[1] || '-----BEGIN PRIVATE KEY-----';
-        const footer = footerMatch?.[1] || '-----END PRIVATE KEY-----';
-        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-        let fakeBody = '';
-        for (let i = 0; i < 64; i++) fakeBody += chars[Math.floor(_secureRandom() * chars.length)];
-        return header + '\n' + fakeBody + '\n' + footer;
-      }
-      // Non-PEM key material: fully randomize
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-      let fake = '';
-      for (let i = 0; i < original.length; i++) fake += chars[Math.floor(_secureRandom() * chars.length)];
-      return fake;
-    }
-
-    default: {
-      // Fallback: randomize digits AND alphabetic characters to prevent any PII leak
-      let result = original;
-      if (/\d/.test(result)) {
-        result = result.replace(/\d/g, () => Math.floor(_secureRandom() * 10).toString());
-      }
-      if (result === original && /[a-zA-Z]/.test(result)) {
-        // No digits were changed — randomize letters too to prevent leak
-        result = result.replace(/[a-zA-Z]/g, c => {
-          const base = c >= 'a' ? 97 : 65;
-          return String.fromCharCode(base + Math.floor(_secureRandom() * 26));
-        });
-      }
-      return result;
-    }
-  }
-}
+// ─── Fake Data Generation (extracted to ./main-world/fake-data.ts) ──────────
 
 // ─── Pseudonymizer ──────────────────────────────────────────────────────────
 
@@ -1204,14 +464,27 @@ interface PseudonymResult {
 /**
  * Prepare mappings for transit to the side panel.
  * The original value is included so the Map tab can show what was replaced.
- * This only travels extension-internal channels (content script → worker → side panel).
+ * Strips raw PII (.original) before postMessage — page scripts can read window messages.
+ * Only pseudonym, type, and length are safe to transit.
  */
-function sanitizeMappingsForTransit(mappings: PseudonymMapping[]): Array<{ original: string; pseudonym: string; type: string; length: number }> {
-  return mappings.map(m => ({ original: m.original, pseudonym: m.pseudonym, type: m.type, length: m.original.length }));
+function sanitizeMappingsForTransit(mappings: PseudonymMapping[]): Array<{ pseudonym: string; type: string; length: number }> {
+  return mappings.map(m => ({ pseudonym: m.pseudonym, type: m.type, length: m.original.length }));
 }
 
 // Global forward map: original → fake (persists across messages in a conversation)
 let currentForwardMap: Record<string, string> = {};
+
+// Entity types that are ANALYTICAL VALUES — detected and scored for sensitivity,
+// but NOT pseudonymized. Replacing these with fakes corrupts the AI's analysis
+// (e.g., fake salaries produce wrong gap calculations). They're only sensitive
+// in combination with identifiers — once names are pseudonymized, the values are safe.
+const VALUE_TYPES: ReadonlySet<string> = new Set([
+  'MONETARY_AMOUNT',
+  'DATE',
+  'PERCENTAGE',
+  'ACCOUNT_NUMBER',
+  'EMPLOYEE_ID',
+]);
 
 function pseudonymizeLocal(text: string, entities: DetectedEntity[]): PseudonymResult {
   if (entities.length === 0) {
@@ -1234,6 +507,13 @@ function pseudonymizeLocal(text: string, entities: DetectedEntity[]): PseudonymR
 
   for (const entity of sorted) {
     const normalizedText = entity.text.trim();
+
+    // Skip pseudonymization for analytical values — they're still detected
+    // and contribute to the sensitivity score, but keeping them real ensures
+    // the AI's computations (gaps, percentages, comparisons) are correct.
+    if (VALUE_TYPES.has(entity.type)) {
+      continue;
+    }
     // Check local seen map first (within this call)
     let pseudonym = seen.get(normalizedText);
     if (!pseudonym) {
@@ -1241,13 +521,34 @@ function pseudonymizeLocal(text: string, entities: DetectedEntity[]): PseudonymR
       pseudonym = currentForwardMap[normalizedText];
     }
     if (!pseudonym) {
-      // Generate a new realistic fake — ensure uniqueness so two different
-      // originals (e.g., "$8M" revenue, "$5M" profit) never collide on the
-      // same fake value (which would make reverse mapping ambiguous).
+      // Generate a new realistic fake — ensure uniqueness:
+      // 1. Must not collide with another pseudonym (would make reverse map ambiguous)
+      // 2. Must not collide with another ORIGINAL (would cause cascading replacement
+      //    during de-pseudo: e.g., fake "14.2%" colliding with original "14.2%" churn)
+      // 3. Must not be a substring of another pseudonym or vice versa (short fakes
+      //    like "$4M" matching inside "$4.2B")
       const usedFakes = new Set(Object.values(currentForwardMap));
+      const usedOriginals = new Set(Object.keys(currentForwardMap));
+      // Also include originals from this call's seen map (not yet in currentForwardMap)
+      for (const [orig] of seen) usedOriginals.add(orig);
+      // Check if candidate collides with any existing mapping (exact or substring)
+      function hasCollision(c: string): boolean {
+        if (usedFakes.has(c) || usedOriginals.has(c) || c === normalizedText) return true;
+        // For short tokens (< 8 chars), check substring collisions:
+        // a fake "$4M" would match inside another fake "$4.2B" during de-pseudo
+        if (c.length < 8) {
+          for (const f of usedFakes) {
+            if (f.includes(c) || c.includes(f)) return true;
+          }
+          for (const o of usedOriginals) {
+            if (o.includes(c) || c.includes(o)) return true;
+          }
+        }
+        return false;
+      }
       let candidate = generateFake(entity.type, normalizedText);
       let attempts = 0;
-      while (usedFakes.has(candidate) && attempts < 5) {
+      while (attempts < 10 && hasCollision(candidate)) {
         candidate = generateFake(entity.type, normalizedText);
         attempts++;
       }
@@ -1831,16 +1132,45 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
   // Multi-word name variants: LLMs often abbreviate or drop suffixes.
   // "Adatum Corporation" → also map "Adatum"
   // "Meridian Capital Partners" → also map "Meridian Capital", "Meridian"
-  //
-  // IMPORTANT: Skip fragment mappings for PERSON names entirely.
-  // LLMs freely recombine first/last names (e.g., "Emily Kumar" from
-  // two different fake people) and fragment mappings produce garbled output
-  // like "Sarah Chen Michael Torres" or "Sarah Torres". The full-name
-  // mapping is sufficient for persons — if the LLM abbreviates to just
-  // a first/last name, a visible pseudonym is better than a garbled mix.
   const isPerson = entityType === 'PERSON';
   const words = pseudonym.split(/\s+/);
   const origWords = original.split(/\s+/);
+
+  // PERSON name fragments: LLMs often use just the first name in narrative text
+  // ("James missed deadlines" instead of "James Wilson missed deadlines").
+  // Map pseudo first name → original first name, and pseudo last → original last,
+  // BUT only if the fragment is unique (doesn't appear in any OTHER pseudonym).
+  // E.g., if "James Wilson" and "Emily James" are both pseudonyms, DON'T map "James"
+  // because it would garble "Emily James" → "Emily David".
+  if (isPerson && words.length >= 2 && origWords.length >= 2) {
+    const allPseudos = Object.keys(map);
+    const pseudoLower = pseudonym.toLowerCase();
+
+    // Check if a fragment is safe: not a substring of any OTHER pseudonym key
+    function isFragmentSafe(fragment: string): boolean {
+      const fLower = fragment.toLowerCase();
+      for (const p of allPseudos) {
+        if (p.toLowerCase() === pseudoLower) continue; // skip self
+        if (p.toLowerCase().includes(fLower)) return false;
+      }
+      return true;
+    }
+
+    const firstName = words[0];
+    const firstOrig = origWords[0];
+    // Only map if: 3+ chars, not already mapped, unique across all pseudonyms
+    if (firstName.length >= 3 && firstOrig.length >= 2 && !map[firstName] && isFragmentSafe(firstName)) {
+      map[firstName] = firstOrig; // pseudo first name → original first name
+    }
+
+    const lastName = words[words.length - 1];
+    const lastOrig = origWords[origWords.length - 1];
+    if (lastName.length >= 3 && lastOrig.length >= 2 && !map[lastName]
+        && lastName !== firstName && isFragmentSafe(lastName)) {
+      map[lastName] = lastOrig; // pseudo last name → original last name
+    }
+  }
+
   if (words.length >= 2 && !isPerson) {
     // Map the first word ONLY if:
     // 1. It's distinctive (not a common suffix or common English word)
@@ -1987,13 +1317,80 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
     }
   }
 
-  // Numeric date format variants: "4/15/2026" ↔ "04/15/2026"
+  // Numeric date format variants: covers both US (M/D/YYYY) and ISO (YYYY-MM-DD) formats.
+  // LLMs freely reformat dates — "2020-07-21" → "7/21/2020", "July 21, 2020", etc.
+  // We generate all cross-format variants so de-pseudo catches every reformatting.
+
+  // US format: "4/15/2026" ↔ "04/15/2026"
   const numDateMatch = pseudonym.match(/^(\d{1,2})([\/\-])(\d{1,2})\2(\d{2,4})$/);
   if (numDateMatch) {
-    const withZeros = numDateMatch[1].padStart(2, '0') + numDateMatch[2] + numDateMatch[3].padStart(2, '0') + numDateMatch[2] + numDateMatch[4];
-    const withoutZeros = parseInt(numDateMatch[1]) + numDateMatch[2] + parseInt(numDateMatch[3]) + numDateMatch[2] + numDateMatch[4];
+    const m = numDateMatch[1], sep = numDateMatch[2], d = numDateMatch[3], y = numDateMatch[4];
+    const withZeros = m.padStart(2, '0') + sep + d.padStart(2, '0') + sep + y;
+    const withoutZeros = parseInt(m) + sep + parseInt(d) + sep + y;
     if (withZeros !== pseudonym) map[withZeros] = original;
     if (withoutZeros !== pseudonym) map[withoutZeros] = original;
+    // Cross-format: US → ISO (YYYY-MM-DD)
+    const fullYear = y.length === 2 ? (parseInt(y) > 50 ? '19' + y : '20' + y) : y;
+    const isoKey = fullYear + '-' + m.padStart(2, '0') + '-' + d.padStart(2, '0');
+    if (!map[isoKey]) map[isoKey] = original;
+    // US with slashes: 4/15/2026
+    const slashKey = parseInt(m) + '/' + parseInt(d) + '/' + fullYear;
+    if (!map[slashKey]) map[slashKey] = original;
+    const slashPadded = m.padStart(2, '0') + '/' + d.padStart(2, '0') + '/' + fullYear;
+    if (!map[slashPadded]) map[slashPadded] = original;
+  }
+
+  // ISO format: "2020-07-21" → also generate US variants and written-out formats
+  const isoDateMatch = pseudonym.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoDateMatch) {
+    const y = isoDateMatch[1], m = isoDateMatch[2], d = isoDateMatch[3];
+    // US formats: M/D/YYYY, MM/DD/YYYY, M-D-YYYY
+    const mi = parseInt(m), di = parseInt(d);
+    if (!map[mi + '/' + di + '/' + y]) map[mi + '/' + di + '/' + y] = original;
+    if (!map[m + '/' + d + '/' + y]) map[m + '/' + d + '/' + y] = original;
+    if (!map[mi + '-' + di + '-' + y]) map[mi + '-' + di + '-' + y] = original;
+    if (!map[m + '-' + d + '-' + y]) map[m + '-' + d + '-' + y] = original;
+    // Written-out: "July 21, 2020", "Jul 21, 2020"
+    const MONTH_FULL = ['', 'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'];
+    const MONTH_SHORT = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    if (mi >= 1 && mi <= 12) {
+      const dayStr = String(di);
+      // "July 21, 2020" and "Jul 21, 2020"
+      if (!map[MONTH_FULL[mi] + ' ' + dayStr + ', ' + y]) map[MONTH_FULL[mi] + ' ' + dayStr + ', ' + y] = original;
+      if (!map[MONTH_SHORT[mi] + ' ' + dayStr + ', ' + y]) map[MONTH_SHORT[mi] + ' ' + dayStr + ', ' + y] = original;
+      // With ordinal: "July 21st, 2020"
+      const ord = (di === 1 || di === 21 || di === 31) ? 'st' : (di === 2 || di === 22) ? 'nd' : (di === 3 || di === 23) ? 'rd' : 'th';
+      if (!map[MONTH_FULL[mi] + ' ' + dayStr + ord + ', ' + y]) map[MONTH_FULL[mi] + ' ' + dayStr + ord + ', ' + y] = original;
+      // Without comma: "July 21 2020"
+      if (!map[MONTH_FULL[mi] + ' ' + dayStr + ' ' + y]) map[MONTH_FULL[mi] + ' ' + dayStr + ' ' + y] = original;
+      // "21 July 2020" (international format)
+      if (!map[dayStr + ' ' + MONTH_FULL[mi] + ' ' + y]) map[dayStr + ' ' + MONTH_FULL[mi] + ' ' + y] = original;
+    }
+    // Without leading zeros: 2020-7-21
+    const noZeroKey = y + '-' + mi + '-' + di;
+    if (noZeroKey !== pseudonym && !map[noZeroKey]) map[noZeroKey] = original;
+  }
+
+  // Written-out date → also generate numeric variants
+  // "March 15, 2021" ↔ "2021-03-15" ↔ "3/15/2021"
+  const writtenDateMatch = pseudonym.match(/^(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})$/i);
+  if (writtenDateMatch) {
+    const MONTH_MAP: Record<string, string> = {
+      january: '01', february: '02', march: '03', april: '04', may: '05', june: '06',
+      july: '07', august: '08', september: '09', october: '10', november: '11', december: '12',
+    };
+    const mNum = MONTH_MAP[writtenDateMatch[1].toLowerCase()];
+    const dNum = writtenDateMatch[2].padStart(2, '0');
+    const yStr = writtenDateMatch[3];
+    if (mNum) {
+      // ISO
+      if (!map[yStr + '-' + mNum + '-' + dNum]) map[yStr + '-' + mNum + '-' + dNum] = original;
+      // US numeric
+      if (!map[parseInt(mNum) + '/' + parseInt(dNum) + '/' + yStr]) map[parseInt(mNum) + '/' + parseInt(dNum) + '/' + yStr] = original;
+      if (!map[mNum + '/' + dNum + '/' + yStr]) map[mNum + '/' + dNum + '/' + yStr] = original;
+    }
   }
 
   // Persist to sessionStorage when modifying the global map (not snapshots)
@@ -2004,6 +1401,7 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
 // Uses a version counter instead of object identity because reverseMap is mutated in-place.
 let _regexCacheVersion = 0;  // Bumped by addReverseMapping()
 let _regexCacheBuiltVersion = -1;  // Version when cache was last built
+let _regexCacheMap: Record<string, string> | null = null;  // Map identity when cache was last built
 interface CachedPseudoEntry {
   pseudonym: string;
   original: string;
@@ -2032,10 +1430,18 @@ function buildRegexCache(reverseMap: Record<string, string>): CachedPseudoEntry[
         const endsWithAlpha = /[a-zA-Z]$/.test(pseudonym);
         const startsWithDigit = /^\d/.test(pseudonym);
         const endsWithDigit = /\d$/.test(pseudonym);
+        const startsWithDollar = pseudonym.startsWith('$');
         // For digit boundaries, also exclude "." (decimal point) — prevents
         // matching "2" inside "14.2" or "14" inside "14.2". Without this,
         // short numeric pseudonyms garble decimal numbers in the response.
-        const prefix = startsWithDigit ? '(?<![\\d.])' : startsWithAlpha ? '(?<![a-zA-Z])' : '';
+        // For $-prefixed pseudonyms: ChatGPT wraps currency in LaTeX $...$
+        // or $$...$$, adding extra $ before our pseudonym. CONSUME ALL leading
+        // $'s so that $$$135K → $185K. The `\$*` prefix eats 0+ extra $'s,
+        // then the escaped `\$135K` eats the pseudonym's own $.
+        const prefix = startsWithDollar ? '\\$*'
+          : startsWithDigit ? '(?<![\\d.])'
+          : startsWithAlpha ? '(?<![a-zA-Z])'
+          : '';
         const suffix = endsWithDigit ? '(?![\\d.])' : endsWithAlpha ? '(?![a-zA-Z])' : '';
         regexCS = new RegExp(prefix + escaped + suffix, 'g');
         regexCI = new RegExp(prefix + escaped + suffix, 'gi');
@@ -2053,9 +1459,13 @@ function buildRegexCache(reverseMap: Record<string, string>): CachedPseudoEntry[
 }
 
 function replacePseudonyms(text: string, reverseMap: Record<string, string>): string {
-  // Build/rebuild regex cache when reverseMap has been mutated (version counter tracks mutations)
-  if (_regexCacheBuiltVersion !== _regexCacheVersion) {
+  // Build/rebuild regex cache when reverseMap changes.
+  // Track both version counter (for mutable currentReverseMap) AND the map identity
+  // (for snapshot maps passed by depseudonymizeResponse). Without identity check,
+  // a snapshot from request A would incorrectly reuse request B's cache.
+  if (_regexCacheBuiltVersion !== _regexCacheVersion || _regexCacheMap !== reverseMap) {
     _regexCacheBuiltVersion = _regexCacheVersion;
+    _regexCacheMap = reverseMap;
     _regexCache = buildRegexCache(reverseMap);
   }
 
@@ -2067,34 +1477,26 @@ function replacePseudonyms(text: string, reverseMap: Record<string, string>): st
     // Strategy 1: Boundary-aware exact match (case-sensitive)
     // IMPORTANT: Use arrow function as replacer to avoid $ being interpreted
     // as special replacement patterns ($1, $$, $&, etc.).
+    // NOTE: All strategies run (no `continue`) because the same pseudonym can appear
+    // in both plain-text and JSON-encoded forms within a single SSE chunk.
     if (regexCS) {
       regexCS.lastIndex = 0;
-      if (regexCS.test(result)) {
-        regexCS.lastIndex = 0;
-        result = result.replace(regexCS, () => original);
-        continue;
-      }
+      result = result.replace(regexCS, () => original);
     }
 
     // Strategy 2: JSON-escaped match (SSE streams contain JSON-encoded strings)
     if (jsonPseudo !== pseudonym && result.includes(jsonPseudo)) {
       result = result.split(jsonPseudo).join(jsonOrig);
-      continue;
     }
     // Double-escaped: Gemini batchexecute responses use nested escaping
     if (json2Pseudo !== jsonPseudo && result.includes(json2Pseudo)) {
       result = result.split(json2Pseudo).join(json2Orig);
-      continue;
     }
 
-    // Strategy 3: Case-insensitive boundary-aware match
+    // Strategy 3: Case-insensitive boundary-aware match (catches case variants missed by S1)
     if (regexCI) {
       regexCI.lastIndex = 0;
-      if (regexCI.test(result)) {
-        regexCI.lastIndex = 0;
-        result = result.replace(regexCI, () => original);
-        continue;
-      }
+      result = result.replace(regexCI, () => original);
     }
 
     // Strategy 4: Plain substring fallback (no word-boundary requirement).
@@ -2118,6 +1520,86 @@ function replacePseudonyms(text: string, reverseMap: Record<string, string>): st
 }
 
 /**
+ * De-pseudonymize the user's own message bubble in the DOM.
+ * On platforms like Claude, the UI renders the user message from the API payload,
+ * so pseudonymized text appears in the user's own message. This function uses a
+ * short-lived MutationObserver to detect when the message renders and replaces
+ * pseudonyms back to originals — making the proxy layer invisible.
+ *
+ * Safe because: one-shot (auto-disconnects), only modifies text nodes,
+ * scoped to new messages, and doesn't interfere with framework state.
+ */
+function depseudonymizeUserBubble(reverseMap: Record<string, string>): void {
+  if (Object.keys(reverseMap).length === 0) return;
+
+  // Collect the pseudonym strings we need to look for
+  const pseudonyms = Object.keys(reverseMap);
+
+  let attempts = 0;
+  const MAX_ATTEMPTS = 30; // 30 × 200ms = 6 seconds max
+
+  function scanAndReplace(): boolean {
+    // Find all user message elements. Different platforms use different selectors.
+    const userMsgSelectors = [
+      // Claude
+      '[data-testid="user-message"]',
+      '.font-user-message',
+      '[class*="human-turn"]',
+      '[class*="user-turn"]',
+      // Generic: last user message in chat
+      '.prose:last-of-type',
+    ];
+
+    // Get ALL text nodes in the chat area. We look for the most recently added
+    // message that contains pseudonym text.
+    const chatContainer = document.querySelector('[class*="conversation"]')
+      || document.querySelector('[role="presentation"]')
+      || document.querySelector('main')
+      || document.body;
+
+    // Walk text nodes looking for pseudonym text
+    const walker = document.createTreeWalker(
+      chatContainer,
+      NodeFilter.SHOW_TEXT,
+      null,
+    );
+
+    let replaced = false;
+    const node = walker.currentNode;
+    let textNode: Node | null = walker.nextNode();
+    while (textNode) {
+      const text = textNode.textContent || '';
+      if (text.length > 0) {
+        for (const pseudo of pseudonyms) {
+          if (text.includes(pseudo)) {
+            // This text node contains a pseudonym — replace it
+            const original = reverseMap[pseudo];
+            textNode.textContent = text.split(pseudo).join(original);
+            replaced = true;
+            break; // re-check this node on next iteration if multiple pseudonyms
+          }
+        }
+      }
+      textNode = walker.nextNode();
+    }
+    return replaced;
+  }
+
+  // Poll for the message to render — it may take a moment after the fetch
+  const pollTimer = setInterval(() => {
+    attempts++;
+    if (scanAndReplace() || attempts >= MAX_ATTEMPTS) {
+      clearInterval(pollTimer);
+      if (attempts < MAX_ATTEMPTS) {
+        // Run once more after a short delay to catch late renders
+        setTimeout(scanAndReplace, 500);
+        igLog(`User bubble de-pseudonymized after ${attempts} attempts`);
+      }
+    }
+  }, 200);
+}
+
+/**
  * Strip position-offset annotations from SSE JSON data lines.
  * ChatGPT's SSE includes `displayedContentReferences` and similar fields with
  * character-offset annotations. When we replace pseudonyms (changing text length),
@@ -2125,8 +1607,9 @@ function replacePseudonyms(text: string, reverseMap: Record<string, string>): st
  * is safe — they're cosmetic (citation hover) and the response still renders correctly.
  */
 function stripOffsetAnnotations(text: string): string {
-  // Only process SSE data lines that look like JSON
-  return text.replace(/^(data: )(\{[\s\S]+\})$/gm, (_match, prefix, json) => {
+  // Only process SSE data lines that look like JSON.
+  // IMPORTANT: Use [^\n]+ (not [\s\S]+) to avoid spanning multiple lines.
+  return text.replace(/^(data: )(\{[^\n]+\})$/gm, (_match, prefix, json) => {
     try {
       const parsed = JSON.parse(json);
       let changed = false;
@@ -2153,9 +1636,37 @@ function stripOffsetAnnotations(text: string): string {
   });
 }
 
+/**
+ * Content-level SSE de-pseudonymization.
+ *
+ * Architecture: instead of replacing pseudonyms in raw SSE transport text
+ * (where "James Park" is split across two JSON objects and never contiguous),
+ * we operate at the CONTENT level:
+ *
+ *   SSE bytes → line splitter → JSON parser → content extractor
+ *     → content accumulator → pseudonym replacer → SSE rebuilder → output
+ *
+ * Two SSE content formats are supported:
+ *   1. Accumulated (ChatGPT): each event has full text so far in parts[0]
+ *   2. Delta (OpenAI API / Claude): each event has only the new token
+ *
+ * For accumulated format: replace in the full content; the frontend naturally
+ * shows the latest version (corrections appear seamlessly).
+ *
+ * For delta format: accumulate deltas into a running buffer, replace in the
+ * full buffer, diff against previously emitted content to compute the
+ * corrected delta.
+ *
+ * Fallback: non-JSON or unrecognized SSE lines get raw text replacement.
+ */
 function depseudonymizeResponse(response: Response, reverseMap: Record<string, string>): Response {
   if (!response.body) {
     igLog('depseudonymizeResponse: no response body — skipping');
+    return response;
+  }
+  // Guard: if body is already locked/consumed, we can't wrap it
+  if (response.bodyUsed) {
+    igLog('depseudonymizeResponse: body already used — skipping');
     return response;
   }
 
@@ -2169,17 +1680,145 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
   let reader: ReadableStreamDefaultReader<Uint8Array>;
   try {
     reader = response.body.getReader();
-  } catch {
+  } catch (readerErr) {
+    console.warn('[Iron Gate MAIN] depseudonymizeResponse: getReader() failed —', readerErr instanceof Error ? readerErr.message : String(readerErr));
     return response;
   }
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
 
-  // Find the longest pseudonym token to size our overlap buffer
-  const maxTokenLen = Math.min(Math.max(...mapKeys.map(k => k.length), 0), 200);
-  let buffer = '';
+  // Longest pseudonym — used as holdback margin for partial matches at content tail
+  const maxPseudoLen = Math.min(Math.max(...mapKeys.map(k => k.length), 0), 200);
+
+  // ── State ──
+  let lineBuffer = '';           // Raw bytes → complete lines
+  let deltaAccumulator = '';     // Running content for delta-style SSE
+  let emittedDeltaLen = 0;       // How much of replaced delta content we've emitted
   let chunkCount = 0;
   let totalReplacements = 0;
+
+  // ── Content extraction: find the text content in an SSE JSON object ──
+  // Returns { mode, content } or null if no content found.
+  function extractContent(parsed: any): { mode: 'accumulated' | 'delta'; content: string } | null {
+    // ChatGPT accumulated: message.content.parts[0] has full text so far
+    const parts = parsed?.message?.content?.parts;
+    if (Array.isArray(parts) && typeof parts[0] === 'string') {
+      return { mode: 'accumulated', content: parts[0] };
+    }
+    // OpenAI / Claude delta: choices[0].delta.content has new token
+    const delta = parsed?.choices?.[0]?.delta?.content;
+    if (typeof delta === 'string') {
+      return { mode: 'delta', content: delta };
+    }
+    // Anthropic stream: delta.text
+    const anthropicDelta = parsed?.delta?.text;
+    if (typeof anthropicDelta === 'string') {
+      return { mode: 'delta', content: anthropicDelta };
+    }
+    return null;
+  }
+
+  // ── Content injection: put modified content back into SSE JSON ──
+  function injectContent(parsed: any, mode: 'accumulated' | 'delta', content: string): void {
+    if (mode === 'accumulated') {
+      parsed.message.content.parts[0] = content;
+    } else {
+      if (parsed?.choices?.[0]?.delta?.content !== undefined) {
+        parsed.choices[0].delta.content = content;
+      } else if (parsed?.delta?.text !== undefined) {
+        parsed.delta.text = content;
+      }
+    }
+  }
+
+  // ── Strip offset annotations from parsed ChatGPT SSE ──
+  function stripAnnotations(parsed: any): void {
+    const meta = parsed?.message?.metadata;
+    if (meta) {
+      delete meta.displayedContentReferences;
+      delete meta.cite_metadata;
+      delete meta.content_references;
+    }
+  }
+
+  // ── Process one complete SSE line ──
+  // Returns the modified line string, or null to suppress (holdback for delta mode).
+  function processSSELine(line: string): string | null {
+    // Pass through empty lines (SSE event separators)
+    if (line === '') return '';
+    // Pass through non-data lines (comments, event types, ids)
+    if (!line.startsWith('data: ')) return line;
+    // Pass through stream terminator
+    const payload = line.substring(6);
+    if (payload === '[DONE]' || payload.trim() === '[DONE]') return line;
+    // Pass through non-JSON payloads
+    if (!payload.startsWith('{') && !payload.startsWith('[')) {
+      // Raw text replacement fallback
+      const replaced = replacePseudonyms(payload, reverseMap);
+      if (replaced !== payload) totalReplacements++;
+      return 'data: ' + replaced;
+    }
+
+    // ── JSON SSE line: parse, extract content, replace, rebuild ──
+    let parsed: any;
+    try {
+      parsed = JSON.parse(payload);
+    } catch {
+      // Invalid JSON — raw text replacement fallback
+      const replaced = replacePseudonyms(payload, reverseMap);
+      if (replaced !== payload) totalReplacements++;
+      return 'data: ' + replaced;
+    }
+
+    const extracted = extractContent(parsed);
+    if (!extracted) {
+      // No content field (metadata event, etc.) — pass through with raw replacement
+      const reser = JSON.stringify(parsed);
+      const replaced = replacePseudonyms(reser, reverseMap);
+      if (replaced !== reser) totalReplacements++;
+      return 'data: ' + replaced;
+    }
+
+    const { mode, content } = extracted;
+
+    if (mode === 'accumulated') {
+      // ── Accumulated format (ChatGPT) ──
+      // Each event has the FULL text so far. Once both "James" and " Park"
+      // are in the accumulated text, "James Park" appears contiguously.
+      // Replace in the full content — the frontend always shows the latest
+      // version, so corrections appear seamlessly with no flicker.
+      const replaced = replacePseudonyms(content, reverseMap);
+      if (replaced !== content) totalReplacements++;
+      stripAnnotations(parsed);
+      injectContent(parsed, mode, replaced);
+      return 'data: ' + JSON.stringify(parsed);
+    }
+
+    // ── Delta format (OpenAI API / Claude / others) ──
+    // Each event has only the new token. Accumulate into a running buffer,
+    // replace in the full buffer, diff to compute the corrected delta.
+    deltaAccumulator += content;
+    const replaced = replacePseudonyms(deltaAccumulator, reverseMap);
+    if (replaced !== deltaAccumulator) totalReplacements++;
+
+    // Hold back the last maxPseudoLen chars — might be a partial pseudonym.
+    // Only emit what's safe (won't change when more content arrives).
+    const safeLen = Math.max(emittedDeltaLen, replaced.length - maxPseudoLen);
+    const newDelta = replaced.substring(emittedDeltaLen, safeLen);
+    emittedDeltaLen = safeLen;
+
+    if (newDelta.length === 0) {
+      // Held back — but we MUST still emit the event to preserve SSE structure.
+      // Claude/Anthropic SSE parsers expect a data line for every event: line.
+      // Suppressing the data line breaks their JSON parser.
+      // Emit with empty content — the frontend handles empty deltas gracefully.
+      injectContent(parsed, mode, '');
+      return 'data: ' + JSON.stringify(parsed);
+    }
+
+    injectContent(parsed, mode, newDelta);
+    return 'data: ' + JSON.stringify(parsed);
+  }
 
   const stream = new ReadableStream({
     async pull(controller) {
@@ -2187,41 +1826,71 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
         const { done, value } = await reader.read();
 
         if (done) {
-          // Flush remaining buffer
-          if (buffer.length > 0) {
-            let flushed = stripOffsetAnnotations(buffer);
-            flushed = replacePseudonyms(flushed, reverseMap);
-            if (flushed !== buffer) totalReplacements++;
-            controller.enqueue(encoder.encode(flushed));
+          // ── Flush remaining data ──
+          // Process any remaining complete lines in lineBuffer
+          if (lineBuffer.length > 0) {
+            const remaining = lineBuffer;
+            lineBuffer = '';
+            const lines = remaining.split('\n');
+            for (const line of lines) {
+              const result = processSSELine(line);
+              if (result !== null) {
+                controller.enqueue(encoder.encode(result + '\n'));
+              }
+            }
           }
-          igLog(`depseudonymizeResponse: stream complete — ${chunkCount} chunks, ${totalReplacements} chunks had replacements`);
+
+          // Flush held-back delta content
+          if (emittedDeltaLen < deltaAccumulator.length) {
+            const replaced = replacePseudonyms(deltaAccumulator, reverseMap);
+            const finalDelta = replaced.substring(emittedDeltaLen);
+            if (finalDelta.length > 0) {
+              // Emit as a raw data line (the stream is ending, format doesn't matter)
+              controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":' + JSON.stringify(finalDelta) + '}}]}\n'));
+            }
+          }
+
+          igLog(`depseudonymizeResponse: stream complete — ${chunkCount} chunks, ${totalReplacements} replacements`);
           controller.close();
           return;
         }
 
         chunkCount++;
-        const chunkText = decoder.decode(value, { stream: true });
-        buffer += chunkText;
+        lineBuffer += decoder.decode(value, { stream: true });
 
-        // Output all text except the last maxTokenLen chars (which might contain a split token)
-        const safeLen = Math.max(0, buffer.length - maxTokenLen);
-        if (safeLen > 0) {
-          let original = buffer.substring(0, safeLen);
-          // Strip offset annotations before replacement so length changes don't corrupt them
-          original = stripOffsetAnnotations(original);
-          const safeText = replacePseudonyms(original, reverseMap);
-          if (safeText !== original) {
-            totalReplacements++;
-            if (totalReplacements <= 5) {
-              igLog(`depseudonymizeResponse: REPLACED in chunk #${chunkCount}!`);
-            }
+        // Split into complete lines. SSE events are delimited by \n.
+        // Keep the last segment (might be incomplete) in lineBuffer.
+        const lines = lineBuffer.split('\n');
+        lineBuffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const result = processSSELine(line);
+          if (result !== null) {
+            controller.enqueue(encoder.encode(result + '\n'));
           }
-          controller.enqueue(encoder.encode(safeText));
-          buffer = buffer.substring(safeLen);
         }
       } catch (err) {
-        console.error('[Iron Gate MAIN] depseudonymizeResponse: stream error:', err);
-        controller.error(err);
+        const msg = err instanceof Error ? err.message : String(err);
+        const isAbort = msg.includes('aborted') || msg.includes('abort') || msg.includes('cancel');
+        if (!isAbort) {
+          console.warn('[Iron Gate MAIN] depseudonymizeResponse: stream error', msg);
+          try {
+            window.postMessage({
+              type: 'IRON_GATE_DEPSEUDO_FAILURE',
+              detail: 'De-pseudonymization stream error — some fake names may appear in the AI response.',
+            }, window.location.origin);
+          } catch { /* ignore */ }
+        }
+        // Fail gracefully: flush whatever we have and close.
+        try {
+          if (lineBuffer.length > 0) {
+            controller.enqueue(encoder.encode(lineBuffer));
+            lineBuffer = '';
+          }
+          controller.close();
+        } catch {
+          try { controller.error(err); } catch { /* already closed */ }
+        }
       }
     },
   });
@@ -2762,7 +2431,7 @@ function showDocumentBlockOverlay(options: {
 // if any recently uploaded files have high-risk scan results.
 
 const FILE_SCAN_GATE_WINDOW = 120_000; // consider scans from last 2 minutes
-const FILE_SCAN_WAIT_TIMEOUT = 15_000; // max wait for pending scan
+const FILE_SCAN_WAIT_TIMEOUT = 3_000; // max wait for pending scan (reduced from 15s to minimize latency)
 
 async function checkFileUploadGate(): Promise<'allow' | 'block'> {
   const now = Date.now();
@@ -3062,6 +2731,45 @@ const patchedFetch = async function patchedFetch(
     return originalFetch.call(window, input, init);
   }
 
+  // ── Skip fetch processing EARLY for platforms where DOM/WS handles request ──
+  // CRITICAL: Must check BEFORE getBodyString() — reading the body (especially
+  // ReadableStream) can consume/mutate the request and cause Copilot to hang.
+  // See commits 4116f4a, 4b6bc05 for the original fix.
+  //
+  // Copilot: dom-capture-wire + WS.prototype.send handles pseudonymization.
+  //          Pass fetch through IMMEDIATELY without touching body.
+  // Gemini:  dom-presubmit handles pseudonymization; fetch response needs de-pseudo.
+  if (shouldSkipFetchProxy(url, activeAdapter)) {
+    // For dom-presubmit adapters (Gemini), we still need to:
+    //   1. Run file upload gate
+    //   2. Wrap response for de-pseudonymization
+    if (activeAdapter?.interception === 'dom-presubmit') {
+      if (mode === 'proxy') {
+        const skipGateDecision = await checkFileUploadGate();
+        if (skipGateDecision === 'block') {
+          igLog('File upload gate BLOCKED (skipFetchProxy adapter)');
+          return new Response(JSON.stringify({ blocked: true, reason: 'Document sensitivity gate' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+      }
+
+      const skipResponse = await originalFetch.call(window, input, init);
+
+      if (mode === 'proxy' && Object.keys(currentReverseMap).length > 0) {
+        igLog(`De-pseudonymizing response for skipFetchProxy adapter (${Object.keys(currentReverseMap).length} mappings)`);
+        return depseudonymizeResponse(skipResponse, { ...currentReverseMap });
+      }
+
+      return skipResponse;
+    }
+
+    // For dom-capture-wire adapters (Copilot): pass through IMMEDIATELY.
+    // Do NOT read body, do NOT wrap response, do NOT add async overhead.
+    return originalFetch.call(window, input, init);
+  }
+
   // Extract the body — NEVER mutates input or init
   let bodyString: string | null = null;
   try {
@@ -3069,7 +2777,6 @@ const patchedFetch = async function patchedFetch(
   } catch {
     // Body read failed — pass through unmodified
   }
-
   // If we consumed a ReadableStream, we must now use the consumed text as body
   // (the original stream is exhausted)
   const consumedBody = init && (init as any).__ironGateConsumedBody;
@@ -3089,52 +2796,9 @@ const patchedFetch = async function patchedFetch(
 
   igLog(`LLM request intercepted — mode: ${mode}, url: ${url.substring(0, 80)}, body: ${bodyString.length} chars`);
 
-  // ════════════════════════════════════════════════════════════════════════
-  // DIAGNOSTIC: Always-on logging — shows exactly what hits the LLM wire
-  // Check Chrome DevTools Console for these [Iron Gate WIRE] messages.
-  // ════════════════════════════════════════════════════════════════════════
-  igLog(`LLM fetch intercepted — Mode: ${mode}, URL: ${url.substring(0, 80)}, Adapter: ${activeAdapter?.name || 'none'}, Body: ${bodyString.length} chars`);
-  // ════════════════════════════════════════════════════════════════════════
-
   // Diagnostic: log metadata for debugging (no raw body content)
   if (url.includes('gemini') || url.includes('googleapis')) {
     igLog(`Gemini fetch: body ${bodyString.length} chars`);
-  }
-  if (url.includes('copilot') || url.includes('bing') || url.includes('sydney')) {
-    igLog(`Copilot fetch: body ${bodyString.length} chars, input: ${input instanceof Request ? 'Request' : typeof input}, init: ${init ? 'yes' : 'no'}`);
-  }
-
-  // ── Skip fetch BODY modification for platforms where DOM/WS handles request ──
-  // Gemini: DOM pre-submit handles pseudonymization; batchexecute body is opaque
-  // Copilot: SignalR WS handles pseudonymization via WebSocket.prototype.send
-  //
-  // BUT we still need to:
-  //   1. Run the file upload gate (block dangerous documents)
-  //   2. Wrap the RESPONSE for de-pseudonymization (the LLM response contains
-  //      pseudonyms from the dom-presubmit'd request — replace them in the stream
-  //      so the framework renders de-pseudonymized text without flicker)
-  if (shouldSkipFetchProxy(url, activeAdapter)) {
-    // File upload gate — must run even for skipped adapters
-    if (mode === 'proxy') {
-      const skipGateDecision = await checkFileUploadGate();
-      if (skipGateDecision === 'block') {
-        igLog('File upload gate BLOCKED (skipFetchProxy adapter)');
-        return new Response(JSON.stringify({ blocked: true, reason: 'Document sensitivity gate' }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-    }
-
-    const skipResponse = await originalFetch.call(window, input, init);
-
-    // Wrap response for de-pseudonymization if reverse map has entries
-    if (mode === 'proxy' && Object.keys(currentReverseMap).length > 0) {
-      igLog(`De-pseudonymizing response for skipFetchProxy adapter (${Object.keys(currentReverseMap).length} mappings)`);
-      return depseudonymizeResponse(skipResponse, { ...currentReverseMap });
-    }
-
-    return skipResponse;
   }
 
   // ── File Upload Gate — block send if a high-risk document was uploaded ────
@@ -3180,6 +2844,7 @@ const patchedFetch = async function patchedFetch(
       }
 
       if (promptText && promptText.length >= 10) {
+        const _t0 = performance.now();
         // ── SERVER MODE: API-side detection + pseudonymization ──
         if (processingMode === 'server') {
           try {
@@ -3189,6 +2854,11 @@ const patchedFetch = async function patchedFetch(
             // Passthrough: no sensitive data detected
             if (serverResult.action === 'passthrough' || !serverResult.pseudonymizedText) {
               igLog('SERVER MODE: passthrough — sending original');
+              // Still notify sidepanel about the audit (score=0, no entities)
+              notifyContentScript(
+                'IRON_GATE_AUDIT', promptText, [],
+                '', [], 'low', serverResult.sensitivityScore || 0,
+              );
               return originalFetch.call(window, input, init);
             }
 
@@ -3222,23 +2892,34 @@ const patchedFetch = async function patchedFetch(
                 'color: #f97316; font-weight: bold; font-size: 13px',
               );
 
-              // Report to worker for sidepanel
-              igHash(promptText).then(ph => {
-                igPostMessage({
-                  type: 'IRON_GATE_INTERCEPTED',
-                  promptHash: ph,
-                  promptLength: promptText.length,
-                  maskedPrompt: serverResult.pseudonymizedText || '',
-                  mappings: Object.entries(serverResult.reverseMap || {}).map(([p, o]) => ({ pseudonym: p, original: '', type: 'server' })),
-                  entityCount: serverResult.entityCount,
-                  level: serverResult.sensitivityLevel,
-                  score: serverResult.sensitivityScore,
-                  entities: [],
-                });
-              }).catch(() => {});
+              // Report to worker for sidepanel — use notifyContentScript for reliable delivery
+              // Build entity array from server response (API returns { type, start, end })
+              // Fall back to constructing from reverseMap if entities not available
+              const serverEntities: Array<{ type: string; text: string; start: number; end: number; confidence: number; source: string }> =
+                Array.isArray(serverResult.entities) && serverResult.entities.length > 0
+                  ? serverResult.entities.map((e: any) => ({
+                      type: e.type || 'UNKNOWN', text: '', start: e.start || 0, end: e.end || 0,
+                      confidence: 1, source: 'server',
+                    }))
+                  : Object.entries(serverResult.reverseMap || {}).map(([pseudonym], i) => ({
+                      type: 'ENTITY', text: '', start: i, end: i + 1,
+                      confidence: 1, source: 'server',
+                    }));
+
+              notifyContentScript(
+                'IRON_GATE_INTERCEPTED', promptText, serverEntities,
+                serverResult.pseudonymizedText || '',
+                Object.entries(serverResult.reverseMap || {}).map(([p, o]) => ({ pseudonym: p, original: '', type: 'server', length: p.length })),
+                serverResult.sensitivityLevel,
+                serverResult.sensitivityScore,
+              );
 
               // Build modified request with pseudonymized body
               const newInit = { ...init, body: modifiedBody };
+              // De-pseudonymize the user's message bubble (non-ChatGPT platforms)
+              if (!url.includes('/backend-api/conversation') && !url.includes('/backend-anon/')) {
+                depseudonymizeUserBubble(requestReverseMap);
+              }
               const response = await originalFetch.call(window, input, newInit);
               return depseudonymizeResponse(response, requestReverseMap);
             }
@@ -3252,6 +2933,7 @@ const patchedFetch = async function patchedFetch(
         const regexEntities = detectWithRegex(promptText);
         const secrets = scanForSecrets(promptText);
         const allEntities = [...regexEntities, ...secrets];
+        const _t1 = performance.now();
 
         igLog(`Detected ${allEntities.length} entities in prompt (${promptText.length} chars)`);
 
@@ -3273,23 +2955,12 @@ const patchedFetch = async function patchedFetch(
               `%c[Iron Gate WIRE] ✅ LOW RISK (score=${score}) — ${allEntities.length} entities detected but context is benign, sending original text`,
               'color: #22c55e; font-weight: bold',
             );
+            console.log(
+              `%c[Iron Gate PERF] Detection: ${(_t1 - _t0).toFixed(0)}ms | Score: ${(performance.now() - _t1).toFixed(0)}ms | Total: ${(performance.now() - _t0).toFixed(0)}ms (GREEN passthrough)`,
+              'color: #818cf8; font-weight: bold',
+            );
             // Report to worker for audit trail, but don't modify the request
-            const _entityCount = allEntities.length;
-            Promise.all([igHash(promptText), minimizeEntitiesForTransit(allEntities)])
-              .then(([_ph, _me]) => {
-                igPostMessage({
-                  type: 'IRON_GATE_AUDIT',
-                  promptHash: _ph,
-                  promptLength: promptText.length,
-                  maskedPrompt: '',
-                  mappings: [],
-                  entityCount: _entityCount,
-                  level,
-                  score,
-                  entities: _me,
-                });
-              })
-              .catch(() => {});
+            notifyContentScript('IRON_GATE_AUDIT', promptText, allEntities, '', [], level, score);
             return originalFetch.call(window, input, init);
           }
 
@@ -3329,29 +3000,13 @@ const patchedFetch = async function patchedFetch(
           if (effectiveRoute === 'private_llm' && _privateLlmEndpoint) {
             igLog(`PRIVATE LLM: Routing pseudonymized prompt to ${_privateLlmEndpoint}`);
 
-            // Notify content script about the interception — fire-and-forget
-            {
-              const _transitMappings = sanitizeMappingsForTransit(pseudoResult.mappings);
-              const _maskedText = pseudoResult.maskedText;
-              const _entityCount = allEntities.length;
-              Promise.all([igHash(promptText), minimizeEntitiesForTransit(allEntities)])
-                .then(([_ph, _me]) => {
-                  igPostMessage({
-                    type: 'IRON_GATE_INTERCEPTED',
-                    promptHash: _ph,
-                    promptLength: promptText.length,
-                    maskedPrompt: _maskedText,
-                    mappings: _transitMappings,
-                    entityCount: _entityCount,
-                    level,
-                    score,
-                    entities: _me,
-                    executiveRoute: 'private_llm',
-                    executiveIndustry: lensRoute.industry,
-                  });
-                })
-                .catch(() => {});
-            }
+            // Notify content script about the interception (non-blocking)
+            notifyContentScript(
+              'IRON_GATE_INTERCEPTED', promptText, allEntities,
+              pseudoResult.maskedText, sanitizeMappingsForTransit(pseudoResult.mappings),
+              level, score,
+              { executiveRoute: 'private_llm', executiveIndustry: lensRoute.industry },
+            );
 
             try {
               // Build OpenAI-compatible request for private LLM (Ollama, vLLM, etc.)
@@ -3486,41 +3141,29 @@ const patchedFetch = async function patchedFetch(
             igLog(`PROXY: Pseudonymized ${allEntities.length} entities (${level}, score=${score}). Types: ${allEntities.map(e => e.type).join(', ')}`);
 
             // Notify content script (for sidepanel display AND backend event)
-            // Fire-and-forget: hashing is for reporting only — don't block the fetch
-            // SECURITY: hash prompt and entity text before postMessage — no raw PII leaves via postMessage
-            const _transitMappings = sanitizeMappingsForTransit(pseudoResult.mappings);
-            const _maskedText = pseudoResult.maskedText;
-            const _entityCount = allEntities.length;
-            Promise.all([igHash(promptText), minimizeEntitiesForTransit(allEntities)])
-              .then(([_ph, _me]) => {
-                igPostMessage({
-                  type: 'IRON_GATE_INTERCEPTED',
-                  promptHash: _ph,
-                  promptLength: promptText.length,
-                  maskedPrompt: _maskedText,
-                  mappings: _transitMappings,
-                  entityCount: _entityCount,
-                  level,
-                  score,
-                  entities: _me,
-                });
-              })
-              .catch(() => {}); // Reporting failure must never block the proxy
+            // NON-BLOCKING: sends message synchronously, hashes in background.
+            // Never blocks the fetch — user sees zero added latency.
+            notifyContentScript(
+              'IRON_GATE_INTERCEPTED', promptText, allEntities,
+              pseudoResult.maskedText, sanitizeMappingsForTransit(pseudoResult.mappings),
+              level, score,
+            );
 
-            // Trigger eager user-message de-pseudo: start scanning for the
-            // user chat bubble IMMEDIATELY so pseudonyms are replaced before
-            // the browser paints them. This makes pseudonymization invisible.
+            const _t2 = performance.now();
+            console.log(
+              `%c[Iron Gate PERF] Detection: ${(_t1 - _t0).toFixed(0)}ms | Pseudo+notify: ${(_t2 - _t1).toFixed(0)}ms | Total before fetch: ${(_t2 - _t0).toFixed(0)}ms`,
+              'color: #818cf8; font-weight: bold',
+            );
 
             // Send modified request — preserve ALL original fetch arguments.
             // Only override the body to prevent breaking tool-specific properties
             // (CSRF tokens, credentials, referrer policy, etc.).
+            // Send modified request — fail-OPEN: if the modified body is rejected,
+            // fall through to the original unmodified request so the user isn't blocked.
             let modifiedResponse: Response;
             try {
               if (init) {
-                // fetch(url_or_request, init) — spread init, override only body
                 let finalInit: RequestInit = { ...init, body: modifiedBody };
-                // If original body was FormData but we replaced with URL-encoded string,
-                // update Content-Type accordingly
                 if (typeof FormData !== 'undefined' && init.body instanceof FormData && typeof modifiedBody === 'string') {
                   const h = new Headers(init.headers);
                   h.set('Content-Type', 'application/x-www-form-urlencoded');
@@ -3528,64 +3171,44 @@ const patchedFetch = async function patchedFetch(
                 }
                 modifiedResponse = await originalFetch.call(window, input, finalInit);
               } else if (input instanceof Request) {
-                // fetch(request) — no init; pass request + body override
                 modifiedResponse = await originalFetch.call(window, input, { body: modifiedBody });
               } else {
-                // fetch(url) — no init, just URL string
                 modifiedResponse = await originalFetch.call(window, input, { method: 'POST', body: modifiedBody });
               }
             } catch (fetchErr) {
               console.error(
-                '%c[Iron Gate WIRE] ❌ Modified request FAILED — BLOCKING to protect sensitive data',
+                '%c[Iron Gate WIRE] ❌ Modified request FAILED — sending original (fail-open)',
                 'color: #ef4444; font-weight: bold; font-size: 13px',
                 '\nError:', fetchErr
               );
-              // Fail CLOSED: never send raw PII to the AI tool on proxy failure
-              return new Response(JSON.stringify({ error: 'Iron Gate: request blocked due to proxy failure. Your sensitive data was NOT sent.' }), {
-                status: 502,
-                headers: { 'Content-Type': 'application/json' },
-              });
+              // Fail OPEN: send the original unmodified request so the user isn't stuck
+              return originalFetch.call(window, input, init);
             }
 
-            // Always-visible response status
+            const _t3 = performance.now();
             console.log(
-              `%c[Iron Gate WIRE] Response: ${modifiedResponse.status} ${modifiedResponse.statusText}`,
+              `%c[Iron Gate WIRE] Response: ${modifiedResponse.status} ${modifiedResponse.statusText} (fetch took ${(_t3 - _t2).toFixed(0)}ms)`,
               modifiedResponse.ok ? 'color: #22c55e' : 'color: #ef4444; font-weight: bold',
               `(${url.substring(0, 60)})`
             );
 
-            // If ChatGPT rejected the modified body (4xx or 5xx), retry with
-            // a simple string replacement as fallback.
-            if (!modifiedResponse.ok && isChatGPT && modifiedResponse.status >= 400) {
-              console.warn(`[Iron Gate MAIN] ChatGPT rejected modified body (${modifiedResponse.status}) — retrying with simple replacement`);
-              try {
-                const fallbackMasked = pseudoResult.maskedText;
-                const _eo = jsonStringEscape(promptText);
-                const _er = jsonStringEscape(fallbackMasked);
-                let fallbackBody: string | null = null;
-                if (bodyString.includes(_eo)) {
-                  fallbackBody = bodyString.split(_eo).join(_er);
-                } else {
-                  fallbackBody = replacePrompt(bodyString, promptText, fallbackMasked);
-                }
-                if (fallbackBody && init) {
-                  modifiedResponse = await originalFetch.call(window, input, { ...init, body: fallbackBody });
-                  igLog(`Fallback response: ${modifiedResponse.status}`);
-                }
-              } catch (retryErr) {
-                console.warn('[Iron Gate MAIN] Fallback retry also failed:', retryErr);
-              }
+            // If the tool rejected our modified body, fall through to original
+            // request immediately — NO retry, NO blocking. This matches March 3
+            // behavior and prevents doubling latency on body rejection.
+            if (!modifiedResponse.ok && modifiedResponse.status >= 400) {
+              console.warn(
+                `%c[Iron Gate WIRE] ⚠️ Tool rejected modified body (${modifiedResponse.status}) — sending original (fail-open)`,
+                'color: #f59e0b; font-weight: bold',
+              );
+              return originalFetch.call(window, input, init);
             }
-            if (!modifiedResponse.ok && modifiedResponse.status >= 500) {
-              console.warn(`[Iron Gate MAIN] ⚠️ Modified request got ${modifiedResponse.status} — BLOCKING to protect sensitive data`);
-              // Fail CLOSED: never send raw PII on server error
-              return new Response(JSON.stringify({ error: 'Iron Gate: request blocked due to server error. Your sensitive data was NOT sent.' }), {
-                status: 502,
-                headers: { 'Content-Type': 'application/json' },
-              });
-            }
-            if (!modifiedResponse.ok) {
-              console.warn(`[Iron Gate MAIN] ⚠️ Modified request got ${modifiedResponse.status} — tool backend may have rejected the modified body`);
+
+            // De-pseudonymize the user's own message bubble in the DOM.
+            // On ChatGPT, React state retains the original text so the user bubble is fine.
+            // On Claude, Gemini, and others, the UI renders from the API payload — so
+            // pseudonymized text would be visible. Fix it by replacing in the DOM.
+            if (!isChatGPT && Object.keys(requestReverseMap).length > 0) {
+              depseudonymizeUserBubble(requestReverseMap);
             }
 
             // De-pseudonymize the response stream (use snapshot, not mutable global).
@@ -3603,6 +3226,10 @@ const patchedFetch = async function patchedFetch(
           }
         } else {
           igLog(`PROXY MODE — no entities found in prompt, sending original text`);
+          console.log(
+            `%c[Iron Gate PERF] Detection: ${(_t1 - _t0).toFixed(0)}ms | Total: ${(performance.now() - _t0).toFixed(0)}ms (no entities, passthrough)`,
+            'color: #818cf8; font-weight: bold',
+          );
         }
       } else {
         igLog(`PROXY MODE — no prompt extracted from body (${bodyString.length} chars), passing through`);
@@ -3642,13 +3269,21 @@ const patchedFetch = async function patchedFetch(
             igLog(`AUDIT: Detected ${allEntities.length} entities (${level}, score=${score}). Types: ${allEntities.map(e => e.type).join(', ')}`);
 
             const _aph = await igHash(promptText);
-            const _ame = await minimizeEntitiesForTransit(allEntities);
+            // Minimize entities for postMessage — strip raw text, use hash + length only
+            const _ame = await Promise.all(allEntities.map(async e => ({
+              type: e.type,
+              textHash: await igHash(e.text),
+              length: e.text.length,
+              start: e.start,
+              end: e.end,
+              confidence: e.confidence,
+              source: e.source,
+            })));
             igPostMessage({
               type: 'IRON_GATE_AUDIT',
               promptHash: _aph,
               promptLength: promptText.length,
-              // SECURITY: raw prompt removed from postMessage — any page script can listen.
-              maskedPrompt: '', // Don't pseudonymize in audit — unnecessary overhead
+              maskedPrompt: '',
               mappings: [],
               entityCount: allEntities.length,
               level,
@@ -3853,6 +3488,37 @@ try {
   igLog('Document capture-phase change listener failed (non-critical)');
 }
 
+// ─── Clipboard paste file detection ────────────────────────────────────────
+// Intercept paste events that contain files (e.g., cmd+v to paste images/docs).
+// These bypass normal file input dialogs and may carry sensitive screenshots.
+try {
+  document.addEventListener('paste', (event: ClipboardEvent) => {
+    if (!event.clipboardData?.files?.length) return;
+    for (const file of Array.from(event.clipboardData.files)) {
+      igLog('Clipboard paste detected:', file.name || 'unnamed', file.type, file.size);
+      _readFileToBase64AndPost(file, 'clipboard paste');
+    }
+  }, true); // capture phase
+  igLog('Clipboard paste file listener installed');
+} catch {
+  igLog('Clipboard paste listener failed (non-critical)');
+}
+
+// ─── Drag-and-drop file detection ─────────────────────────────────────────
+// Intercept file drops onto AI tool input areas.
+try {
+  document.addEventListener('drop', (event: DragEvent) => {
+    if (!event.dataTransfer?.files?.length) return;
+    for (const file of Array.from(event.dataTransfer.files)) {
+      igLog('Drag-drop file detected:', file.name, file.type, file.size);
+      _readFileToBase64AndPost(file, 'drag-drop');
+    }
+  }, true); // capture phase
+  igLog('Drag-drop file listener installed');
+} catch {
+  igLog('Drag-drop listener failed (non-critical)');
+}
+
 // ─── Patch XMLHttpRequest ──────────────────────────────────────────────────
 // Some AI tools (Copilot, Bing) use XHR instead of fetch.
 
@@ -3963,22 +3629,13 @@ XMLHttpRequest.prototype.send = function(body?: any) {
               igLog(`XHR PROXY: Pseudonymized ${allEntities.length} entities (${level}, score=${score}), masked: ${pseudoResult.maskedText.length} chars`);
 
 
-              // SECURITY: hash before postMessage — fire-and-forget async
-              Promise.all([igHash(promptText), minimizeEntitiesForTransit(allEntities)])
-                .then(([ph, me]) => {
-                  igPostMessage({
-                    type: 'IRON_GATE_INTERCEPTED',
-                    promptHash: ph,
-                    promptLength: promptText.length,
-                    maskedPrompt: pseudoResult.maskedText,
-                    mappings: sanitizeMappingsForTransit(pseudoResult.mappings),
-                    entityCount: allEntities.length,
-                    level,
-                    score,
-                    entities: me,
-                  });
-                })
-                .catch(() => {});
+              // Notify content script (XHR is sync so can't await — but notifyContentScript
+              // has internal try/catch so the message is always sent)
+              notifyContentScript(
+                'IRON_GATE_INTERCEPTED', promptText, allEntities,
+                pseudoResult.maskedText, sanitizeMappingsForTransit(pseudoResult.mappings),
+                level, score,
+              );
 
               // Patch the response to de-pseudonymize
               // SKIP for platforms where DOM observer handles de-pseudo
@@ -4024,22 +3681,11 @@ XMLHttpRequest.prototype.send = function(body?: any) {
             const { level, score } = quickScore(allEntities);
             const pseudoResult = pseudonymizeLocal(promptText, allEntities);
             igLog(`XHR AUDIT: ${allEntities.length} entities (${level}, score=${score})`);
-            Promise.all([igHash(promptText), minimizeEntitiesForTransit(allEntities)])
-              .then(([ph, me]) => {
-                igPostMessage({
-                  type: 'IRON_GATE_AUDIT',
-                  promptHash: ph,
-                  promptLength: promptText.length,
-                  // SECURITY: raw prompt removed from postMessage — any page script can listen.
-                  maskedPrompt: pseudoResult.maskedText,
-                  mappings: sanitizeMappingsForTransit(pseudoResult.mappings),
-                  entityCount: allEntities.length,
-                  level,
-                  score,
-                  entities: me,
-                });
-              })
-              .catch(() => {});
+            notifyContentScript(
+              'IRON_GATE_AUDIT', promptText, allEntities,
+              pseudoResult.maskedText, sanitizeMappingsForTransit(pseudoResult.mappings),
+              level, score,
+            );
           }
         }
       } catch { /* don't break original */ }
@@ -4193,13 +3839,20 @@ function _walkPseudoSignalR(obj: any): { value: any; changed: boolean } {
 // Patch WebSocket.prototype.send for Copilot SignalR pseudonymization.
 const _origWsSend = OriginalWebSocket.prototype.send;
 OriginalWebSocket.prototype.send = function(this: WebSocket, data: string | ArrayBufferLike | Blob | ArrayBufferView) {
+  // Copilot: completely bypass WS.prototype.send patch.
+  // ANY processing here (even passthrough) can interfere with SignalR's
+  // tight send/receive timing and cause Copilot to hang.
+  // Detection still works via dom-capture-wire; pseudonymization is deferred.
+  if (activeAdapter?.id === 'copilot') {
+    return _origWsSend.call(this, data);
+  }
   // File upload gate — block WS frames if a high-risk document was detected
   if (hasHighRiskFileScanSync() && activeAdapter?.isWsEndpoint?.(this.url)) {
     igLog('WS.prototype.send BLOCKED — high-risk document detected');
     return;
   }
   if (mode === 'proxy' && pendingCopilotPseudo &&
-      activeAdapter?.id === 'copilot' && activeAdapter.isWsEndpoint?.(this.url)) {
+      activeAdapter?.isWsEndpoint?.(this.url)) {
     if (typeof data === 'string') {
       const modified = applyCopilotSignalRPseudo(data);
       if (modified !== data) {
@@ -4228,10 +3881,12 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
   // but INCOMING response de-pseudonymization was completely skipped.
   // Now we fall through to the standard WS patching below so that Copilot responses
   // also get de-pseudonymized via the onmessage/addEventListener wrappers.
+  // Copilot: return the raw WebSocket IMMEDIATELY — do NOT enter the isLLM
+  // processing block at all. Any instance property access, logging, or patching
+  // on the WS can interfere with SignalR's connection lifecycle.
   const isCopilotWS = activeAdapter?.id === 'copilot' && activeAdapter.isWsEndpoint?.(urlStr);
   if (isCopilotWS) {
-    igLog(`WebSocket opened: ${urlStr.substring(0, 80)} — Copilot/Bing: prototype.send patch handles outgoing, falling through for response de-pseudo`);
-    // Don't return — fall through to patch onmessage for de-pseudonymization
+    return ws;
   }
 
   // Check if this WS endpoint belongs to an AI platform (active or any adapter)
@@ -4464,41 +4119,20 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
                 igLog(`WS PROXY: Pseudonymized ${allEntities.length} entities (${level}, score=${score}), masked: ${pseudoResult.maskedText.length} chars`);
 
 
-                Promise.all([igHash(promptText), minimizeEntitiesForTransit(allEntities)])
-                  .then(([ph, me]) => {
-                    igPostMessage({
-                      type: 'IRON_GATE_INTERCEPTED',
-                      promptHash: ph,
-                      promptLength: promptText.length,
-                      maskedPrompt: pseudoResult.maskedText,
-                      mappings: sanitizeMappingsForTransit(pseudoResult.mappings),
-                      entityCount: allEntities.length,
-                      level,
-                      score,
-                      entities: me,
-                    });
-                  })
-                  .catch(() => {});
+                notifyContentScript(
+                  'IRON_GATE_INTERCEPTED', promptText, allEntities,
+                  pseudoResult.maskedText, sanitizeMappingsForTransit(pseudoResult.mappings),
+                  level, score,
+                );
 
                 return _sendResult(modifiedData);
               } else {
                 console.warn(`[Iron Gate MAIN] WS PROXY: replacement FAILED — blocking to protect sensitive data. method=${replacementMethod}`);
-                // Still report the detection even though we're blocking
-                Promise.all([igHash(promptText), minimizeEntitiesForTransit(allEntities)])
-                  .then(([ph, me]) => {
-                    igPostMessage({
-                      type: 'IRON_GATE_AUDIT',
-                      promptHash: ph,
-                      promptLength: promptText.length,
-                      maskedPrompt: pseudoResult.maskedText,
-                      mappings: sanitizeMappingsForTransit(pseudoResult.mappings),
-                      entityCount: allEntities.length,
-                      level,
-                      score,
-                      entities: me,
-                    });
-                  })
-                  .catch(() => {});
+                notifyContentScript(
+                  'IRON_GATE_AUDIT', promptText, allEntities,
+                  pseudoResult.maskedText, sanitizeMappingsForTransit(pseudoResult.mappings),
+                  level, score,
+                );
                 // Fail CLOSED: do not send original frame with PII
                 return;
               }
@@ -4541,22 +4175,11 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
               const { level, score } = quickScore(allEntities);
               const pseudoResult = pseudonymizeLocal(promptText, allEntities);
               igLog(`WS AUDIT: ${allEntities.length} entities (${level}, score=${score})`);
-              Promise.all([igHash(promptText), minimizeEntitiesForTransit(allEntities)])
-                .then(([ph, me]) => {
-                  igPostMessage({
-                    type: 'IRON_GATE_AUDIT',
-                    promptHash: ph,
-                    promptLength: promptText.length,
-                    // SECURITY: raw prompt removed from postMessage — any page script can listen.
-                    maskedPrompt: pseudoResult.maskedText,
-                    mappings: sanitizeMappingsForTransit(pseudoResult.mappings),
-                    entityCount: allEntities.length,
-                    level,
-                    score,
-                    entities: me,
-                  });
-                })
-                .catch(() => {});
+              notifyContentScript(
+                'IRON_GATE_AUDIT', promptText, allEntities,
+                pseudoResult.maskedText, sanitizeMappingsForTransit(pseudoResult.mappings),
+                level, score,
+              );
             }
           }
         } catch { /* don't break */ }
@@ -4567,7 +4190,15 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
     } // end if (!isCopilotWS) — skip instance send patch for Copilot
 
     // Response de-pseudonymization via addEventListener
-    // Copilot WS connections now fall through here for response de-pseudo
+    // SKIP for Copilot — patching WS instance properties (addEventListener, onmessage)
+    // breaks SignalR's internal ping/pong validation, causing "Ping received after close"
+    // errors and killing the WebSocket connection. Copilot response de-pseudo is handled
+    // by the DOM observer watching `.ac-container` response elements.
+    if (isCopilotWS) {
+      igLog('Copilot WS: skipping addEventListener/onmessage patching to avoid breaking SignalR');
+      return ws;
+    }
+
     let _wsRcvCount = 0;
     let _wsRcvReplaced = 0;
     const originalAddEventListener = ws.addEventListener.bind(ws);
@@ -4800,23 +4431,11 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
 
     igLog(`${adapterName} DOM PROXY (${source}): Pseudonymized ${allEntities.length} entities (${level}, score=${score})`);
 
-
-    // SECURITY: hash before postMessage — fire-and-forget async
-    Promise.all([igHash(text), minimizeEntitiesForTransit(allEntities)])
-      .then(([ph, me]) => {
-        igPostMessage({
-          type: 'IRON_GATE_INTERCEPTED',
-          promptHash: ph,
-          promptLength: text.length,
-          maskedPrompt: pseudoResult.maskedText,
-          mappings: sanitizeMappingsForTransit(pseudoResult.mappings),
-          entityCount: allEntities.length,
-          level,
-          score,
-          entities: me,
-        });
-      })
-      .catch(() => {});
+    notifyContentScript(
+      'IRON_GATE_INTERCEPTED', text, allEntities,
+      pseudoResult.maskedText, sanitizeMappingsForTransit(pseudoResult.mappings),
+      level, score,
+    );
 
     return pseudoResult;
   }
@@ -5075,8 +4694,8 @@ igPostMessage({
   adapter: activeAdapter?.name || null,
 });
 
-// Mark as active using Symbol-keyed guard
-(window as any)[_IG_GUARD_SYM] = { status: 'active', since: Date.now(), token: _igGuardToken };
+// Mark as active using Symbol-keyed guard — store nonce so duplicates can send valid heartbeats
+(window as any)[_IG_GUARD_SYM] = { status: 'active', since: Date.now(), token: _igGuardToken, nonce: _IG_MSG_NONCE };
 (window as any).__IRON_GATE_MAIN_WORLD = 'active';
 (window as any).__IRON_GATE_MODE = mode;
 

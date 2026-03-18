@@ -220,8 +220,8 @@ export class DetectionClient {
               circuitState: 'open',
               timestamp: new Date().toISOString(),
             },
-          }).catch(() => {});
-        }).catch(() => {});
+          }).catch((err) => logger.error('Failed to send detection_degraded webhook', { error: String(err) }));
+        }).catch((err) => logger.error('Failed to import enqueue module for circuit breaker alert', { error: String(err) }));
       },
     });
     this.detectionCache = new DetectionCache();

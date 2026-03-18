@@ -169,6 +169,13 @@ const BENIGN_INTENT_PATTERNS: BenignIntentPattern[] = [
     pattern: /\b(?:(?:write|create|build|implement|code|develop|debug|fix)\s+(?:a\s+)?(?:function|class|method|script|program|app|component|module|API|endpoint|query)|(?:refactor|optimize|review)\s+(?:this|the|my)\s+(?:code|function|class)|(?:what\s+does|how\s+does)\s+(?:this|the)\s+(?:code|function|method))\b/i,
     safeTypes: new Set(['PERSON', 'ORGANIZATION', 'LOCATION', 'DATE', 'IP_ADDRESS']),
   },
+
+  // ── Math / Calculation Tasks ───────────────────────────────────────────
+  {
+    name: 'math_calculation',
+    pattern: /\b(?:(?:solve|calculate|compute|derive|simplify|integrate|differentiate|factor|expand|evaluate)\s+(?:this|the|for)?\s*(?:equation|expression|integral|derivative|formula|function|limit|sum|series|polynomial|matrix)?|(?:what\s+is|find)\s+(?:the\s+)?(?:value|answer|result|solution|derivative|integral|limit|sum)\s+(?:of|for|to)|(?:convert|multiply|divide|add|subtract|percentage|ratio|proportion)\b)/i,
+    safeTypes: new Set(['PERSON', 'ORGANIZATION', 'LOCATION', 'DATE', 'MONETARY_AMOUNT']),
+  },
 ];
 
 // ─── First-Person Possessive Patterns ────────────────────────────────────────

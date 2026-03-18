@@ -20,8 +20,9 @@
 /** Polling interval in milliseconds (60 seconds). */
 export const POLL_INTERVAL = 60_000;
 
-/** Maximum time (ms) to wait for the kill-switch endpoint before treating as unreachable. */
-const REQUEST_TIMEOUT = 10_000;
+/** Maximum time (ms) to wait for the kill-switch endpoint before treating as unreachable.
+ *  Render cold starts can take 15-30s, so give the server time to wake up. */
+const REQUEST_TIMEOUT = 30_000;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -95,22 +96,28 @@ export async function checkKillSwitch(
         );
         return { kill_switch: false, active: true, config_version: 0 };
       }
-      // Other errors (5xx, etc.) — fail closed for safety
-      console.error(
-        `[SECURITY] Kill-switch endpoint returned HTTP ${response.status}. Failing closed.`,
+      // Other errors (5xx, etc.) — fail OPEN for transient server issues.
+      // Fail-closed caused false kill-switch activations on Render cold starts
+      // and temporary 502/503 errors, locking users out unnecessarily.
+      // The kill switch should only activate on an EXPLICIT server signal.
+      console.warn(
+        `[SECURITY] Kill-switch endpoint returned HTTP ${response.status}. Treating as transient — extension stays active.`,
       );
-      return { kill_switch: true, active: false, config_version: -1 };
+      return { kill_switch: false, active: true, config_version: -1 };
     }
 
     const data: KillSwitchState = await response.json();
     return data;
   } catch (error) {
-    // Network error, timeout, or JSON parse failure — fail closed
-    console.error(
-      '[SECURITY] Kill-switch check failed (server unreachable or error). Failing closed.',
+    // Network error, timeout, or JSON parse failure — fail OPEN.
+    // Render cold starts, flaky networks, and DNS issues should NOT
+    // disable the extension. Only an explicit kill_switch:true from
+    // the server should pause monitoring.
+    console.warn(
+      '[SECURITY] Kill-switch check failed (server unreachable or timeout). Extension stays active.',
       error instanceof Error ? error.message : error,
     );
-    return { kill_switch: true, active: false, config_version: -1 };
+    return { kill_switch: false, active: true, config_version: -1 };
   }
 }
 

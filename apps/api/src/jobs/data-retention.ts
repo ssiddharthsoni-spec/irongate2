@@ -154,6 +154,32 @@ export async function runRetentionCleanup(): Promise<RetentionCleanupResult> {
     heartbeatsDeleted: result.heartbeatsDeleted,
   });
 
+  // Record retention run in audit_log for compliance traceability
+  const totalDeleted = result.eventsDeleted + result.pseudonymMapsDeleted +
+    result.auditEntriesDeleted + result.alertsDeleted +
+    result.auditLogDeleted + result.heartbeatsDeleted;
+  if (totalDeleted > 0) {
+    try {
+      await db.execute(sql`
+        INSERT INTO audit_log (firm_id, action, resource_type, new_value, created_at)
+        SELECT DISTINCT firm_id, 'data_retention_cleanup', 'system', ${JSON.stringify({
+          eventsDeleted: result.eventsDeleted,
+          pseudonymMapsDeleted: result.pseudonymMapsDeleted,
+          auditEntriesDeleted: result.auditEntriesDeleted,
+          alertsDeleted: result.alertsDeleted,
+          auditLogDeleted: result.auditLogDeleted,
+          heartbeatsDeleted: result.heartbeatsDeleted,
+          retentionDays: DEFAULT_RETENTION_DAYS,
+          runAt: new Date().toISOString(),
+        })}::jsonb, NOW()
+        FROM firms
+        LIMIT 1
+      `);
+    } catch (auditErr) {
+      logger.warn('Failed to record retention audit entry', { error: String(auditErr) });
+    }
+  }
+
   return result;
 }
 

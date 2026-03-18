@@ -8,6 +8,7 @@ import { getRedisClient } from '../lib/redis';
 // This avoids the race condition where module-load-time getRedisClient()
 // sets _attempted=true before REDIS_URL is available.
 
+let _auditQueue: Queue | null | undefined;
 let _coOccurrencesQueue: Queue | null | undefined;
 let _webhooksQueue: Queue | null | undefined;
 let _siemQueue: Queue | null | undefined;
@@ -25,6 +26,15 @@ function lazyQueue(
   if (cached !== undefined) return cached;
   const connection = getConnection();
   return connection ? new Queue(name, { connection, ...opts }) : null;
+}
+
+export function getAuditQueue(): Queue | null {
+  if (_auditQueue === undefined) {
+    _auditQueue = lazyQueue(_auditQueue, 'ig:audit', {
+      defaultJobOptions: { attempts: 5, backoff: { type: 'exponential', delay: 1000 } },
+    });
+  }
+  return _auditQueue;
 }
 
 export function getCoOccurrencesQueue(): Queue | null {
@@ -65,6 +75,38 @@ export function getInferenceQueue(): Queue | null {
 
 
 // --- Type-safe job data interfaces ---
+
+export interface AuditJobData {
+  firmId: string;
+  userId: string;
+  aiToolId: string;
+  sessionId?: string;
+  promptHash: string;
+  promptLength: number;
+  sensitivityScore: number;
+  sensitivityLevel: 'low' | 'medium' | 'high' | 'critical';
+  action: 'pass' | 'warn' | 'block' | 'proxy' | 'override';
+  captureMethod: string;
+  metadata?: Record<string, unknown>;
+  // SIEM event data (dispatched after audit write succeeds)
+  siemEvent?: {
+    eventId: string;
+    firmId: string;
+    aiToolId: string;
+    sensitivityScore: number;
+    sensitivityLevel: string;
+    action: string;
+    entityCount: number;
+    captureMethod: string;
+    timestamp: string;
+  };
+  // Conversation state update
+  conversationUpdate?: {
+    sessionId: string;
+    entityTypes: string[];
+    intent: string;
+  };
+}
 
 export interface CoOccurrenceJobData {
   firmId: string;

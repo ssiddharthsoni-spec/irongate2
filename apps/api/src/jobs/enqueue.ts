@@ -3,10 +3,12 @@
 // so the system degrades gracefully instead of breaking.
 
 import {
+  getAuditQueue,
   getCoOccurrencesQueue,
   getWebhooksQueue,
   getSiemQueue,
   getInferenceQueue,
+  type AuditJobData,
   type CoOccurrenceJobData,
   type WebhookJobData,
   type SIEMJobData,
@@ -17,6 +19,44 @@ import { dispatch as webhookDispatch } from '../services/webhook-dispatcher';
 import { forward as siemForward } from '../services/siem-forwarder';
 import { analyzePatterns } from '../services/inference-engine';
 import { logger } from '../lib/logger';
+
+/**
+ * Enqueue an audit trail write as a durable BullMQ job.
+ * If Redis is unavailable, falls back to direct appendEvent (fire-and-forget).
+ * The job processor handles: audit chain write → SIEM dispatch → conversation state update.
+ */
+export async function enqueueAudit(data: AuditJobData): Promise<void> {
+  const queue = getAuditQueue();
+  if (queue) {
+    await queue.add('audit-write', data, {
+      // Audit jobs should not be deduplicated — every event is unique
+      removeOnComplete: 1000,
+      removeOnFail: 5000, // Keep failed jobs for investigation
+    });
+  } else {
+    // Fallback: direct write (fire-and-forget, same as old behavior)
+    // This path only fires if Redis is completely down
+    const { appendEvent } = await import('../services/audit-chain');
+    appendEvent({
+      firmId: data.firmId,
+      userId: data.userId,
+      aiToolId: data.aiToolId,
+      sessionId: data.sessionId,
+      promptHash: data.promptHash,
+      promptLength: data.promptLength,
+      sensitivityScore: data.sensitivityScore,
+      sensitivityLevel: data.sensitivityLevel,
+      action: data.action,
+      captureMethod: data.captureMethod,
+      metadata: data.metadata,
+    }).catch((err) =>
+      logger.error('AUDIT WRITE FAILED (no Redis, no fallback)', {
+        firmId: data.firmId,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+  }
+}
 
 export async function enqueueCoOccurrences(data: CoOccurrenceJobData): Promise<void> {
   const queue = getCoOccurrencesQueue();

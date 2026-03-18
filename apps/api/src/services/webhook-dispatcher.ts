@@ -6,7 +6,7 @@
 // ============================================================================
 
 import { db } from '../db/client';
-import { webhookSubscriptions } from '../db/schema';
+import { webhookSubscriptions, webhookDeliveryLog } from '../db/schema';
 import { eq, and, sql } from 'drizzle-orm';
 import { logger } from '../lib/logger';
 import { encrypt, decrypt, deriveKey } from '@iron-gate/crypto';
@@ -103,8 +103,9 @@ export async function dispatch(
         // If decryption fails, the secret may be legacy plaintext — use as-is once, then re-encrypt
         plainSecret = sub.secret;
         encryptSecret(sub.secret).then(enc => {
-          db.update(webhookSubscriptions).set({ secret: enc }).where(eq(webhookSubscriptions.id, sub.id)).catch(() => {});
-        }).catch(() => {});
+          db.update(webhookSubscriptions).set({ secret: enc }).where(eq(webhookSubscriptions.id, sub.id))
+            .catch((err) => logger.error('Webhook secret re-encryption DB update failed', { subId: sub.id, error: String(err) }));
+        }).catch((err) => logger.error('Webhook secret re-encryption failed', { subId: sub.id, error: String(err) }));
       }
       // Fire-and-forget per subscription
       deliverWithRetry(sub.id, sub.url, plainSecret, eventType, payload).catch((err) => {
@@ -175,12 +176,19 @@ async function deliverWithRetry(
   payload: Record<string, unknown>,
   attempt = 1,
 ): Promise<void> {
-  const maxAttempts = 3;
-  const backoffs = [1000, 5000, 25000]; // 1s, 5s, 25s
+  const maxAttempts = 5;
+  const baseBackoffs = [1000, 5000, 15000, 30000, 60000]; // 1s, 5s, 15s, 30s, 60s
+  const firmId = (payload as any).firmId || 'unknown';
+
+  let statusCode: number | null = null;
+  let responseBody: string | null = null;
+  let success = false;
+  let errorMsg: string | null = null;
 
   try {
     const body = JSON.stringify(payload);
     const signature = await hmacSha256(body, secret);
+    const deliveryId = crypto.randomUUID();
 
     const response = await fetch(url, {
       method: 'POST',
@@ -188,36 +196,75 @@ async function deliverWithRetry(
         'Content-Type': 'application/json',
         'X-IronGate-Signature': signature,
         'X-IronGate-Event': eventType,
-        'X-IronGate-Delivery': crypto.randomUUID(),
+        'X-IronGate-Delivery': deliveryId,
       },
       body,
       signal: AbortSignal.timeout(10000), // 10s timeout
     });
 
-    if (!response.ok && attempt < maxAttempts) {
-      await sleep(backoffs[attempt - 1]);
-      return deliverWithRetry(subId, url, secret, eventType, payload, attempt + 1);
-    }
+    statusCode = response.status;
+    success = response.ok;
 
-    if (!response.ok && attempt >= maxAttempts) {
-      // Deactivate subscription after 3 consecutive failures
-      await db
-        .update(webhookSubscriptions)
-        .set({ isActive: false })
-        .where(eq(webhookSubscriptions.id, subId));
-      logger.warn('Deactivated webhook subscription after repeated failures', { subId, maxAttempts });
+    // Capture response body for debugging (truncated to 1KB)
+    try {
+      responseBody = (await response.text()).slice(0, 1024);
+    } catch { /* ignore body read errors */ }
+
+    if (!response.ok) {
+      errorMsg = `HTTP ${statusCode}`;
     }
   } catch (error) {
-    if (attempt < maxAttempts) {
-      await sleep(backoffs[attempt - 1]);
-      return deliverWithRetry(subId, url, secret, eventType, payload, attempt + 1);
-    }
-    // Deactivate on persistent failure
-    await db
-      .update(webhookSubscriptions)
-      .set({ isActive: false })
-      .where(eq(webhookSubscriptions.id, subId));
+    errorMsg = error instanceof Error ? error.message : String(error);
   }
+
+  // Log every delivery attempt to webhookDeliveryLog for auditability
+  logDeliveryAttempt(subId, firmId, eventType, payload, statusCode, responseBody, attempt, success, errorMsg);
+
+  if (success) return;
+
+  // Retry with jitter: base backoff ± 25% randomness to prevent thundering herd
+  if (attempt < maxAttempts) {
+    const base = baseBackoffs[attempt - 1];
+    const jitter = base * 0.25 * (Math.random() * 2 - 1); // ±25%
+    await sleep(Math.max(500, Math.round(base + jitter)));
+    return deliverWithRetry(subId, url, secret, eventType, payload, attempt + 1);
+  }
+
+  // Deactivate subscription after all retries exhausted
+  await db
+    .update(webhookSubscriptions)
+    .set({ isActive: false })
+    .where(eq(webhookSubscriptions.id, subId));
+  logger.warn('Deactivated webhook subscription after repeated failures', { subId, maxAttempts, lastError: errorMsg });
+}
+
+/** Fire-and-forget delivery log — never blocks the retry flow */
+function logDeliveryAttempt(
+  webhookId: string,
+  firmId: string,
+  eventType: string,
+  payload: Record<string, unknown>,
+  statusCode: number | null,
+  responseBody: string | null,
+  attempt: number,
+  success: boolean,
+  error: string | null,
+): void {
+  db.insert(webhookDeliveryLog).values({
+    webhookId,
+    firmId,
+    eventType,
+    payload,
+    statusCode,
+    responseBody,
+    attempt,
+    success,
+    error,
+  }).catch((err) => {
+    logger.warn('Failed to log webhook delivery attempt', {
+      webhookId, attempt, error: err instanceof Error ? err.message : String(err),
+    });
+  });
 }
 
 async function hmacSha256(message: string, secret: string): Promise<string> {

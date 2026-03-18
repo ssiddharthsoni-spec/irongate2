@@ -4,12 +4,17 @@
 
 import { Worker, type Job } from 'bullmq';
 import { getRedisClient } from '../lib/redis';
+import { appendEvent } from '../services/audit-chain';
+import { forward as siemForward } from '../services/siem-forwarder';
 import { recordCoOccurrences } from '../services/sensitivity-graph';
 import { dispatch as webhookDispatch } from '../services/webhook-dispatcher';
-import { forward as siemForward } from '../services/siem-forwarder';
 import { analyzePatterns } from '../services/inference-engine';
 import { logger } from '../lib/logger';
+import { db } from '../db/client';
+import { conversationState } from '../db/schema';
+import { sql } from 'drizzle-orm';
 import type {
+  AuditJobData,
   CoOccurrenceJobData,
   WebhookJobData,
   SIEMJobData,
@@ -40,6 +45,78 @@ export function startWorkers(): void {
     logger.warn('Redis not available — background jobs will use fire-and-forget fallback');
     return;
   }
+
+  // ── Audit worker: guaranteed audit chain writes + SIEM + conversation state ──
+  const auditWorker = new Worker<AuditJobData>(
+    'ig:audit',
+    async (job) => {
+      const data = job.data;
+
+      // 1. Write to cryptographic audit chain (retries on chain position conflict)
+      await appendEvent({
+        firmId: data.firmId,
+        userId: data.userId,
+        aiToolId: data.aiToolId,
+        sessionId: data.sessionId,
+        promptHash: data.promptHash,
+        promptLength: data.promptLength,
+        sensitivityScore: data.sensitivityScore,
+        sensitivityLevel: data.sensitivityLevel,
+        action: data.action,
+        captureMethod: data.captureMethod,
+        metadata: data.metadata,
+      });
+
+      // 2. SIEM dispatch (after audit write succeeds)
+      if (data.siemEvent) {
+        await siemForward(data.firmId, data.siemEvent).catch((err) =>
+          logger.warn('SIEM forward failed in audit job', {
+            firmId: data.firmId,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
+      }
+
+      // 3. Conversation state update
+      if (data.conversationUpdate?.sessionId) {
+        const cu = data.conversationUpdate;
+        await db.insert(conversationState).values({
+          sessionId: cu.sessionId,
+          firmId: data.firmId,
+          turnCount: 1,
+          cumulativeScore: data.sensitivityScore,
+          peakScore: data.sensitivityScore,
+          entityTypesSeen: cu.entityTypes,
+          lastIntent: cu.intent,
+          lastActivity: new Date(),
+        }).onConflictDoUpdate({
+          target: [conversationState.sessionId, conversationState.firmId],
+          set: {
+            turnCount: sql`${conversationState.turnCount} + 1`,
+            cumulativeScore: sql`${conversationState.cumulativeScore} + ${data.sensitivityScore}`,
+            peakScore: sql`GREATEST(${conversationState.peakScore}, ${data.sensitivityScore})`,
+            entityTypesSeen: sql`(
+              SELECT jsonb_agg(DISTINCT val)
+              FROM jsonb_array_elements_text(
+                COALESCE(${conversationState.entityTypesSeen}::jsonb, '[]'::jsonb) ||
+                ${JSON.stringify(cu.entityTypes)}::jsonb
+              ) AS val
+            )`,
+            lastIntent: cu.intent,
+            lastActivity: new Date(),
+          },
+        }).catch((err) =>
+          logger.warn('Conversation state update failed in audit job', {
+            sessionId: cu.sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
+      }
+    },
+    { connection, concurrency: 10 },
+  );
+  attachErrorHandlers(auditWorker, 'audit');
+  workers.push(auditWorker);
 
   const coOccurrenceWorker = new Worker<CoOccurrenceJobData>(
     'ig:co-occurrences',
@@ -100,7 +177,7 @@ export function startWorkers(): void {
   workers.push(inferenceWorker);
 
   logger.info('BullMQ workers started', {
-    queues: ['co-occurrences', 'webhooks', 'siem', 'inference'],
+    queues: ['audit', 'co-occurrences', 'webhooks', 'siem', 'inference'],
   });
 }
 

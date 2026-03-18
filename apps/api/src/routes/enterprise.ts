@@ -54,7 +54,7 @@ enterpriseRoutes.put('/sso-config', requirePerm('setSensitivityThresholds'), asy
   });
 
   const parsed = schema.safeParse(body);
-  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  if (!parsed.success) return c.json({ error: 'Invalid request body', details: parsed.error.flatten() }, 400);
 
   const [firm] = await db.select({ config: firms.config }).from(firms).where(eq(firms.id, firmId)).limit(1);
   if (!firm) return c.json({ error: 'Firm not found' }, 404);
@@ -165,7 +165,7 @@ enterpriseRoutes.post('/dpa/accept', requirePerm('setSensitivityThresholds'), as
   });
 
   const parsed = schema.safeParse(body);
-  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  if (!parsed.success) return c.json({ error: 'Invalid request body', details: parsed.error.flatten() }, 400);
 
   await db.insert(dpaAcceptance).values({
     firmId,
@@ -198,7 +198,7 @@ enterpriseRoutes.post('/request-deletion', requirePerm('setSensitivityThresholds
   });
 
   const parsed = schema.safeParse(body);
-  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  if (!parsed.success) return c.json({ error: 'Invalid request body', details: parsed.error.flatten() }, 400);
 
   // Check no pending request exists
   const [existing] = await db

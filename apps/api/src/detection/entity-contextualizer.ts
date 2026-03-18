@@ -90,7 +90,7 @@ export function contextualizeEntities(
 ): ContextualizedEntity[] {
   if (entities.length === 0) return [];
 
-  const opening = text.substring(0, 200);
+  const opening = text.substring(0, 500);
   const hasAnySelfRef = SELF_REF_PATTERNS.some(p => p.test(opening));
   const hasAnyPublicRef = PUBLIC_REF_PATTERNS.some(p => p.test(opening));
   const hasAnyInternalBiz = INTERNAL_BIZ_PATTERNS.some(p => p.test(text));
@@ -117,8 +117,8 @@ function classifyEntityContext(
     return { tag: 'credential', confidence: 0.95 };
   }
 
-  const ctxStart = Math.max(0, entity.start - 100);
-  const ctxEnd = Math.min(text.length, entity.end + 100);
+  const ctxStart = Math.max(0, entity.start - 500);
+  const ctxEnd = Math.min(text.length, entity.end + 500);
   const surrounding = text.substring(ctxStart, ctxEnd);
 
   // 2. Credential patterns near entity

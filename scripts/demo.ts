@@ -19,7 +19,7 @@ interface DetectedEntity {
   start: number;
   end: number;
   confidence: number;
-  source: 'regex' | 'gliner' | 'presidio' | 'keyword';
+  source: 'regex' | 'presidio' | 'keyword';
 }
 
 interface RegexPattern {

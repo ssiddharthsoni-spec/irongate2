@@ -541,6 +541,25 @@ export const webhookDeliveryLog = pgTable('webhook_delivery_log', {
   index('webhook_delivery_time_idx').on(table.deliveredAt),
 ]);
 
+// --- SIEM Delivery Log ---
+export const siemDeliveryLog = pgTable('siem_delivery_log', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  eventId: uuid('event_id'),
+  eventType: varchar('event_type', { length: 100 }).notNull(),
+  format: varchar('format', { length: 20 }).notNull(), // 'cef' | 'json' | 'asim'
+  endpoint: text('endpoint').notNull(),
+  statusCode: integer('status_code'),
+  success: boolean('success').notNull().default(false),
+  error: text('error'),
+  attempt: integer('attempt').notNull().default(1),
+  payloadSize: integer('payload_size'),
+  deliveredAt: timestamp('delivered_at').notNull().defaultNow(),
+}, (table) => [
+  index('siem_delivery_firm_idx').on(table.firmId),
+  index('siem_delivery_time_idx').on(table.deliveredAt),
+]);
+
 // --- API Keys ---
 export const apiKeys = pgTable('api_keys', {
   id: uuid('id').primaryKey().defaultRandom(),

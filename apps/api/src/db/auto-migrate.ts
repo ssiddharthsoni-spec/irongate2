@@ -494,6 +494,32 @@ const migrations: string[] = [
   `CREATE INDEX IF NOT EXISTS conv_state_session_idx ON conversation_state(session_id)`,
   `CREATE INDEX IF NOT EXISTS conv_state_firm_idx ON conversation_state(firm_id)`,
 
+  // --- siem_delivery_log table ---
+  `CREATE TABLE IF NOT EXISTS siem_delivery_log (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    firm_id UUID NOT NULL REFERENCES firms(id),
+    event_id UUID,
+    event_type VARCHAR(100) NOT NULL,
+    format VARCHAR(20) NOT NULL,
+    endpoint TEXT NOT NULL,
+    status_code INTEGER,
+    success BOOLEAN NOT NULL DEFAULT false,
+    error TEXT,
+    attempt INTEGER NOT NULL DEFAULT 1,
+    payload_size INTEGER,
+    delivered_at TIMESTAMP NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS siem_delivery_firm_idx ON siem_delivery_log(firm_id)`,
+  `CREATE INDEX IF NOT EXISTS siem_delivery_time_idx ON siem_delivery_log(delivered_at)`,
+
+  // --- RLS for siem_delivery_log ---
+  `ALTER TABLE siem_delivery_log ENABLE ROW LEVEL SECURITY`,
+  `DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'siem_delivery_isolation' AND tablename = 'siem_delivery_log') THEN
+      EXECUTE 'CREATE POLICY siem_delivery_isolation ON siem_delivery_log FOR ALL USING (firm_id = app.current_firm_id())';
+    END IF;
+  END $$`,
+
   // --- RLS for conversation_state ---
   `ALTER TABLE conversation_state ENABLE ROW LEVEL SECURITY`,
   `DO $$ BEGIN

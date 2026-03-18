@@ -7,18 +7,42 @@ export const GeminiDetector: AIToolDetector = {
   urlPatterns: [/gemini\.google\.com/],
 
   getPromptInput() {
-    // Gemini uses a rich text editor
-    return (
-      document.querySelector('.ql-editor[contenteditable="true"]') as HTMLElement | null ??
-      document.querySelector('rich-textarea .ql-editor') as HTMLElement | null ??
-      document.querySelector('[contenteditable="true"]') as HTMLElement | null
-    );
+    // Gemini uses a rich text editor — try specific selectors first,
+    // then fall back to generic contenteditable with role="textbox".
+    // Must match the selectors in adapters/gemini.ts.
+    const selectors = [
+      '.ql-editor[contenteditable="true"]',
+      'rich-textarea .ql-editor',
+      'div[contenteditable="true"][role="textbox"]',
+      'div[contenteditable="true"][aria-label]',
+      'input-area [contenteditable="true"]',
+      '.text-input-field [contenteditable="true"]',
+      'p[data-placeholder]',
+      'textarea',
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel) as HTMLElement | null;
+      if (el) return el;
+    }
+    // Last resort — generic contenteditable, but only if it looks like an input
+    // (has some reasonable size and is visible)
+    const allCE = document.querySelectorAll('div[contenteditable="true"]');
+    for (const el of allCE) {
+      const rect = (el as HTMLElement).getBoundingClientRect();
+      if (rect.height > 20 && rect.height < 500 && rect.width > 200) {
+        return el as HTMLElement;
+      }
+    }
+    return null;
   },
 
   getSubmitTrigger() {
     return (
       document.querySelector('button[aria-label="Send message"]') as HTMLElement | null ??
-      document.querySelector('.send-button') as HTMLElement | null
+      document.querySelector('button[aria-label*="send" i]') as HTMLElement | null ??
+      document.querySelector('button[aria-label*="submit" i]') as HTMLElement | null ??
+      document.querySelector('.send-button') as HTMLElement | null ??
+      document.querySelector('button[mattooltip*="Send" i]') as HTMLElement | null
     );
   },
 

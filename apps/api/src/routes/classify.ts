@@ -36,7 +36,7 @@ classifyRoutes.post('/', async (c) => {
   const parsed = classifyRequestSchema.safeParse(body);
 
   if (!parsed.success) {
-    return c.json({ error: 'Invalid request', details: parsed.error.issues }, 400);
+    return c.json({ error: 'Invalid request body', details: parsed.error.flatten() }, 400);
   }
 
   // Use firmId from auth context, not from request body (prevent spoofing)

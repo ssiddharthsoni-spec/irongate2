@@ -93,7 +93,7 @@ export class ApiClient {
           'X-Firm-ID': this.config.firmId,
         },
         body: JSON.stringify({
-          extensionVersion: '0.1.0',
+          extensionVersion: '0.2.7',
           activePlatform: aiToolId,
           mode,
         }),

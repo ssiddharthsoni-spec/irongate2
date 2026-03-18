@@ -21,6 +21,7 @@ function inlineMainWorldPlugin() {
     name: 'inline-main-world',
     closeBundle() {
       const assetsDir = resolve(__dirname, 'dist/assets');
+      const manifestPath = resolve(__dirname, 'dist/manifest.json');
 
       try {
         const files = readdirSync(assetsDir);
@@ -29,6 +30,8 @@ function inlineMainWorldPlugin() {
         const loaderFiles = files.filter(
           (f) => f.includes('main-world') && f.includes('loader') && f.endsWith('.js')
         );
+
+        const loaderResources: string[] = [];
 
         for (const loaderName of loaderFiles) {
           const loaderPath = resolve(assetsDir, loaderName);
@@ -63,6 +66,7 @@ function inlineMainWorldPlugin() {
             if (result.outputFiles && result.outputFiles.length > 0) {
               const bundledCode = result.outputFiles[0].text;
               writeFileSync(loaderPath, bundledCode);
+              loaderResources.push(`assets/${loaderName}`);
               console.log(
                 `[inline-main-world] Bundled ${moduleName} → ${loaderName} (${bundledCode.length} bytes, self-contained IIFE)`
               );
@@ -71,6 +75,42 @@ function inlineMainWorldPlugin() {
             }
           } catch (err) {
             console.warn(`[inline-main-world] esbuild bundle failed for ${moduleName}:`, err);
+          }
+        }
+
+        // Add loader files to web_accessible_resources so the <script src> fallback
+        // injection works when Chrome's native MAIN world injection fails.
+        if (loaderResources.length > 0) {
+          try {
+            const manifestJson = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+            const war = manifestJson.web_accessible_resources || [];
+
+            // Find the CRXJS-generated entry (has use_dynamic_url) or create one
+            let crxEntry = war.find((e: any) =>
+              e.use_dynamic_url === false && Array.isArray(e.resources) && e.resources.some((r: string) => r.startsWith('assets/'))
+            );
+
+            if (crxEntry) {
+              // Add loader files to existing CRXJS entry
+              for (const res of loaderResources) {
+                if (!crxEntry.resources.includes(res)) {
+                  crxEntry.resources.push(res);
+                }
+              }
+            } else {
+              // Create new entry with all site matches
+              war.push({
+                matches: ['<all_urls>'],
+                resources: loaderResources,
+                use_dynamic_url: false,
+              });
+            }
+
+            manifestJson.web_accessible_resources = war;
+            writeFileSync(manifestPath, JSON.stringify(manifestJson, null, 2));
+            console.log(`[inline-main-world] Added ${loaderResources.join(', ')} to web_accessible_resources`);
+          } catch (err) {
+            console.warn('[inline-main-world] Failed to update manifest web_accessible_resources:', err);
           }
         }
       } catch (err) {

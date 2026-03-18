@@ -67,6 +67,7 @@ import { scimRoutes } from './routes/scim';
 import { incidentRoutes } from './routes/incidents';
 import { enterpriseRoutes } from './routes/enterprise';
 import classifyRoutes from './routes/classify';
+import { agentRoutes } from './routes/agent';
 import { authMiddleware } from './middleware/auth';
 import { rateLimitMiddleware, proxyRateLimitMiddleware } from './middleware/rate-limit';
 import { firmContextMiddleware } from './middleware/firm-context';
@@ -78,6 +79,7 @@ import { jwtRevocationMiddleware } from './middleware/jwt-revocation';
 import { requirePerm } from './middleware/rbac';
 import { adminRestrictionsMiddleware } from './middleware/admin-restrictions';
 import { mfaEnforcementMiddleware } from './middleware/mfa-enforcement';
+import { policyTierMiddleware } from './middleware/sso-policy-tiers';
 import { metrics } from './lib/metrics';
 import { openApiSpec } from './docs/openapi';
 import { sql } from 'drizzle-orm';
@@ -135,10 +137,33 @@ app.use(
       return allowedOrigins.includes(origin) ? origin : null;
     },
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization', 'X-Firm-ID', 'X-Admin-Key-1', 'X-Admin-Key-2', 'X-Admin-Justification', 'x-api-key'],
+    allowHeaders: ['Content-Type', 'Authorization', 'X-Firm-ID', 'X-Admin-Key-1', 'X-Admin-Key-2', 'X-Admin-Justification', 'x-api-key', 'X-Extension-Version'],
+    exposeHeaders: ['X-API-Version', 'X-Min-Extension-Version'],
     credentials: true,
   })
 );
+
+// 5. API version headers — expose API version and minimum extension version
+const API_VERSION = '0.2.7';
+const MIN_EXTENSION_VERSION = '0.2.0';
+
+app.use('*', async (c, next) => {
+  c.header('X-API-Version', API_VERSION);
+  c.header('X-Min-Extension-Version', MIN_EXTENSION_VERSION);
+
+  // Warn (but don't block) if extension version is too old
+  const extVersion = c.req.header('X-Extension-Version');
+  if (extVersion && extVersion < MIN_EXTENSION_VERSION) {
+    logger.warn('Outdated extension version', {
+      extensionVersion: extVersion,
+      minRequired: MIN_EXTENSION_VERSION,
+      path: c.req.path,
+    });
+    c.header('X-Extension-Update-Required', 'true');
+  }
+
+  await next();
+});
 
 // Health check (no auth) — checks DB connectivity in production
 app.get('/health', async (c) => {
@@ -168,8 +193,10 @@ app.get('/health', async (c) => {
 
 // Kubernetes liveness probe — always returns 200 if process is running
 app.get('/health/live', (c) => c.json({ status: 'alive' }));
+app.get('/healthz', (c) => c.json({ status: 'alive' }));
 
 // Kubernetes readiness probe — returns 200 only if dependencies are healthy
+app.get('/readyz', async (c) => c.redirect('/health/ready', 307));
 app.get('/health/ready', async (c) => {
   const checks: Record<string, boolean> = {};
 
@@ -341,6 +368,8 @@ app.use('/v1/*', rateLimitMiddleware);
 app.use('/v1/*', firmContextMiddleware);
 app.use('/v1/*', rlsContextMiddleware);
 
+// Policy tier resolution — makes c.get('policyTier') available
+app.use('/v1/*', policyTierMiddleware());
 // MFA enforcement on admin routes (when firm has mfaRequired=true)
 app.use('/v1/admin/*', mfaEnforcementMiddleware);
 // RBAC enforcement on admin and privileged routes
@@ -372,6 +401,7 @@ app.route('/v1/provenance', provenanceRoutes);
 app.route('/v1/incidents', incidentRoutes);
 app.route('/v1/enterprise', enterpriseRoutes);
 app.route('/v1/classify', classifyRoutes);
+app.route('/v1/agent', agentRoutes);
 
 // ---------------------------------------------------------------------------
 // Internal cron endpoints (secured by CRON_SECRET header)

@@ -337,6 +337,32 @@ const FINANCIAL_INTEL_PATTERNS: KeywordPattern[] = [
     weight: 18,
     confidence: 0.8,
   },
+  // Business metrics WITH named entity — confidential company financials
+  // Generic hypotheticals ("a company with $42M ARR") are NOT sensitive.
+  // Only flag when a specific company/person is named alongside financials.
+  {
+    pattern: /\b(?:our|my|the\s+company'?s?|we\s+have|we're\s+at)\b.*?\b(?:ARR|MRR|burn\s*rate|runway|churn|revenue)\b/gi,
+    sensitivityType: 'INTERNAL_FINANCIALS',
+    category: 'financial_intel',
+    weight: 25,
+    confidence: 0.92,
+  },
+  // Named entity + financial metrics (e.g., "Stripe's ARR is $42M")
+  {
+    pattern: /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*'?s?\s+(?:ARR|MRR|burn\s*rate|runway|revenue|churn|valuation)\b.*?\$[\d,.]+/gi,
+    sensitivityType: 'NAMED_COMPANY_FINANCIALS',
+    category: 'financial_intel',
+    weight: 22,
+    confidence: 0.88,
+  },
+  // Fundraising with first-person context (leaking own company data)
+  {
+    pattern: /\b(?:our|we'?re?|my\s+company)\b.*?\b(?:Series\s+[A-F]|seed\s+round|rais(?:e|ing)|fundrais\w*)\b/gi,
+    sensitivityType: 'INTERNAL_FUNDRAISING',
+    category: 'financial_intel',
+    weight: 22,
+    confidence: 0.88,
+  },
 ];
 
 // ── Tech Security & Infrastructure ───────────────────────────────────────────

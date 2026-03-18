@@ -68,13 +68,13 @@ export interface DetectedEntity {
   start: number;
   end: number;
   confidence: number;
-  source: 'gliner' | 'regex' | 'presidio' | 'keyword' | 'plugin' | 'client_matter';
+  source: 'regex' | 'presidio' | 'keyword' | 'plugin' | 'client_matter';
 }
 
 export interface DetectionResult {
   entities: DetectedEntity[];
   processingTimeMs: number;
-  modelUsed: 'gliner' | 'regex' | 'presidio';
+  modelUsed: 'regex' | 'presidio';
 }
 
 // --- Sensitivity Scoring ---

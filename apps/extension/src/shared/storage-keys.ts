@@ -26,5 +26,8 @@ export const TOTAL_ENTITIES_DETECTED = 'total_entities_detected';
 
 // Notifications
 export const LAST_NOTIFICATION_DAY = 'last_notification_day';
+/** User preference: which detections trigger badge/toast. 'all' | 'warnings' | 'blocks' | 'silent' */
+export const NOTIFICATION_LEVEL = 'notification_level';
+export type NotificationLevel = 'all' | 'warnings' | 'blocks' | 'silent';
 
 export type SubscriptionTier = 'basic' | 'pro' | 'team' | 'enterprise';

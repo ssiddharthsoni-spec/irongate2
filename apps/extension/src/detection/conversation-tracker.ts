@@ -192,9 +192,61 @@ export class ConversationTracker {
     return this.turns.length;
   }
 
+  /**
+   * Serialize lightweight snapshot for persistence (no raw PII text).
+   * Allows conversation context to survive service worker restarts.
+   */
+  toSnapshot(): ConversationSnapshot {
+    return {
+      sessionId: this.sessionId,
+      lastActivity: this.lastActivity,
+      turns: this.turns.map(t => ({
+        entityTypes: t.entities.map(e => e.type),
+        score: t.score,
+        textLength: t.text.length,
+        timestamp: t.timestamp,
+      })),
+    };
+  }
+
+  /**
+   * Restore from a persisted snapshot. Reconstructs enough state for
+   * escalation detection and cumulative scoring without raw text.
+   */
+  static fromSnapshot(snapshot: ConversationSnapshot): ConversationTracker {
+    const tracker = new ConversationTracker(snapshot.sessionId);
+    tracker.lastActivity = snapshot.lastActivity;
+    // Reconstruct turns with placeholder text (length-only, no PII)
+    tracker.turns = snapshot.turns.map(t => ({
+      text: ' '.repeat(Math.min(t.textLength, 100)), // Placeholder for length checks
+      entities: t.entityTypes.map(type => ({
+        type,
+        text: '[redacted]',
+        start: 0,
+        end: 0,
+        confidence: 1,
+        source: 'regex' as const, // Restored entities use 'regex' source since it's the base tier
+      })),
+      score: t.score,
+      timestamp: t.timestamp,
+    }));
+    return tracker;
+  }
+
   reset(): void {
     this.turns = [];
     this.sessionId = crypto.randomUUID();
     this.lastActivity = Date.now();
   }
+}
+
+export interface ConversationSnapshot {
+  sessionId: string;
+  lastActivity: number;
+  turns: Array<{
+    entityTypes: string[];
+    score: number;
+    textLength: number;
+    timestamp: number;
+  }>;
 }

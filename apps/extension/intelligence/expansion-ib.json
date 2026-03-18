@@ -600,14 +600,14 @@
     "id": "IB136",
     "industry": "investment_banking",
     "role_perspective": "restructuring_specialist",
-    "prompt": "Lakeshore Manufacturing's restructuring plan proposes a debt-for-equity swap where first lien holders recover 85 cents on the dollar and second lien holders get 40 cents plus warrants. The ad hoc group led by Blackrock Credit is pushing for better terms. We need to model the plan vs. liquidation value.",
+    "prompt": "Lakeshore Manufacturing's restructuring plan proposes a debt-for-equity swap where first lien holders recover 85 cents on the dollar and second lien holders get 40 cents plus warrants. The ad hoc group led by Ridgemont Asset Management Credit is pushing for better terms. We need to model the plan vs. liquidation value.",
     "label": "CRITICAL",
     "sensitivity_types": ["RESTRUCTURING_PLAN", "CREDITOR_DETAILS"],
     "reasoning": "Names the debtor, details recovery rates for each tranche, identifies a major creditor leading negotiations, and outlines restructuring terms.",
     "regulations": ["Securities Exchange Act", "SEC Rule 10b-5", "NDA"],
     "pii_entities": [
       {"type": "ORGANIZATION", "value": "Lakeshore Manufacturing"},
-      {"type": "ORGANIZATION", "value": "Blackrock Credit"}
+      {"type": "ORGANIZATION", "value": "Ridgemont Asset Management Credit"}
     ],
     "contextual_entities": ["debt-for-equity swap", "85 cents first lien", "40 cents second lien", "warrants", "ad hoc group", "liquidation value"],
     "confidence": 0.99
@@ -631,7 +631,7 @@
     "id": "IB138",
     "industry": "investment_banking",
     "role_perspective": "md_coverage",
-    "prompt": "Vanguard Therapeutics has received an unsolicited approach from BioNexus Corp at $65 per share. The board is considering a white knight defense and wants us to approach Catalent and Thermo Fisher. Keep this strictly above the wall.",
+    "prompt": "Vanguard Therapeutics has received an unsolicited approach from BioNexus Corp at $65 per share. The board is considering a white knight defense and wants us to approach Provence Pharma Services and Kelvin Life Sciences. Keep this strictly above the wall.",
     "label": "CRITICAL",
     "sensitivity_types": ["BID_TERMS", "MNPI", "ACTIVIST_STRATEGY"],
     "reasoning": "Contains unsolicited bid details, named parties, specific share price, white knight strategy, and potential alternative acquirers.",
@@ -639,8 +639,8 @@
     "pii_entities": [
       {"type": "ORGANIZATION", "value": "Vanguard Therapeutics"},
       {"type": "ORGANIZATION", "value": "BioNexus Corp"},
-      {"type": "ORGANIZATION", "value": "Catalent"},
-      {"type": "ORGANIZATION", "value": "Thermo Fisher"}
+      {"type": "ORGANIZATION", "value": "Provence Pharma Services"},
+      {"type": "ORGANIZATION", "value": "Kelvin Life Sciences"}
     ],
     "contextual_entities": ["unsolicited approach", "$65 per share", "white knight defense", "above the wall"],
     "confidence": 0.99
@@ -664,15 +664,15 @@
     "id": "IB140",
     "industry": "investment_banking",
     "role_perspective": "vp_banking",
-    "prompt": "The PIPE for Arcadian Technologies' de-SPAC is oversubscribed. Wellington and Fidelity are anchoring at $10 per share with full ratchet anti-dilution. Total PIPE size is $250M against a $1.8B pro forma enterprise value. Lock-up is 180 days.",
+    "prompt": "The PIPE for Arcadian Technologies' de-SPAC is oversubscribed. Ashbrook Asset Management and Northgate Investments are anchoring at $10 per share with full ratchet anti-dilution. Total PIPE size is $250M against a $1.8B pro forma enterprise value. Lock-up is 180 days.",
     "label": "CRITICAL",
     "sensitivity_types": ["PIPE_TRANSACTION", "MNPI"],
     "reasoning": "Names the company, anchor investors, PIPE pricing, anti-dilution terms, total commitment, and lock-up period for an unannounced de-SPAC.",
     "regulations": ["SEC Rule 10b-5", "Securities Exchange Act", "Regulation FD", "NDA"],
     "pii_entities": [
       {"type": "ORGANIZATION", "value": "Arcadian Technologies"},
-      {"type": "ORGANIZATION", "value": "Wellington"},
-      {"type": "ORGANIZATION", "value": "Fidelity"}
+      {"type": "ORGANIZATION", "value": "Ashbrook Asset Management"},
+      {"type": "ORGANIZATION", "value": "Northgate Investments"}
     ],
     "contextual_entities": ["PIPE", "de-SPAC", "$10 per share", "full ratchet", "$250M PIPE", "$1.8B EV", "180-day lock-up"],
     "confidence": 0.99
@@ -697,16 +697,16 @@
     "id": "IB142",
     "industry": "investment_banking",
     "role_perspective": "associate",
-    "prompt": "The management presentation for Project Ironclad is scheduled for next Tuesday. The CEO of Westfield Logistics will present the 5-year plan showing revenue growth from $420M to $780M and EBITDA margins expanding from 18% to 24%. Three sponsors are attending: Bain Capital, KKR, and Warburg Pincus.",
+    "prompt": "The management presentation for Project Ironclad is scheduled for next Tuesday. The CEO of Westfield Logistics will present the 5-year plan showing revenue growth from $420M to $780M and EBITDA margins expanding from 18% to 24%. Three sponsors are attending: Silverpeak Capital, Kaelstrom Capital, and Warhaven Capital.",
     "label": "CRITICAL",
     "sensitivity_types": ["DEAL_CODENAME", "MANAGEMENT_PRESENTATION", "SPONSOR_IDENTITY", "MNPI"],
     "reasoning": "Contains codename, named target company, specific financial projections, named sponsors attending a management presentation.",
     "regulations": ["SEC Rule 10b-5", "Regulation FD", "NDA", "Chinese Wall"],
     "pii_entities": [
       {"type": "ORGANIZATION", "value": "Westfield Logistics"},
-      {"type": "ORGANIZATION", "value": "Bain Capital"},
-      {"type": "ORGANIZATION", "value": "KKR"},
-      {"type": "ORGANIZATION", "value": "Warburg Pincus"}
+      {"type": "ORGANIZATION", "value": "Silverpeak Capital"},
+      {"type": "ORGANIZATION", "value": "Kaelstrom Capital"},
+      {"type": "ORGANIZATION", "value": "Warhaven Capital"}
     ],
     "contextual_entities": ["Project Ironclad", "management presentation", "$420M to $780M revenue", "18% to 24% margins", "5-year plan"],
     "confidence": 0.99
@@ -715,14 +715,14 @@
     "id": "IB143",
     "industry": "investment_banking",
     "role_perspective": "restructuring_specialist",
-    "prompt": "The DIP financing for Cascade Energy is being led by JPMorgan with a $300M super-priority facility. The pre-petition first lien group is objecting to the priming and the judge has set a hearing for March 15th. Recovery for unsecured creditors is estimated at 5-10 cents.",
+    "prompt": "The DIP financing for Cascade Energy is being led by Granite Point Capital with a $300M super-priority facility. The pre-petition first lien group is objecting to the priming and the judge has set a hearing for March 15th. Recovery for unsecured creditors is estimated at 5-10 cents.",
     "label": "CRITICAL",
     "sensitivity_types": ["RESTRUCTURING_PLAN", "CREDITOR_DETAILS"],
     "reasoning": "Contains named debtor, DIP financing details, identified lender, creditor dispute details, court dates, and recovery estimates.",
     "regulations": ["Securities Exchange Act", "SEC Rule 10b-5", "NDA"],
     "pii_entities": [
       {"type": "ORGANIZATION", "value": "Cascade Energy"},
-      {"type": "ORGANIZATION", "value": "JPMorgan"}
+      {"type": "ORGANIZATION", "value": "Granite Point Capital"}
     ],
     "contextual_entities": ["DIP financing", "$300M super-priority", "priming objection", "March 15th hearing", "5-10 cents recovery"],
     "confidence": 0.99
@@ -746,7 +746,7 @@
     "id": "IB145",
     "industry": "investment_banking",
     "role_perspective": "md_coverage",
-    "prompt": "Redwood Capital is preparing a hostile bid for Sequoia Materials at $28 per share, contingent on financing from Goldman Sachs and Jefferies. The breakup fee demand is 4% and they want to launch a tender offer within two weeks. We are advising the target.",
+    "prompt": "Redwood Capital is preparing a hostile bid for Sequoia Materials at $28 per share, contingent on financing from Sterling Meridian Group and Pemberton Securities. The breakup fee demand is 4% and they want to launch a tender offer within two weeks. We are advising the target.",
     "label": "CRITICAL",
     "sensitivity_types": ["BID_TERMS", "MNPI", "BREAKUP_FEE", "SPONSOR_IDENTITY"],
     "reasoning": "Contains hostile bid details, named bidder and target, specific price, financing banks, breakup fee, and imminent tender offer timeline.",
@@ -754,8 +754,8 @@
     "pii_entities": [
       {"type": "ORGANIZATION", "value": "Redwood Capital"},
       {"type": "ORGANIZATION", "value": "Sequoia Materials"},
-      {"type": "ORGANIZATION", "value": "Goldman Sachs"},
-      {"type": "ORGANIZATION", "value": "Jefferies"}
+      {"type": "ORGANIZATION", "value": "Sterling Meridian Group"},
+      {"type": "ORGANIZATION", "value": "Pemberton Securities"}
     ],
     "contextual_entities": ["hostile bid", "$28 per share", "4% breakup fee", "tender offer", "two-week timeline"],
     "confidence": 0.99
@@ -764,14 +764,14 @@
     "id": "IB146",
     "industry": "investment_banking",
     "role_perspective": "associate",
-    "prompt": "Project Falcon syndication update: Barclays and Credit Suisse are co-leading the $800M TLB. Pricing is SOFR + 425 with a 99 OID. Commitments from CLO managers are soft and we may need to flex up to SOFR + 475. The leveraged credit market is watching this deal closely.",
+    "prompt": "Project Falcon syndication update: Westmark Capital and Dunmore Securities are co-leading the $800M TLB. Pricing is SOFR + 425 with a 99 OID. Commitments from CLO managers are soft and we may need to flex up to SOFR + 475. The leveraged credit market is watching this deal closely.",
     "label": "CRITICAL",
     "sensitivity_types": ["DEAL_CODENAME", "SYNDICATION_TERMS", "MNPI"],
     "reasoning": "Contains codename, named arrangers, loan size, exact pricing, OID, flex scenarios, and market intelligence about syndication risk.",
     "regulations": ["SEC Rule 10b-5", "FINRA", "NDA", "Chinese Wall"],
     "pii_entities": [
-      {"type": "ORGANIZATION", "value": "Barclays"},
-      {"type": "ORGANIZATION", "value": "Credit Suisse"}
+      {"type": "ORGANIZATION", "value": "Westmark Capital"},
+      {"type": "ORGANIZATION", "value": "Dunmore Securities"}
     ],
     "contextual_entities": ["Project Falcon", "$800M TLB", "SOFR + 425", "99 OID", "SOFR + 475 flex", "CLO managers"],
     "confidence": 0.99
@@ -811,15 +811,15 @@
     "id": "IB149",
     "industry": "investment_banking",
     "role_perspective": "director",
-    "prompt": "The consortium of Apollo, Blackstone, and CVC is submitting a joint bid of $8.5B for Meridian Healthcare Services under Project Atlas. Each sponsor commits $1.5B equity with the remainder financed through a $4.0B term loan and $1.0B mezzanine facility.",
+    "prompt": "The consortium of Thorngate Capital, Ironhaven Partners, and Valcrest Group is submitting a joint bid of $8.5B for Meridian Healthcare Services under Project Atlas. Each sponsor commits $1.5B equity with the remainder financed through a $4.0B term loan and $1.0B mezzanine facility.",
     "label": "CRITICAL",
     "sensitivity_types": ["DEAL_CODENAME", "BID_TERMS", "SPONSOR_IDENTITY", "LBO_TERMS"],
     "reasoning": "Contains codename, three named sponsors in consortium, total bid, equity splits, and complete financing structure for an active take-private.",
     "regulations": ["SEC Rule 10b-5", "Regulation FD", "NDA", "Chinese Wall"],
     "pii_entities": [
-      {"type": "ORGANIZATION", "value": "Apollo"},
-      {"type": "ORGANIZATION", "value": "Blackstone"},
-      {"type": "ORGANIZATION", "value": "CVC"},
+      {"type": "ORGANIZATION", "value": "Thorngate Capital"},
+      {"type": "ORGANIZATION", "value": "Ironhaven Partners"},
+      {"type": "ORGANIZATION", "value": "Valcrest Group"},
       {"type": "ORGANIZATION", "value": "Meridian Healthcare Services"}
     ],
     "contextual_entities": ["Project Atlas", "consortium bid", "$8.5B", "$1.5B equity each", "$4.0B term loan", "$1.0B mezzanine"],
@@ -829,15 +829,15 @@
     "id": "IB150",
     "industry": "investment_banking",
     "role_perspective": "restructuring_specialist",
-    "prompt": "The creditor committee for Pinnacle Retail Group has rejected the 363 sale proposal from Cerberus at $220M. The secured lenders led by Deutsche Bank want a credit bid at $180M to take control. The company has 45 days of cash runway remaining.",
+    "prompt": "The creditor committee for Pinnacle Retail Group has rejected the 363 sale proposal from Hargrove Capital at $220M. The secured lenders led by Nordvale Bank want a credit bid at $180M to take control. The company has 45 days of cash runway remaining.",
     "label": "CRITICAL",
     "sensitivity_types": ["RESTRUCTURING_PLAN", "CREDITOR_DETAILS", "BID_TERMS"],
     "reasoning": "Names debtor, bidder, lead secured lender, specific bid amounts, credit bid strategy, and critical cash runway information.",
     "regulations": ["Securities Exchange Act", "SEC Rule 10b-5", "NDA"],
     "pii_entities": [
       {"type": "ORGANIZATION", "value": "Pinnacle Retail Group"},
-      {"type": "ORGANIZATION", "value": "Cerberus"},
-      {"type": "ORGANIZATION", "value": "Deutsche Bank"}
+      {"type": "ORGANIZATION", "value": "Hargrove Capital"},
+      {"type": "ORGANIZATION", "value": "Nordvale Bank"}
     ],
     "contextual_entities": ["363 sale", "$220M proposal", "credit bid $180M", "45 days cash runway", "creditor committee"],
     "confidence": 0.99
@@ -846,31 +846,31 @@
     "id": "IB151",
     "industry": "investment_banking",
     "role_perspective": "associate",
-    "prompt": "Project Lighthouse final bid analysis: Nordic Capital at $38/share (all cash), Advent International at $36/share with a $2/share CVR tied to FDA approval, and the management-led MBO at $34/share with 100% rollover. Recommend we go with Nordic given certainty of close.",
+    "prompt": "Project Lighthouse final bid analysis: Nordhaven Capital at $38/share (all cash), Alivera Capital at $36/share with a $2/share CVR tied to FDA approval, and the management-led MBO at $34/share with 100% rollover. Recommend we go with Nordic given certainty of close.",
     "label": "CRITICAL",
     "sensitivity_types": ["DEAL_CODENAME", "BID_TERMS", "SPONSOR_IDENTITY"],
     "reasoning": "Contains codename, three named bidders with specific prices and deal structures, and a recommendation for an active competitive process.",
     "regulations": ["SEC Rule 10b-5", "Regulation FD", "NDA", "Chinese Wall"],
     "pii_entities": [
-      {"type": "ORGANIZATION", "value": "Nordic Capital"},
-      {"type": "ORGANIZATION", "value": "Advent International"}
+      {"type": "ORGANIZATION", "value": "Nordhaven Capital"},
+      {"type": "ORGANIZATION", "value": "Alivera Capital"}
     ],
-    "contextual_entities": ["Project Lighthouse", "$38/share Nordic", "$36 + $2 CVR Advent", "$34 MBO", "FDA approval CVR"],
+    "contextual_entities": ["Project Lighthouse", "$38/share Nordic", "$36 + $2 CVR Alivera", "$34 MBO", "FDA approval CVR"],
     "confidence": 0.99
   },
   {
     "id": "IB152",
     "industry": "investment_banking",
     "role_perspective": "md_coverage",
-    "prompt": "Summit Aerospace is being approached by both Lockheed Martin and L3Harris for a potential acquisition. Summit's CEO wants to explore a sale at no less than 16x forward EBITDA, which implies roughly $2.4B. We have an NDA in place with both parties.",
+    "prompt": "Summit Aerospace is being approached by both Aerolon Defense Systems and Tripoint Aerospace for a potential acquisition. Summit's CEO wants to explore a sale at no less than 16x forward EBITDA, which implies roughly $2.4B. We have an NDA in place with both parties.",
     "label": "CRITICAL",
     "sensitivity_types": ["BID_TERMS", "MNPI", "SPONSOR_IDENTITY"],
     "reasoning": "Names target and two potential acquirers, specific valuation floor, and confirms active NDA-covered discussions.",
     "regulations": ["SEC Rule 10b-5", "Regulation FD", "NDA", "Chinese Wall"],
     "pii_entities": [
       {"type": "ORGANIZATION", "value": "Summit Aerospace"},
-      {"type": "ORGANIZATION", "value": "Lockheed Martin"},
-      {"type": "ORGANIZATION", "value": "L3Harris"}
+      {"type": "ORGANIZATION", "value": "Aerolon Defense Systems"},
+      {"type": "ORGANIZATION", "value": "Tripoint Aerospace"}
     ],
     "contextual_entities": ["16x forward EBITDA", "$2.4B implied valuation", "NDA in place", "dual acquirer interest"],
     "confidence": 0.99
@@ -908,15 +908,15 @@
     "id": "IB155",
     "industry": "investment_banking",
     "role_perspective": "restructuring_specialist",
-    "prompt": "The plan support agreement for Bridgewater Media requires 66.7% of first lien holders to sign by March 20th. Oaktree and Elliott have committed representing 45% of the class. We need another $300M in claims to reach the threshold. The equitization ratio gives new equity 85% to first lien and 15% to second lien.",
+    "prompt": "The plan support agreement for Bridgewater Media requires 66.7% of first lien holders to sign by March 20th. Timberland Capital and Stonebridge Advisors have committed representing 45% of the class. We need another $300M in claims to reach the threshold. The equitization ratio gives new equity 85% to first lien and 15% to second lien.",
     "label": "CRITICAL",
     "sensitivity_types": ["RESTRUCTURING_PLAN", "CREDITOR_DETAILS"],
     "reasoning": "Names debtor and key creditors, contains voting thresholds, commitment levels, deadline, and equitization ratios for a restructuring plan.",
     "regulations": ["Securities Exchange Act", "SEC Rule 10b-5", "NDA"],
     "pii_entities": [
       {"type": "ORGANIZATION", "value": "Bridgewater Media"},
-      {"type": "ORGANIZATION", "value": "Oaktree"},
-      {"type": "ORGANIZATION", "value": "Elliott"}
+      {"type": "ORGANIZATION", "value": "Timberland Capital"},
+      {"type": "ORGANIZATION", "value": "Stonebridge"}
     ],
     "contextual_entities": ["plan support agreement", "66.7% threshold", "45% committed", "$300M claims gap", "85/15 equitization"],
     "confidence": 0.99
@@ -925,13 +925,13 @@
     "id": "IB156",
     "industry": "investment_banking",
     "role_perspective": "associate",
-    "prompt": "Project Gemini syndication is struggling. Morgan Stanley flexed the TLB from SOFR + 400 to SOFR + 475 and moved the OID from 99.5 to 97. Total issuance is $1.1B. We may need to hold $200M on our balance sheet if we can't clear the book by Friday.",
+    "prompt": "Project Gemini syndication is struggling. Whitfield Securities flexed the TLB from SOFR + 400 to SOFR + 475 and moved the OID from 99.5 to 97. Total issuance is $1.1B. We may need to hold $200M on our balance sheet if we can't clear the book by Friday.",
     "label": "CRITICAL",
     "sensitivity_types": ["DEAL_CODENAME", "SYNDICATION_TERMS", "MNPI"],
     "reasoning": "Contains codename, named arranger, original and flexed pricing, OID change, issuance size, potential balance sheet retention, and deadline.",
     "regulations": ["SEC Rule 10b-5", "FINRA", "NDA", "Chinese Wall"],
     "pii_entities": [
-      {"type": "ORGANIZATION", "value": "Morgan Stanley"}
+      {"type": "ORGANIZATION", "value": "Whitfield Securities"}
     ],
     "contextual_entities": ["Project Gemini", "SOFR + 400 to +475 flex", "97 OID", "$1.1B issuance", "$200M hold", "balance sheet risk"],
     "confidence": 0.99
@@ -1032,15 +1032,15 @@
     "id": "IB163",
     "industry": "investment_banking",
     "role_perspective": "restructuring_specialist",
-    "prompt": "Monarch Holdings' Chapter 11 plan includes a rights offering backstopped by Canyon Capital at $150M, giving them 40% of the reorganized equity. Existing equity holders are getting wiped out. The confirmed plan also includes a $75M exit facility from Ares Capital.",
+    "prompt": "Monarch Holdings' Chapter 11 plan includes a rights offering backstopped by Ravencrest Capital at $150M, giving them 40% of the reorganized equity. Existing equity holders are getting wiped out. The confirmed plan also includes a $75M exit facility from Eldenbridge Capital.",
     "label": "CRITICAL",
     "sensitivity_types": ["RESTRUCTURING_PLAN", "CREDITOR_DETAILS", "SPONSOR_IDENTITY"],
     "reasoning": "Names the debtor, backstop provider with equity allocation, rights offering size, treatment of existing equity, and exit facility details.",
     "regulations": ["Securities Exchange Act", "SEC Rule 10b-5", "NDA"],
     "pii_entities": [
       {"type": "ORGANIZATION", "value": "Monarch Holdings"},
-      {"type": "ORGANIZATION", "value": "Canyon Capital"},
-      {"type": "ORGANIZATION", "value": "Ares Capital"}
+      {"type": "ORGANIZATION", "value": "Ravencrest Capital"},
+      {"type": "ORGANIZATION", "value": "Eldenbridge Capital"}
     ],
     "contextual_entities": ["Chapter 11 plan", "$150M rights offering", "40% reorganized equity", "equity wipeout", "$75M exit facility"],
     "confidence": 0.99
@@ -1162,14 +1162,14 @@
     "id": "IB171",
     "industry": "investment_banking",
     "role_perspective": "md_coverage",
-    "prompt": "Project Monarch is a take-private of Silverleaf Technologies by Warburg Pincus at $72 per share. The go-shop period is 40 days with a tiered breakup fee: 2.5% during go-shop, 3.5% after. The board vote is expected June 15th. We need to file the proxy within 20 days of signing.",
+    "prompt": "Project Monarch is a take-private of Silverleaf Technologies by Warhaven Capital at $72 per share. The go-shop period is 40 days with a tiered breakup fee: 2.5% during go-shop, 3.5% after. The board vote is expected June 15th. We need to file the proxy within 20 days of signing.",
     "label": "CRITICAL",
     "sensitivity_types": ["DEAL_CODENAME", "BID_TERMS", "SPONSOR_IDENTITY", "BREAKUP_FEE", "EXCLUSIVITY_TERMS"],
     "reasoning": "Contains codename, named target and sponsor, price, go-shop terms, tiered breakup fees, board vote date, and proxy timeline.",
     "regulations": ["SEC Rule 10b-5", "Regulation FD", "Securities Exchange Act", "NDA", "Chinese Wall"],
     "pii_entities": [
       {"type": "ORGANIZATION", "value": "Silverleaf Technologies"},
-      {"type": "ORGANIZATION", "value": "Warburg Pincus"}
+      {"type": "ORGANIZATION", "value": "Warhaven Capital"}
     ],
     "contextual_entities": ["Project Monarch", "take-private", "$72 per share", "40-day go-shop", "2.5%/3.5% tiered breakup", "June 15th vote"],
     "confidence": 0.99
@@ -1194,13 +1194,13 @@
     "id": "IB173",
     "industry": "investment_banking",
     "role_perspective": "vp_banking",
-    "prompt": "The syndication for Project Thunderbolt has cleared. BofA priced the $650M TLB at SOFR + 350 with a 99.5 OID. The $150M revolver is undrawn. Investor demand was 3x oversubscribed. Final allocations go out Monday morning.",
+    "prompt": "The syndication for Project Thunderbolt has cleared. Claremont National priced the $650M TLB at SOFR + 350 with a 99.5 OID. The $150M revolver is undrawn. Investor demand was 3x oversubscribed. Final allocations go out Monday morning.",
     "label": "CRITICAL",
     "sensitivity_types": ["DEAL_CODENAME", "SYNDICATION_TERMS"],
     "reasoning": "Contains codename, named arranger, exact pricing, OID, facility sizes, oversubscription level, and allocation timeline.",
     "regulations": ["SEC Rule 10b-5", "FINRA", "NDA"],
     "pii_entities": [
-      {"type": "ORGANIZATION", "value": "BofA"}
+      {"type": "ORGANIZATION", "value": "Claremont National"}
     ],
     "contextual_entities": ["Project Thunderbolt", "$650M TLB", "SOFR + 350", "99.5 OID", "$150M revolver", "3x oversubscribed"],
     "confidence": 0.98
@@ -1257,7 +1257,7 @@
     "id": "IB177",
     "industry": "investment_banking",
     "role_perspective": "analyst",
-    "prompt": "Project Neptune LBO memo: Carlisle Capital is acquiring NovaTech Solutions for $4.1B. Financing includes $2.5B first lien from Citi/RBC, $500M second lien, and $1.1B equity. Management retains 10% through options vesting over 4 years. The deal closes subject to HSR clearance, expected within 60 days.",
+    "prompt": "Project Neptune LBO memo: Carlisle Capital is acquiring NovaTech Solutions for $4.1B. Financing includes $2.5B first lien from Citi/Ridgemont Royal, $500M second lien, and $1.1B equity. Management retains 10% through options vesting over 4 years. The deal closes subject to HSR clearance, expected within 60 days.",
     "label": "CRITICAL",
     "sensitivity_types": ["DEAL_CODENAME", "LBO_TERMS", "SPONSOR_IDENTITY", "SYNDICATION_TERMS"],
     "reasoning": "Contains codename, names sponsor and target, complete capital structure, arranger names, management terms, and regulatory timeline.",
@@ -1266,7 +1266,7 @@
       {"type": "ORGANIZATION", "value": "Carlisle Capital"},
       {"type": "ORGANIZATION", "value": "NovaTech Solutions"},
       {"type": "ORGANIZATION", "value": "Citi"},
-      {"type": "ORGANIZATION", "value": "RBC"}
+      {"type": "ORGANIZATION", "value": "Ridgemont Royal"}
     ],
     "contextual_entities": ["Project Neptune", "$4.1B acquisition", "$2.5B first lien", "$500M second lien", "$1.1B equity", "10% management options", "HSR clearance"],
     "confidence": 0.99
@@ -1275,14 +1275,14 @@
     "id": "IB178",
     "industry": "investment_banking",
     "role_perspective": "md_coverage",
-    "prompt": "Project Summit: We need to present to Westfield Corp's board on Tuesday regarding Blackrock's unsolicited $18B bid for the real estate portfolio. The bid implies a 5% cap rate on NOI of $900M. The board is inclined to reject and pursue a REIT conversion instead. Prepare the defense materials.",
+    "prompt": "Project Summit: We need to present to Westfield Corp's board on Tuesday regarding Ridgemont Asset Management's unsolicited $18B bid for the real estate portfolio. The bid implies a 5% cap rate on NOI of $900M. The board is inclined to reject and pursue a REIT conversion instead. Prepare the defense materials.",
     "label": "CRITICAL",
     "sensitivity_types": ["BID_TERMS", "MNPI", "DEAL_CODENAME"],
     "reasoning": "Contains codename, names target and bidder, specific bid amount, cap rate analysis, NOI, board inclination, and alternative strategy.",
     "regulations": ["SEC Rule 10b-5", "Regulation FD", "Securities Exchange Act", "NDA", "Chinese Wall"],
     "pii_entities": [
       {"type": "ORGANIZATION", "value": "Westfield Corp"},
-      {"type": "ORGANIZATION", "value": "Blackrock"}
+      {"type": "ORGANIZATION", "value": "Ridgemont Asset Management"}
     ],
     "contextual_entities": ["Project Summit", "$18B unsolicited bid", "5% cap rate", "$900M NOI", "REIT conversion", "board rejection"],
     "confidence": 0.99

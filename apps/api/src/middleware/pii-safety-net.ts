@@ -79,12 +79,46 @@ const KNOWN_FAKE_PATTERNS = new Set([
   'postgres://user:pass@localhost:5432/testdb',
 ]);
 
-function isKnownFake(matchText: string): boolean {
+function isKnownFake(matchText: string, firmWhitelist?: Set<string>): boolean {
   const lower = matchText.toLowerCase();
   for (const fake of KNOWN_FAKE_PATTERNS) {
     if (lower.includes(fake)) return true;
   }
+  // Check firm-specific whitelist (admin-configured synthetic test data)
+  if (firmWhitelist) {
+    for (const pattern of firmWhitelist) {
+      if (lower.includes(pattern.toLowerCase())) return true;
+    }
+  }
   return false;
+}
+
+// Cache for firm-specific PII whitelists (5 minute TTL)
+const _firmWhitelistCache = new Map<string, { entries: Set<string>; expiresAt: number }>();
+
+/**
+ * Load firm-specific PII whitelist from firm config.
+ * Admins can configure `piiWhitelist` array in firm config JSONB to add
+ * synthetic test data patterns that should not trigger the safety net.
+ */
+export function loadFirmWhitelist(firmId: string, firmConfig: Record<string, any>): Set<string> | undefined {
+  const cached = _firmWhitelistCache.get(firmId);
+  if (cached && cached.expiresAt > Date.now()) return cached.entries;
+
+  const whitelist = firmConfig?.piiWhitelist;
+  if (!Array.isArray(whitelist) || whitelist.length === 0) return undefined;
+
+  // Limit to 100 entries, each max 200 chars (prevent abuse)
+  const entries = new Set(
+    whitelist
+      .filter((e: unknown) => typeof e === 'string' && e.length > 0 && e.length <= 200)
+      .slice(0, 100) as string[]
+  );
+
+  if (entries.size === 0) return undefined;
+
+  _firmWhitelistCache.set(firmId, { entries, expiresAt: Date.now() + 5 * 60 * 1000 });
+  return entries;
 }
 
 // ─── Scanner ─────────────────────────────────────────────────────────────────
@@ -99,7 +133,7 @@ export interface PIIScanResult {
  * Scan text for unmasked PII patterns.
  * Returns types found, but NEVER the matched text values.
  */
-export function scanForUnmaskedPII(text: string): PIIScanResult {
+export function scanForUnmaskedPII(text: string, firmWhitelist?: Set<string>): PIIScanResult {
   const detectedTypes = new Set<string>();
   let detectedCount = 0;
 
@@ -108,8 +142,8 @@ export function scanForUnmaskedPII(text: string): PIIScanResult {
     pattern.pattern.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = pattern.pattern.exec(text)) !== null) {
-      // Skip known fakes from our pseudonymizer pools
-      if (isKnownFake(match[0])) continue;
+      // Skip known fakes from our pseudonymizer pools + firm whitelist
+      if (isKnownFake(match[0], firmWhitelist)) continue;
 
       detectedTypes.add(pattern.type);
       detectedCount++;
@@ -151,7 +185,17 @@ export const piiSafetyNetMiddleware = createMiddleware(async (c, next) => {
       return;
     }
 
-    const scanResult = scanForUnmaskedPII(textToScan);
+    // Load firm-specific whitelist for synthetic test data
+    let firmWhitelist: Set<string> | undefined;
+    try {
+      const firmId = c.get('firmId');
+      const firmConfig = c.get('firmConfig') as Record<string, any> | undefined;
+      if (firmId && firmConfig) {
+        firmWhitelist = loadFirmWhitelist(firmId, firmConfig);
+      }
+    } catch { /* non-critical — proceed without whitelist */ }
+
+    const scanResult = scanForUnmaskedPII(textToScan, firmWhitelist);
 
     if (!scanResult.clean) {
       // Log the detection (type + count only, NEVER the matched text)

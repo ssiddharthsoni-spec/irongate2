@@ -34,8 +34,37 @@ export const securityHeadersMiddleware = createMiddleware(async (c, next) => {
   // Disable legacy XSS auditor — CSP is the modern defense
   c.header('X-XSS-Protection', '0');
 
-  // Content Security Policy — restrict resource origins to self
-  c.header('Content-Security-Policy', "default-src 'self'");
+  // Content Security Policy — restrict resource origins comprehensively.
+  // The /docs page needs Swagger UI scripts/styles from unpkg; all other
+  // routes are JSON-only and get a maximally restrictive policy.
+  const path = new URL(c.req.url).pathname;
+  if (path === '/docs') {
+    c.header('Content-Security-Policy', [
+      "default-src 'none'",
+      "script-src https://unpkg.com 'unsafe-inline'",
+      "style-src https://unpkg.com 'unsafe-inline'",
+      "img-src 'self' data:",
+      "connect-src 'self'",
+      "frame-ancestors 'none'",
+      "base-uri 'none'",
+      "form-action 'none'",
+      "object-src 'none'",
+    ].join('; '));
+  } else {
+    c.header('Content-Security-Policy', [
+      "default-src 'none'",
+      "script-src 'none'",
+      "object-src 'none'",
+      "base-uri 'none'",
+      "form-action 'none'",
+      "frame-ancestors 'none'",
+      "img-src 'none'",
+      "media-src 'none'",
+      "font-src 'none'",
+      "connect-src 'self'",
+      "style-src 'none'",
+    ].join('; '));
+  }
 
   // Limit referrer information sent on cross-origin navigation
   c.header('Referrer-Policy', 'strict-origin-when-cross-origin');

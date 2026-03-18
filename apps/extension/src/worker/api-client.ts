@@ -106,6 +106,7 @@ export async function apiRequest<T>(options: RequestOptions): Promise<T> {
       // Build auth headers: prefer API key, fall back to JWT
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
+        'X-Extension-Version': chrome.runtime?.getManifest?.()?.version || '0.0.0',
       };
       if (config.firmId) {
         headers['X-Firm-ID'] = config.firmId;

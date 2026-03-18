@@ -13,7 +13,7 @@ function getPdfjs() {
   return pdfjsPromise;
 }
 // Pre-warm: trigger the import immediately so it's cached before the first scan
-void getPdfjs().catch(() => {});
+void getPdfjs().catch((err) => console.error('[PDF.js] Pre-warm import failed:', err));
 
 /**
  * Extract plain text from a document buffer based on file extension.

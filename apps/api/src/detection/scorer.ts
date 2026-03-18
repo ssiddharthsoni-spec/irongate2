@@ -102,7 +102,9 @@ export function score(text: string, entities: DetectedEntity[]): ScoreResult {
   const contextScore = computeContextScore(text, entities);
   const legalBoost = computeLegalBoost(text);
 
-  const rawScore = entityScore + volumeScore + contextScore + legalBoost;
+  let rawScore = entityScore + volumeScore + contextScore + legalBoost;
+  // NaN fail-safe: if any component produced NaN, default to HIGH (fail-closed, never passthrough)
+  if (!Number.isFinite(rawScore)) rawScore = 70;
   const finalScore = Math.min(100, Math.max(0, Math.round(rawScore)));
   const level = scoreToLevel(finalScore);
   const explanation = generateExplanation(finalScore, level, entities, text);
@@ -164,7 +166,9 @@ export async function scoreFirmAware(
 
   // 6. Combine all components
   const baseScore = entityScore + volumeScore + contextScore + legalBoost;
-  const adjustedScore = (baseScore * documentMultiplier) + graphBoost + conversationBoost;
+  let adjustedScore = (baseScore * documentMultiplier) + graphBoost + conversationBoost;
+  // NaN fail-safe: if any component produced NaN, default to HIGH (fail-closed, never passthrough)
+  if (!Number.isFinite(adjustedScore)) adjustedScore = 70;
   const finalScore = Math.min(100, Math.max(0, Math.round(adjustedScore)));
   const level = scoreToLevel(finalScore);
   const explanation = generateExplanation(finalScore, level, entities, text, graphReasons);
@@ -191,7 +195,8 @@ function computeEntityScore(entities: DetectedEntity[], weights: Record<string, 
   let s = 0;
   for (const entity of entities) {
     const weight = weights[entity.type] || 5;
-    s += weight * entity.confidence;
+    const confidence = Number.isFinite(entity.confidence) ? entity.confidence : 0.5;
+    s += weight * confidence;
   }
 
   // Combination bonus

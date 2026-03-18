@@ -135,7 +135,8 @@ describe('Compliance Enforcer', () => {
       expect(ids).toContain('ccpa');
       expect(ids).toContain('itar');
       expect(ids).toContain('glba');
-      expect(ids).toHaveLength(7);
+      expect(ids).toContain('ferpa');
+      expect(ids).toHaveLength(8);
     });
   });
 });

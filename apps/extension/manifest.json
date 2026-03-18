@@ -19,8 +19,7 @@
     "https://chat.openai.com/*",
     "https://claude.ai/*",
     "https://gemini.google.com/*",
-    "https://irongate-api.onrender.com/*",
-    "https://irongate-api-staging.onrender.com/*"
+    "https://irongate-api.onrender.com/*"
   ],
   "optional_host_permissions": [
     "https://copilot.microsoft.com/*",

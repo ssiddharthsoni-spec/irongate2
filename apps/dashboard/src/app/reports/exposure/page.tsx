@@ -79,42 +79,7 @@ function sensitivityScoreBg(score: number): string {
 /*  Demo data                                                          */
 /* ------------------------------------------------------------------ */
 
-function getDemoReport(days: number): ExposureReport {
-  return {
-    reportDate: new Date().toISOString(),
-    periodDays: days,
-    executiveSummary: {
-      totalInteractions: 12847,
-      uniqueUsers: 156,
-      avgSensitivityScore: 34.2,
-      highRiskInteractions: 1568,
-      criticalInteractions: 334,
-      maxSensitivityScore: 97,
-    },
-    toolBreakdown: [
-      { toolId: 'ChatGPT', count: 6421, avgScore: 32.5, highRiskCount: 789 },
-      { toolId: 'Claude', count: 3212, avgScore: 38.1, highRiskCount: 456 },
-      { toolId: 'Gemini', count: 1927, avgScore: 30.8, highRiskCount: 234 },
-      { toolId: 'Copilot', count: 1287, avgScore: 28.4, highRiskCount: 89 },
-    ],
-    scoreDistribution: { low: 7823, medium: 3456, high: 1234, critical: 334 },
-    dailyTrend: Array.from({ length: days }, (_, i) => ({
-      date: new Date(Date.now() - (days - 1 - i) * 86400000)
-        .toISOString()
-        .split('T')[0],
-      count: Math.floor(300 + Math.random() * 200),
-      avgScore: Math.floor(25 + Math.random() * 25),
-    })),
-    recommendations: [
-      'Deploy Iron Gate Proxy Mode to automatically protect sensitive prompts before they reach external AI tools.',
-      'Implement mandatory user training on AI tool data hygiene and acceptable use policies.',
-      'Configure custom sensitivity thresholds aligned with your organization\'s risk appetite.',
-      'Enable real-time Slack/Teams alerts for critical sensitivity events (score > 85).',
-      'Schedule weekly exposure report reviews with your security and compliance teams.',
-      'Restrict high-sensitivity data categories (SSN, API keys, credentials) from all AI tools.',
-    ],
-  };
-}
+/* No demo data — dashboard must show real data or clear error state */
 
 /* ------------------------------------------------------------------ */
 /*  KPI Card                                                           */
@@ -347,22 +312,18 @@ export default function ExposureReportPage() {
   const [report, setReport] = useState<ExposureReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(30);
-  const [isDemoData, setIsDemoData] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   const fetchReport = useCallback(async (periodDays: number) => {
     try {
       setLoading(true);
-      setIsDemoData(false);
+      setFetchError(null);
       const response = await apiFetch(`/reports/exposure?days=${periodDays}`);
-      if (response.ok) {
-        setReport(await response.json());
-      } else {
-        setReport(getDemoReport(periodDays));
-        setIsDemoData(true);
-      }
-    } catch {
-      setReport(getDemoReport(periodDays));
-      setIsDemoData(true);
+      if (!response.ok) throw new Error(`Server responded with ${response.status}`);
+      setReport(await response.json());
+    } catch (err: any) {
+      setReport(null);
+      setFetchError(err.message || 'Unable to connect to API. Check your connection and try again.');
     } finally {
       setLoading(false);
     }
@@ -387,7 +348,19 @@ export default function ExposureReportPage() {
   if (!report) {
     return (
       <div className="flex items-center justify-center h-96">
-        <p className="text-red-500">Failed to load report.</p>
+        <div className="text-center max-w-md">
+          <svg className="w-12 h-12 text-red-400 mx-auto mb-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+          </svg>
+          <p className="text-red-600 dark:text-red-400 font-medium mb-2">Failed to load report</p>
+          <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mb-4">{fetchError || 'An unexpected error occurred.'}</p>
+          <button
+            onClick={() => fetchReport(days)}
+            className="px-5 py-2 bg-iron-600 hover:bg-iron-700 text-white text-sm font-medium rounded-lg transition-colors"
+          >
+            Retry
+          </button>
+        </div>
       </div>
     );
   }
@@ -396,26 +369,6 @@ export default function ExposureReportPage() {
 
   return (
     <div className="max-w-5xl mx-auto">
-      {/* ---- Demo Data Warning Banner ---- */}
-      {isDemoData && (
-        <div className="mb-6 rounded-xl bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 px-5 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <svg className="w-5 h-5 text-yellow-600 dark:text-yellow-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
-            </svg>
-            <p className="text-sm font-medium text-yellow-800 dark:text-yellow-300">
-              Displaying sample data — API is unreachable. Connect to your Iron Gate instance to see real metrics.
-            </p>
-          </div>
-          <button
-            onClick={() => fetchReport(days)}
-            className="ml-4 px-4 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white text-sm font-medium rounded-lg transition-colors flex-shrink-0"
-          >
-            Retry Connection
-          </button>
-        </div>
-      )}
-
       {/* ---- Header ---- */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <div>

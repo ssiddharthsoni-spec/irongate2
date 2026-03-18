@@ -87,7 +87,6 @@ export default function TeamSettingsPage() {
       setMembers((prev) => prev.map((m) => (m.id === memberId ? { ...m, role: newRole } : m)));
     } catch {
       setError('Failed to update role. Please try again.');
-      setTimeout(() => setError(null), 5000);
     }
   }
 
@@ -98,7 +97,6 @@ export default function TeamSettingsPage() {
       setMembers((prev) => prev.filter((m) => m.id !== memberId));
     } catch {
       setError('Failed to remove team member. Please try again.');
-      setTimeout(() => setError(null), 5000);
     }
     setConfirmRemoveId(null);
     setRemovingId(null);

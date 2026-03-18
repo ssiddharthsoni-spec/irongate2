@@ -166,8 +166,12 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
   const [currentTool, setCurrentTool] = useState<string | null>(null);
   const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([]);
   const [lastScore, setLastScore] = useState<SensitivityScore | null>(null);
+  const lastScoreRef = useRef<any>(null);
+  // Keep ref in sync so processDetectionResult can read latest without re-render
+  useEffect(() => { lastScoreRef.current = lastScore; }, [lastScore]);
   const [feedbackOpen, setFeedbackOpen] = useState<number | null>(null);
   const [feedbackSent, setFeedbackSent] = useState<Set<number>>(new Set());
+  const [promptFeedback, setPromptFeedback] = useState<'yes' | 'no' | 'not_sensitive' | null>(null);
 
   // Prompt Inspector state
   const [inspectorData, setInspectorData] = useState<PromptInspectorData | null>(null);
@@ -255,6 +259,14 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
   const [apiKeyDraft, setApiKeyDraft] = useState('');
   const [apiKeySaved, setApiKeySaved] = useState(false);
   const [protectionHealthy, setProtectionHealthy] = useState<boolean | null>(null);
+  const [notifLevel, setNotifLevel] = useState<'all' | 'warnings' | 'blocks' | 'silent'>('all');
+
+  // Load notification preference on mount
+  useEffect(() => {
+    chrome.storage.local.get('notification_level').then(r => {
+      if (r.notification_level) setNotifLevel(r.notification_level);
+    }).catch(() => {});
+  }, []);
 
   // Enterprise managed mode state
   const [isManaged, setIsManaged] = useState(false);
@@ -263,6 +275,11 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
   // Kill switch and connectivity state
   const [killSwitchActive, setKillSwitchActive] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  // Compliance report state
+  const [complianceReport, setComplianceReport] = useState<Record<string, any> | null>(null);
+  const [complianceOpen, setComplianceOpen] = useState(false);
+  const [complianceLoading, setComplianceLoading] = useState(false);
 
   // Active tab tracking for multi-tab awareness
   const [activeTabId, setActiveTabId] = useState<number | null>(null);
@@ -429,6 +446,21 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
     await onSignOut();
   }, [onSignOut]);
 
+  // Fetch compliance report from worker
+  const fetchComplianceReport = useCallback(async () => {
+    setComplianceLoading(true);
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'GET_COMPLIANCE_REPORT' });
+      if (response?.ok && response.report) {
+        setComplianceReport(response.report);
+      }
+    } catch (err) {
+      console.warn('[Iron Gate] Failed to fetch compliance report:', err);
+    } finally {
+      setComplianceLoading(false);
+    }
+  }, []);
+
   // Toggle mode and notify service worker
   const handleModeToggle = useCallback(async () => {
     if (isManaged) return; // Locked in enterprise managed mode
@@ -471,6 +503,24 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
       setFeedbackOpen(null);
     } catch (err) {
       console.warn('[Iron Gate] Failed to send feedback:', err);
+    }
+  }, [lastScore]);
+
+  const sendPromptFeedback = useCallback(async (rating: 'yes' | 'no' | 'not_sensitive') => {
+    if (!lastScore) return;
+    try {
+      await chrome.runtime.sendMessage({
+        type: 'PROMPT_FEEDBACK',
+        payload: {
+          score: lastScore.score,
+          level: lastScore.level,
+          entityCount: lastScore.entities.length,
+          rating,
+        },
+      });
+      setPromptFeedback(rating);
+    } catch (err) {
+      console.warn('[Iron Gate] Failed to send prompt feedback:', err);
     }
   }, [lastScore]);
 
@@ -540,51 +590,60 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
             setCurrentTool(response.aiToolName || response.aiTool || 'AI Tool');
 
             // Clear stale detection data when switching to a different AI tool
-            if (previousToolId && previousToolId !== toolId) {
+            const toolChanged = previousToolId && previousToolId !== toolId;
+            if (toolChanged) {
               setLastScore(null);
+              lastScoreRef.current = null;
               setInspectorData(null);
-              chrome.storage.local.remove('lastScore');
+              chrome.storage.local.remove(['lastScore', 'lastDetectionResult']);
             }
             previousToolId = toolId;
+
+            // Fetch per-tab detection state from service worker
+            // Skip if the tool just changed — tab state contains stale data from the old tool
+            if (!toolChanged) {
+              chrome.runtime.sendMessage(
+                { type: 'GET_TAB_STATE', payload: { tabId } },
+                (resp2) => {
+                  if (chrome.runtime.lastError) return;
+                  if (resp2?.ok && resp2.state) {
+                    const s = resp2.state;
+                    // Only restore tab state if it's from the same AI tool — prevents
+                    // stale ChatGPT results showing when navigating to Claude in same tab
+                    if (s.aiToolId && s.aiToolId !== toolId) return;
+                    if (s.lastScore !== null) {
+                      setLastScore({
+                        score: s.lastScore,
+                        level: s.lastLevel || 'low',
+                        explanation: s.lastExplanation || '',
+                        entities: s.lastEntities || [],
+                        aiToolId: s.aiToolId,
+                      } as any);
+                    }
+                    if (s.lastMaskedPrompt) {
+                      setInspectorData({
+                        originalPrompt: s.lastOriginalPrompt || '',
+                        maskedPrompt: s.lastMaskedPrompt || '',
+                        pseudonymMappings: s.lastPseudonymMappings || [],
+                      });
+                    }
+                  }
+                }
+              );
+            }
           } else {
             setStatus('idle');
             setCurrentTool(null);
             // Clear stale detection when navigating away from AI tools
             if (previousToolId) {
               setLastScore(null);
+              lastScoreRef.current = null;
               setInspectorData(null);
-              chrome.storage.local.remove('lastScore');
+              chrome.storage.local.remove(['lastScore', 'lastDetectionResult']);
               previousToolId = null;
             }
           }
         }); } catch { /* Tab may be closing or extension context invalidated */ }
-
-        // Fetch per-tab detection state from service worker
-        chrome.runtime.sendMessage(
-          { type: 'GET_TAB_STATE', payload: { tabId } },
-          (response) => {
-            if (chrome.runtime.lastError) return;
-            if (response?.ok && response.state) {
-              const s = response.state;
-              if (s.lastScore !== null) {
-                setLastScore({
-                  score: s.lastScore,
-                  level: s.lastLevel || 'low',
-                  explanation: s.lastExplanation || '',
-                  entities: s.lastEntities || [],
-                  aiToolId: s.aiToolId,
-                } as any);
-              }
-              if (s.lastMaskedPrompt) {
-                setInspectorData({
-                  originalPrompt: s.lastOriginalPrompt || '',
-                  maskedPrompt: s.lastMaskedPrompt || '',
-                  pseudonymMappings: s.lastPseudonymMappings || [],
-                });
-              }
-            }
-          }
-        );
       });
     }
 
@@ -615,13 +674,31 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
     };
     chrome.tabs.onActivated.addListener(activatedListener);
 
-    // Listen for detection results from service worker AND content scripts
-    const messageListener = (message: any) => {
-      if (message.type === 'SENSITIVITY_SCORE') {
-        const newScore = message.payload;
-        const scoreTabId = newScore.tabId;
+    // ── Core detection result processor — used by both runtime messages AND storage backup ──
+    // Deduplicates via _storageTimestamp to prevent double-processing when both paths deliver.
+    let _lastProcessedTimestamp = 0;
 
-        // Always add to recent activity regardless of which tab
+    function processDetectionResult(newScore: any, source: string) {
+      if (!newScore) {
+        console.warn('[Iron Gate Sidepanel] processDetectionResult called with null/undefined from', source);
+        return;
+      }
+      // Deduplicate: if we already processed this exact result (from another delivery path), skip
+      const ts = newScore._storageTimestamp;
+      if (ts && ts === _lastProcessedTimestamp) {
+        console.log('[Iron Gate Sidepanel] Skipping duplicate from', source, 'ts:', ts);
+        return;
+      }
+      if (ts) _lastProcessedTimestamp = ts;
+
+      const scoreTabId = newScore.tabId;
+      const isRealtime = newScore.realtime === true;
+      const isProxy = newScore.isProxy === true;
+
+      console.log(`[Iron Gate Sidepanel] PROCESSING from ${source}: score=${newScore.score}, level=${newScore.level}, isProxy=${isProxy}, entities=${newScore.entities?.length}, mappings=${newScore.pseudonymMappings?.length}, tabId=${scoreTabId}, activeTab=${activeTabIdRef.current}`);
+
+      // Only add to recent activity for proxy (pseudonymized) results.
+      if (isProxy) {
         const newItem = {
           id: crypto.randomUUID(),
           aiTool: newScore.aiToolId || 'generic',
@@ -636,41 +713,125 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
           chrome.storage.local.set({ recentActivity: updated.slice(0, 20) });
           return updated;
         });
+      }
 
-        // Only update the main display if this score is for the ACTIVE tab.
-        // Accept the score if: no tab context on the score (legacy), OR
-        // we don't know the active tab yet (null), OR tab IDs match.
-        const currentActiveTab = activeTabIdRef.current;
-        if (scoreTabId == null || currentActiveTab == null || scoreTabId === currentActiveTab) {
-          setLastScore(newScore);
-          setFeedbackSent(new Set());
-          setFeedbackOpen(null);
+      // Only update the main display if this score is for the ACTIVE tab.
+      const currentActiveTab = activeTabIdRef.current;
+      if (scoreTabId == null || currentActiveTab == null || scoreTabId === currentActiveTab) {
+        // Determine if this result should update the display.
+        // Check rules BEFORE calling setState to avoid the race where
+        // setState fires (scheduling a re-render) but shouldUpdate is false.
+        const prev = lastScoreRef.current;
 
-          // Persist lastScore for this tab
-          chrome.storage.local.set({ lastScore: newScore });
+        // RULE 1: Never let a low-score non-proxy result overwrite a RECENT proxy detection.
+        // Proxy results expire after 10 seconds — user has moved on to a new prompt.
+        const proxyAge = prev?.isProxy ? Date.now() - (_lastProxyScoreAt || 0) : Infinity;
+        const proxyIsStale = proxyAge > 10_000;
+        if (prev?.isProxy && !isProxy && prev.score > newScore.score
+            && (!newScore.entities || newScore.entities.length === 0)
+            && !proxyIsStale) {
+          console.log('[Iron Gate Sidepanel] RULE 1 suppressed: prev proxy score', prev.score, '> new', newScore.score, 'proxyAge:', proxyAge);
+          return;
+        }
+        // RULE 2: Suppress "All Clear" from non-authoritative sources,
+        // but only if there's no stale proxy result to clear.
+        if (!isProxy && !newScore.serverMode && newScore.score <= 25
+            && (!newScore.entities || newScore.entities.length === 0)
+            && !proxyIsStale) {
+          console.log('[Iron Gate Sidepanel] RULE 2 suppressed: score', newScore.score, 'entities:', newScore.entities?.length, 'proxyIsStale:', proxyIsStale);
+          return;
+        }
 
-          // Update Prompt Inspector data if available
-          if (newScore.maskedPrompt) {
-            setInspectorData({
-              originalPrompt: newScore.originalPrompt || '',
-              maskedPrompt: newScore.maskedPrompt,
-              pseudonymMappings: newScore.pseudonymMappings || [],
-            });
-            setInspectorOpen(true);
+        console.log('[Iron Gate Sidepanel] ACCEPTED → setLastScore:', newScore.score, newScore.level, 'entities:', newScore.entities?.length);
+        setLastScore(newScore);
+        setFeedbackSent(new Set());
+        setFeedbackOpen(null);
+        setPromptFeedback(null);
+        if (isProxy) _lastProxyScoreAt = Date.now();
+
+        chrome.storage.local.set({ lastScore: newScore });
+
+        if (isProxy && newScore.maskedPrompt) {
+          setInspectorData({
+            originalPrompt: newScore.originalPrompt || '',
+            maskedPrompt: newScore.maskedPrompt,
+            pseudonymMappings: newScore.pseudonymMappings || [],
+          });
+          setInspectorOpen(true);
+        }
+      }
+    }
+
+    // Shared ref for cancelling PROMPT_CLEARED debounce from any delivery path
+    let _promptClearTimerRef = { current: null as ReturnType<typeof setTimeout> | null };
+    // Track when a proxy score was last set — suppress PROMPT_CLEARED for a window after,
+    // because dom-presubmit adapters (Gemini, Copilot) fire INTERCEPTED *before* the
+    // platform clears the input, so there's no pending timer to cancel.
+    let _lastProxyScoreAt = 0;
+    const PROXY_SCORE_PROTECT_MS = 5_000;
+
+    // ── DELIVERY PATH 1: chrome.storage.onChanged listener ──
+    const storageBackupListener = (changes: Record<string, chrome.storage.StorageChange>) => {
+      if (changes.lastDetectionResult?.newValue) {
+        const result = changes.lastDetectionResult.newValue;
+        console.log('[Iron Gate Sidepanel] Storage change detected:', result.score, result.level, 'entities:', result.entities?.length, 'isProxy:', result.isProxy);
+        if (result._storageTimestamp && Date.now() - result._storageTimestamp < 60_000) {
+          // Cancel pending PROMPT_CLEARED
+          if (_promptClearTimerRef.current) { clearTimeout(_promptClearTimerRef.current); _promptClearTimerRef.current = null; }
+          processDetectionResult(result, 'storage-change');
+        }
+      }
+    };
+    chrome.storage.onChanged.addListener(storageBackupListener);
+
+    // ── DELIVERY PATH 2: Periodic storage poll (guaranteed failsafe) ──
+    let _lastPollTs = 0;
+    const storagePollInterval = setInterval(() => {
+      chrome.storage.local.get('lastDetectionResult', (data) => {
+        if (chrome.runtime.lastError) return;
+        const result = data.lastDetectionResult;
+        if (result && result._storageTimestamp && result._storageTimestamp !== _lastPollTs) {
+          if (Date.now() - result._storageTimestamp < 60_000) {
+            console.log('[Iron Gate Sidepanel] Poll found new result:', result.score, result.level, 'entities:', result.entities?.length, 'isProxy:', result.isProxy, 'ts:', result._storageTimestamp);
+            _lastPollTs = result._storageTimestamp;
+            // Cancel pending PROMPT_CLEARED
+            if (_promptClearTimerRef.current) { clearTimeout(_promptClearTimerRef.current); _promptClearTimerRef.current = null; }
+            processDetectionResult(result, 'storage-poll');
           }
         }
+      });
+    }, 2000);
+
+    // ── DELIVERY PATH 3: chrome.runtime.onMessage ──
+    const messageListener = (message: any) => {
+      if (message.type === 'SENSITIVITY_SCORE') {
+        console.log('[Iron Gate Sidepanel] Runtime message received:', message.payload?.score, message.payload?.level, 'entities:', message.payload?.entities?.length, 'isProxy:', message.payload?.isProxy);
+        // Cancel any pending PROMPT_CLEARED — a detection arrived, don't wipe it
+        if (_promptClearTimerRef.current) { clearTimeout(_promptClearTimerRef.current); _promptClearTimerRef.current = null; }
+        processDetectionResult(message.payload, 'runtime-message');
       }
 
       // ── PROMPT_CLEARED — user emptied the input field ──
-      // Reset the live score display so stale results don't persist.
+      // Debounced by 1.5s: ChatGPT clears the input immediately after submission,
+      // which races with the SENSITIVITY_SCORE from the MAIN world interceptor.
+      // If a SENSITIVITY_SCORE arrives within the window, the clear is cancelled.
       if (message.type === 'PROMPT_CLEARED') {
+        // Suppress PROMPT_CLEARED if a proxy score was recently set.
+        // dom-presubmit adapters (Gemini, Copilot) fire INTERCEPTED *before*
+        // the platform clears the input, so there's no pending timer to cancel.
+        if (Date.now() - _lastProxyScoreAt < PROXY_SCORE_PROTECT_MS) return;
+
         const clearTabId = message.payload?.tabId;
         const currentActiveTab = activeTabIdRef.current;
         if (clearTabId == null || currentActiveTab == null || clearTabId === currentActiveTab) {
-          setLastScore(null);
-          setInspectorData(null);
-          setInspectorOpen(false);
-          chrome.storage.local.remove('lastScore');
+          if (_promptClearTimerRef.current) clearTimeout(_promptClearTimerRef.current);
+          _promptClearTimerRef.current = setTimeout(() => {
+            _promptClearTimerRef.current = null;
+            setLastScore(null);
+            setInspectorData(null);
+            setInspectorOpen(false);
+            chrome.storage.local.remove('lastScore');
+          }, 1500);
         }
       }
 
@@ -686,6 +847,31 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
 
       if (message.type === 'PROTECTION_STATUS') {
         setProtectionHealthy(message.payload?.healthy ?? null);
+      }
+
+      if (message.type === 'COMPLIANCE_BLOCK') {
+        const p = message.payload;
+        setRecentActivity((prev) => {
+          const updated = [
+            {
+              id: crypto.randomUUID(),
+              aiTool: p?.aiToolId || 'unknown',
+              score: 100,
+              level: 'critical' as const,
+              entityCount: p?.entityCount || 0,
+              timestamp: new Date().toISOString(),
+              complianceBlock: true,
+              blockReason: p?.reason || 'Compliance policy violation',
+            },
+            ...prev.slice(0, 49),
+          ];
+          chrome.storage.local.set({ recentActivity: updated.slice(0, 20) });
+          return updated;
+        });
+      }
+
+      if (message.type === 'KILL_SWITCH_ACTIVATED') {
+        setProtectionHealthy(false);
       }
 
       if (message.type === 'FILE_SCAN_RESULT') {
@@ -733,8 +919,11 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
       listenerInstalledRef.current = false;
       retryTimers.forEach(clearTimeout);
       dynamicTimers.forEach(clearTimeout);
+      if (_promptClearTimerRef.current) clearTimeout(_promptClearTimerRef.current);
       clearInterval(periodicCheck);
+      clearInterval(storagePollInterval);
       chrome.runtime.onMessage.removeListener(messageListener);
+      chrome.storage.onChanged.removeListener(storageBackupListener);
       chrome.tabs.onUpdated.removeListener(tabListener);
       chrome.tabs.onActivated.removeListener(activatedListener);
     };
@@ -1169,6 +1358,23 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
             </span>
           </div>
 
+          {/* Notification Level */}
+          <label className="block text-xs font-medium text-gray-500 mb-1 mt-3">Notifications</label>
+          <select
+            value={notifLevel}
+            onChange={(e) => {
+              const val = e.target.value as typeof notifLevel;
+              setNotifLevel(val);
+              chrome.storage.local.set({ notification_level: val }).catch(() => {});
+            }}
+            className="w-full px-2 py-1.5 text-xs border rounded-md bg-gray-50 focus:outline-none focus:ring-1 focus:ring-iron-500 mb-3"
+          >
+            <option value="all">All detections</option>
+            <option value="warnings">Warnings + blocks only</option>
+            <option value="blocks">Blocks only</option>
+            <option value="silent">Silent</option>
+          </select>
+
           {/* Trust & Transparency */}
           <button
             onClick={() => { setTrustPageOpen(true); setSettingsOpen(false); }}
@@ -1219,6 +1425,11 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
         {protectionHealthy === false && (
           <p className="text-xs text-red-600 mt-2">
             Fetch interception failed on this page. Prompts may not be scanned or pseudonymized. Try refreshing the page.
+          </p>
+        )}
+        {status === 'monitoring' && protectionHealthy !== false && !lastScore && (
+          <p className="text-xs text-gray-500 mt-2">
+            Your prompts are being scanned in real-time. Sensitive data will be automatically pseudonymized before reaching the AI.
           </p>
         )}
       </div>
@@ -1451,7 +1662,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
                       <div className="space-y-1.5">
                         {inspectorData.pseudonymMappings.map((m, i) => (
                           <div key={i} className="flex items-center gap-2 text-xs bg-gray-50 rounded-md px-2.5 py-1.5 border">
-                            <span className="font-mono text-red-400">{m.original || `${m.length} chars`}</span>
+                            <span className="font-mono text-red-400">{`${m.length} chars`}</span>
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 text-gray-400 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
                               <path fillRule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clipRule="evenodd" />
                             </svg>
@@ -1474,7 +1685,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
         <div className="bg-white rounded-lg p-4 mb-4 shadow-sm border">
           <h2 className="text-sm font-medium text-gray-500 mb-2">
             {lastScore.entities.length > 0
-              ? (mode === 'proxy' ? 'Protected Your Prompt' : 'Detected in Your Prompt')
+              ? ((lastScore as any).isProxy ? 'Protected Your Prompt' : 'Detected in Your Prompt')
               : 'Last Scan'}
           </h2>
           <div className="flex items-center gap-3">
@@ -1497,7 +1708,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
               <div className="text-sm font-medium">
                 {lastScore.entities.length === 0
                   ? 'All Clear'
-                  : mode === 'proxy'
+                  : (lastScore as any).isProxy
                     ? `${lastScore.entities.length} item${lastScore.entities.length !== 1 ? 's' : ''} protected`
                     : `${lastScore.entities.length} item${lastScore.entities.length !== 1 ? 's' : ''} found`
                 }
@@ -1505,7 +1716,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
               <div className="text-xs text-gray-500">
                 {lastScore.entities.length === 0
                   ? 'No sensitive data in this prompt'
-                  : mode === 'proxy'
+                  : (lastScore as any).isProxy
                     ? 'Replaced with realistic pseudonyms'
                     : `Sensitivity: ${lastScore.level}`
                 }
@@ -1514,6 +1725,21 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
           </div>
           {lastScore.explanation && (
             <p className="text-xs text-gray-600 mt-2">{lastScore.explanation}</p>
+          )}
+          {/* Prompt-level feedback — shown for medium+ detections */}
+          {lastScore.entities.length > 0 && lastScore.score >= 26 && (
+            <div className="mt-3 flex items-center gap-2 text-xs text-gray-500">
+              {promptFeedback ? (
+                <span className="text-green-600">Thanks for your feedback</span>
+              ) : (
+                <>
+                  <span>Was this warning helpful?</span>
+                  <button onClick={() => sendPromptFeedback('yes')} className="px-2 py-0.5 rounded bg-green-50 text-green-700 hover:bg-green-100 font-medium">Yes</button>
+                  <button onClick={() => sendPromptFeedback('no')} className="px-2 py-0.5 rounded bg-red-50 text-red-700 hover:bg-red-100 font-medium">No</button>
+                  <button onClick={() => sendPromptFeedback('not_sensitive')} className="px-2 py-0.5 rounded bg-gray-100 text-gray-600 hover:bg-gray-200 font-medium">Not sensitive</button>
+                </>
+              )}
+            </div>
           )}
           {/* Entity pills with feedback */}
           <div className="flex flex-wrap gap-1 mt-3">
@@ -1925,6 +2151,104 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
             ))
           )}
         </div>
+      </div>
+
+      {/* Compliance Report */}
+      <div className="bg-white rounded-lg shadow-sm border mt-4">
+        <button
+          onClick={() => {
+            if (!complianceOpen) fetchComplianceReport();
+            setComplianceOpen(!complianceOpen);
+          }}
+          className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-iron-600" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M6 2a2 2 0 00-2 2v12a2 2 0 002 2h8a2 2 0 002-2V7.414A2 2 0 0015.414 6L12 2.586A2 2 0 0010.586 2H6zm2 10a1 1 0 10-2 0v3a1 1 0 102 0v-3zm2-3a1 1 0 011 1v5a1 1 0 11-2 0v-5a1 1 0 011-1zm4-1a1 1 0 10-2 0v7a1 1 0 102 0V8z" clipRule="evenodd" />
+            </svg>
+            <h2 className="text-sm font-medium text-gray-700">Compliance Report</h2>
+          </div>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className={`h-4 w-4 text-gray-400 transition-transform ${complianceOpen ? 'rotate-180' : ''}`}
+            viewBox="0 0 20 20"
+            fill="currentColor"
+          >
+            <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+          </svg>
+        </button>
+
+        {complianceOpen && (
+          <div className="px-4 pb-3 border-t">
+            {complianceLoading ? (
+              <p className="text-xs text-gray-400 py-3 text-center">Loading report...</p>
+            ) : complianceReport ? (
+              <div className="space-y-3 mt-3">
+                {/* Compliance Score */}
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-gray-600">Compliance Score</span>
+                  <span className={`text-lg font-bold ${
+                    (complianceReport.complianceScore as number) >= 80 ? 'text-green-600' :
+                    (complianceReport.complianceScore as number) >= 50 ? 'text-yellow-600' : 'text-red-600'
+                  }`}>
+                    {complianceReport.complianceScore}/100
+                  </span>
+                </div>
+
+                {/* Summary Stats */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="bg-gray-50 rounded p-2">
+                    <p className="text-[10px] text-gray-400 uppercase">Total Detections</p>
+                    <p className="text-sm font-semibold text-gray-700">{(complianceReport.summary as any)?.totalDetections || 0}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded p-2">
+                    <p className="text-[10px] text-gray-400 uppercase">High Risk</p>
+                    <p className="text-sm font-semibold text-red-600">{(complianceReport.summary as any)?.highRiskDetections || 0}</p>
+                  </div>
+                </div>
+
+                {/* Sensitivity Distribution */}
+                {complianceReport.sensitivityDistribution && (
+                  <div>
+                    <p className="text-[10px] text-gray-400 uppercase mb-1">Sensitivity Distribution</p>
+                    <div className="flex gap-1">
+                      {Object.entries(complianceReport.sensitivityDistribution as Record<string, number>).map(([level, count]) => (
+                        <div key={level} className={`flex-1 rounded p-1.5 text-center ${
+                          level === 'critical' ? 'bg-red-50' :
+                          level === 'high' ? 'bg-orange-50' :
+                          level === 'medium' ? 'bg-yellow-50' : 'bg-green-50'
+                        }`}>
+                          <p className="text-[10px] font-medium capitalize">{level}</p>
+                          <p className="text-xs font-bold">{count}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Entity Types */}
+                {complianceReport.entityTypeCounts && Object.keys(complianceReport.entityTypeCounts as object).length > 0 && (
+                  <div>
+                    <p className="text-[10px] text-gray-400 uppercase mb-1">Entity Types Detected</p>
+                    <div className="flex flex-wrap gap-1">
+                      {Object.entries(complianceReport.entityTypeCounts as Record<string, number>).slice(0, 8).map(([type, count]) => (
+                        <span key={type} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-gray-100 text-gray-700">
+                          {type}: {count}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <p className="text-[10px] text-gray-400 text-center">
+                  Generated {new Date(complianceReport.generatedAt as string).toLocaleString()}
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-gray-400 py-3 text-center">No report data available.</p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Footer */}

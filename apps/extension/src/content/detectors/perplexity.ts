@@ -9,6 +9,7 @@ export const PerplexityDetector: AIToolDetector = {
   getPromptInput() {
     return (
       document.querySelector('textarea[placeholder*="Ask"]') as HTMLElement | null ??
+      document.querySelector('textarea[placeholder*="ask"]') as HTMLElement | null ??
       document.querySelector('textarea') as HTMLElement | null
     );
   },

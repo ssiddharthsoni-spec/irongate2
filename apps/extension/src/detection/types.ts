@@ -4,13 +4,13 @@ export interface DetectedEntity {
   start: number;
   end: number;
   confidence: number;
-  source: 'gliner' | 'regex' | 'presidio' | 'keyword' | 'dictionary';
+  source: 'regex' | 'presidio' | 'keyword' | 'dictionary' | 'agent' | 'semantic' | 'metadata-classifier';
 }
 
 export interface DetectionResult {
   entities: DetectedEntity[];
   processingTimeMs: number;
-  modelUsed: 'gliner' | 'regex' | 'hybrid';
+  modelUsed: 'regex' | 'hybrid';
 }
 
 export interface ModelStatus {

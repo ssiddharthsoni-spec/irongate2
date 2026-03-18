@@ -99,6 +99,17 @@ const GLBA: ComplianceFramework = {
   minConfidence: 0.7,
 };
 
+const FERPA: ComplianceFramework = {
+  id: 'ferpa',
+  name: 'FERPA',
+  blockedEntityTypes: new Set([
+    'STUDENT_ID', 'EDUCATION_RECORD',
+    // Student records + PII = FERPA violation
+    'SSN', 'DATE_OF_BIRTH', 'DRIVERS_LICENSE',
+  ]),
+  minConfidence: 0.65,
+};
+
 export const COMPLIANCE_FRAMEWORKS: Record<string, ComplianceFramework> = {
   hipaa: HIPAA,
   pci_dss: PCI_DSS,
@@ -107,6 +118,7 @@ export const COMPLIANCE_FRAMEWORKS: Record<string, ComplianceFramework> = {
   ccpa: CCPA,
   itar: ITAR,
   glba: GLBA,
+  ferpa: FERPA,
 };
 
 // ─── Enforcement Result ──────────────────────────────────────────────────────

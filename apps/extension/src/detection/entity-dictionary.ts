@@ -226,9 +226,13 @@ export function createDictionaryMatcher(): DictionaryMatcher {
     },
 
     reload(entries: DictionaryEntry[]): void {
-      automaton = buildAutomaton(entries);
+      // Copy-on-write: build new automaton, then atomically swap reference.
+      // Prevents race condition if search() reads during rebuild.
+      const newAutomaton = buildAutomaton(entries);
+      const newCount = entries.reduce((sum, e) => sum + 1 + e.aliases.length, 0);
+      automaton = newAutomaton;
+      count = newCount;
       loaded = true;
-      count = entries.reduce((sum, e) => sum + 1 + e.aliases.length, 0);
       console.log(`[Iron Gate] Dictionary loaded: ${entries.length} entries, ${count} patterns`);
     },
 

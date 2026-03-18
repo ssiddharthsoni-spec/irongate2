@@ -87,7 +87,7 @@ export async function runPlugins(firmId: string, text: string): Promise<PluginRe
       db.update(firmPlugins)
         .set({ hitCount: sql`${firmPlugins.hitCount} + 1` })
         .where(eq(firmPlugins.id, plugin.id))
-        .catch(() => {});
+        .catch((err) => logger.warn('Plugin hitCount update failed', { pluginId: plugin.id, error: String(err) }));
     } catch (error) {
       logger.warn('Plugin execution failed', { pluginName: plugin.name, error: error instanceof Error ? error.message : String(error) });
     }

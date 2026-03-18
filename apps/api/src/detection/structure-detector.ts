@@ -45,8 +45,8 @@ export function detectStructure(text: string): StructureDetectionResult {
   const detectors: Array<() => StructureDetectionResult | null> = [
     () => detectCodeBlock(text),
     () => detectTabular(text),
-    () => detectKeyValue(text),
     () => detectEmailHeaders(text),
+    () => detectKeyValue(text),
     () => detectEntityList(text),
     () => detectDocumentBlock(text),
   ];

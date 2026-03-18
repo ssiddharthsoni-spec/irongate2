@@ -100,4 +100,14 @@ export const logger = {
   info: (message: string, meta?: Record<string, unknown>) => emit('info', message, meta),
   warn: (message: string, meta?: Record<string, unknown>) => emit('warn', message, meta),
   error: (message: string, meta?: Record<string, unknown>) => emit('error', message, meta),
+
+  /** Create a child logger that attaches a requestId to every log line. */
+  withRequestId(requestId: string) {
+    return {
+      debug: (message: string, meta?: Record<string, unknown>) => emit('debug', message, { requestId, ...meta }),
+      info: (message: string, meta?: Record<string, unknown>) => emit('info', message, { requestId, ...meta }),
+      warn: (message: string, meta?: Record<string, unknown>) => emit('warn', message, { requestId, ...meta }),
+      error: (message: string, meta?: Record<string, unknown>) => emit('error', message, { requestId, ...meta }),
+    };
+  },
 };

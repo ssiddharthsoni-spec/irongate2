@@ -103,12 +103,9 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
   // Send message to service worker
   function sendToWorker(type: string, payload: any) {
     try {
-      chrome.runtime.sendMessage({ type, payload }).catch(() => {
-        // Extension context invalidated — ignore
-      });
-    } catch (error) {
+      chrome.runtime.sendMessage({ type, payload }).catch(() => {});
+    } catch {
       // Extension context may be invalidated on update
-      console.warn('[Iron Gate] Failed to send message to worker:', error);
     }
   }
 

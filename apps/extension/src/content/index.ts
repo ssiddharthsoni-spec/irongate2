@@ -4,22 +4,17 @@ import { createSensitivityBadge } from './ui/sensitivity-badge';
 import { createCoachingToasts, getNextCoachingTip, type CoachingToastHandle } from './ui/coaching-toast';
 import { resolveMode, resolveConfig } from '../managed-config';
 
-// ── Double-Injection Guard ───────────────────────────────────────────────────
-// Prevent the same content script version from initializing twice in one page context.
-// This catches cases where Chrome re-runs the same script without a reload.
-const __IG_ALREADY_INJECTED = !!(window as any).__IRON_GATE_CS_INJECTED__;
-if (__IG_ALREADY_INJECTED) {
-  console.warn('[IronGate] Content script already injected, skipping');
-}
-(window as any).__IRON_GATE_CS_INJECTED__ = true;
-
-// ── Duplicate Injection Guard ────────────────────────────────────────────────
+// ── Injection Guard ──────────────────────────────────────────────────────────
 // When the extension reloads and re-injects, the OLD content script may still
 // be partially alive. We use a window marker to detect and clean up old instances.
+// After cleanup, the NEW script MUST initialize (even though the old one ran).
 const CS_MARKER = '__IRON_GATE_CS_ACTIVE';
+let _isReplacement = false;
 if ((window as any)[CS_MARKER]) {
-  // Tell the old instance to shut down
+  // Tell the old instance to shut down — we're taking over
   window.dispatchEvent(new CustomEvent('iron-gate-cs-replaced'));
+  _isReplacement = true;
+  console.log('[IronGate] Replacing old content script instance');
 }
 (window as any)[CS_MARKER] = true;
 
@@ -119,6 +114,25 @@ let detector: ReturnType<typeof detectAITool> = null;
 let engine: ReturnType<typeof createCaptureEngine> | null = null;
 let badge: ReturnType<typeof createSensitivityBadge> | null = null;
 let toasts: CoachingToastHandle | null = null;
+
+// ── Per-Tab Reverse Map Keying ──────────────────────────────────────────────
+// Use tab-specific keys for reverse map storage to prevent cross-tab
+// contamination when the same hostname is open in multiple tabs.
+let _tabMapKey: string | null = null;
+
+async function getTabMapKey(): Promise<string> {
+  if (_tabMapKey) return _tabMapKey;
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'IRON_GATE_GET_TAB_ID' });
+    if (response?.tabId) {
+      _tabMapKey = `reverse_map_tab_${response.tabId}`;
+      return _tabMapKey;
+    }
+  } catch { /* context invalidated */ }
+  // Fallback: use hostname (legacy behavior, better than nothing)
+  _tabMapKey = `reverse_map_${window.location.hostname}`;
+  return _tabMapKey;
+}
 let contextAlive = true;
 
 // Coaching state — throttle toasts to avoid spam
@@ -126,16 +140,29 @@ let lastToastTime = 0;
 let sessionInterceptCount = 0;
 const TOAST_COOLDOWN = 8000; // Min 8s between toasts
 
+// ── Content-script → MAIN world nonce (reverse direction) ───────────────────
+// Prevents malicious page scripts from sending fake IRON_GATE_SET_MODE or
+// other control messages to the MAIN world script.
+const _IG_CS_NONCE = crypto.randomUUID();
+
+/**
+ * Secure postMessage wrapper for content script → MAIN world messages.
+ * Auto-includes the content-script nonce so MAIN world can validate the sender.
+ */
+function csPostMessage(data: Record<string, unknown>): void {
+  window.postMessage({ ...data, _csNonce: _IG_CS_NONCE }, window.location.origin);
+}
+
 // ── Sync mode with MAIN world script ────────────────────────────────────────
 // The MAIN world script patches window.fetch in the page's JS context.
 // We tell it the current mode so it knows whether to pseudonymize.
 
 function syncModeToMainWorld(newMode: 'audit' | 'proxy') {
-  window.postMessage({ type: 'IRON_GATE_SET_MODE', mode: newMode }, window.location.origin);
+  csPostMessage({ type: 'IRON_GATE_SET_MODE', mode: newMode });
 }
 
-function syncProcessingModeToMainWorld(processingMode: 'local' | 'server') {
-  window.postMessage({ type: 'IRON_GATE_SET_PROCESSING_MODE', processingMode }, window.location.origin);
+function syncProcessingModeToMainWorld(processingMode: 'local' | 'server' | 'shadow') {
+  csPostMessage({ type: 'IRON_GATE_SET_PROCESSING_MODE', processingMode });
 }
 
 // Send private LLM config to MAIN world for Executive Lens routing
@@ -144,11 +171,11 @@ function syncPrivateLlmToMainWorld() {
     chrome.storage.local.get(['localLLMEndpoint', 'localLLMModel'], (result) => {
       if (!chrome.runtime?.id) return;
       if (result.localLLMEndpoint) {
-        window.postMessage({
+        csPostMessage({
           type: 'IRON_GATE_SET_PRIVATE_LLM',
           endpoint: result.localLLMEndpoint,
           model: result.localLLMModel || 'llama3.2:3b',
-        }, window.location.origin);
+        });
       }
     });
     // Also check managed storage (enterprise policy)
@@ -156,11 +183,11 @@ function syncPrivateLlmToMainWorld() {
       if (!chrome.runtime?.id) return;
       if (chrome.runtime.lastError) return; // managed storage may not exist
       if (result?.localLLMEndpoint) {
-        window.postMessage({
+        csPostMessage({
           type: 'IRON_GATE_SET_PRIVATE_LLM',
           endpoint: result.localLLMEndpoint,
           model: result.localLLMModel || 'llama3.2:3b',
-        }, window.location.origin);
+        });
       }
     });
   } catch {
@@ -471,19 +498,19 @@ function handleMainWorldMessages(event: MessageEvent) {
         payload: { text, aiToolId, requestId },
       }, (response) => {
         if (!chrome.runtime?.id) return;
-        window.postMessage({
+        csPostMessage({
           type: 'IRON_GATE_SERVER_PROCESS_RESPONSE',
           requestId,
           result: response?.result || null,
           error: response?.error || (chrome.runtime.lastError?.message) || null,
-        }, window.location.origin);
+        });
       });
     } catch {
-      window.postMessage({
+      csPostMessage({
         type: 'IRON_GATE_SERVER_PROCESS_RESPONSE',
         requestId,
         error: 'Extension context invalidated',
-      }, window.location.origin);
+      });
     }
     return;
   }
@@ -495,9 +522,10 @@ function handleMainWorldMessages(event: MessageEvent) {
   if (event.data?.type === 'IRON_GATE_PERSIST_REVERSE_MAP') {
     const map = event.data.map;
     if (map && typeof map === 'object') {
-      const tabKey = `reverse_map_${window.location.hostname}`;
-      encryptAndStore(tabKey, map).then((entryCount) => {
-        igLog(`Persisted reverse map (${entryCount} entries) encrypted to session storage`);
+      getTabMapKey().then((tabKey) => {
+        return encryptAndStore(tabKey, map).then((entryCount) => {
+          igLog(`Persisted reverse map (${entryCount} entries) to key ${tabKey}`);
+        });
       }).catch(() => {});
     }
     return;
@@ -505,16 +533,29 @@ function handleMainWorldMessages(event: MessageEvent) {
 
   // MAIN world requests persisted reverse map (after page refresh)
   if (event.data?.type === 'IRON_GATE_REQUEST_REVERSE_MAP') {
-    const tabKey = `reverse_map_${window.location.hostname}`;
-    loadAndDecrypt(tabKey).then((map) => {
-      if (map && Object.keys(map).length > 0) {
-        window.postMessage({
-          type: 'IRON_GATE_RESTORE_REVERSE_MAP',
-          map,
-        }, window.location.origin);
-        igLog(`Restored reverse map (${Object.keys(map).length} entries) to MAIN world`);
-      }
+    getTabMapKey().then((tabKey) => {
+      return loadAndDecrypt(tabKey).then((map) => {
+        if (map && Object.keys(map).length > 0) {
+          csPostMessage({
+            type: 'IRON_GATE_RESTORE_REVERSE_MAP',
+            map,
+          });
+          igLog(`Restored reverse map (${Object.keys(map).length} entries) from key ${tabKey}`);
+        }
+      });
     }).catch(() => {});
+    return;
+  }
+
+  // De-pseudonymization failure — show warning toast
+  if (event.data?.type === 'IRON_GATE_DEPSEUDO_FAILURE') {
+    if (toasts) {
+      toasts.show({
+        title: 'De-pseudonymization Warning',
+        message: event.data.detail || 'Some pseudonymized names may appear in the AI response.',
+        type: 'warning',
+      });
+    }
     return;
   }
 
@@ -523,8 +564,9 @@ function handleMainWorldMessages(event: MessageEvent) {
     const isProxy = event.data.type === 'IRON_GATE_INTERCEPTED';
     const promptHash = sanitizeString(event.data.promptHash, 128);
     const promptLength = clampNumber(event.data.promptLength, 0, 10_000_000, 0);
-    // SECURITY: originalPrompt intentionally NOT relayed from postMessage.
-    // Raw prompt text must never travel through the page's message channel.
+    // Original prompt is safe to relay — it's already visible in the page DOM
+    // (the user typed it), so postMessage adds no additional exposure.
+    const originalPrompt = sanitizeString(event.data.originalPrompt, MAX_STRING_LEN);
     const maskedPrompt = sanitizeString(event.data.maskedPrompt, MAX_STRING_LEN);
     const entityCount = clampNumber(event.data.entityCount, 0, 10000, 0);
     const rawLevel = sanitizeString(event.data.level, 20);
@@ -533,29 +575,80 @@ function handleMainWorldMessages(event: MessageEvent) {
     const entities = Array.isArray(event.data.entities) ? event.data.entities.slice(0, 1000) : [];
     const mappings = Array.isArray(event.data.mappings) ? event.data.mappings.slice(0, 1000) : [];
 
-    igLog(`MAIN world ${isProxy ? 'intercepted' : 'audit'} — ${entityCount} entities (${level}, score=${score})`);
+    console.log(`[Iron Gate CS] MAIN world ${isProxy ? 'INTERCEPTED' : 'AUDIT'} — ${entityCount} entities (${level}, score=${score}), entities array length: ${entities.length}, mappings: ${mappings.length}`);
 
+    const relayPayload = {
+      score: score ?? (level === 'critical' ? 95 : level === 'high' ? 75 : level === 'medium' ? 45 : 15),
+      level,
+      explanation: isProxy
+        ? `Pseudonymized ${entityCount} entities before sending to AI tool.`
+        : `Detected ${entityCount} sensitive entities in prompt (audit mode — not pseudonymized).`,
+      entities,
+      aiToolId: detector?.id || 'unknown',
+      promptHash,
+      promptLength,
+      originalPrompt,
+      maskedPrompt,
+      pseudonymMappings: mappings,
+      isProxy, // true = pseudonymized (INTERCEPTED), false = audit only
+    };
+
+    // Check if extension context is still alive before attempting relay
+    if (!chrome.runtime?.id) {
+      console.error(
+        '%c[Iron Gate] Extension was updated — please refresh this page to restore protection.',
+        'color: #ef4444; font-weight: bold; font-size: 14px',
+      );
+      // Inject visible warning into the page
+      try {
+        const existing = document.getElementById('iron-gate-refresh-banner');
+        if (!existing) {
+          const banner = document.createElement('div');
+          banner.id = 'iron-gate-refresh-banner';
+          banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:999999;background:#ef4444;color:white;padding:10px 20px;font-family:system-ui;font-size:14px;text-align:center;cursor:pointer;';
+          banner.textContent = '⚠️ Iron Gate was updated. Click here or refresh this page to restore protection.';
+          banner.onclick = () => window.location.reload();
+          document.body.appendChild(banner);
+        }
+      } catch { /* DOM manipulation may fail */ }
+      return;
+    }
+
+    // PRIMARY: Send via chrome.runtime.sendMessage
     try {
       chrome.runtime.sendMessage({
         type: 'SENSITIVITY_SCORE',
-        payload: {
-          score: score ?? (level === 'critical' ? 95 : level === 'high' ? 75 : level === 'medium' ? 45 : 15),
-          level,
-          explanation: isProxy
-            ? `Pseudonymized ${entityCount} entities before sending to AI tool.`
-            : `Detected ${entityCount} sensitive entities in prompt (audit mode — not pseudonymized).`,
-          entities,
-          aiToolId: detector?.id || 'unknown',
-          promptHash,
-          promptLength,
-          maskedPrompt,
-          pseudonymMappings: mappings,
-        },
-      }).catch((err) => {
-        console.warn('[Iron Gate] Failed to relay to service worker:', err);
+        payload: relayPayload,
+      }).then(() => {
+        igLog('SENSITIVITY_SCORE relayed successfully');
+      }).catch((err: unknown) => {
+        console.warn('[Iron Gate] runtime.sendMessage failed — using storage backup:', err);
+        // BACKUP: Write to chrome.storage.local so sidepanel can pick it up
+        try {
+          chrome.storage.local.set({
+            lastDetectionResult: { ...relayPayload, _storageTimestamp: Date.now() },
+          }).catch(() => {});
+        } catch { /* storage failed too */ }
       });
-    } catch {
-      // Extension context may be invalidated
+    } catch (err) {
+      console.warn('[Iron Gate] runtime.sendMessage threw:', err);
+    }
+
+    // ALWAYS write storage backup for proxy results — belt and suspenders.
+    // The sidepanel has a storage.onChanged listener that processes this.
+    if (isProxy) {
+      try {
+        const _ts = Date.now();
+        chrome.storage.local.set({
+          lastDetectionResult: { ...relayPayload, _storageTimestamp: _ts },
+        }).then(() => {
+          console.log('[Iron Gate CS] Storage backup written successfully, ts:', _ts, 'isProxy:', relayPayload.isProxy, 'entities:', relayPayload.entities?.length);
+        }).catch((err: unknown) => {
+          console.warn('[Iron Gate CS] Storage backup FAILED:', err);
+        });
+      } catch {
+        igLog('Storage backup write failed');
+      }
     }
 
     showCoachingFeedback(isProxy ? 'proxy' : 'audit', entityCount, level, score);
@@ -625,10 +718,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         }
         // Relay scan result to MAIN world so fetch/DOM interceptors can gate on it
         if (p) {
-          window.postMessage({
+          csPostMessage({
             type: 'IRON_GATE_FILE_SCAN_RESULT',
             payload: p,
-          }, window.location.origin);
+          });
         }
         sendResponse({ ok: true });
         break;
@@ -695,8 +788,6 @@ function showCoachingFeedback(mode: 'proxy' | 'audit', entityCount: number, leve
 
 // Initialize detection (may run before DOM is ready, that's OK)
 function initialize() {
-  // Double-injection guard: skip if this script already ran in this page context
-  if (__IG_ALREADY_INJECTED) return;
   try {
     const currentUrl = window.location.href;
     detector = detectAITool(currentUrl);
@@ -706,6 +797,45 @@ function initialize() {
 
       engine = createCaptureEngine(detector);
       engine.start();
+
+      // ── Fallback real-time polling ──────────────────────────────────────
+      // Direct text polling that bypasses the capture engine's DOM observer.
+      // Ensures real-time detection works even if MutationObserver has issues.
+      let _fbLastText = '';
+      const _fbDetector = detector; // capture reference
+      setInterval(() => {
+        if (!contextAlive || !_fbDetector) return;
+        try {
+          const input = _fbDetector.getPromptInput();
+          if (!input) return;
+          const text = _fbDetector.extractPromptText(input);
+          if (text && text.length > 5 && text !== _fbLastText) {
+            _fbLastText = text;
+            try {
+              chrome.runtime.sendMessage({
+                type: 'PROMPT_DETECTED',
+                payload: {
+                  text,
+                  aiToolId: _fbDetector.id,
+                  captureMethod: 'dom-fallback',
+                },
+              }).catch(() => {});
+            } catch {
+              // Extension context invalidated
+            }
+          } else if (!text || text.length === 0) {
+            if (_fbLastText.length > 0) {
+              _fbLastText = '';
+              chrome.runtime.sendMessage({
+                type: 'PROMPT_CLEARED',
+                payload: { aiToolId: _fbDetector.id },
+              }).catch(() => {});
+            }
+          }
+        } catch (err) {
+          console.warn('[Iron Gate RT] poll error:', err);
+        }
+      }, 1500);
 
       // Badge disabled — the floating "Protected" chip is distracting on AI tool pages
       // badge = createSensitivityBadge();
@@ -730,6 +860,40 @@ function initialize() {
       } catch {
         // chrome.storage.session may not be available in all contexts
       }
+      // ── Voice mode detection ──────────────────────────────────────────
+      // Watch for voice input activation on supported platforms.
+      // Voice transcription happens in-app — Iron Gate cannot intercept it.
+      let voiceWarningShown = false;
+      const voiceSelectors = [
+        'button[aria-label*="voice" i]',
+        'button[aria-label*="microphone" i]',
+        'button[aria-label*="dictate" i]',
+        'button[data-testid*="voice" i]',
+        '[class*="voice-input" i]',
+        '[class*="microphone" i]',
+      ].join(',');
+
+      const voiceObserver = new MutationObserver(() => {
+        if (voiceWarningShown || !toasts) return;
+        const voiceActive = document.querySelector(
+          '[aria-label*="stop" i][aria-label*="voice" i], ' +
+          '[aria-label*="stop" i][aria-label*="listen" i], ' +
+          '[class*="voice-active" i], [class*="recording" i]'
+        );
+        if (voiceActive) {
+          voiceWarningShown = true;
+          toasts.show({
+            type: 'warning',
+            title: 'Voice Input Detected',
+            message: 'Voice transcription bypasses Iron Gate protection. Avoid dictating sensitive data.',
+            duration: 8000,
+          });
+          // Reset after 60s so it can warn again in a new voice session
+          setTimeout(() => { voiceWarningShown = false; }, 60_000);
+        }
+      });
+      voiceObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'aria-label'] });
+
     } else {
       igLog('No AI tool detected on:', currentUrl);
     }
@@ -756,7 +920,7 @@ function checkExtensionContext(): void {
       contextAlive = false;
       igLog('Extension context invalidated — orphaned content script');
       engine?.stop();
-      window.postMessage({ type: 'IRON_GATE_CONTEXT_INVALIDATED' }, window.location.origin);
+      csPostMessage({ type: 'IRON_GATE_CONTEXT_INVALIDATED' });
       if (toasts) {
         toasts.show({
           type: 'warning',

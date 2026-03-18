@@ -21,8 +21,7 @@ import type { DetectedEntity } from './types';
 // better than regex for names, orgs, and contextual entities.
 const SOURCE_PRIORITY: Record<string, number> = {
   dictionary: 4,  // Admin-curated = ground truth
-  gliner: 3,      // On-device ML model
-  keyword: 2,     // LLM agent detector (context-aware)
+  keyword: 3,     // LLM agent detector (context-aware)
   presidio: 2,
   regex: 1,       // Pattern matching fallback
 };

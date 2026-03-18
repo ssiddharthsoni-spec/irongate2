@@ -230,6 +230,7 @@ export default function Sidebar() {
                 { href: '/admin/departments', label: 'Departments' },
                 { href: '/admin/webhooks', label: 'Webhooks' },
                 { href: '/admin/incidents', label: 'Incidents' },
+                { href: '/admin/feature-flags', label: 'Feature Flags' },
                 { href: '/admin/data-deletion', label: 'Data Deletion' },
                 { href: '/admin/kill-switch', label: 'Kill Switch' },
                 { href: '/admin/deployment', label: 'Deployment Health' },

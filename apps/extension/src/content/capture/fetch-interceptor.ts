@@ -183,6 +183,13 @@ export function installFetchInterceptor(
         }
       } catch (err) {
         console.warn('[Iron Gate] Body transform error, sending original:', err);
+        // Warn user that pseudonymization failed — data is being sent unprotected
+        try {
+          window.postMessage({
+            type: 'IRON_GATE_DEPSEUDO_FAILURE',
+            detail: 'Pseudonymization failed — your prompt was sent without PII protection. Consider deleting the message.',
+          }, window.location.origin);
+        } catch { /* ignore */ }
       }
     }
 

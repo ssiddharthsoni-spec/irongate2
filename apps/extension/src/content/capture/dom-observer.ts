@@ -98,9 +98,46 @@ export function createDOMObserver(
       input.addEventListener('input', handleMutation);
 
       console.log('[Iron Gate] DOM observer attached to prompt input');
+
+      // ── CRITICAL: Read initial text immediately ──
+      // If text was already in the input (e.g. pasted before observer attached),
+      // the MutationObserver won't fire. Emit the existing text right away.
+      try {
+        const initialText = detector.extractPromptText(input);
+        if (initialText && initialText !== lastText) {
+          lastText = initialText;
+          onPromptChange(initialText);
+        }
+      } catch (err) {
+        console.warn('[Iron Gate] Initial text read failed:', err);
+      }
     } finally {
       isAttaching = false;
     }
+  }
+
+  // ── Periodic text polling ──
+  // Some editors (Gemini's Quill, contenteditable) may not fire mutations
+  // on programmatic changes or paste. Poll every 800ms as a safety net.
+  let textPollInterval: ReturnType<typeof setInterval> | null = null;
+
+  function startTextPolling() {
+    textPollInterval = setInterval(() => {
+      try {
+        if (!currentInput || !currentInput.isConnected) return;
+        const text = detector.extractPromptText(currentInput);
+        if (text !== lastText) {
+          lastText = text;
+          if (text.length > 0) {
+            onPromptChange(text);
+          } else {
+            onPromptCleared?.();
+          }
+        }
+      } catch (err) {
+        console.warn('[Iron Gate] Text poll error:', err);
+      }
+    }, 800);
   }
 
   // Poll for the prompt input element (SPAs render async)
@@ -138,6 +175,7 @@ export function createDOMObserver(
   }, 1000);
 
   startPolling();
+  startTextPolling();
 
   return {
     disconnect() {
@@ -148,6 +186,10 @@ export function createDOMObserver(
       if (pollInterval) {
         clearInterval(pollInterval);
         pollInterval = null;
+      }
+      if (textPollInterval) {
+        clearInterval(textPollInterval);
+        textPollInterval = null;
       }
       if (debounceTimer) {
         clearTimeout(debounceTimer);
