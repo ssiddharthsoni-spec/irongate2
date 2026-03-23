@@ -2,6 +2,10 @@
 // Iron Gate — Shared Types
 // ==========================================
 
+// --- Sprint 0 Contracts ---
+export * from './pseudonym-map';
+export * from './detection-api';
+
 // --- AI Tool Detection ---
 
 export type AIToolId =

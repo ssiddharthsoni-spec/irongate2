@@ -16,8 +16,8 @@ const MAX_REQUESTS = 300; // 300 requests per minute
 // ---------------------------------------------------------------------------
 
 const requestCounts = new Map<string, { count: number; resetTime: number; lastAccess: number }>();
-const MAX_MAP_ENTRIES = 10_000;
-const CLEANUP_INTERVAL = 60_000;
+const MAX_MAP_ENTRIES = 2_000;
+const CLEANUP_INTERVAL = 30_000;
 let lastCleanup = Date.now();
 
 function evictExpiredEntries() {
@@ -36,7 +36,7 @@ function evictLRU() {
   // Evict entries with the oldest lastAccess time
   const entries = Array.from(requestCounts.entries());
   entries.sort((a, b) => a[1].lastAccess - b[1].lastAccess);
-  const toDelete = entries.length - MAX_MAP_ENTRIES + 1000;
+  const toDelete = entries.length - MAX_MAP_ENTRIES + 500;
   for (let i = 0; i < toDelete && i < entries.length; i++) {
     requestCounts.delete(entries[i][0]);
   }

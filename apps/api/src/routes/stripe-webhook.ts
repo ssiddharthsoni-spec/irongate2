@@ -24,8 +24,9 @@ function markEventProcessed(eventId: string): boolean {
 
   PROCESSED_EVENTS.set(eventId, now);
 
-  // Periodic cleanup when map grows too large
-  if (PROCESSED_EVENTS.size > IDEMPOTENCY_MAX_SIZE) {
+  // BUG-12: Clean up expired entries on every 100th insertion (not just at capacity).
+  // Prevents memory bloat from expired entries that never get cleaned.
+  if (PROCESSED_EVENTS.size % 100 === 0 || PROCESSED_EVENTS.size > IDEMPOTENCY_MAX_SIZE) {
     for (const [id, ts] of PROCESSED_EVENTS) {
       if (now - ts > IDEMPOTENCY_TTL) PROCESSED_EVENTS.delete(id);
     }

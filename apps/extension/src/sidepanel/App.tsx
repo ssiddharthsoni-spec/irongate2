@@ -201,21 +201,46 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
 
   const handleCopySafe = useCallback(async () => {
     if (!inspectorData?.maskedPrompt) return;
+    const text = inspectorData.maskedPrompt;
+    let copied = false;
+
+    // Method 1: Direct clipboard API (works when sidepanel is focused)
     try {
-      await navigator.clipboard.writeText(inspectorData.maskedPrompt);
-      setCopiedSafe(true);
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-      copyTimerRef.current = setTimeout(() => setCopiedSafe(false), 2000);
-    } catch {
-      // Fallback for older browsers
-      const textarea = document.createElement('textarea');
-      textarea.value = inspectorData.maskedPrompt;
-      textarea.style.position = 'fixed';
-      textarea.style.opacity = '0';
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
+      window.focus();
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch { /* sidepanel may not have clipboard access */ }
+
+    // Method 2: Inject into active tab to use its clipboard access
+    if (!copied) {
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab?.id) {
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: (t: string) => navigator.clipboard.writeText(t),
+            args: [text],
+          });
+          copied = true;
+        }
+      } catch { /* tab injection may fail */ }
+    }
+
+    // Method 3: execCommand fallback
+    if (!copied) {
+      try {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        copied = document.execCommand('copy');
+        document.body.removeChild(textarea);
+      } catch { /* last resort failed */ }
+    }
+
+    if (copied) {
       setCopiedSafe(true);
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
       copyTimerRef.current = setTimeout(() => setCopiedSafe(false), 2000);
@@ -224,20 +249,43 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
 
   const handleCopyDocSafe = useCallback(async () => {
     if (!docScanData?.redactedText) return;
+    const text = docScanData.redactedText;
+    let copied = false;
+
     try {
-      await navigator.clipboard.writeText(docScanData.redactedText);
-      setCopiedDocSafe(true);
-      if (copyDocTimerRef.current) clearTimeout(copyDocTimerRef.current);
-      copyDocTimerRef.current = setTimeout(() => setCopiedDocSafe(false), 2000);
-    } catch {
-      const textarea = document.createElement('textarea');
-      textarea.value = docScanData.redactedText;
-      textarea.style.position = 'fixed';
-      textarea.style.opacity = '0';
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
+      window.focus();
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch { /* sidepanel may not have clipboard access */ }
+
+    if (!copied) {
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab?.id) {
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: (t: string) => navigator.clipboard.writeText(t),
+            args: [text],
+          });
+          copied = true;
+        }
+      } catch { /* tab injection may fail */ }
+    }
+
+    if (!copied) {
+      try {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        copied = document.execCommand('copy');
+        document.body.removeChild(textarea);
+      } catch { /* last resort failed */ }
+    }
+
+    if (copied) {
       setCopiedDocSafe(true);
       if (copyDocTimerRef.current) clearTimeout(copyDocTimerRef.current);
       copyDocTimerRef.current = setTimeout(() => setCopiedDocSafe(false), 2000);
@@ -306,7 +354,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
           chrome.storage.local.get(['recentActivity'], (result) => {
             if (result.recentActivity && Array.isArray(result.recentActivity)) setRecentActivity(result.recentActivity);
           });
-          chrome.storage.local.remove('lastScore');
+          chrome.storage.local.remove(['lastScore', 'lastDetectionResult']);
           return; // Skip individual mode setup
         }
       } catch {
@@ -330,7 +378,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
         if (result.connectionState) setConnection(result.connectionState);
         if (result.firmMode) setMode(result.firmMode);
         if (result.recentActivity && Array.isArray(result.recentActivity)) setRecentActivity(result.recentActivity);
-        chrome.storage.local.remove('lastScore');
+        chrome.storage.local.remove(['lastScore', 'lastDetectionResult']);
       });
     }
     loadConfig();
@@ -578,7 +626,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
               if (previousToolId) {
                 setLastScore(null);
                 setInspectorData(null);
-                chrome.storage.local.remove('lastScore');
+                chrome.storage.local.remove(['lastScore', 'lastDetectionResult']);
                 previousToolId = null;
               }
             }
@@ -677,19 +725,32 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
     // ── Core detection result processor — used by both runtime messages AND storage backup ──
     // Deduplicates via _storageTimestamp to prevent double-processing when both paths deliver.
     let _lastProcessedTimestamp = 0;
+    let _lastProcessedFingerprint = '';
+    let _lastProcessedFingerprintAt = 0;
 
     function processDetectionResult(newScore: any, source: string) {
       if (!newScore) {
         console.warn('[Iron Gate Sidepanel] processDetectionResult called with null/undefined from', source);
         return;
       }
-      // Deduplicate: if we already processed this exact result (from another delivery path), skip
+      // Deduplicate: if we already processed this exact result (from another delivery path), skip.
+      // Use a content fingerprint so the same logical result isn't processed 3x
+      // (content script storage, worker storage, worker runtime message).
+      const fingerprint = `${newScore.isProxy}:${newScore.score}:${newScore.entities?.length || 0}:${newScore.promptLength || 0}`;
       const ts = newScore._storageTimestamp;
       if (ts && ts === _lastProcessedTimestamp) {
         console.log('[Iron Gate Sidepanel] Skipping duplicate from', source, 'ts:', ts);
         return;
       }
+      // Also dedup by fingerprint: if we already processed this exact result
+      // within the last 2 seconds from a different delivery path, skip.
+      if (fingerprint === _lastProcessedFingerprint && Date.now() - _lastProcessedFingerprintAt < 2000) {
+        console.log('[Iron Gate Sidepanel] Skipping duplicate from', source, 'fingerprint:', fingerprint);
+        return;
+      }
       if (ts) _lastProcessedTimestamp = ts;
+      _lastProcessedFingerprint = fingerprint;
+      _lastProcessedFingerprintAt = Date.now();
 
       const scoreTabId = newScore.tabId;
       const isRealtime = newScore.realtime === true;
@@ -721,35 +782,34 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
         // Determine if this result should update the display.
         // Check rules BEFORE calling setState to avoid the race where
         // setState fires (scheduling a re-render) but shouldUpdate is false.
-        const prev = lastScoreRef.current;
+        // ── SUPPRESSION: None needed ──────────────────────────────────────
+        //
+        // The Turn Coordinator (main-world.ts) drops ALL 0-entity low-score
+        // AUDITs at the source. Every result that reaches the sidepanel is
+        // significant (INTERCEPTED, has entities, or score > 25).
+        //
+        // "All Clear" is handled by PROMPT_CLEARED (input field cleared after
+        // submit, debounced) and tab navigation — NOT by 0-entity AUDITs.
+        //
+        // This eliminates the entire class of "noise overwrites detection" bugs.
+        // No buffer windows, no sequence numbers, no authority gates needed.
 
-        // RULE 1: Never let a low-score non-proxy result overwrite a RECENT proxy detection.
-        // Proxy results expire after 10 seconds — user has moved on to a new prompt.
-        const proxyAge = prev?.isProxy ? Date.now() - (_lastProxyScoreAt || 0) : Infinity;
-        const proxyIsStale = proxyAge > 10_000;
-        if (prev?.isProxy && !isProxy && prev.score > newScore.score
-            && (!newScore.entities || newScore.entities.length === 0)
-            && !proxyIsStale) {
-          console.log('[Iron Gate Sidepanel] RULE 1 suppressed: prev proxy score', prev.score, '> new', newScore.score, 'proxyAge:', proxyAge);
-          return;
-        }
-        // RULE 2: Suppress "All Clear" from non-authoritative sources,
-        // but only if there's no stale proxy result to clear.
-        if (!isProxy && !newScore.serverMode && newScore.score <= 25
-            && (!newScore.entities || newScore.entities.length === 0)
-            && !proxyIsStale) {
-          console.log('[Iron Gate Sidepanel] RULE 2 suppressed: score', newScore.score, 'entities:', newScore.entities?.length, 'proxyIsStale:', proxyIsStale);
-          return;
-        }
-
-        console.log('[Iron Gate Sidepanel] ACCEPTED → setLastScore:', newScore.score, newScore.level, 'entities:', newScore.entities?.length);
+        console.log('[Iron Gate Sidepanel] ACCEPTED → setLastScore:', newScore.score, newScore.level, 'entities:', newScore.entities?.length, 'isProxy:', isProxy, 'source:', source);
         setLastScore(newScore);
         setFeedbackSent(new Set());
         setFeedbackOpen(null);
         setPromptFeedback(null);
-        if (isProxy) _lastProxyScoreAt = Date.now();
+        _lastAcceptedScoreAt = Date.now();
 
         chrome.storage.local.set({ lastScore: newScore });
+        // Clear lastDetectionResult after processing so the storage poll
+        // doesn't re-deliver this same result on subsequent cycles.
+        chrome.storage.local.remove('lastDetectionResult');
+
+        // Always clear inspector data first to prevent stale pseudonym mappings
+        // from flashing during React's async state update.
+        setInspectorData(null);
+        setInspectorOpen(false);
 
         if (isProxy && newScore.maskedPrompt) {
           setInspectorData({
@@ -764,10 +824,10 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
 
     // Shared ref for cancelling PROMPT_CLEARED debounce from any delivery path
     let _promptClearTimerRef = { current: null as ReturnType<typeof setTimeout> | null };
-    // Track when a proxy score was last set — suppress PROMPT_CLEARED for a window after,
-    // because dom-presubmit adapters (Gemini, Copilot) fire INTERCEPTED *before* the
-    // platform clears the input, so there's no pending timer to cancel.
-    let _lastProxyScoreAt = 0;
+    // Track when ANY accepted score was last set — suppress PROMPT_CLEARED for a window after.
+    // Without this, PROMPT_CLEARED (from platform auto-clearing input after submit) wipes
+    // the scan result. Both proxy (INTERCEPTED) and audit (AUDIT) results need protection.
+    let _lastAcceptedScoreAt = 0;
     const PROXY_SCORE_PROTECT_MS = 5_000;
 
     // ── DELIVERY PATH 1: chrome.storage.onChanged listener ──
@@ -816,10 +876,11 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
       // which races with the SENSITIVITY_SCORE from the MAIN world interceptor.
       // If a SENSITIVITY_SCORE arrives within the window, the clear is cancelled.
       if (message.type === 'PROMPT_CLEARED') {
-        // Suppress PROMPT_CLEARED if a proxy score was recently set.
-        // dom-presubmit adapters (Gemini, Copilot) fire INTERCEPTED *before*
-        // the platform clears the input, so there's no pending timer to cancel.
-        if (Date.now() - _lastProxyScoreAt < PROXY_SCORE_PROTECT_MS) return;
+        // Suppress PROMPT_CLEARED if ANY score was recently accepted.
+        // Platforms (Claude, ChatGPT, Gemini) auto-clear the input after submit,
+        // which races with detection results. Without this protection, the "All Clear"
+        // or "Protected" result gets wiped before the user can see it.
+        if (Date.now() - _lastAcceptedScoreAt < PROXY_SCORE_PROTECT_MS) return;
 
         const clearTabId = message.payload?.tabId;
         const currentActiveTab = activeTabIdRef.current;
@@ -830,7 +891,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
             setLastScore(null);
             setInspectorData(null);
             setInspectorOpen(false);
-            chrome.storage.local.remove('lastScore');
+            chrome.storage.local.remove(['lastScore', 'lastDetectionResult']);
           }, 1500);
         }
       }

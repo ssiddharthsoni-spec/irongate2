@@ -13,6 +13,30 @@ interface RegexPattern {
   contextual?: boolean; // if true, extract only the name portion (last two words)
 }
 
+// Business suffixes that indicate an ORGANIZATION, not a PERSON.
+// Used to reclassify PERSON matches whose last word is a business term.
+// e.g. "Proseware Solutions" matched as PERSON → reclassified to ORGANIZATION.
+const ORG_SUFFIX_SET = new Set([
+  'inc', 'corp', 'corporation', 'llc', 'ltd', 'llp',
+  'associates', 'partners', 'group', 'foundation',
+  'hospital', 'center', 'centre', 'university', 'college',
+  'bank', 'insurance', 'industries', 'enterprises', 'holdings',
+  'capital', 'trust', 'fund', 'technologies', 'tech',
+  'solutions', 'services', 'consulting', 'management',
+  'investments', 'advisors', 'advisory', 'labs', 'laboratories',
+  'media', 'energy', 'resources', 'dynamics', 'systems',
+  'international', 'global', 'worldwide', 'agency',
+  'commission', 'authority', 'bureau', 'institute', 'council',
+  'pharma', 'pharmaceuticals', 'mining', 'logistics', 'motors',
+  'financial', 'securities', 'networks', 'electric',
+  'communications', 'telecom', 'exchange', 'petroleum',
+  'aerospace', 'aviation', 'defense', 'studio', 'studios',
+  'healthcare', 'health', 'ventures', 'platform', 'platforms',
+  'software', 'analytics', 'robotics', 'automation',
+  'engineering', 'constructions', 'construction',
+  'properties', 'realty', 'brands', 'foods', 'beverages',
+]);
+
 const REGEX_PATTERNS: RegexPattern[] = [
   // ── Person Names ──────────────────────────────────────────────────────
   // Titled names: Dr. John Smith, Mr. Jane Doe
@@ -28,17 +52,17 @@ const REGEX_PATTERNS: RegexPattern[] = [
     confidence: 0.85,
     contextual: true,
   },
-  // Names before parenthetical contact info: "Sarah Chen (email..." or "Sarah Chen,"
+  // Names before parenthetical or comma + context: "Sarah Chen (email..." or "David Park, Employee ID"
   {
     type: 'PERSON',
-    pattern: /\b[A-Z][a-z]{2,15}\s+[A-Z][a-z]{2,15}\s*(?=\(|\[|<|,\s*(?:who|our|the|is|at|from))/g,
+    pattern: /\b[A-Z][a-z]{2,15}\s+[A-Z][a-z]{2,15}\s*(?=\(|\[|<|,\s*(?:who|our|the|is|at|from|[Ee]mployee|[Ss]taff|[Aa]ge|[Bb]orn|[Bb]adge|ID|[Dd]ob|[Ss]sn|an?\s))/g,
     confidence: 0.8,
   },
   // Names after prepositions: "for Sarah Chen", "from John Smith"
   {
     type: 'PERSON',
     pattern: /\b(?:for|from|to|by|with|about|cc|re|dear|hi|hey|hello|regarding)\s+[A-Z][a-z]{2,15}\s+[A-Z][a-z]{2,15}\b/gi,
-    confidence: 0.65,
+    confidence: 0.82,
     contextual: true,
   },
   // Names followed by action verbs: "John Smith mentioned", "Sarah Chen emailed"
@@ -59,6 +83,14 @@ const REGEX_PATTERNS: RegexPattern[] = [
     pattern: /\b(?:told|asked|emailed|called|informed|notified|briefed|contacted|assigned|promoted|terminated|hired|fired|invited)\s+[A-Z][a-z]{2,15}\s+[A-Z][a-z]{2,15}\b/gi,
     confidence: 0.7,
     contextual: true,
+  },
+  // Names in structured/delimited data: "| Sarah Chen |", "| F David Park |"
+  // Uses lookbehind for delimiter so match[0] starts at the name.
+  // Optional prefix (gender marker M/F or column header) is consumed by lookbehind.
+  {
+    type: 'PERSON',
+    pattern: /(?<=[\|,\t]\s*(?:[A-Za-z]+\s+)*)[A-Z][a-z]{2,15}\s+[A-Z][a-z]{2,15}(?=\s*[\|,\t])/g,
+    confidence: 0.78,
   },
   // ── Organization Names ────────────────────────────────────────────────
   // Multi-word capitalized names with common org suffixes
@@ -109,6 +141,15 @@ const REGEX_PATTERNS: RegexPattern[] = [
     confidence: 0.5,
     contextual: true,
   },
+  // Standalone org names followed by business-activity nouns.
+  // Catches "Fabrikam deal", "Acme merger", "Northwind acquisition".
+  // Lookahead ensures match[0] is just the org name (not "deal"/"merger"/etc.)
+  // so pseudonymization replaces only the entity, not the surrounding text.
+  {
+    type: 'ORGANIZATION',
+    pattern: /\b[A-Z][a-z]{3,}(?:\s+[A-Z][a-z]+)?(?=\s+(?:deal|acquisition|merger|contract|partnership|engagement|lawsuit|expansion|valuation|buyout|takeover|divestiture|spin[\s-]?off|restructuring|bankruptcy|IPO|bid|tender|settlement|litigation|arbitration)\b)/gi,
+    confidence: 0.7,
+  },
   // Stock tickers: (TSX: THI), (NYSE: AAPL), NASDAQ: TSLA
   {
     type: 'TICKER',
@@ -119,6 +160,12 @@ const REGEX_PATTERNS: RegexPattern[] = [
   {
     type: 'EMPLOYEE_ID',
     pattern: /\b(?:EMP|HR|FMLA|RSU|REQ|WO|PO|INV)[-#]?\d{4,8}\b/g,
+    confidence: 0.85,
+  },
+  // "Employee ID 4523", "Staff ID 12345", "Badge #67890"
+  {
+    type: 'EMPLOYEE_ID',
+    pattern: /\b(?:employee|staff|badge|worker|personnel)\s*(?:ID|id|Id|#|number|no\.?)\s*:?\s*#?\d{3,8}\b/gi,
     confidence: 0.85,
   },
   // Generic reference numbers with prefix labels
@@ -193,7 +240,7 @@ const REGEX_PATTERNS: RegexPattern[] = [
   // ── Monetary Amounts ──────────────────────────────────────────────────
   {
     type: 'MONETARY_AMOUNT',
-    pattern: /\$\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})?\s?(?:million|billion|M|B|k|K)?\b/g,
+    pattern: /\$\s?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?\s?(?:million|billion|M|B|k|K)?\b/g,
     confidence: 0.85,
   },
   {
@@ -239,6 +286,12 @@ const REGEX_PATTERNS: RegexPattern[] = [
     type: 'PROJECT_NAME',
     pattern: /(?<=[""\u201C])[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}(?=[""\u201D])/g,
     confidence: 0.6,
+  },
+  // "Project Atlas", "Project Phoenix", "Operation Sunrise" (unquoted)
+  {
+    type: 'PROJECT_NAME',
+    pattern: /\b(?:Project|Operation|Initiative|Program|Campaign)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b/g,
+    confidence: 0.75,
   },
   // ── Passport Numbers (US format) ──────────────────────────────────────
   {
@@ -567,9 +620,11 @@ function runRegexPatterns(text: string): DetectedEntity[] {
       let matchStart = match.index;
       let matchEnd = match.index + match[0].length;
 
-      // For contextual patterns, extract just the name part (last two capitalized words)
+      // For contextual patterns, extract just the name part (last capitalized words).
+      // Trim first — patterns like pipe-delimited may capture trailing whitespace
+      // before a lookahead, which breaks the $ anchor.
       if (contextual) {
-        const nameMatch = match[0].match(/[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}$/);
+        const nameMatch = match[0].trimEnd().match(/[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}$/);
         if (nameMatch) {
           const nameStart = match[0].lastIndexOf(nameMatch[0]);
           matchText = nameMatch[0];
@@ -617,7 +672,47 @@ function runRegexPatterns(text: string): DetectedEntity[] {
     }
   }
 
-  return entities;
+  // ── Post-detection: reclassify PERSON → ORGANIZATION ──────────────────
+  // If a PERSON entity's last word is a known business suffix, it's an org.
+  // This catches all patterns systematically instead of patching each regex.
+  for (const entity of entities) {
+    if (entity.type !== 'PERSON') continue;
+    const words = entity.text.trim().split(/\s+/);
+    const lastWord = words[words.length - 1];
+    if (lastWord && ORG_SUFFIX_SET.has(lastWord.toLowerCase())) {
+      entity.type = 'ORGANIZATION';
+    }
+  }
+
+  // Remove duplicate spans where the same text is now both PERSON and ORGANIZATION
+  // at the same position (keep ORGANIZATION — it's the higher-signal classification).
+  const deduped: DetectedEntity[] = [];
+  const spanMap = new Map<string, DetectedEntity>();
+  for (const entity of entities) {
+    const spanKey = `${entity.start}-${entity.end}`;
+    const existing = spanMap.get(spanKey);
+    if (!existing) {
+      spanMap.set(spanKey, entity);
+      deduped.push(entity);
+    } else if (existing.type === 'PERSON' && entity.type === 'ORGANIZATION') {
+      // Replace PERSON with ORGANIZATION at same span
+      const idx = deduped.indexOf(existing);
+      if (idx >= 0) deduped[idx] = entity;
+      spanMap.set(spanKey, entity);
+    } else if (existing.type === entity.type) {
+      // Same type at same span — keep higher confidence
+      if (entity.confidence > existing.confidence) {
+        const idx = deduped.indexOf(existing);
+        if (idx >= 0) deduped[idx] = entity;
+        spanMap.set(spanKey, entity);
+      }
+    } else {
+      // Different types, neither is PERSON→ORG conflict — keep both
+      deduped.push(entity);
+    }
+  }
+
+  return deduped;
 }
 
 /**
@@ -665,8 +760,15 @@ export function detectWithRegex(text: string): DetectedEntity[] {
 function removeOverlaps(entities: DetectedEntity[]): DetectedEntity[] {
   if (entities.length <= 1) return entities;
 
-  // Sort by confidence descending, then by span length descending (prefer longer matches)
+  // Sort by confidence descending, then by span length descending (prefer longer matches).
+  // Special case: PERSON beats LOCATION at same span, because names like "David Park",
+  // "John Lake", "Sarah Hill" contain geographic words but are people in business context.
   const sorted = [...entities].sort((a, b) => {
+    // PERSON vs LOCATION tiebreak: prefer PERSON when both match same text
+    if (a.type === 'PERSON' && b.type === 'LOCATION' &&
+        a.start === b.start && a.end === b.end) return -1;
+    if (b.type === 'PERSON' && a.type === 'LOCATION' &&
+        a.start === b.start && a.end === b.end) return 1;
     if (b.confidence !== a.confidence) return b.confidence - a.confidence;
     return (b.end - b.start) - (a.end - a.start);
   });

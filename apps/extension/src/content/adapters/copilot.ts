@@ -39,6 +39,7 @@ export const CopilotAdapter: SiteAdapter = {
   // Copilot uses SignalR over WebSocket for chat — skip fetch/XHR proxy
   // to avoid interfering with Copilot's internal REST API calls.
   // Pseudonymization is handled by dom-capture-wire → WS.prototype.send patch.
+  responseStreamStrategy: 'none',  // WS handler does response de-pseudo
   skipFetchProxy: true,
   skipXhrProxy: true,
 

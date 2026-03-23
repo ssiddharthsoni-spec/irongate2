@@ -317,8 +317,19 @@ export function computeScore(
   }
 
   // Safety: if contextual keywords indicate high sensitivity, don't let
-  // any multiplier reduce the score
-  if (contextualKeywordScore >= 15) {
+  // any multiplier reduce the score — UNLESS this is a self-referential task.
+  // In a resume, "managed $2M revenue at Acme Corp" triggers financial/M&A
+  // contextual keywords, but those describe past work experience, not active
+  // deals or MNPI. Forcing intentSuppMultiplier back to 1.0 would completely
+  // override the user's explicit "improve my resume" intent.
+  // selfRefFull: true when self-referential AND all entities suppressed.
+  // Used to gate safety overrides that would otherwise force multipliers
+  // back to 1.0 (which would undo intent suppression for resumes/bios).
+  const selfRefFull = intentResult.isSelfReferential &&
+    intentResult.suppressions.length > 0 &&
+    intentResult.suppressions.length === entities.length;
+
+  if (contextualKeywordScore >= 15 && !selfRefFull) {
     if (documentTypeMultiplier < 1.0) documentTypeMultiplier = 1.0;
     if (coOccurrenceMultiplier < 1.0) coOccurrenceMultiplier = 1.0;
     if (intentWeight < 1.0) intentWeight = 1.0;
@@ -378,8 +389,10 @@ export function computeScore(
   }
 
   // Safety: don't let intent suppression reduce score when dangerous
-  // contextual keywords are present (M&A deal + "research" shouldn't suppress)
-  if (contextualKeywordScore >= 15) {
+  // contextual keywords are present (M&A deal + "research" shouldn't suppress).
+  // Exception: self-referential tasks (resume/bio) where keywords describe
+  // the user's work history, not active deals.
+  if (contextualKeywordScore >= 15 && !selfRefFull) {
     intentSuppMultiplier = Math.max(intentSuppMultiplier, 1.0);
   }
 
@@ -401,17 +414,39 @@ export function computeScore(
     safeMultiplier(coOccurrenceMultiplier) *
     safeMultiplier(intentSuppMultiplier);
 
+  // ── Self-Referential Score Ceiling ────────────────────────────────────
+  // When intent suppression identified a self-referential task (resume, bio,
+  // cover letter) AND suppressed all entities, cap the score at 20.
+  // The user IS the data — "improve my resume" with employer names, email,
+  // and salary numbers is not a data leak. Without this ceiling, entity
+  // weights + volume + contextual keywords can push the score above 25 even
+  // with the 0.1 multiplier, causing unnecessary pseudonymization.
+  //
+  // Safety: this ceiling does NOT apply when NEVER_SUPPRESS entity types
+  // are present (SSN, credit card, credentials) — those are always protected.
+  // Only apply ceiling when ALL entities were suppressed (full suppression).
+  // Partial suppression means some entities are NOT safe (e.g. ACCOUNT_NUMBER
+  // in a wire transfer that starts with "format this") — those must still
+  // drive the score.
+  const allEntitiesSuppressed = intentResult.suppressions.length > 0 &&
+    intentResult.suppressions.length === entities.length;
+  if (intentResult.isSelfReferential && allEntitiesSuppressed && !hasHighPII) {
+    rawScore = Math.min(rawScore, 20);
+  }
+
   // Floor: contextual keywords ≥20 → minimum score of 30
   // If contextual keywords detect real business-sensitive content, never let the
   // score fall below "medium" territory regardless of entity suppression.
-  if (contextualKeywordScore >= 20 && rawScore < 30) {
+  // Exception: self-referential tasks where keywords describe work history.
+  const selfRefFullSuppression = intentResult.isSelfReferential && allEntitiesSuppressed;
+  if (contextualKeywordScore >= 20 && rawScore < 30 && !selfRefFullSuppression) {
     rawScore = 30;
   }
 
   // Floor: contextual keywords ≥35 → minimum score of 50
   // Strong keyword signal (M&A, medical, legal) deserves solid medium rating
   // even when entity detection is weak.
-  if (contextualKeywordScore >= 35 && rawScore < 50) {
+  if (contextualKeywordScore >= 35 && rawScore < 50 && !selfRefFullSuppression) {
     rawScore = 50;
   }
 

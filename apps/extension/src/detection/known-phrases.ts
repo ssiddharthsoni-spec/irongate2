@@ -121,6 +121,38 @@ const TECHNICAL = [
   'Net Present', 'Internal Rate', 'Break Even',
 ];
 
+const JOB_TITLES = [
+  'Senior Engineer', 'Staff Engineer', 'Senior Developer', 'Staff Developer',
+  'Junior Engineer', 'Junior Developer', 'Lead Engineer', 'Lead Developer',
+  'Tech Lead', 'Team Lead', 'Project Lead', 'Engineering Manager',
+  'Product Manager', 'Program Manager', 'General Manager',
+  'Senior Analyst', 'Junior Analyst', 'Staff Analyst', 'Lead Analyst',
+  'Senior Consultant', 'Junior Consultant', 'Staff Consultant',
+  'Senior Designer', 'Junior Designer', 'Lead Designer',
+  'Senior Architect', 'Solution Architect', 'Enterprise Architect',
+  'Senior Associate', 'Junior Associate', 'Staff Associate',
+  'Research Scientist', 'Data Scientist', 'Data Engineer', 'Data Analyst',
+  'Software Engineer', 'Software Developer', 'Systems Engineer',
+  'Network Engineer', 'Security Engineer', 'DevOps Engineer',
+  'Site Reliability', 'Technical Writer', 'Technical Director',
+  'Creative Director', 'Art Director', 'Marketing Director',
+  'Sales Director', 'Operations Director', 'Finance Director',
+  'Account Manager', 'Account Executive', 'Business Analyst',
+  'Financial Analyst', 'Investment Analyst', 'Risk Analyst',
+  'Compliance Officer', 'Legal Counsel', 'Patent Attorney',
+  'Human Resources', 'Office Manager', 'Executive Assistant',
+];
+
+// Common table/column headers that look like two-word person names
+const COLUMN_HEADERS = [
+  'Start Date', 'End Date', 'Due Date', 'Birth Date', 'Hire Date',
+  'First Name', 'Last Name', 'Full Name', 'Middle Name', 'User Name',
+  'Job Title', 'Pay Grade', 'Base Salary', 'Annual Salary',
+  'Phone Number', 'Email Address', 'Home Address', 'Mailing Address',
+  'Status Code', 'Account Number', 'Employee Number', 'Badge Number',
+  'Total Revenue', 'Net Income', 'Gross Profit', 'Tax Rate',
+];
+
 // ── Build the lookup set ────────────────────────────────────────────────────
 
 function buildBlocklistSet(lists: string[][]): Set<string> {
@@ -135,7 +167,7 @@ function buildBlocklistSet(lists: string[][]): Set<string> {
 
 /** Static blocklist of known non-PII phrases (case-insensitive lookup) */
 export const KNOWN_NON_PII: ReadonlySet<string> = buildBlocklistSet([
-  COMPANIES, LAW_FIRMS, PLACES, TECHNICAL,
+  COMPANIES, LAW_FIRMS, PLACES, TECHNICAL, JOB_TITLES, COLUMN_HEADERS,
 ]);
 
 /** Extend the blocklist at runtime (e.g., from managed config) */

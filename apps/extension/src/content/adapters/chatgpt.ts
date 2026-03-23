@@ -42,6 +42,31 @@ export const ChatGPTAdapter: SiteAdapter = {
 
   fileUploadPatterns: [/\/backend-api\/files/, /files\.oaiusercontent\.com/],
 
+  // ChatGPT uses accumulated SSE format (message.content.parts[0]) — SSE content parsing works best
+  responseStreamStrategy: 'sse-content',
+
+  extractResponseContent(parsed: any) {
+    // ChatGPT accumulated: message.content.parts[0] has full text so far
+    const parts = parsed?.message?.content?.parts;
+    if (Array.isArray(parts) && typeof parts[0] === 'string') {
+      return { mode: 'accumulated' as const, content: parts[0] };
+    }
+    // OpenAI API delta: choices[0].delta.content
+    const delta = parsed?.choices?.[0]?.delta?.content;
+    if (typeof delta === 'string') {
+      return { mode: 'delta' as const, content: delta };
+    }
+    return null;
+  },
+
+  injectResponseContent(parsed: any, mode: 'accumulated' | 'delta', content: string) {
+    if (mode === 'accumulated' && parsed?.message?.content?.parts) {
+      parsed.message.content.parts[0] = content;
+    } else if (parsed?.choices?.[0]?.delta?.content !== undefined) {
+      parsed.choices[0].delta.content = content;
+    }
+  },
+
   skipFetchProxy: false, // Fetch proxy handles request pseudonymization
   skipXhrProxy: false,
 

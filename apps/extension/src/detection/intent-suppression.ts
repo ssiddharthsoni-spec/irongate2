@@ -28,6 +28,14 @@ export interface IntentSuppressionResult {
   scoreMultiplier: number;
   /** Which entities were suppressed and why */
   suppressions: IntentSuppression[];
+  /**
+   * True when the user IS the data (resume, bio, cover letter, formatting).
+   * These tasks naturally contain many entities and contextual keywords
+   * (e.g. "managed $2M revenue at Acme Corp") that describe past work
+   * experience, NOT active deals or MNPI. The scorer must not let safety
+   * overrides (contextualKeywordScore ≥ 15) force the multiplier back to 1.0.
+   */
+  isSelfReferential: boolean;
 }
 
 export interface IntentSuppression {
@@ -51,6 +59,24 @@ interface BenignIntentPattern {
   requireProximity?: boolean;
 }
 
+// Patterns where the user is sharing THEIR OWN content for a task.
+// Resumes, bios, cover letters, formatting tasks, etc. naturally contain
+// many entities (employer, clients, email, locations) and are longer than
+// casual queries. These get relaxed length/entity guards because the data
+// is inherently the user's own — unlike a data record or DSAR.
+// NOTE: 'summarization_task' was intentionally EXCLUDED. Summarizing applies
+// to ANY content — a Slack thread of MNPI, a legal memo, financial data.
+// Unlike a resume (where the user IS the data), summarization doesn't imply
+// the content is the user's own. Same for 'translation_task' — translating
+// a confidential document is still confidential.
+const SELF_REFERENTIAL_PATTERNS = new Set([
+  'personal_bio',
+  'resume_improvement',
+  'formatting_task',
+  'creative_writing',
+  'template_draft',
+]);
+
 const BENIGN_INTENT_PATTERNS: BenignIntentPattern[] = [
   // ── Personal/Creative Tasks ────────────────────────────────────────────
   {
@@ -71,7 +97,12 @@ const BENIGN_INTENT_PATTERNS: BenignIntentPattern[] = [
   {
     name: 'personal_bio',
     pattern: /\b(?:write\s+(?:a\s+)?(?:bio|about\s+me|my\s+(?:resume|cv|cover\s+letter|linkedin|profile))|help\s+(?:me\s+)?(?:with\s+)?my\s+(?:resume|cv|cover\s+letter|linkedin|profile))\b/i,
-    safeTypes: new Set(['PERSON', 'EMAIL', 'PHONE_NUMBER', 'LOCATION', 'ORGANIZATION', 'DATE']),
+    safeTypes: new Set(['PERSON', 'EMAIL', 'PHONE_NUMBER', 'LOCATION', 'ORGANIZATION', 'DATE', 'MONETARY_AMOUNT']),
+  },
+  {
+    name: 'resume_improvement',
+    pattern: /\b(?:(?:improve|update|edit|rewrite|polish|enhance|revise|fix|rework|critique|review|feedback\s+on|can\s+you\s+(?:improve|help|fix|review|rewrite))\s+(?:my\s+|this\s+|the\s+)?(?:resume|cv|cover\s+letter|linkedin\s+(?:profile)?|bio|portfolio)|(?:resume|cv|cover\s+letter)\s+(?:review|feedback|improvement|help|advice|tips?))\b/i,
+    safeTypes: new Set(['PERSON', 'EMAIL', 'PHONE_NUMBER', 'LOCATION', 'ORGANIZATION', 'DATE', 'MONETARY_AMOUNT']),
   },
   {
     name: 'personal_health',
@@ -145,14 +176,14 @@ const BENIGN_INTENT_PATTERNS: BenignIntentPattern[] = [
   // ── Translation Tasks ──────────────────────────────────────────────────
   {
     name: 'translation_task',
-    pattern: /\b(?:translat(?:e|ion)|(?:convert|change)\s+(?:this\s+)?(?:to|into)\s+(?:english|spanish|french|german|chinese|japanese|korean|arabic|hindi|portuguese|italian|russian|dutch|swedish)|in\s+(?:english|spanish|french|german|chinese|japanese|korean))\b/i,
+    pattern: /\b(?:translat\w*|(?:convert|change)\s+(?:this\s+)?(?:to|into)\s+(?:english|spanish|french|german|chinese|japanese|korean|arabic|hindi|portuguese|italian|russian|dutch|swedish)|in\s+(?:english|spanish|french|german|chinese|japanese|korean))\b/i,
     safeTypes: new Set(['PERSON', 'ORGANIZATION', 'LOCATION', 'DATE']),
   },
 
   // ── Summarization Tasks ────────────────────────────────────────────────
   {
     name: 'summarization_task',
-    pattern: /\b(?:summariz(?:e|ation)|(?:give|write|create|provide)\s+(?:a\s+)?(?:summary|synopsis|overview|recap|brief|gist|tldr|tl;dr)|(?:shorten|condense|simplify)\s+(?:this|the\s+following))\b/i,
+    pattern: /\b(?:summariz\w*|(?:give|write|create|provide)\s+(?:a\s+)?(?:summary|synopsis|overview|recap|brief|gist|tldr|tl;dr)|(?:shorten|condense|simplify)\s+(?:this|the\s+following))\b/i,
     safeTypes: new Set(['PERSON', 'ORGANIZATION', 'LOCATION', 'DATE']),
   },
 
@@ -161,6 +192,41 @@ const BENIGN_INTENT_PATTERNS: BenignIntentPattern[] = [
     name: 'creative_writing',
     pattern: /\b(?:write\s+(?:a\s+)?(?:story|poem|song|haiku|limerick|essay|article|blog\s*post|script|dialogue|monologue|speech)|(?:creative|fictional|fantasy|sci[\s-]?fi)\s+(?:writing|story|narrative)|make\s+(?:up|it)\s+(?:a\s+)?(?:story|poem))\b/i,
     safeTypes: new Set(['PERSON', 'ORGANIZATION', 'LOCATION', 'DATE']),
+  },
+
+  // ── Roleplay / Hypothetical / Fictional Scenarios ─────────────────────
+  {
+    name: 'roleplay_fictional',
+    pattern: /\b(?:(?:let'?s|let\s+us)\s+(?:roleplay|role[\s-]?play|pretend|imagine|say)|(?:roleplay|role[\s-]?play)\s*[:\.!,]|fictional\s+(?:company|person|org\w*|business|startup|firm|scenario|example)|hypothetical(?:ly)?|(?:imagine|pretend|suppose|assume)\s+(?:you\s+are|you're|I\s+am|I'm|we\s+are|we're|that)|(?:for\s+(?:this\s+)?example|as\s+an?\s+example)\s*,?\s+(?:let'?s\s+)?(?:say|assume|imagine|suppose))\b/i,
+    safeTypes: new Set(['PERSON', 'ORGANIZATION', 'LOCATION', 'DATE', 'MONETARY_AMOUNT']),
+  },
+
+  // ── Test / Sample / Placeholder Data ──────────────────────────────────
+  {
+    name: 'test_sample_data',
+    pattern: /\b(?:(?:this\s+is\s+)?(?:test|sample|dummy|placeholder|fake|mock|example)\s+(?:data|entry|record|input|text|content|value|name|email|address|number)|(?:for\s+)?(?:testing|demonstration|demo)\s+(?:purposes?|only|data)|(?:use|using)\s+(?:test|fake|dummy|sample|placeholder)\s+(?:data|values?|names?|info))\b/i,
+    safeTypes: new Set(['PERSON', 'ORGANIZATION', 'LOCATION', 'DATE', 'EMAIL', 'PHONE_NUMBER', 'DATE_OF_BIRTH']),
+  },
+
+  // ── Educational / Learning ──────────────────────────────────────────────
+  {
+    name: 'educational_example',
+    pattern: /\b(?:(?:for\s+)?(?:educational|learning|teaching|training|classroom|tutorial)\s+(?:purposes?|example|exercise|use)|(?:teach|learn|study|practice)\s+(?:about|how\s+to)|(?:textbook|coursework|homework|assignment|lecture)\s+(?:example|problem|exercise|question))\b/i,
+    safeTypes: new Set(['PERSON', 'ORGANIZATION', 'LOCATION', 'DATE', 'MONETARY_AMOUNT']),
+  },
+
+  // ── Templates / Drafts / Boilerplate ────────────────────────────────────
+  {
+    name: 'template_draft',
+    pattern: /\b(?:(?:create|write|draft|make|generate)\s+(?:a\s+)?(?:template|boilerplate|skeleton|outline|placeholder)|(?:template|boilerplate)\s+(?:for|text|content|example)|(?:fill\s+in|populate)\s+(?:this|the)\s+(?:template|form|placeholder))\b/i,
+    safeTypes: new Set(['PERSON', 'ORGANIZATION', 'LOCATION', 'DATE', 'EMAIL', 'PHONE_NUMBER']),
+  },
+
+  // ── Practice / Exercise ─────────────────────────────────────────────────
+  {
+    name: 'practice_exercise',
+    pattern: /\b(?:(?:practice|exercise|drill|quiz|exam)\s+(?:problem|question|prompt|scenario|example)|(?:work(?:ing)?\s+through|walk\s+(?:me\s+)?through)\s+(?:an?\s+)?example|(?:let'?s|let\s+us)\s+(?:practice|try\s+(?:a|an)\s+example))\b/i,
+    safeTypes: new Set(['PERSON', 'ORGANIZATION', 'LOCATION', 'DATE', 'MONETARY_AMOUNT']),
   },
 
   // ── Code Help Tasks ─────────────────────────────────────────────────────
@@ -219,18 +285,17 @@ const NEVER_SUPPRESS_TYPES = new Set([
  * reduced (not removed entirely) so they still show up in the side panel
  * for user awareness, but don't inflate the sensitivity score.
  *
- * IMPORTANT safety guards:
- * - Only applies to SHORT prompts (≤500 chars) — long text is likely data dumps
- * - Benign intent patterns must appear in the FIRST 150 chars of the prompt
- * - First-person must appear in the first sentence
- * - Multiple entities (≥4) = likely a data record, not a casual query
- */
-/**
+ * Architecture:
+ *   1. Match benign intent patterns in the opening of the prompt
+ *   2. THEN apply context-appropriate guards based on what matched
+ *   3. Self-referential tasks (resume, bio, formatting) get relaxed guards
+ *      because the user IS the data — resumes naturally have many entities
+ *   4. Lookup tasks (weather, definition) keep strict guards
+ *   5. hasDataRecordContext() is the per-entity safety check (field labels,
+ *      tabular format), NOT blunt entity counts
+ *
  * @param nliBenign - When true, NLI has classified the prompt as benign
- *   with high confidence. This broadens suppression: ALL safe-type entities
- *   are suppressed even if no hardcoded regex pattern matched. This eliminates
- *   the whack-a-mole problem — NLI understands novel benign scenarios
- *   (e.g., "reformat this text for a presentation") without needing a regex.
+ *   with high confidence. Broadens suppression without needing a regex match.
  */
 export function applyIntentSuppression(
   text: string,
@@ -238,26 +303,7 @@ export function applyIntentSuppression(
   nliBenign: boolean = false,
 ): IntentSuppressionResult {
   if (entities.length === 0) {
-    return { entities, scoreMultiplier: 1.0, suppressions: [] };
-  }
-
-  // GUARD 1: Long texts are likely data dumps / documents, not casual queries.
-  // Intent suppression is for "create a horoscope for March 15" not for
-  // multi-paragraph legal memos that happen to contain "what is".
-  // NLI cross-talk: when NLI says benign, relax the length guard slightly
-  // (e.g., a 600-char personal question is still benign).
-  const lengthLimit = nliBenign ? 800 : 500;
-  if (text.length > lengthLimit) {
-    return { entities, scoreMultiplier: 1.0, suppressions: [] };
-  }
-
-  // GUARD 2: Many entities = structured data record, not a casual question.
-  // "Who is Elon Musk?" has 1 entity. A DSAR with 8 entities is a data dump.
-  // NLI cross-talk: when NLI says benign, relax the entity count guard
-  // (a personal bio might mention 4-5 names/places and still be benign).
-  const entityLimit = nliBenign ? 6 : 4;
-  if (entities.length >= entityLimit) {
-    return { entities, scoreMultiplier: 1.0, suppressions: [] };
+    return { entities, scoreMultiplier: 1.0, suppressions: [], isSelfReferential: false };
   }
 
   const suppressions: IntentSuppression[] = [];
@@ -265,7 +311,7 @@ export function applyIntentSuppression(
 
   // Only check the opening portion of the prompt for benign intent.
   // A "what is" buried in paragraph 5 of a legal doc shouldn't suppress anything.
-  const opening = text.substring(0, 150);
+  const opening = text.substring(0, 200);
 
   // Find matching benign intent patterns IN THE OPENING
   for (const bip of BENIGN_INTENT_PATTERNS) {
@@ -283,22 +329,51 @@ export function applyIntentSuppression(
   // This is the key change that eliminates whack-a-mole: NLI understands
   // novel benign scenarios without needing a regex for each one.
   if (nliBenign && matchedPatterns.length === 0 && !isFirstPerson) {
-    // NLI is the pattern match — add all common safe types
     const nliSafeTypes = new Set(['PERSON', 'DATE', 'DATE_OF_BIRTH', 'LOCATION', 'ORGANIZATION', 'EMAIL']);
-    // But DON'T proceed if the only entity is a NEVER_SUPPRESS type
     const allNeverSuppress = entities.every(e => NEVER_SUPPRESS_TYPES.has(e.type));
     if (!allNeverSuppress) {
-      // Treat NLI as a virtual pattern match
       matchedPatterns.push({
         name: 'nli_benign',
-        pattern: /./,  // dummy — NLI already matched
+        pattern: /./,
         safeTypes: nliSafeTypes,
       });
     }
   }
 
   if (matchedPatterns.length === 0 && !isFirstPerson) {
-    return { entities, scoreMultiplier: 1.0, suppressions: [] };
+    return { entities, scoreMultiplier: 1.0, suppressions: [], isSelfReferential: false };
+  }
+
+  // ── CONTEXT-AWARE GUARDS ───────────────────────────────────────────────
+  //
+  // ARCHITECTURE (replaces blunt length/entity limits):
+  //
+  // The OLD approach applied guards BEFORE pattern matching — a 575-char
+  // resume with 7 entities was immediately rejected as a "data dump" without
+  // ever checking if the user said "improve my resume."
+  //
+  // The NEW approach: pattern matching runs FIRST, then guards are calibrated
+  // based on what matched. Self-referential task patterns (resume, cover
+  // letter, bio, formatting) naturally contain many entities and are long —
+  // a resume IS the user's own data. Lookup patterns (weather, definition)
+  // keep strict guards.
+  //
+  // Safety is maintained by hasDataRecordContext() which checks for actual
+  // data-record signals (field labels, tabular format) per-entity, not by
+  // blunt entity counts that can't distinguish a resume from a DSAR.
+  //
+  const isSelfReferentialTask = matchedPatterns.some(p =>
+    SELF_REFERENTIAL_PATTERNS.has(p.name)
+  );
+
+  const lengthLimit = isSelfReferentialTask ? 2000 : nliBenign ? 800 : 500;
+  if (text.length > lengthLimit) {
+    return { entities, scoreMultiplier: 1.0, suppressions: [], isSelfReferential: false };
+  }
+
+  const entityLimit = isSelfReferentialTask ? 15 : nliBenign ? 6 : 4;
+  if (entities.length >= entityLimit) {
+    return { entities, scoreMultiplier: 1.0, suppressions: [], isSelfReferential: false };
   }
 
   // Build the set of safe entity types from all matched patterns
@@ -354,14 +429,18 @@ export function applyIntentSuppression(
 
   let scoreMultiplier = 1.0;
   if (suppressedCount > 0 && suppressedCount === totalCount) {
-    // ALL entities are benign intent → strong suppression
-    scoreMultiplier = 0.3;
+    // ALL entities are benign intent → strong suppression.
+    // Self-referential tasks (resume, bio, cover letter) get an aggressive
+    // multiplier (0.1) because the entities ARE the user's own data, not
+    // a data leak. Combined with confidence reduction to 0.2, this
+    // guarantees the score drops into green zone (≤25).
+    scoreMultiplier = isSelfReferentialTask ? 0.1 : 0.3;
   } else if (suppressedCount > 0) {
     // Some entities suppressed, some remain → moderate reduction
-    scoreMultiplier = 0.6;
+    scoreMultiplier = isSelfReferentialTask ? 0.3 : 0.6;
   }
 
-  return { entities: adjusted, scoreMultiplier, suppressions };
+  return { entities: adjusted, scoreMultiplier, suppressions, isSelfReferential: isSelfReferentialTask };
 }
 
 /**

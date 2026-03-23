@@ -24,6 +24,13 @@ export const POLL_INTERVAL = 60_000;
  *  Render cold starts can take 15-30s, so give the server time to wake up. */
 const REQUEST_TIMEOUT = 30_000;
 
+/** Number of consecutive failures tolerated before fail-closed activates.
+ *  3 failures × 60s interval = 3 minutes of grace for Render cold starts. */
+const MAX_TRANSIENT_FAILURES = 3;
+
+/** Tracks consecutive check failures. Reset on any successful response. */
+let _consecutiveFailures = 0;
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface KillSwitchState {
@@ -96,28 +103,48 @@ export async function checkKillSwitch(
         );
         return { kill_switch: false, active: true, config_version: 0 };
       }
-      // Other errors (5xx, etc.) — fail OPEN for transient server issues.
-      // Fail-closed caused false kill-switch activations on Render cold starts
-      // and temporary 502/503 errors, locking users out unnecessarily.
-      // The kill switch should only activate on an EXPLICIT server signal.
-      console.warn(
-        `[SECURITY] Kill-switch endpoint returned HTTP ${response.status}. Treating as transient — extension stays active.`,
+      // Other errors (5xx, etc.) — fail CLOSED.
+      // If the server is down, we cannot confirm the extension is authorized
+      // to operate. Block prompt processing until the server responds.
+      // To avoid false lockouts on Render cold starts (15-30s), the poller
+      // uses a 30s timeout and 60s interval, giving 2 full attempts before
+      // a user even notices. Consecutive transient failures (up to 3) are
+      // tolerated before activating the kill switch.
+      _consecutiveFailures++;
+      if (_consecutiveFailures <= MAX_TRANSIENT_FAILURES) {
+        console.warn(
+          `[SECURITY] Kill-switch endpoint returned HTTP ${response.status}. Transient failure ${_consecutiveFailures}/${MAX_TRANSIENT_FAILURES} — extension stays active.`,
+        );
+        return { kill_switch: false, active: true, config_version: -1 };
+      }
+      console.error(
+        `[SECURITY] Kill-switch endpoint returned HTTP ${response.status} after ${_consecutiveFailures} consecutive failures. FAIL-CLOSED — blocking extension.`,
       );
-      return { kill_switch: false, active: true, config_version: -1 };
+      return { kill_switch: true, active: false, config_version: -1 };
     }
 
+    // Success — reset failure counter
+    _consecutiveFailures = 0;
     const data: KillSwitchState = await response.json();
     return data;
   } catch (error) {
-    // Network error, timeout, or JSON parse failure — fail OPEN.
-    // Render cold starts, flaky networks, and DNS issues should NOT
-    // disable the extension. Only an explicit kill_switch:true from
-    // the server should pause monitoring.
-    console.warn(
-      '[SECURITY] Kill-switch check failed (server unreachable or timeout). Extension stays active.',
+    // Network error, timeout, or JSON parse failure.
+    // Tolerate up to MAX_TRANSIENT_FAILURES consecutive failures for cold starts,
+    // then fail-closed. This prevents unmonitored operation while avoiding
+    // false lockouts from a single Render cold start.
+    _consecutiveFailures++;
+    if (_consecutiveFailures <= MAX_TRANSIENT_FAILURES) {
+      console.warn(
+        `[SECURITY] Kill-switch check failed (${_consecutiveFailures}/${MAX_TRANSIENT_FAILURES}). Extension stays active.`,
+        error instanceof Error ? error.message : error,
+      );
+      return { kill_switch: false, active: true, config_version: -1 };
+    }
+    console.error(
+      `[SECURITY] Kill-switch check failed ${_consecutiveFailures} consecutive times. FAIL-CLOSED — blocking extension.`,
       error instanceof Error ? error.message : error,
     );
-    return { kill_switch: false, active: true, config_version: -1 };
+    return { kill_switch: true, active: false, config_version: -1 };
   }
 }
 

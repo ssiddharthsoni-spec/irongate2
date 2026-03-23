@@ -55,13 +55,21 @@ const MA_DEAL_PATTERNS: KeywordPattern[] = [
     weight: 30,
     confidence: 0.92,
   },
-  // Acquisition language with specific entities
+  // Acquisition language with specific entities (with dollar amount)
   {
     pattern: /\b(?:acquir\w*|acquisition|merger|merg\w*)\b.*?\b(?:for|at|valued?\s+at)\b.*?\$[\d,.]+\s*(?:M|B|million|billion)?/gi,
     sensitivityType: 'DEAL_TERMS',
     category: 'ma_deal',
     weight: 25,
     confidence: 0.92,
+  },
+  // Acquisition/merger of a named target (no dollar amount required)
+  {
+    pattern: /\b(?:potential|planned|proposed|possible|pending)?\s*(?:acquir\w*|acquisition|merger|merg\w*)\s+(?:of|with|target\w*)\s+[A-Z][A-Za-z]/gi,
+    sensitivityType: 'DEAL_TERMS',
+    category: 'ma_deal',
+    weight: 25,
+    confidence: 0.88,
   },
   // Due diligence references
   {
@@ -81,7 +89,7 @@ const MA_DEAL_PATTERNS: KeywordPattern[] = [
   },
   // SPAC merger language
   {
-    pattern: /\bSPAC\b.*?\b(?:merg(?:er|ing)|valuation|ticker|blank.?check)\b/gi,
+    pattern: /\bSPAC\b.*?\b(?:merg(?:er|ing)|valuation|ticker|blank[\s-]?check)\b/gi,
     sensitivityType: 'SPAC_DETAILS',
     category: 'ma_deal',
     weight: 25,
@@ -159,7 +167,7 @@ const LEGAL_STRATEGY_PATTERNS: KeywordPattern[] = [
   },
   // Deposition content
   {
-    pattern: /\bdeposition\b.*?\b(?:testif|admitted|stated|revealed|prior\s+knowledge)\b/gi,
+    pattern: /\bdeposition\b.*?\b(?:testif\w*|admitted|stated|revealed|prior\s+knowledge)\b/gi,
     sensitivityType: 'DEPOSITION_CONTENT',
     category: 'legal_strategy',
     weight: 22,
@@ -215,7 +223,7 @@ const LEGAL_STRATEGY_PATTERNS: KeywordPattern[] = [
   },
   // Conflict of interest / ethics
   {
-    pattern: /\b(?:conflict\s+of\s+interest|ethics\s+committee|disqualif)\b/gi,
+    pattern: /\b(?:conflict\s+of\s+interest|ethics\s+committee|disqualif\w*)\b/gi,
     sensitivityType: 'ETHICS_CONFLICT',
     category: 'legal_strategy',
     weight: 20,
@@ -237,7 +245,7 @@ const CORPORATE_GOVERNANCE_PATTERNS: KeywordPattern[] = [
   },
   // Reverse: "CEO" then "terminate"
   {
-    pattern: /\b(?:CEO|CFO|CTO|COO|executive|president|officer)\b.*?\b(?:terminat|fir(?:e|ing|ed)|remov|replac)\b/gi,
+    pattern: /\b(?:CEO|CFO|CTO|COO|executive|president|officer)\b.*?\b(?:terminat\w*|fir(?:e|ing|ed)|remov\w*|replac\w*)\b/gi,
     sensitivityType: 'EXECUTIVE_TERMINATION',
     category: 'corporate_governance',
     weight: 30,
@@ -267,6 +275,48 @@ const CORPORATE_GOVERNANCE_PATTERNS: KeywordPattern[] = [
     weight: 22,
     confidence: 0.85,
   },
+  // ── Internal Communications Export ──────────────────────────────────────
+  // The #1 GC/CISO concern: employees pasting internal comms into AI tools.
+  // "I exported a Slack thread", "here's our Teams chat", "from our email
+  // thread" — these are structural signals that the user is sharing internal
+  // communications with a third-party AI. The content pattern (Title: 'quote')
+  // or (Name said: "...") confirms it's a multi-party internal discussion.
+  //
+  // This catches the META-pattern: not what the content says, but WHERE it
+  // came from. Internal executive comms → third-party AI = always flagged.
+  {
+    pattern: /\b(?:export\w*|cop(?:y|ied)|past\w*|shar\w*|forward\w*|dump\w*|pull\w*)\s+(?:a\s+|an?\s+|the\s+|this\s+|our\s+|my\s+)?(?:slack|teams|email|chat|message|conversation|thread|transcript|discussion|meeting\s+(?:notes?|chat|transcript))\b/gi,
+    sensitivityType: 'INTERNAL_COMMS_EXPORT',
+    category: 'corporate_governance',
+    weight: 25,
+    confidence: 0.9,
+  },
+  // Executive-attributed quotes: "CEO:", "CFO:", "Head of Sales:", "VP:"
+  // Multiple C-suite/leadership titles followed by quoted speech = internal
+  // executive discussion. A GC sees this and immediately flags it.
+  {
+    pattern: /\b(?:CEO|CFO|CTO|COO|CIO|CISO|CPO|CMO|CRO|VP|SVP|EVP|Head\s+of\s+\w+|General\s+Counsel|Chief\s+\w+\s+Officer|Director\s+of\s+\w+|Partner|Managing\s+Director)\s*[:]\s*['""\u201C]/gi,
+    sensitivityType: 'EXECUTIVE_COMMS',
+    category: 'corporate_governance',
+    weight: 28,
+    confidence: 0.92,
+  },
+  // "between leadership/executives/management" — signals internal discussion
+  {
+    pattern: /\b(?:between|among|from)\s+(?:the\s+)?(?:leadership|executives?|management|C[\s-]?suite|senior\s+(?:leadership|management|team)|partners?)\b/gi,
+    sensitivityType: 'EXECUTIVE_COMMS',
+    category: 'corporate_governance',
+    weight: 22,
+    confidence: 0.88,
+  },
+  // Slack/Teams/email channel references with internal context
+  {
+    pattern: /\b(?:#[\w-]+[\s-](?:internal|private|confidential|exec|leadership)|(?:private|internal|exec)\s+(?:channel|group|chat|thread|slack|teams))\b/gi,
+    sensitivityType: 'INTERNAL_COMMS_EXPORT',
+    category: 'corporate_governance',
+    weight: 22,
+    confidence: 0.88,
+  },
 ];
 
 // ── Financial Intelligence / MNPI ────────────────────────────────────────────
@@ -275,7 +325,15 @@ const CORPORATE_GOVERNANCE_PATTERNS: KeywordPattern[] = [
 const FINANCIAL_INTEL_PATTERNS: KeywordPattern[] = [
   // Pre-release earnings / revenue
   {
-    pattern: /\b(?:Q[1-4]|quarterly|annual)\s+(?:revenue|earnings|results?)\b.*?\b(?:will\s+(?:come|be)|expect|project|estimat|consensus)\b/gi,
+    pattern: /\b(?:Q[1-4]|quarterly|annual)\s+(?:revenue|earnings|results?|projections?)\b.*?\b(?:will\s+(?:come|be)|expect\w*|project\w*|estimat\w*|consensus|forecast\w*)\b/gi,
+    sensitivityType: 'PRE_RELEASE_EARNINGS',
+    category: 'financial_intel',
+    weight: 28,
+    confidence: 0.93,
+  },
+  // Revenue/earnings with dollar amounts: "Q3 revenue projections ($18.4M)"
+  {
+    pattern: /\b(?:Q[1-4]|quarterly|annual)\s+(?:revenue|earnings|projections?)\b.*?\$[\d,.]+\s*(?:M|B|K|million|billion|thousand)?\b/gi,
     sensitivityType: 'PRE_RELEASE_EARNINGS',
     category: 'financial_intel',
     weight: 28,
@@ -291,7 +349,7 @@ const FINANCIAL_INTEL_PATTERNS: KeywordPattern[] = [
   },
   // Portfolio details with values
   {
-    pattern: /\b(?:portfolio|allocation)\b.*?\b(?:equit|fixed\s+income|alternative|total\s+value|allocated)\b.*?\$[\d,.]+/gi,
+    pattern: /\b(?:portfolio|allocation)\b.*?\b(?:equit\w*|fixed\s+income|alternative|total\s+value|allocated)\b.*?\$[\d,.]+/gi,
     sensitivityType: 'CLIENT_PORTFOLIO',
     category: 'financial_intel',
     weight: 22,
@@ -299,7 +357,7 @@ const FINANCIAL_INTEL_PATTERNS: KeywordPattern[] = [
   },
   // Front-running / trading misconduct
   {
-    pattern: /\b(?:front.?running|insider\s+trading|personal\s+account|ahead\s+of\s+(?:our|the\s+fund))\b/gi,
+    pattern: /\b(?:front[\s-]?running|insider\s+trading|personal\s+account|ahead\s+of\s+(?:our|the\s+fund))\b/gi,
     sensitivityType: 'TRADING_MISCONDUCT',
     category: 'financial_intel',
     weight: 28,
@@ -371,7 +429,7 @@ const FINANCIAL_INTEL_PATTERNS: KeywordPattern[] = [
 const TECH_SECURITY_PATTERNS: KeywordPattern[] = [
   // Zero-day / active vulnerability
   {
-    pattern: /\b(?:zero.?day|0.?day|active\s+vulnerabilit|unpatched|CVE-\d{4})\b/gi,
+    pattern: /\b(?:zero[\s-]?day|0[\s-]?day|active\s+vulnerabilit\w*|unpatched|CVE-\d{4})\b/gi,
     sensitivityType: 'ACTIVE_VULNERABILITY',
     category: 'tech_security',
     weight: 28,
@@ -435,7 +493,7 @@ const TECH_SECURITY_PATTERNS: KeywordPattern[] = [
   },
   // Penetration test results
   {
-    pattern: /\b(?:pentest|penetration\s+test|security\s+audit)\b.*?\b(?:critical|high.severity|vulnerabilit|finding)\b/gi,
+    pattern: /\b(?:pentest|penetration\s+test|security\s+audit)\b.*?\b(?:critical|high[\s-]?severity|vulnerabilit\w*|finding\w*)\b/gi,
     sensitivityType: 'PENTEST_RESULTS',
     category: 'tech_security',
     weight: 20,
@@ -451,7 +509,7 @@ const TECH_SECURITY_PATTERNS: KeywordPattern[] = [
   },
   // Disaster recovery / business continuity
   {
-    pattern: /\b(?:RTO|RPO|disaster\s+recovery)\b.*?\b(?:minutes?|hours?|active.active|replication)\b/gi,
+    pattern: /\b(?:RTO|RPO|disaster\s+recovery)\b.*?\b(?:minutes?|hours?|active[\s-]?active|replication)\b/gi,
     sensitivityType: 'DR_STRATEGY',
     category: 'tech_security',
     weight: 15,
@@ -465,7 +523,7 @@ const TECH_SECURITY_PATTERNS: KeywordPattern[] = [
 const HEALTHCARE_PATTERNS: KeywordPattern[] = [
   // Clinical trial results (unpublished)
   {
-    pattern: /\b(?:phase\s+[1-4]|clinical\s+trial)\b.*?\b(?:showed|improvement|progression.free|p\s*[=<>]\s*[\d.]+|NDA|haven't\s+disclosed|not\s+disclosed)\b/gi,
+    pattern: /\b(?:phase\s+[1-4]|clinical\s+trial)\b.*?\b(?:showed|improvement|progression[\s-]?free|p\s*[=<>]\s*[\d.]+|NDA|haven't\s+disclosed|not\s+disclosed)\b/gi,
     sensitivityType: 'UNPUBLISHED_TRIAL',
     category: 'healthcare_phi',
     weight: 30,
@@ -473,7 +531,7 @@ const HEALTHCARE_PATTERNS: KeywordPattern[] = [
   },
   // Sentinel events / safety incidents
   {
-    pattern: /\b(?:sentinel\s+event|wrong.site\s+surgery|medication\s+(?:error|overdose)|patient\s+fall|adverse\s+event)\b/gi,
+    pattern: /\b(?:sentinel\s+event|wrong[\s-]?site\s+surgery|medication\s+(?:error|overdose)|patient\s+fall|adverse\s+event)\b/gi,
     sensitivityType: 'SAFETY_INCIDENT',
     category: 'healthcare_phi',
     weight: 22,
@@ -481,7 +539,7 @@ const HEALTHCARE_PATTERNS: KeywordPattern[] = [
   },
   // Physician performance / credentialing
   {
-    pattern: /\b(?:malpractice|complication\s+rate|credentialing|surgical\s+privileges?|peer\s+review)\b.*?\b(?:restrict|revoke|suspend|claims?|rate)\b/gi,
+    pattern: /\b(?:malpractice|complication\s+rate|credentialing|surgical\s+privileges?|peer\s+review)\b.*?\b(?:restrict\w*|revok\w*|suspend\w*|claims?|rate)\b/gi,
     sensitivityType: 'PHYSICIAN_PERFORMANCE',
     category: 'healthcare_phi',
     weight: 22,
@@ -489,7 +547,7 @@ const HEALTHCARE_PATTERNS: KeywordPattern[] = [
   },
   // VIP / celebrity patient
   {
-    pattern: /\b(?:celebrity|VIP|high.profile)\s+(?:patient|admission|case)\b/gi,
+    pattern: /\b(?:celebrity|VIP|high[\s-]?profile)\s+(?:patient|admission|case)\b/gi,
     sensitivityType: 'VIP_PATIENT',
     category: 'healthcare_phi',
     weight: 22,
@@ -511,7 +569,7 @@ const HEALTHCARE_PATTERNS: KeywordPattern[] = [
 const HR_WORKFORCE_PATTERNS: KeywordPattern[] = [
   // Layoff plans with specifics
   {
-    pattern: /\b(?:lay\s*off|layoff|RIF|reduction\s+in\s+force|headcount\s+reduction)\b.*?\b(?:\d+%|\d+\s+people|affected|cut)\b/gi,
+    pattern: /\b(?:lay\s*offs?|layoffs?|RIF|reduction\s+in\s+force|headcount\s+reduction)\b.*?\b(?:\d+%|\d+\s+(?:people|employees?|staff|workers?)|affected|cut)\b/gi,
     sensitivityType: 'LAYOFF_PLAN',
     category: 'hr_workforce',
     weight: 30,
@@ -519,7 +577,7 @@ const HR_WORKFORCE_PATTERNS: KeywordPattern[] = [
   },
   // Reverse: percentage then layoff
   {
-    pattern: /\b\d+%\b.*?\b(?:lay\s*off|layoff|RIF|reduction|cut|eliminat)\b/gi,
+    pattern: /\b\d+%\b.*?\b(?:lay\s*offs?|layoffs?|RIF|reduction|cut|eliminat)\b/gi,
     sensitivityType: 'LAYOFF_PLAN',
     category: 'hr_workforce',
     weight: 30,
@@ -559,7 +617,7 @@ const HR_WORKFORCE_PATTERNS: KeywordPattern[] = [
   },
   // Employee attrition data
   {
-    pattern: /\b(?:attrition|turnover|resign|quit|accepted\s+offers?)\b.*?\b(?:\d+\s+(?:engineers?|employees?|people)|competitor|last\s+(?:month|quarter))\b/gi,
+    pattern: /\b(?:attrition|turnover|resign\w*|quit\w*|accepted\s+offers?)\b.*?\b(?:\d+\s+(?:engineers?|employees?|people)|competitor|last\s+(?:month|quarter))\b/gi,
     sensitivityType: 'ATTRITION_DATA',
     category: 'hr_workforce',
     weight: 18,
@@ -581,7 +639,7 @@ const HR_WORKFORCE_PATTERNS: KeywordPattern[] = [
 const COMPETITIVE_INTEL_PATTERNS: KeywordPattern[] = [
   // Vendor negotiation with specifics
   {
-    pattern: /\b(?:negotiat|counteroffer|renewal)\b.*?\b(?:spend|discount|\d+%|backup\s+plan|migrat)\b/gi,
+    pattern: /\b(?:negotiat\w*|counteroffer|renewal)\b.*?\b(?:spend|discount|\d+%|backup\s+plan|migrat\w*)\b/gi,
     sensitivityType: 'VENDOR_NEGOTIATION',
     category: 'competitive_intel',
     weight: 18,
@@ -634,7 +692,7 @@ const INSURANCE_CLAIMS_PATTERNS: KeywordPattern[] = [
   },
   // Actuarial analysis with specifics
   {
-    pattern: /\b(?:actuarial|loss\s+ratio|combined\s+ratio)\b.*?\b(?:\d+(?:\.\d+)?%|deteriorat|improv|adverse|triangle)\b/gi,
+    pattern: /\b(?:actuarial|loss\s+ratio|combined\s+ratio)\b.*?\b(?:\d+(?:\.\d+)?%|deteriorat\w*|improv\w*|adverse|triangle)\b/gi,
     sensitivityType: 'ACTUARIAL_DATA',
     category: 'insurance_claims',
     weight: 20,
@@ -716,7 +774,7 @@ const GOVERNMENT_CLASSIFIED_PATTERNS: KeywordPattern[] = [
   },
   // Export control / ITAR violations
   {
-    pattern: /\b(?:ITAR|export\s+control|EAR|munitions|defense\s+article)\b.*?\b(?:violat|unauthorized|foreign\s+(?:national|person)|deemed\s+export|disclosure)\b/gi,
+    pattern: /\b(?:ITAR|export\s+control|EAR|munitions|defense\s+article)\b.*?\b(?:violat\w*|unauthorized|foreign\s+(?:national|person)|deemed\s+export|disclosure)\b/gi,
     sensitivityType: 'EXPORT_CONTROL_VIOLATION',
     category: 'government_classified',
     weight: 30,
@@ -724,7 +782,7 @@ const GOVERNMENT_CLASSIFIED_PATTERNS: KeywordPattern[] = [
   },
   // CFIUS / national security review
   {
-    pattern: /\b(?:CFIUS|national\s+security\s+review|foreign\s+investment)\b.*?\b(?:filing|review|mitigat|block|divest)\b/gi,
+    pattern: /\b(?:CFIUS|national\s+security\s+review|foreign\s+investment)\b.*?\b(?:filing|review|mitigat\w*|block\w*|divest\w*)\b/gi,
     sensitivityType: 'CFIUS_REVIEW',
     category: 'government_classified',
     weight: 25,
@@ -777,7 +835,7 @@ const ENERGY_OPERATIONS_PATTERNS: KeywordPattern[] = [
   },
   // PPA / offtake with terms
   {
-    pattern: /\b(?:PPA|power\s+purchase\s+agreement|offtake)\b.*?\b(?:\$[\d,.]+|per\s+(?:MWh|kWh)|term|escalat|renewable)\b/gi,
+    pattern: /\b(?:PPA|power\s+purchase\s+agreement|offtake)\b.*?\b(?:\$[\d,.]+|per\s+(?:MWh|kWh)|term|escalat\w*|renewable)\b/gi,
     sensitivityType: 'PPA_TERMS',
     category: 'energy_operations',
     weight: 22,
@@ -785,7 +843,7 @@ const ENERGY_OPERATIONS_PATTERNS: KeywordPattern[] = [
   },
   // Environmental liability / remediation
   {
-    pattern: /\b(?:environmental\s+(?:liability|remediation|contamination)|CERCLA|superfund|decommission)\b.*?\b(?:\$[\d,.]+|cost|estimat|reserve|provision)\b/gi,
+    pattern: /\b(?:environmental\s+(?:liability|remediation|contamination)|CERCLA|superfund|decommission)\b.*?\b(?:\$[\d,.]+|cost|estimat\w*|reserve|provision)\b/gi,
     sensitivityType: 'ENVIRONMENTAL_LIABILITY',
     category: 'energy_operations',
     weight: 22,
@@ -806,7 +864,7 @@ const ENERGY_OPERATIONS_PATTERNS: KeywordPattern[] = [
 const REAL_ESTATE_DEALS_PATTERNS: KeywordPattern[] = [
   // Off-market / pocket listing
   {
-    pattern: /\b(?:off[\s-]?market|pocket\s+listing|pre[\s-]?market|not\s+(?:yet\s+)?listed)\b.*?\b(?:deal|property|opportunit|buyer|seller)\b/gi,
+    pattern: /\b(?:off[\s-]?market|pocket\s+listing|pre[\s-]?market|not\s+(?:yet\s+)?listed)\b.*?\b(?:deal|property|opportunit\w*|buyer\w*|seller\w*)\b/gi,
     sensitivityType: 'OFF_MARKET_DEAL',
     category: 'real_estate_deals',
     weight: 22,
@@ -830,7 +888,7 @@ const REAL_ESTATE_DEALS_PATTERNS: KeywordPattern[] = [
   },
   // 1031 exchange / tax strategy
   {
-    pattern: /\b(?:1031\s+exchange|opportunity\s+zone|tax\s+abatement|like[\s-]kind)\b.*?\b(?:property|gain|defer|identif|deadline)\b/gi,
+    pattern: /\b(?:1031\s+exchange|opportunity\s+zone|tax\s+abatement|like[\s-]kind)\b.*?\b(?:property|gain|defer\w*|identif\w*|deadline)\b/gi,
     sensitivityType: 'TAX_STRATEGY',
     category: 'real_estate_deals',
     weight: 18,
@@ -838,7 +896,7 @@ const REAL_ESTATE_DEALS_PATTERNS: KeywordPattern[] = [
   },
   // Development / entitlement
   {
-    pattern: /\b(?:entitlement|rezoning|variance|zoning\s+(?:change|approval))\b.*?\b(?:approv|deny|hearing|council|commission|FAR|density)\b/gi,
+    pattern: /\b(?:entitlement|rezoning|variance|zoning\s+(?:change|approval))\b.*?\b(?:approv\w*|den(?:y|ied|ial|ying)|hearing|council|commission|FAR|density)\b/gi,
     sensitivityType: 'ENTITLEMENT_DATA',
     category: 'real_estate_deals',
     weight: 18,

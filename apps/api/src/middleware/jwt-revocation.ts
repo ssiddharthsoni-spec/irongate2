@@ -98,14 +98,13 @@ export const jwtRevocationMiddleware = createMiddleware(async (c, next) => {
 
   const redis = getRedisClient();
   if (!redis) {
-    // No Redis — local check passed, but we can't verify against the full
-    // revocation list. In production, fail-closed (reject) to prevent
-    // revoked tokens from being accepted. In dev, allow through.
-    if (process.env.NODE_ENV === 'production') {
-      logger.error('JWT revocation check BLOCKED: Redis unavailable in production');
-      return c.json({ error: 'Service temporarily unavailable — please retry' }, 503);
-    }
-    logger.warn('JWT revocation check skipped: Redis unavailable (dev mode)');
+    // No Redis — local revocation check passed (token is not in our in-memory
+    // blacklist). Gracefully degrade: allow the request through rather than
+    // returning 503. A Redis outage should not cause a full service outage.
+    // The in-memory list covers all tokens revoked during this process lifetime.
+    // Risk: tokens revoked on OTHER instances won't be caught. Acceptable
+    // trade-off vs. taking the entire service offline.
+    logger.warn('JWT revocation: Redis unavailable — falling back to in-memory check only');
     await next();
     return;
   }
@@ -118,14 +117,10 @@ export const jwtRevocationMiddleware = createMiddleware(async (c, next) => {
       return c.json({ error: 'Unauthorized: token has been revoked' }, 401);
     }
   } catch (err) {
-    // Redis error in production — fail-closed
-    if (process.env.NODE_ENV === 'production') {
-      logger.error('JWT revocation check BLOCKED: Redis error in production', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return c.json({ error: 'Service temporarily unavailable — please retry' }, 503);
-    }
-    logger.warn('JWT revocation check failed (dev mode — allowing through)', {
+    // Redis error — gracefully degrade. The local in-memory check already
+    // passed, so allow through. Returning 503 here would take down the
+    // entire API for all users over a transient Redis blip.
+    logger.warn('JWT revocation: Redis error — falling back to in-memory check', {
       error: err instanceof Error ? err.message : String(err),
     });
   }

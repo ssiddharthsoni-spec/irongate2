@@ -17,6 +17,25 @@ import { createAnthropicStreamTransformer } from '../streaming/sse-transformer';
 import { logEvent } from './event-logger';
 import type { GatewayConfig } from '../config';
 
+// BUG-05: Upstream fetch timeout — prevents gateway from hanging indefinitely
+const UPSTREAM_TIMEOUT_MS = 60_000; // 60s — generous for AI API streaming responses
+
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+  if (init.signal) {
+    init.signal.addEventListener('abort', () => controller.abort());
+  }
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    throw err;
+  }
+}
+
 export function createAnthropicRoutes(config: GatewayConfig) {
   const routes = new Hono();
   const upstreamBase = config.upstreams.anthropic;
@@ -80,7 +99,7 @@ export function createAnthropicRoutes(config: GatewayConfig) {
         const maskedBody = rebuildAnthropicRequest(body, segments, result.maskedSegments);
 
         const upstreamUrl = `${upstreamBase}/v1/messages`;
-        const upstreamResponse = await fetch(upstreamUrl, {
+        const upstreamResponse = await fetchWithTimeout(upstreamUrl, {
           method: 'POST',
           headers: buildAnthropicHeaders(c.req.raw.headers),
           body: JSON.stringify(maskedBody),
@@ -120,7 +139,7 @@ export function createAnthropicRoutes(config: GatewayConfig) {
 // ── Helpers ───────────────────────────────────────────────────────────
 
 async function forwardPassthrough(c: any, url: string, body: any): Promise<Response> {
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: 'POST',
     headers: buildAnthropicHeaders(c.req.raw.headers),
     body: JSON.stringify(body),

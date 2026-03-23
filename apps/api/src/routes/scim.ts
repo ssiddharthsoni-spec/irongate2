@@ -9,6 +9,7 @@ import { db } from '../db/client';
 import { firms, users, departments } from '../db/schema';
 import { eq, and, ilike, sql, inArray } from 'drizzle-orm';
 import { logger } from '../lib/logger';
+import { createRateLimiter } from '../middleware/rate-limit';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -197,6 +198,10 @@ async function scimAuth(c: any, next: () => Promise<void>) {
 // ---------------------------------------------------------------------------
 
 export const scimRoutes = new Hono<ScimEnv>();
+
+// BUG-16: Rate limit SCIM endpoints to prevent enumeration via leaked tokens
+const scimRateLimiter = createRateLimiter({ maxRequests: 100, windowMs: 60_000, keyPrefix: 'rl:scim' });
+scimRoutes.use('*', scimRateLimiter);
 
 // Apply SCIM auth to all routes
 scimRoutes.use('*', scimAuth);

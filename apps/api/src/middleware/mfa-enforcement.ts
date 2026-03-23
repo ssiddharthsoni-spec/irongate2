@@ -58,6 +58,14 @@ export const mfaEnforcementMiddleware = createMiddleware(async (c, next) => {
     return;
   }
 
+  // BUG-15: Guard against auth middleware being bypassed — if userId isn't set,
+  // the token hasn't been verified and we can't trust the JWT claims.
+  const userId = c.get('userId');
+  if (!userId) {
+    logger.warn('MFA enforcement: auth middleware did not set userId — blocking');
+    return c.json({ error: 'Authentication required' }, 401);
+  }
+
   // MFA is required — check the Authorization header JWT claims
   // Clerk JWTs include `amr` (Authentication Methods References) claim
   // which lists authentication methods used. If MFA was completed,

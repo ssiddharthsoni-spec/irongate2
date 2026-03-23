@@ -2,7 +2,15 @@
 
 import { useAuth } from '@clerk/nextjs';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://irongate-api.onrender.com/v1';
+// BUG-19: No hardcoded fallback — prevents staging from accidentally talking to production.
+// NEXT_PUBLIC_API_URL must be set in all environments.
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || (() => {
+  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+    return 'http://localhost:3001/v1';
+  }
+  console.error('[Iron Gate] NEXT_PUBLIC_API_URL is not configured. API calls will fail.');
+  return '/api/v1'; // Relative path fallback — will fail clearly
+})();
 
 export function useApiClient() {
   const { getToken } = useAuth();

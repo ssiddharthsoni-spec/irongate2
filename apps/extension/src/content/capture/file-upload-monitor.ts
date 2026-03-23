@@ -166,8 +166,14 @@ export function createFileUploadMonitor(
     return inputs;
   }
 
+  // --- Track observed shadow roots to prevent unbounded observer accumulation ---
+  const _observedShadowRoots = new WeakSet<ShadowRoot>();
+
   // --- Observe a shadow root for added file inputs ---
   function observeShadowRoot(shadowRoot: ShadowRoot) {
+    // Dedup: don't attach multiple observers to the same shadow root
+    if (_observedShadowRoots.has(shadowRoot)) return;
+    _observedShadowRoots.add(shadowRoot);
     const shadowObs = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
         for (const node of Array.from(mutation.addedNodes)) {

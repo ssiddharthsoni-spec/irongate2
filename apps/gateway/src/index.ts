@@ -16,6 +16,25 @@ import { loadConfig } from './config';
 import { createOpenAIRoutes } from './routes/openai';
 import { createAnthropicRoutes } from './routes/anthropic';
 
+// BUG-05: Upstream fetch timeout — prevents gateway from hanging indefinitely
+const UPSTREAM_TIMEOUT_MS = 60_000; // 60s — generous for AI API streaming responses
+
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+  if (init.signal) {
+    init.signal.addEventListener('abort', () => controller.abort());
+  }
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    throw err;
+  }
+}
+
 const config = loadConfig();
 const app = new Hono();
 
@@ -58,6 +77,9 @@ app.all('*', async (c) => {
   const method = c.req.method;
 
   try {
+    // BUG-40: Only forwarding Authorization and Content-Type is intentional —
+    // the catch-all proxies the user's upstream provider key, not Iron Gate headers
+    // (X-Firm-ID, X-Admin-Key, x-api-key are NOT forwarded).
     const init: RequestInit = {
       method,
       headers: new Headers({
@@ -70,7 +92,7 @@ app.all('*', async (c) => {
       init.body = await c.req.raw.text();
     }
 
-    const response = await fetch(url, init);
+    const response = await fetchWithTimeout(url, init);
     return new Response(response.body, {
       status: response.status,
       headers: { 'content-type': response.headers.get('content-type') || 'application/json' },

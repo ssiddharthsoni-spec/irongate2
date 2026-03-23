@@ -26,7 +26,9 @@ export const adminRoutes = new Hono<AppEnv>();
 // Audit logging helper — fire-and-forget, never blocks the request
 // ---------------------------------------------------------------------------
 
-function logAdminAction(
+// BUG-13: Returns a promise — callers should `await` for sensitive operations
+// (user management, role changes) but can fire-and-forget for non-critical events
+async function logAdminAction(
   c: Context<AppEnv>,
   action: string,
   resourceType: string,
@@ -35,7 +37,7 @@ function logAdminAction(
     oldValue?: unknown;
     newValue?: unknown;
   },
-) {
+): Promise<void> {
   const firmId = c.get('firmId');
   const actorId = c.get('userId');
   const ipAddress = c.req.header('cf-connecting-ip')
@@ -43,20 +45,23 @@ function logAdminAction(
     || (c.req.header('x-forwarded-for') || '').split(',')[0].trim()
     || null;
 
-  db.insert(auditLog)
-    .values({
-      firmId,
-      actorId,
-      actorEmail: null, // populated if available via join, not critical
-      action,
-      resourceType,
-      resourceId: opts?.resourceId || null,
-      oldValue: opts?.oldValue != null ? opts.oldValue : null,
-      newValue: opts?.newValue != null ? opts.newValue : null,
-      ipAddress,
-      userAgent: c.req.header('user-agent') || null,
-    })
-    .catch((err) => logger.warn('Audit log insert failed', { error: String(err) }));
+  try {
+    await db.insert(auditLog)
+      .values({
+        firmId,
+        actorId,
+        actorEmail: null, // populated if available via join, not critical
+        action,
+        resourceType,
+        resourceId: opts?.resourceId || null,
+        oldValue: opts?.oldValue != null ? opts.oldValue : null,
+        newValue: opts?.newValue != null ? opts.newValue : null,
+        ipAddress,
+        userAgent: c.req.header('user-agent') || null,
+      });
+  } catch (err) {
+    logger.warn('Audit log insert failed', { error: String(err) });
+  }
 }
 
 // Mount MDM config export sub-routes under /mdm/*

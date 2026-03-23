@@ -86,6 +86,18 @@ import { sql } from 'drizzle-orm';
 import { db } from './db/client';
 import type { AppEnv } from './types';
 
+/** Compare two semver strings. Returns negative if a < b, 0 if equal, positive if a > b. */
+function compareSemver(a: string, b: string): number {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const na = pa[i] || 0;
+    const nb = pb[i] || 0;
+    if (na !== nb) return na - nb;
+  }
+  return 0;
+}
+
 const app = new Hono<AppEnv>();
 
 // Build allowed origins from environment
@@ -153,7 +165,9 @@ app.use('*', async (c, next) => {
 
   // Warn (but don't block) if extension version is too old
   const extVersion = c.req.header('X-Extension-Version');
-  if (extVersion && extVersion < MIN_EXTENSION_VERSION) {
+  // BUG-11: Use proper semver parsing — string comparison fails for multi-digit versions
+  // (e.g., '0.2.0' > '0.10.0' lexicographically but 0.10.0 is newer)
+  if (extVersion && compareSemver(extVersion, MIN_EXTENSION_VERSION) < 0) {
     logger.warn('Outdated extension version', {
       extensionVersion: extVersion,
       minRequired: MIN_EXTENSION_VERSION,

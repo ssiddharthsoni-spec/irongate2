@@ -17,6 +17,25 @@ import { createOpenAIStreamTransformer } from '../streaming/sse-transformer';
 import { logEvent } from './event-logger';
 import type { GatewayConfig } from '../config';
 
+// BUG-05: Upstream fetch timeout — prevents gateway from hanging indefinitely
+const UPSTREAM_TIMEOUT_MS = 60_000; // 60s — generous for AI API streaming responses
+
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+  if (init.signal) {
+    init.signal.addEventListener('abort', () => controller.abort());
+  }
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    throw err;
+  }
+}
+
 export function createOpenAIRoutes(config: GatewayConfig) {
   const routes = new Hono();
   const upstreamBase = config.upstreams.openai;
@@ -83,7 +102,7 @@ export function createOpenAIRoutes(config: GatewayConfig) {
 
         // Forward to upstream
         const upstreamUrl = `${upstreamBase}/v1/chat/completions`;
-        const upstreamResponse = await fetch(upstreamUrl, {
+        const upstreamResponse = await fetchWithTimeout(upstreamUrl, {
           method: 'POST',
           headers: buildUpstreamHeaders(c.req.raw.headers),
           body: JSON.stringify(maskedBody),
@@ -133,7 +152,7 @@ export function createOpenAIRoutes(config: GatewayConfig) {
 // ── Helper: Forward request to upstream unchanged ─────────────────────
 
 async function forwardPassthrough(c: any, url: string, body: any): Promise<Response> {
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: 'POST',
     headers: buildUpstreamHeaders(c.req.raw.headers),
     body: JSON.stringify(body),
@@ -160,7 +179,7 @@ async function proxyAll(c: any, upstreamBase: string): Promise<Response> {
     init.body = await c.req.raw.text();
   }
 
-  const response = await fetch(url, init);
+  const response = await fetchWithTimeout(url, init);
   return new Response(response.body, {
     status: response.status,
     headers: filterResponseHeaders(response.headers),

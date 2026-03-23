@@ -266,7 +266,8 @@ const _messageIdTimestamps = new Map<string, number>();
 const MESSAGE_ID_TTL_MS = 60_000; // Expire after 1 minute
 
 // Purge expired message IDs every 30 seconds
-setInterval(() => {
+const _messageIdCleanupTimer = setInterval(() => {
+  if (!contextAlive) { clearInterval(_messageIdCleanupTimer); return; }
   const now = Date.now();
   for (const [mid, ts] of _messageIdTimestamps) {
     if (now - ts > MESSAGE_ID_TTL_MS) {
@@ -582,7 +583,9 @@ function handleMainWorldMessages(event: MessageEvent) {
       level,
       explanation: isProxy
         ? `Pseudonymized ${entityCount} entities before sending to AI tool.`
-        : `Detected ${entityCount} sensitive entities in prompt (audit mode — not pseudonymized).`,
+        : entityCount === 0
+          ? 'No sensitive data detected in your prompt.'
+          : `Detected ${entityCount} sensitive data points in your prompt.`,
       entities,
       aiToolId: detector?.id || 'unknown',
       promptHash,
@@ -591,6 +594,7 @@ function handleMainWorldMessages(event: MessageEvent) {
       maskedPrompt,
       pseudonymMappings: mappings,
       isProxy, // true = pseudonymized (INTERCEPTED), false = audit only
+      wireIntercept: event.data.wireIntercept === true, // authoritative wire-level result — sidepanel must not suppress
     };
 
     // Check if extension context is still alive before attempting relay
@@ -623,20 +627,29 @@ function handleMainWorldMessages(event: MessageEvent) {
         igLog('SENSITIVITY_SCORE relayed successfully');
       }).catch((err: unknown) => {
         console.warn('[Iron Gate] runtime.sendMessage failed — using storage backup:', err);
-        // BACKUP: Write to chrome.storage.local so sidepanel can pick it up
-        try {
-          chrome.storage.local.set({
-            lastDetectionResult: { ...relayPayload, _storageTimestamp: Date.now() },
-          }).catch(() => {});
-        } catch { /* storage failed too */ }
+        // BACKUP: Write to chrome.storage.local so sidepanel can pick it up.
+        // BUT: 0-entity non-authoritative results must NEVER be persisted to storage.
+        // Storage is a bypass channel — the sidepanel's storage poll and onChanged
+        // listener would deliver stale 0-entity results that overwrite real detections.
+        // Only authoritative results (proxy, wireIntercept, or has entities) are worth persisting.
+        if (relayPayload.isProxy || relayPayload.wireIntercept || (relayPayload.entities && relayPayload.entities.length > 0)) {
+          try {
+            chrome.storage.local.set({
+              lastDetectionResult: { ...relayPayload, _storageTimestamp: Date.now() },
+            }).catch(() => {});
+          } catch { /* storage failed too */ }
+        }
       });
     } catch (err) {
       console.warn('[Iron Gate] runtime.sendMessage threw:', err);
     }
 
-    // ALWAYS write storage backup for proxy results — belt and suspenders.
+    // ALWAYS write storage backup for authoritative results — belt and suspenders.
     // The sidepanel has a storage.onChanged listener that processes this.
-    if (isProxy) {
+    // Wire intercept AUDITs (clean prompts in proxy mode) also need storage backup
+    // because chrome.runtime.sendMessage is unreliable in MV3 — without this,
+    // "All Clear" results have ZERO storage backup and get silently lost.
+    if (isProxy || relayPayload.wireIntercept) {
       try {
         const _ts = Date.now();
         chrome.storage.local.set({
@@ -680,6 +693,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         engine?.updateConfig({ mode: message.payload.mode });
         syncModeToMainWorld(message.payload.mode);
         igLog('Mode switched to:', message.payload.mode);
+        sendResponse({ ok: true });
+        break;
+      case 'PROCESSING_MODE_CHANGED':
+        if (message.payload?.processingMode) {
+          syncProcessingModeToMainWorld(message.payload.processingMode);
+          igLog('Processing mode changed to:', message.payload.processingMode);
+        }
         sendResponse({ ok: true });
         break;
       case 'FILE_SCAN_RESULT': {
@@ -803,14 +823,15 @@ function initialize() {
       // Ensures real-time detection works even if MutationObserver has issues.
       let _fbLastText = '';
       const _fbDetector = detector; // capture reference
-      setInterval(() => {
-        if (!contextAlive || !_fbDetector) return;
+      const _fbPollTimer = setInterval(() => {
+        if (!contextAlive || !_fbDetector) { clearInterval(_fbPollTimer); return; }
         try {
           const input = _fbDetector.getPromptInput();
           if (!input) return;
           const text = _fbDetector.extractPromptText(input);
           if (text && text.length > 5 && text !== _fbLastText) {
             _fbLastText = text;
+            console.log(`[Iron Gate RT] Captured ${text.length} chars from ${_fbDetector.id} — sending PROMPT_DETECTED`);
             try {
               chrome.runtime.sendMessage({
                 type: 'PROMPT_DETECTED',

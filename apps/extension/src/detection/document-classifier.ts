@@ -95,6 +95,18 @@ export function classifyDocument(text: string): ClassificationResult {
     scores.meeting_notes = (scores.meeting_notes || 0) + 1;
     signals.push('bullet_points');
   }
+  // Internal comms → meeting_notes (reuse, higher multiplier 1.3x)
+  // "I exported a Slack/Teams thread", "here's our email chain"
+  if (/\b(?:exported?|copied|pasted?|shared?)\s+(?:a\s+|the\s+|this\s+|our\s+)?(?:slack|teams|email|chat|message)\s+(?:thread|chain|conversation|channel)\b/i.test(text)) {
+    scores.meeting_notes = (scores.meeting_notes || 0) + 5;
+    signals.push('internal_comms_export');
+  }
+  // Multiple Title: 'quote' patterns = internal discussion transcript
+  const titleQuoteCount = (text.match(/\b(?:CEO|CFO|CTO|COO|CIO|VP|SVP|Head\s+of\s+\w+|Director|Partner|Manager|Lead)\s*:/gi) || []).length;
+  if (titleQuoteCount >= 2) {
+    scores.meeting_notes = (scores.meeting_notes || 0) + 4;
+    signals.push('multi_executive_quotes');
+  }
 
   // --- Code Snippet ---
   if (/\b(function|const|let|var|import|export|class|interface|return|if|else|for|while)\b/.test(text)) {

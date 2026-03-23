@@ -65,7 +65,8 @@ function getHmacSecret(): string {
     console.error('[CRITICAL] No HMAC secret configured for email verification. Set JWT_SIGNING_KEY or IRON_GATE_SIGNING_SECRET.');
     return fallback;
   }
-  return `dev-hmac-${process.pid}`;
+  // BUG-10: Use crypto-random even in dev — process.pid is predictable (1-5000 in containers)
+  return `dev-hmac-${crypto.randomBytes(32).toString('hex')}`;
 }
 
 function createVerificationToken(userId: string, email: string): { token: string; hash: string; expiresAt: Date } {
@@ -139,6 +140,9 @@ extensionAuthRoutes.post('/register-extension', async (c) => {
     return c.json({ error: 'Too many requests. Please try again later.' }, 429);
   }
 
+  // BUG-09: Capture start time for constant-time delay to prevent timing-based enumeration
+  const handleStart = Date.now();
+
   let body: unknown;
   try {
     body = await c.req.json();
@@ -183,6 +187,11 @@ extensionAuthRoutes.post('/register-extension', async (c) => {
       .limit(1);
 
     if (existing) {
+      // BUG-09: Constant-time delay to prevent timing-based enumeration
+      const elapsed = Date.now() - handleStart;
+      const minDelay = 150 + Math.random() * 100; // 150-250ms
+      if (elapsed < minDelay) await new Promise(r => setTimeout(r, minDelay - elapsed));
+
       // User already exists — return a generic message that does NOT leak
       // internal details (userId, firmId, firmName, tier, subscription).
       // The user should sign in via the dashboard or use their existing API key.
@@ -337,6 +346,11 @@ extensionAuthRoutes.post('/register-extension', async (c) => {
   } catch (err) {
     // Handle known error codes with appropriate status
     if (err instanceof Error && err.message === 'INVALID_FIRM_CODE') {
+      // BUG-09: Constant-time delay to prevent timing-based enumeration
+      const elapsed = Date.now() - handleStart;
+      const minDelay = 150 + Math.random() * 100; // 150-250ms
+      if (elapsed < minDelay) await new Promise(r => setTimeout(r, minDelay - elapsed));
+
       return c.json({ error: 'Invalid firm code' }, 400);
     }
 

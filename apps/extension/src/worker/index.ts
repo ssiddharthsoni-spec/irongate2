@@ -37,6 +37,7 @@ import { ConversationTracker, type ConversationSnapshot } from '../detection/con
 import { analyzeWithExecutiveLens, resolveRoute } from '../detection/executive-lens';
 import { createModelRuntime } from '../agent/model-runtime';
 import { createAgentDetector } from '../agent/agent-detector';
+import { pseudonymizeViaApi, depseudonymizeViaApi, checkDetectionHealth, isApiAvailable, getApiCircuitState, getAllCircuitStates, KillSwitchError, type PseudonymizeResult } from './detection-api';
 
 // Debug logging — silent in production, enable via: chrome.storage.local.get('ironGateDebug')
 let _IG_DEBUG = false;
@@ -105,30 +106,31 @@ function incrementStats(entities: number, scans: number): void {
   _statsFlushTimer = setTimeout(flushStats, 200);
 }
 
-let _statsIsFlushing = false;
-async function flushStats(): Promise<void> {
-  if (_statsIsFlushing) return;
-  _statsIsFlushing = true;
-  const entityDelta = _pendingEntityDelta;
-  const scanDelta = _pendingScanDelta;
-  _pendingEntityDelta = 0;
-  _pendingScanDelta = 0;
-  _statsFlushTimer = null;
-  if (entityDelta === 0 && scanDelta === 0) { _statsIsFlushing = false; return; }
+// BUG-08: Use promise chain instead of boolean flag for atomic flush serialization.
+// The boolean check-and-set was not atomic — two rapid flushes could both pass.
+let _statsFlushChain = Promise.resolve();
+function flushStats(): Promise<void> {
+  _statsFlushChain = _statsFlushChain.then(async () => {
+    const entityDelta = _pendingEntityDelta;
+    const scanDelta = _pendingScanDelta;
+    _pendingEntityDelta = 0;
+    _pendingScanDelta = 0;
+    _statsFlushTimer = null;
+    if (entityDelta === 0 && scanDelta === 0) return;
 
-  try {
-    const data = await chrome.storage.local.get([TOTAL_ENTITIES_DETECTED, WEEKLY_SCAN_COUNT]);
-    await chrome.storage.local.set({
-      [TOTAL_ENTITIES_DETECTED]: (data[TOTAL_ENTITIES_DETECTED] || 0) + entityDelta,
-      [WEEKLY_SCAN_COUNT]: (data[WEEKLY_SCAN_COUNT] || 0) + scanDelta,
-    });
-  } catch {
-    // Re-add deltas on failure so they're retried on next flush
-    _pendingEntityDelta += entityDelta;
-    _pendingScanDelta += scanDelta;
-  } finally {
-    _statsIsFlushing = false;
-  }
+    try {
+      const data = await chrome.storage.local.get([TOTAL_ENTITIES_DETECTED, WEEKLY_SCAN_COUNT]);
+      await chrome.storage.local.set({
+        [TOTAL_ENTITIES_DETECTED]: (data[TOTAL_ENTITIES_DETECTED] || 0) + entityDelta,
+        [WEEKLY_SCAN_COUNT]: (data[WEEKLY_SCAN_COUNT] || 0) + scanDelta,
+      });
+    } catch {
+      // Re-add deltas on failure so they're retried on next flush
+      _pendingEntityDelta += entityDelta;
+      _pendingScanDelta += scanDelta;
+    }
+  });
+  return _statsFlushChain;
 }
 
 igLog('Service worker started');
@@ -241,9 +243,19 @@ async function decryptDictionary(b64: string): Promise<DictionaryEntry[]> {
 }
 
 let _dictSyncing = false;
+let _dictSyncStarted = 0;
 async function syncEntityDictionary(): Promise<void> {
-  if (_dictSyncing) return; // Prevent concurrent syncs (5.3)
+  // BUG-25: Add timeout guard — if sync gets stuck, reset flag after 30s
+  if (_dictSyncing) {
+    if (Date.now() - _dictSyncStarted > 30_000) {
+      igLog('Dictionary sync: stuck flag detected (>30s) — resetting');
+      _dictSyncing = false;
+    } else {
+      return;
+    }
+  }
   _dictSyncing = true;
+  _dictSyncStarted = Date.now();
   try {
     const versionResp = await apiRequest<{ hash: string; count: number }>({
       method: 'GET', path: '/admin/entity-dictionary/version', retries: 1,
@@ -590,6 +602,35 @@ resolveConfig().then((config) => {
     // Start kill switch enforcement with default API URL
     startKillSwitchEnforcement(KILL_SWITCH_API_URL);
   }
+  // Auto-detect Detection API availability and switch to server mode
+  // This enables the thin-client architecture when the Detection Service is reachable.
+  {
+    checkDetectionHealth().then((healthy) => {
+      if (healthy) {
+        igLog('Detection API is healthy — enabling server-side NER');
+        // Store detection API availability so content scripts can use it
+        chrome.storage.local.set({ detectionApiAvailable: true }).catch(() => {});
+        // Notify all content scripts to use server mode for pseudonymization
+        try {
+          chrome.tabs.query({}, (tabs) => {
+            if (!chrome.runtime?.id) return;
+            for (const tab of tabs || []) {
+              if (tab.id) {
+                chrome.tabs.sendMessage(tab.id, {
+                  type: 'PROCESSING_MODE_CHANGED',
+                  payload: { processingMode: 'server' },
+                }).catch(() => {});
+              }
+            }
+          });
+        } catch { /* tabs API may not be available */ }
+      } else {
+        igLog('Detection API not reachable — using local detection');
+      }
+    }).catch(() => {
+      igLog('Detection API health check failed — using local detection');
+    });
+  }
 }).catch((err) => {
   igLog('Failed to resolve managed config:', err);
   chrome.storage.local.get('firmMode', (result) => {
@@ -871,27 +912,35 @@ async function handleMessage(
       // API call runs in background — results compared after local finishes.
       // ════════════════════════════════════════════════════════════════════
       let shadowServerPromise: Promise<{ action: string; score: number } | null> | undefined;
-      if (config.processingMode === 'shadow' && config.apiKey) {
-        const shadowApiUrl = config.apiUrl.replace(/\/v1\/?$/, '') + '/v1/proxy/process';
-        shadowServerPromise = fetch(shadowApiUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${config.apiKey}`,
-          },
-          body: JSON.stringify({
-            text,
-            aiToolId,
+      if (config.processingMode === 'shadow') {
+        // Shadow mode: run Detection API in background for comparison
+        // Prefer Detection Service (Python FastAPI) over old Node.js proxy
+        if (isApiAvailable()) {
+          shadowServerPromise = pseudonymizeViaApi(text, {
             sessionId: `tab-${sender.tab?.id ?? 0}`,
-            captureMethod,
-            platform: aiToolId,
-          }),
-          signal: AbortSignal.timeout(5_000),
-        }).then(async (r) => {
-          if (!r.ok) return null;
-          const j = await r.json();
-          return { action: j.action as string, score: j.sensitivityScore as number };
-        }).catch(() => null);
+            aiTool: aiToolId,
+          }).then(r => r ? { action: r.policy_decision, score: r.score } : null)
+            .catch(() => null);
+        } else if (config.apiKey) {
+          const shadowApiUrl = config.apiUrl.replace(/\/v1\/?$/, '') + '/v1/proxy/process';
+          shadowServerPromise = fetch(shadowApiUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${config.apiKey}`,
+            },
+            body: JSON.stringify({
+              text, aiToolId,
+              sessionId: `tab-${sender.tab?.id ?? 0}`,
+              captureMethod, platform: aiToolId,
+            }),
+            signal: AbortSignal.timeout(5_000),
+          }).then(async (r) => {
+            if (!r.ok) return null;
+            const j = await r.json();
+            return { action: j.action as string, score: j.sensitivityScore as number };
+          }).catch(() => null);
+        }
       }
 
       // ────────────────────────────────────────────────────────────────────
@@ -976,10 +1025,11 @@ async function handleMessage(
         igLog('Agent detector error (falling back to regex):', err);
         console.warn('[IronGate] Agent detector failed — falling back to regex-only', err instanceof Error ? err.message : String(err));
         _pipelineWarnings.push('agent_detector_failed');
+        agentAvailable = false; // Force fallback to regex
       }
 
-      // Step 4: If agent unavailable, use regex for ALL entity types (fallback)
-      if (!agentAvailable) {
+      // Step 4: If agent unavailable or failed, use regex for ALL entity types (fallback)
+      if (!agentAvailable || (agentAvailable && agentEntities.length === 0)) {
         for (const e of regexEntities) {
           if (!regexSuperiorTypes.has(e.type)) {
             // These are the name/org/location entities that regex caught
@@ -1278,6 +1328,7 @@ async function handleMessage(
       // This gives users live feedback as they type. The MAIN world fetch
       // interceptor (SENSITIVITY_SCORE on submit) will overwrite with the
       // final, authoritative result when the prompt is actually sent.
+      let _authoritativeSuppressed = false;
       const pdTabId = sender.tab?.id;
       if (pdTabId) {
         lastPromptTextByTab.set(pdTabId, text);
@@ -1297,8 +1348,20 @@ async function handleMessage(
         // pseudonymization result (which has the correct entity/mapping counts).
         const authTime = lastAuthoritativeByTab.get(pdTabId) || 0;
         const now = Date.now();
-        if (now - authTime < AUTHORITATIVE_SUPPRESS_MS) {
+        _authoritativeSuppressed = now - authTime < AUTHORITATIVE_SUPPRESS_MS;
+        if (_authoritativeSuppressed) {
           igLog(`PROMPT_DETECTED: suppressed broadcast — authoritative result received ${now - authTime}ms ago`);
+        } else {
+
+        // Suppress 0-entity low-score results from real-time typing detection.
+        // These cause the sidepanel to flash "All Clear" before the authoritative
+        // INTERCEPTED result arrives from the fetch interceptor. The real result
+        // comes from the MAIN world's SENSITIVITY_SCORE relay, not the worker's
+        // own detection. Only broadcast when there are actual entities or
+        // significant contextual score.
+        if (allEntities.length === 0 && sensitivityResult.score <= 25) {
+          igLog(`PROMPT_DETECTED: suppressed 0-entity broadcast (score=${sensitivityResult.score})`);
+          _authoritativeSuppressed = true; // prevent storage write too
         } else {
 
         const lastBroadcast = lruGet(lastBroadcastByTab, pdTabId) || 0;
@@ -1351,6 +1414,8 @@ async function handleMessage(
           // (Storage write moved outside debounce — see below return)
         }
 
+        } // end of 0-entity suppression else block
+
         } // end of authoritative suppression else block
       }
 
@@ -1395,24 +1460,27 @@ async function handleMessage(
       }
 
       // ── PRIMARY delivery: write to storage for sidepanel ──
-      // chrome.runtime.sendMessage worker→sidepanel is unreliable in MV3.
-      // Storage writes + onChanged listener is the guaranteed delivery path.
-      // NOTE: tabId is intentionally OMITTED — the storage key is singleton,
-      // and including tabId causes the sidepanel to silently drop results when
-      // its activeTabIdRef doesn't match (race condition on tab query timing).
-      chrome.storage.local.set({
-        lastDetectionResult: {
-          score: sensitivityResult.score,
-          level: sensitivityResult.level,
-          entities: allEntities.map((e) => ({
-            type: e.type, start: e.start, end: e.end,
-            confidence: e.confidence, source: e.source,
-          })),
-          aiToolId,
-          realtime: true,
-          _storageTimestamp: Date.now(),
-        },
-      }).catch(() => {});
+      // Only write SIGNIFICANT results (has entities or score > 25).
+      // 0-entity low-score results are noise and must NEVER reach storage —
+      // storage is a bypass channel that the sidepanel's poll/onChanged reads,
+      // and stale noise in storage can overwrite real detections.
+      // Also skip if authoritative-suppressed (MAIN world result is fresher).
+      const hasSignificantPD = allEntities.length > 0 || sensitivityResult.score > 25;
+      if (!_authoritativeSuppressed && hasSignificantPD) {
+        chrome.storage.local.set({
+          lastDetectionResult: {
+            score: sensitivityResult.score,
+            level: sensitivityResult.level,
+            entities: allEntities.map((e) => ({
+              type: e.type, start: e.start, end: e.end,
+              confidence: e.confidence, source: e.source,
+            })),
+            aiToolId,
+            realtime: true,
+            _storageTimestamp: Date.now(),
+          },
+        }).catch(() => {});
+      }
 
       return {
         received: true,
@@ -1421,24 +1489,91 @@ async function handleMessage(
     }
 
     // ── SERVER_PROCESS — MAIN world requests server-side pseudonymization ──
-    // Called synchronously from the fetch interceptor; must return quickly.
-    // Retry logic: 2 retries with 1s timeout each, then fall through to local.
+    // Called from the fetch interceptor when processingMode === 'server'.
+    // Uses the Detection Service API (POST /v1/pseudonymize) which runs:
+    //   entity dictionary → Presidio + spaCy NER → GLiNER → secret scanner →
+    //   context classification → policy evaluation → pseudonymization
+    // Returns everything in ONE round-trip.
+    // Falls back to old Node.js proxy if Detection API is unavailable.
     case 'SERVER_PROCESS': {
       const { text: spText, aiToolId: spAiToolId, requestId: spReqId, wasPasted: spWasPasted } = message.payload || {};
       if (!spText || !spReqId) return { error: 'Missing text or requestId' };
 
       const config = await resolveConfig();
+
+      // ── Try Detection Service API first (Python FastAPI) ──
+      // This is the primary path: all NER + policy + pseudonymization in one call.
+      if (isApiAvailable()) {
+        try {
+          const apiResult = await pseudonymizeViaApi(spText, {
+            sessionId: `tab-${sender.tab?.id ?? 0}`,
+            aiTool: spAiToolId || 'unknown',
+          });
+
+          if (apiResult) {
+            // Map Detection API policy_decision to main-world action
+            const action = apiResult.policy_decision === 'block' ? 'blocked'
+              : apiResult.policy_decision === 'allow' ? 'passthrough'
+              : apiResult.policy_decision === 'warn' ? 'pseudonymized'
+              : 'pseudonymized'; // pseudonymize → pseudonymized
+
+            igLog('SERVER_PROCESS: Detection API —', action,
+              `score=${apiResult.score}, entities=${apiResult.entities.length},`,
+              `policy=${apiResult.policy_decision}, time=${apiResult.processing_time_ms}ms`);
+
+            return {
+              result: {
+                action,
+                pseudonymizedText: apiResult.masked_text,
+                reverseMap: apiResult.reverse_map,
+                sensitivityScore: apiResult.score,
+                sensitivityLevel: apiResult.level,
+                entityCount: apiResult.entities.length,
+                entities: apiResult.entities.map(e => ({
+                  type: e.type, text: e.text,
+                  start: e.start, end: e.end,
+                  confidence: e.confidence, source: e.source,
+                })),
+                contextCategory: apiResult.context_category,
+                policyExplanation: apiResult.policy_explanation,
+                sessionId: apiResult.session_id,
+              },
+            };
+          }
+          // apiResult is null → circuit breaker open or API unreachable
+          igLog('SERVER_PROCESS: Detection API returned null — falling back');
+        } catch (err) {
+          if (err instanceof KillSwitchError) {
+            // Kill switch active — block immediately
+            return {
+              result: {
+                action: 'blocked',
+                pseudonymizedText: null,
+                reverseMap: undefined,
+                sensitivityScore: 100,
+                sensitivityLevel: 'critical',
+                entityCount: 0,
+                entities: [],
+                killSwitch: true,
+                killSwitchMessage: err.message,
+              },
+            };
+          }
+          igLog('SERVER_PROCESS: Detection API error —', err);
+        }
+      }
+
+      // ── Fallback: old Node.js proxy endpoint ──
+      // Used when Detection Service is unavailable (circuit breaker open, no URL configured).
       if ((config.processingMode !== 'server' && config.processingMode !== 'shadow') || !config.apiKey) {
-        return { error: 'Server mode not active' };
+        return { error: 'Server mode not active and Detection API unavailable' };
       }
 
       const apiUrl = config.apiUrl.replace(/\/v1\/?$/, '') + '/v1/proxy/process';
-      const isShortSafe = spText.length <= 2000;
       const MAX_RETRIES = 2;
 
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
-          // Timeout: 2s for first attempt, 1s for retries — keep total under 3s
           const timeout = attempt === 0 ? 2_000 : 1_000;
           const resp = await fetch(apiUrl, {
             method: 'POST',
@@ -1453,20 +1588,19 @@ async function handleMessage(
               captureMethod: spWasPasted ? 'pasted' : 'typed',
               platform: spAiToolId || 'unknown',
               wasPasted: !!spWasPasted,
-              quickCheck: isShortSafe,
+              quickCheck: spText.length <= 2000,
             }),
             signal: AbortSignal.timeout(timeout),
           });
 
           if (!resp.ok) {
-            if (attempt < MAX_RETRIES && resp.status >= 500) continue; // retry on server errors
+            if (attempt < MAX_RETRIES && resp.status >= 500) continue;
             return { error: `API ${resp.status}` };
           }
 
           const result = await resp.json();
-          igLog('SERVER_PROCESS: API response —', result.action, 'score:', result.sensitivityScore, `(attempt ${attempt + 1})`);
+          igLog('SERVER_PROCESS: proxy fallback —', result.action, 'score:', result.sensitivityScore, `(attempt ${attempt + 1})`);
 
-          // Build reverse map from server response for de-pseudonymization
           let reverseMap: Record<string, string> | undefined;
           if (result.reverseMap) {
             reverseMap = {};
@@ -1483,16 +1617,14 @@ async function handleMessage(
               sensitivityScore: result.sensitivityScore,
               sensitivityLevel: result.sensitivityLevel,
               entityCount: result.entityCount || 0,
-              // Pass through entity types so sidepanel can display what was detected
               entities: Array.isArray(result.entities) ? result.entities : [],
             },
           };
         } catch (err) {
-          igLog(`SERVER_PROCESS: attempt ${attempt + 1} failed —`, err);
+          igLog(`SERVER_PROCESS: proxy attempt ${attempt + 1} failed —`, err);
           if (attempt >= MAX_RETRIES) {
             return { error: err instanceof Error ? err.message : String(err) };
           }
-          // Brief pause before retry
           await new Promise(r => setTimeout(r, 200));
         }
       }
@@ -1561,15 +1693,22 @@ async function handleMessage(
         payload: { ...payload, tabId: ssTabId },
       }).catch(() => {});
 
-      // IMMEDIATE BACKUP: Write to storage so sidepanel picks it up via onChanged
-      try {
-        const storagePayload = {
-          ...payload,
-          tabId: ssTabId,
-          _storageTimestamp: Date.now(),
-        };
-        chrome.storage.local.set({ lastDetectionResult: storagePayload }).catch(() => {});
-      } catch { /* storage write failed — primary path may still work */ }
+      // IMMEDIATE BACKUP: Write to storage so sidepanel picks it up via onChanged.
+      // Wire intercept results (both INTERCEPTED and AUDIT) are authoritative —
+      // they MUST reach the sidepanel through all delivery paths. Without storage
+      // backup, 0-entity "All Clear" results rely solely on runtime.sendMessage
+      // which MV3 frequently drops, causing the sidepanel to show nothing.
+      const hasSignificantResult = payload.isProxy || payload.wireIntercept || (entities && entities.length > 0) || score > 25;
+      if (hasSignificantResult) {
+        try {
+          const storagePayload = {
+            ...payload,
+            tabId: ssTabId,
+            _storageTimestamp: Date.now(),
+          };
+          chrome.storage.local.set({ lastDetectionResult: storagePayload }).catch(() => {});
+        } catch { /* storage write failed — primary path may still work */ }
+      }
 
       // ── DEFERRED: Stats, API reporting, tab state (none of this blocks sidepanel) ──
       if (isFromContentScript) {
@@ -2031,6 +2170,30 @@ async function handleMessage(
     case 'GET_COMPLIANCE_REPORT': {
       const report = await generateComplianceReport();
       return { ok: true, report };
+    }
+
+    // ── Detection API status — sidepanel/content can check if server-side NER is live ──
+    case 'GET_DETECTION_API_STATUS': {
+      return {
+        ok: true,
+        apiAvailable: isApiAvailable(),
+        circuitBreaker: getApiCircuitState(),
+        allCircuits: getAllCircuitStates(),
+      };
+    }
+
+    // ── Server-side de-pseudonymization using session ID ──
+    // When the extension stored a session_id from a pseudonymize call,
+    // it can use this to de-pseudonymize response text server-side.
+    case 'DEPSEUDONYMIZE_VIA_API': {
+      const { text: dpText, sessionId: dpSessionId } = message.payload || {};
+      if (!dpText || !dpSessionId) return { error: 'Missing text or sessionId' };
+      try {
+        const result = await depseudonymizeViaApi(dpText, dpSessionId);
+        return { ok: true, text: result };
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : String(err) };
+      }
     }
 
     case 'CLIPBOARD_DETECTED': {

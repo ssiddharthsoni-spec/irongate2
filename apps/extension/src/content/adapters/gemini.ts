@@ -50,6 +50,7 @@ export const GeminiAdapter: SiteAdapter = {
 
   fileUploadPatterns: [/content-push\.googleapis\.com\/upload/],
 
+  responseStreamStrategy: 'none',  // DOM pre-submit, no wire response
   skipFetchProxy: true,  // batchexecute body is opaque
   skipXhrProxy: true,
 

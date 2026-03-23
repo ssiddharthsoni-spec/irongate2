@@ -111,6 +111,7 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
 
   // Handler: real-time typing detection
   function onPromptChange(text: string) {
+    console.log(`[Iron Gate] onPromptChange: ${text.length} chars from ${detector.id}`);
     sendToWorker('PROMPT_DETECTED', {
       text,
       aiToolId: detector.id,

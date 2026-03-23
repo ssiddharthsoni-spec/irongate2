@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # PostgreSQL Database
   postgres:
@@ -17,6 +15,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - irongate
 
   # Redis Cache
   redis:
@@ -30,8 +30,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - irongate
 
-  # Iron Gate API
+  # Iron Gate API (Hono / Node.js)
   api:
     build:
       context: ../..
@@ -42,14 +44,17 @@ services:
       NODE_ENV: development
       DATABASE_URL: postgresql://irongate:irongate_dev@postgres:5432/irongate
       REDIS_URL: redis://redis:6379
+      DETECTION_SERVICE_URL: http://detection:8080
       PORT: 3000
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks:
+      - irongate
 
-  # Iron Gate Detection Service
+  # Iron Gate Detection Service (Python FastAPI)
   detection:
     build:
       context: ../..
@@ -59,8 +64,16 @@ services:
       - "50051:50051"
     environment:
       LOG_LEVEL: info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - irongate
 
-  # Iron Gate Dashboard
+  # Iron Gate Dashboard (Next.js) — optional, start with: docker compose --profile dashboard up
   dashboard:
     build:
       context: ../..
@@ -71,7 +84,15 @@ services:
       NEXT_PUBLIC_API_URL: http://api:3000/v1
     depends_on:
       - api
+    profiles:
+      - dashboard
+    networks:
+      - irongate
 
 volumes:
   postgres_data:
   redis_data:
+
+networks:
+  irongate:
+    driver: bridge

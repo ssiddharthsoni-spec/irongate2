@@ -145,4 +145,30 @@ export interface SiteAdapter {
    */
   fileUploadPatterns?: RegExp[];
 
+  /**
+   * Response stream de-pseudonymization strategy.
+   *
+   * - 'sse-content': Parse SSE lines, extract content from JSON, replace in content
+   *   field, re-serialize. Best for ChatGPT (accumulated) and OpenAI API (delta).
+   * - 'raw-chunk': Direct text replacement on each decoded chunk. Best for platforms
+   *   with non-standard SSE or where SSE parsing is unreliable (Claude.ai).
+   * - 'none': No wire response de-pseudo (DOM pre-submit platforms like Gemini).
+   *
+   * Default: 'sse-content'
+   */
+  responseStreamStrategy?: 'sse-content' | 'raw-chunk' | 'none';
+
+  /**
+   * Optional: Extract content from a parsed SSE JSON event for response de-pseudo.
+   * Returns { mode, content } or null if this event has no text content.
+   * Only used when responseStreamStrategy is 'sse-content'.
+   */
+  extractResponseContent?(parsed: any): { mode: 'accumulated' | 'delta'; content: string } | null;
+
+  /**
+   * Optional: Inject modified content back into a parsed SSE JSON event.
+   * Only used when responseStreamStrategy is 'sse-content'.
+   */
+  injectResponseContent?(parsed: any, mode: 'accumulated' | 'delta', content: string): void;
+
 }
