@@ -166,7 +166,9 @@ function igPostMessage(data: Record<string, unknown>): void {
 // ─── State ──────────────────────────────────────────────────────────────────
 
 let mode: 'audit' | 'proxy' = 'proxy';
-let processingMode: 'local' | 'server' = (window as any).__IRON_GATE_PROCESSING_MODE || 'local';
+let processingMode: 'local' | 'server' = (window as any).__IRON_GATE_PROCESSING_MODE || (() => {
+  try { return localStorage.getItem('ig_last_mode') === 'server' ? 'server' : 'local'; } catch { return 'local'; }
+})();
 let currentReverseMap: Record<string, string> = {};
 let _lastConversationPath: string = window.location.pathname;
 
@@ -334,6 +336,7 @@ window.addEventListener('message', (event) => {
       const old = processingMode;
       processingMode = event.data.processingMode;
       (window as any).__IRON_GATE_PROCESSING_MODE = processingMode;
+      try { localStorage.setItem('ig_last_mode', processingMode); } catch {}
       if (old !== processingMode) {
         console.log(
           `%c[Iron Gate MAIN] Processing mode: ${old} → ${processingMode}`,

@@ -293,6 +293,48 @@ const REGEX_PATTERNS: RegexPattern[] = [
     pattern: /\b(?:Project|Operation|Initiative|Program|Campaign)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b/g,
     confidence: 0.75,
   },
+  // ── Date of Birth ────────────────────────────────────────────────────
+  // "DOB: 03/15/1990", "date of birth: March 15, 1990", "born on 1990-03-15"
+  {
+    type: 'DATE_OF_BIRTH',
+    pattern: /(?<=(?:DOB|dob|date\s+of\s+birth|birth\s*date|born\s+on|d\.o\.b\.?)\s*(?::|is|=)?\s*)\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/gi,
+    confidence: 0.9,
+  },
+  {
+    type: 'DATE_OF_BIRTH',
+    pattern: /(?<=(?:DOB|dob|date\s+of\s+birth|birth\s*date|born\s+on|d\.o\.b\.?)\s*(?::|is|=)?\s*)(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}/gi,
+    confidence: 0.9,
+  },
+  {
+    type: 'DATE_OF_BIRTH',
+    pattern: /(?<=(?:DOB|dob|date\s+of\s+birth|birth\s*date|born\s+on|d\.o\.b\.?)\s*(?::|is|=)?\s*)\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}/gi,
+    confidence: 0.9,
+  },
+  // ── Street Addresses ────────────────────────────────────────────────
+  // "123 Main Street", "4567 Oak Ave, Suite 200"
+  {
+    type: 'ADDRESS',
+    pattern: /\b\d{1,5}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s+(?:Street|St|Avenue|Ave|Boulevard|Blvd|Drive|Dr|Lane|Ln|Road|Rd|Court|Ct|Place|Pl|Way|Circle|Cir|Terrace|Ter|Trail|Trl|Parkway|Pkwy|Highway|Hwy)\.?(?:\s*,?\s*(?:Suite|Ste|Apt|Unit|#)\s*\.?\s*\d{1,5})?\b/gi,
+    confidence: 0.8,
+  },
+  // Address with city/state/zip: "..., Springfield, IL 62704"
+  {
+    type: 'ADDRESS',
+    pattern: /\b\d{1,5}\s+[A-Za-z][\w\s]{2,30},\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,?\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/g,
+    confidence: 0.85,
+  },
+  // ── Bank Account / Routing Numbers ──────────────────────────────────
+  // "routing number: 021000021", "bank account: 1234567890"
+  {
+    type: 'BANK_ACCOUNT',
+    pattern: /(?<=(?:bank\s+account|checking\s+account|savings\s+account|account\s+number|acct)\s*(?:#|number|no\.?)?\s*(?::|is|=)?\s*)\d{8,17}(?!\d)/gi,
+    confidence: 0.85,
+  },
+  {
+    type: 'ROUTING_NUMBER',
+    pattern: /(?<=(?:routing\s+(?:number|no\.?|#)|ABA|RTN)\s*(?::|is|=)?\s*)\d{9}(?!\d)/gi,
+    confidence: 0.85,
+  },
   // ── Passport Numbers (US format) ──────────────────────────────────────
   {
     type: 'PASSPORT_NUMBER',

@@ -28,6 +28,7 @@ export const ClaudeAdapter: SiteAdapter = {
   apiPatterns: [
     /claude\.ai\/api/,
     /api\.anthropic\.com\/v1\/messages/,
+    /claude\.ai\/api\/organizations\/[^/]+\/chat_conversations\/[^/]+\/title/,
   ],
 
   fileUploadPatterns: [/claude\.ai\/api\/convert_document/],
@@ -70,6 +71,11 @@ export const ClaudeAdapter: SiteAdapter = {
             return lastUser.content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n');
           }
         }
+      }
+
+      // Claude.ai title endpoint: { message_content: "user message" }
+      if (typeof parsed?.message_content === 'string' && parsed.message_content.length > 0) {
+        return parsed.message_content;
       }
 
       // Claude.ai web app: { text: "user message" } — the latest user message
@@ -126,6 +132,12 @@ export const ClaudeAdapter: SiteAdapter = {
             break;
           }
         }
+        return JSON.stringify(parsed);
+      }
+
+      // Claude.ai title endpoint: { message_content: "user message" }
+      if (typeof parsed?.message_content === 'string' && parsed.message_content.length > 0) {
+        parsed.message_content = replacement;
         return JSON.stringify(parsed);
       }
 
