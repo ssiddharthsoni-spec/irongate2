@@ -5196,6 +5196,12 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
       addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
     }
 
+    // Start persistent DOM observer so the AI response gets de-pseudonymized
+    // as it streams in. Critical for DOM-only adapters (Gemini) where there's
+    // no fetch/XHR response stream to intercept — the observer watches for
+    // new text nodes containing pseudonyms and replaces them in real time.
+    startPersistentDomDepseudo();
+
     // ════════════════════════════════════════════════════════════
     // DIAGNOSTIC: DOM PRE-SUBMIT — what gets written to the input
     // Only log when debug mode is active to prevent PII leak (4.2)
