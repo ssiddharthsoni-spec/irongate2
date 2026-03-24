@@ -83,6 +83,10 @@ interface PromptInspectorData {
   originalPrompt: string;
   maskedPrompt: string;
   pseudonymMappings: Array<{ original?: string; pseudonym: string; type: string; length: number }>;
+  /** When true, entities were detected but allowed through (context-aware decision) */
+  isPassthrough?: boolean;
+  /** Human-readable reason for passthrough (e.g., "Resume context — your data allowed through") */
+  passthroughReason?: string;
 }
 
 export function App() {
@@ -812,10 +816,31 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
         setInspectorOpen(false);
 
         if (isProxy && newScore.maskedPrompt) {
+          // Pseudonymized — show full inspector with changes, safe version, mappings
           setInspectorData({
             originalPrompt: newScore.originalPrompt || '',
             maskedPrompt: newScore.maskedPrompt,
             pseudonymMappings: newScore.pseudonymMappings || [],
+          });
+          setInspectorOpen(true);
+        } else if (newScore.entities && newScore.entities.length > 0 && !newScore.realtime) {
+          // Entities detected but NOT pseudonymized (passthrough) — show what was found and why
+          const entityCount = newScore.entities.length;
+          const entityTypes = [...new Set(newScore.entities.map((e: any) => e.type as string))] as string[];
+          const isValueOnly = entityTypes.every((t) =>
+            ['MONETARY_AMOUNT', 'DATE', 'PERCENTAGE', 'QUANTITY'].includes(t)
+          );
+          const reason = isValueOnly
+            ? `${entityCount} value-type ${entityCount === 1 ? 'entity' : 'entities'} detected (${entityTypes.join(', ')}). Financial values are not pseudonymized — they're needed for accurate AI analysis.`
+            : newScore.isSelfReferential
+            ? `${entityCount} ${entityCount === 1 ? 'entity' : 'entities'} detected but allowed through — this appears to be your own data (resume, bio, or personal document).`
+            : `${entityCount} ${entityCount === 1 ? 'entity' : 'entities'} detected. Context analysis determined low risk — original text sent to AI.`;
+          setInspectorData({
+            originalPrompt: newScore.originalPrompt || '',
+            maskedPrompt: '',
+            pseudonymMappings: [],
+            isPassthrough: true,
+            passthroughReason: reason,
           });
           setInspectorOpen(true);
         }
@@ -1519,6 +1544,21 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
             </svg>
           </button>
 
+          {/* Passthrough explanation — entities detected but context-aware decision allowed them through */}
+          {inspectorData?.isPassthrough && (
+            <div className="px-3 py-2 border-t bg-blue-50">
+              <div className="flex items-center gap-2 py-1">
+                <svg className="h-4 w-4 text-blue-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
+                </svg>
+                <div>
+                  <p className="text-xs text-blue-800 font-medium">Context-Aware Pass-Through</p>
+                  <p className="text-[10px] text-blue-600 mt-0.5">{inspectorData.passthroughReason}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Copy Safe Version — prominent button (only in proxy mode where data is actually protected) */}
           {inspectorData?.maskedPrompt && mode === 'proxy' && (
             <div className="px-3 py-2 border-t bg-green-50">
@@ -1640,12 +1680,22 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
                       )}
                     </div>
                     {inspectorData.pseudonymMappings.length === 0 ? (
-                      <div className="bg-green-50 border border-green-100 rounded-md p-3 text-center">
-                        <svg className="w-6 h-6 text-green-500 mx-auto mb-1.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                      <div className={`${inspectorData.isPassthrough ? 'bg-blue-50 border-blue-100' : 'bg-green-50 border-green-100'} border rounded-md p-3 text-center`}>
+                        <svg className={`w-6 h-6 ${inspectorData.isPassthrough ? 'text-blue-500' : 'text-green-500'} mx-auto mb-1.5`} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                          {inspectorData.isPassthrough ? (
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
+                          ) : (
+                            <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                          )}
                         </svg>
-                        <p className="text-xs text-green-700 font-medium">All clear!</p>
-                        <p className="text-[10px] text-green-600 mt-0.5">No sensitive data detected in this prompt.</p>
+                        <p className={`text-xs ${inspectorData.isPassthrough ? 'text-blue-700' : 'text-green-700'} font-medium`}>
+                          {inspectorData.isPassthrough ? 'No changes made' : 'All clear!'}
+                        </p>
+                        <p className={`text-[10px] ${inspectorData.isPassthrough ? 'text-blue-600' : 'text-green-600'} mt-0.5`}>
+                          {inspectorData.isPassthrough
+                            ? 'Entities detected but context analysis determined they\'re safe to send.'
+                            : 'No sensitive data detected in this prompt.'}
+                        </p>
                       </div>
                     ) : (
                       <div className="space-y-2">
