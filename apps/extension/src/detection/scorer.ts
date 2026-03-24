@@ -114,6 +114,12 @@ const ENTITY_WEIGHTS: Record<string, number> = {
   // Real estate
   PARCEL_NUMBER: 12,
   MLS_NUMBER: 10,
+  // Personal identity
+  DATE_OF_BIRTH: 25,
+  ADDRESS: 20,
+  // Financial
+  BANK_ACCOUNT: 30,
+  ROUTING_NUMBER: 25,
   // Business metrics (VALUE_TYPES — detected but not pseudonymized)
   // Low weight: only sensitive when combined with named entities
   HEADCOUNT: 5,

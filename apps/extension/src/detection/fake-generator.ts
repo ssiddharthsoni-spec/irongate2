@@ -262,6 +262,35 @@ export function generateFake(type: string, original: string): string {
     case 'ADDRESS':
       return pickFromPool(FAKE_ADDRESSES, 'ADDRESS');
 
+    case 'DATE_OF_BIRTH': {
+      // Generate a realistic fake DOB preserving format
+      const fakeMonth = Math.floor(secureRandom() * 12) + 1;
+      const fakeDay = Math.floor(secureRandom() * 28) + 1;
+      const fakeYear = Math.floor(secureRandom() * 40) + 1960;
+      // Detect format: "March 15, 1990" vs "03/15/1990" vs "1990-03-15"
+      if (/[A-Za-z]/.test(original)) {
+        return `${MONTHS[fakeMonth - 1]} ${fakeDay}, ${fakeYear}`;
+      }
+      if (/^\d{4}[\/\-]/.test(original)) {
+        const sep = original.includes('/') ? '/' : '-';
+        return `${fakeYear}${sep}${String(fakeMonth).padStart(2, '0')}${sep}${String(fakeDay).padStart(2, '0')}`;
+      }
+      const sep = original.includes('/') ? '/' : '-';
+      return `${String(fakeMonth).padStart(2, '0')}${sep}${String(fakeDay).padStart(2, '0')}${sep}${fakeYear}`;
+    }
+
+    case 'BANK_ACCOUNT': {
+      // Randomize all digits, preserve length
+      return original.replace(/\d/g, () => Math.floor(secureRandom() * 10).toString());
+    }
+
+    case 'ROUTING_NUMBER': {
+      // Generate a fake 9-digit routing number
+      let fake = '';
+      for (let i = 0; i < 9; i++) fake += Math.floor(secureRandom() * 10).toString();
+      return fake;
+    }
+
     // Secrets — use obvious placeholders so they never leak
     case 'API_KEY':
     case 'AWS_CREDENTIAL':
