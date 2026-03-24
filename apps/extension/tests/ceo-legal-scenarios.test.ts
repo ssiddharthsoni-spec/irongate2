@@ -375,7 +375,7 @@ Key person risk: CTO Dr. James Park (james.park@medtech.io, SSN 234-56-7890)
 IP portfolio: 47 patents, 12 pending
 Litigation: 3 active suits, estimated liability $15M
 Bank: Silicon Valley Bank, acct #9876543210`,
-      requiredTypes: ['SSN', 'EMAIL', 'ACCOUNT_NUMBER'],
+      requiredTypes: ['SSN', 'EMAIL', 'BANK_ACCOUNT'],
       minEntities: 3,
       minScore: 50,
       allowedLevels: ['high', 'critical'],

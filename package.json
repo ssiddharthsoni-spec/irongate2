@@ -7,6 +7,8 @@
     "dev": "turbo dev",
     "build": "turbo build",
     "test": "turbo test",
+    "test:quick": "pnpm --filter extension test",
+    "check": "npx tsc --noEmit -p apps/extension/tsconfig.json && pnpm --filter extension test && pnpm --filter extension build",
     "test:e2e": "turbo test:e2e",
     "test:detection": "turbo test:detection",
     "lint": "turbo lint",

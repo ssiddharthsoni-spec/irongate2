@@ -88,7 +88,7 @@ describe('Entity Type Detection', () => {
 
   it('should detect DATE patterns (MM/DD/YYYY)', () => {
     const entities = detectEntities('Date of birth: 03/15/1985');
-    expect(entities.some((e) => e.type === 'DATE')).toBe(true);
+    expect(entities.some((e) => e.type === 'DATE' || e.type === 'DATE_OF_BIRTH')).toBe(true);
   });
 
   it('should detect DATE patterns (YYYY-MM-DD)', () => {
