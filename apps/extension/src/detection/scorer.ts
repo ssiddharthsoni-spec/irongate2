@@ -43,6 +43,12 @@ export interface SensitivityScore {
   readonly explanation: string;
   readonly breakdown: Readonly<ScoreBreakdown>;
   readonly entities: readonly DetectedEntity[];
+  /** Whether intent suppression identified this as a self-referential task (resume, bio, cover letter) */
+  readonly isSelfReferential?: boolean;
+  /** Document type from document classifier (e.g., 'litigation_doc', 'financial_data', 'casual_question') */
+  readonly documentType?: string;
+  /** Context category summarizing the detected intent/context for ownership decisions */
+  readonly contextCategory?: string;
 }
 
 export interface ScoreBreakdown {
@@ -469,6 +475,15 @@ export function computeScore(
   const contextualExplanation = explainContextualMarkers(contextualMarkers);
   const explanation = generateExplanation(score, level, contextualEntities, text, docClassification.type, contextualExplanation);
 
+  // Derive contextCategory from intent classification + document type for ownership decisions.
+  // Priority: specific intent > document type > general
+  // 'casual_question' is the document classifier's default/fallback type.
+  const contextCategory = intentClassification.confidence >= 0.7 && intentClassification.intent !== 'general'
+    ? intentClassification.intent  // e.g., 'resume_review', 'code_review', 'research'
+    : docClassification.confidence >= 0.25 && docClassification.type !== 'casual_question'
+      ? docClassification.type       // e.g., 'litigation_doc', 'financial_data'
+      : 'general';
+
   const result: SensitivityScore = {
     score,
     level,
@@ -484,6 +499,9 @@ export function computeScore(
       structureMultiplier,
     }),
     entities: contextualEntities,
+    isSelfReferential: intentResult.isSelfReferential,
+    documentType: docClassification.type,
+    contextCategory,
   };
 
   // Freeze to prevent accidental mutation (e.g., result.score = X).

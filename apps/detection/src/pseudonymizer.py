@@ -414,9 +414,16 @@ class Pseudonymizer:
         self,
         text: str,
         entities: list[dict],
+        skip_entities: set[str] | None = None,
     ) -> tuple[str, dict[str, str], int]:
         """
         Replace all detected entities in *text* with pseudonyms.
+
+        Args:
+            text: The original text to pseudonymize.
+            entities: List of detected entities with keys: type, text, start, end, confidence, source.
+            skip_entities: Optional set of entity text values that should NOT be pseudonymized.
+                           These entities are left as-is in the output text.
 
         Returns:
             (masked_text, pseudonym_map, entities_replaced)
@@ -435,6 +442,10 @@ class Pseudonymizer:
         pseudonym_map: dict[str, str] = {}
 
         for entity in sorted_entities:
+            # Skip entities that the per-entity policy decided to allow
+            if skip_entities and entity["text"] in skip_entities:
+                continue
+
             entry = self._get_or_create(entity["text"], entity["type"])
             masked_text = (
                 masked_text[: entity["start"]]

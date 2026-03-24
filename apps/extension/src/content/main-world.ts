@@ -28,7 +28,8 @@ import { scanForSecrets, isNaturalLanguage } from './main-world/entity-patterns'
 // as the worker. These are pure functions with no chrome.* dependencies.
 import { computeScore, scoreToLevel } from '../detection/scorer';
 import type { DetectedEntity } from '../detection/types';
-import { HIGH_PII_TYPES } from '../detection/types';
+import { HIGH_PII_TYPES, ALWAYS_CRITICAL_TYPES } from '../detection/types';
+import { classifyEntityOwnership, type OwnershipType } from '../detection/entity-ownership';
 // NLI removed (3.5) — server-side classification replaces in-browser ML
 
 // ─── Duplicate Execution Guard ───────────────────────────────────────────
@@ -612,6 +613,45 @@ function pseudonymizeLocal(text: string, entities: DetectedEntity[]): PseudonymR
 
   mappings.reverse();
   return { maskedText, mappings };
+}
+
+// ─── Selective Entity Filtering (Context-Aware Pseudonymization) ────────────
+// Instead of pseudonymizing ALL entities when score > 25, filter based on
+// entity ownership. Self-owned entities in benign context and public entities
+// are allowed through; credentials are always pseudonymized regardless.
+
+function filterEntitiesForPseudonymization(
+  text: string,
+  allEntities: DetectedEntity[],
+  fullScore: { isSelfReferential?: boolean; contextCategory?: string; score: number },
+): DetectedEntity[] {
+  if (allEntities.length === 0) return allEntities;
+
+  const contextCategory = fullScore.contextCategory || 'general';
+  const isBenignContext = fullScore.isSelfReferential === true ||
+    ['personal_task', 'resume_review', 'personal_bio', 'code_review', 'creative_writing'].includes(contextCategory);
+
+  const ownerships = classifyEntityOwnership(text, allEntities, contextCategory);
+
+  return allEntities.filter((entity, i) => {
+    const ownership = ownerships[i];
+    if (!ownership) return true; // Safety: if ownership missing, pseudonymize
+
+    // Always pseudonymize credentials regardless of ownership
+    if (ALWAYS_CRITICAL_TYPES.has(entity.type)) return true;
+
+    // Always pseudonymize HIGH_PII_TYPES (SSN, credit card, medical record, etc.)
+    if (HIGH_PII_TYPES.has(entity.type)) return true;
+
+    // Self-owned entities in benign context → allow through
+    if (ownership.ownership === 'self' && isBenignContext && ownership.confidence >= 0.7) return false;
+
+    // Public entities with sufficient confidence → allow through
+    if (ownership.ownership === 'public' && ownership.confidence >= 0.7) return false;
+
+    // Everything else (third_party, internal, unknown, low-confidence) → pseudonymize
+    return true;
+  });
 }
 
 // ─── Prompt Extraction / Replacement ───────────────────────────────────────
@@ -3531,13 +3571,18 @@ const patchedFetch = async function patchedFetch(
             return originalFetch.call(window, input, init);
           }
 
-          const pseudoResult = pseudonymizeLocal(promptText, allEntities);
+          // Selective pseudonymization: filter entities based on ownership context.
+          // Self-owned entities in benign context (resume, bio) and public entities
+          // are allowed through. Credentials and HIGH_PII always pseudonymized.
+          const entitiesToPseudonymize = filterEntitiesForPseudonymization(promptText, allEntities, fullScore);
+          igLog(`Ownership filter: ${allEntities.length} entities → ${entitiesToPseudonymize.length} to pseudonymize`);
+          const pseudoResult = pseudonymizeLocal(promptText, entitiesToPseudonymize);
 
           // If pseudonymization produced no actual changes (all entities were
-          // VALUE_TYPES like MONETARY_AMOUNT/DATE that are intentionally skipped),
-          // treat as passthrough — don't fake an interception with empty mappings.
+          // VALUE_TYPES like MONETARY_AMOUNT/DATE that are intentionally skipped,
+          // or all entities were filtered out by ownership), treat as passthrough.
           if (pseudoResult.mappings.length === 0) {
-            igLog(`PROXY MODE — ${allEntities.length} entities detected but all are VALUE_TYPES (no pseudonymizable entities), score=${score}`);
+            igLog(`PROXY MODE — ${allEntities.length} entities detected but none require pseudonymization (ownership filter or VALUE_TYPES), score=${score}`);
             console.log(
               `%c[Iron Gate PERF] Detection: ${(_t1 - _t0).toFixed(0)}ms | Total: ${(performance.now() - _t0).toFixed(0)}ms (value-types only, passthrough)`,
               'color: #818cf8; font-weight: bold',
@@ -4228,11 +4273,13 @@ XMLHttpRequest.prototype.send = function(body?: any) {
               return originalXHRSend.call(this, body);
             }
 
-            const pseudoResult = pseudonymizeLocal(promptText, allEntities);
+            // Selective pseudonymization based on entity ownership
+            const xhrEntitiesToPseudo = filterEntitiesForPseudonymization(promptText, allEntities, fullScore);
+            const pseudoResult = pseudonymizeLocal(promptText, xhrEntitiesToPseudo);
 
-            // No actual pseudonymization (all VALUE_TYPES) → passthrough
+            // No actual pseudonymization (ownership filter or VALUE_TYPES) → passthrough
             if (pseudoResult.mappings.length === 0) {
-              igLog(`XHR: ${allEntities.length} entities detected but all VALUE_TYPES, sending original`);
+              igLog(`XHR: ${allEntities.length} entities detected but none require pseudonymization, sending original`);
               turnCoordinator.submit({
                 type: 'IRON_GATE_AUDIT', promptText, allEntities,
                 maskedText: '', mappings: [], level, score,
@@ -4680,7 +4727,19 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
                 return originalSend(data);
               }
 
-              const pseudoResult = pseudonymizeLocal(promptText, allEntities);
+              // Selective pseudonymization based on entity ownership
+              const wsEntitiesToPseudo = filterEntitiesForPseudonymization(promptText, allEntities, fullScore);
+              const pseudoResult = pseudonymizeLocal(promptText, wsEntitiesToPseudo);
+
+              // If ownership filter removed all entities, pass through
+              if (pseudoResult.mappings.length === 0) {
+                igLog(`WS: ${allEntities.length} entities detected but none require pseudonymization, sending original`);
+                turnCoordinator.submit({
+                  type: 'IRON_GATE_AUDIT', promptText, allEntities,
+                  maskedText: '', mappings: [], level, score,
+                });
+                return originalSend(data);
+              }
 
               for (const m of pseudoResult.mappings) {
                 addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
@@ -5115,11 +5174,13 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
       return null;
     }
 
-    const pseudoResult = pseudonymizeLocal(text, allEntities);
+    // Selective pseudonymization based on entity ownership
+    const domEntitiesToPseudo = filterEntitiesForPseudonymization(text, allEntities, fullScore);
+    const pseudoResult = pseudonymizeLocal(text, domEntitiesToPseudo);
 
-    // No actual pseudonymization (all VALUE_TYPES) → passthrough
+    // No actual pseudonymization (ownership filter or VALUE_TYPES) → passthrough
     if (pseudoResult.mappings.length === 0) {
-      igLog(`${source} DOM: ${allEntities.length} entities detected but all VALUE_TYPES, not pseudonymizing`);
+      igLog(`${source} DOM: ${allEntities.length} entities detected but none require pseudonymization`);
       turnCoordinator.submit({
         type: 'IRON_GATE_AUDIT', promptText: text, allEntities,
         maskedText: '', mappings: [], level, score,

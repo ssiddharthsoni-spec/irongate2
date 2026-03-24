@@ -30,7 +30,8 @@ import logging
 from .pipeline import DetectionPipeline
 from .pseudonymizer import Pseudonymizer
 from .context_classifier import classify_context
-from .policy_engine import evaluate_policy, PolicyContext, DEFAULT_RULES
+from .policy_engine import evaluate_policy, evaluate_entity_policy, PolicyContext, DEFAULT_RULES
+from .entity_ownership import classify_entity_ownership
 from .entity_dictionary import entity_dictionary
 from .audit import log_event, flush_buffer, get_compliance_report
 
@@ -137,6 +138,14 @@ class PseudonymizeRequest(BaseModel):
     user_id: Optional[str] = None
 
 
+class EntityDecision(BaseModel):
+    entity_text: str
+    entity_type: str
+    ownership: str
+    decision: str
+    explanation: str
+
+
 class PseudonymizeResponse(BaseModel):
     masked_text: str
     entities: list[Entity]
@@ -150,6 +159,7 @@ class PseudonymizeResponse(BaseModel):
     processing_time_ms: float
     session_id: str
     dry_run_matches: list[DryRunMatchResponse] = []
+    entity_decisions: list[EntityDecision] = []
 
 
 class PolicyEvaluateRequest(BaseModel):
@@ -275,6 +285,48 @@ async def _load_org_policy(org_id: str) -> tuple[list[dict], list[str]]:
         logger.warning(f"Could not load policy for {org_id}: {e}")
 
     return DEFAULT_RULES, []
+
+
+def _build_entity_explanation(
+    entity_text: str,
+    entity_type: str,
+    ownership: str,
+    decision: str,
+    context_category: str,
+) -> str:
+    """Build a human-readable explanation for a per-entity policy decision."""
+    ownership_labels = {
+        "self": "your data",
+        "third_party": "third-party",
+        "public": "public information",
+        "internal": "org-internal",
+        "unknown": "unclassified",
+    }
+    ownership_label = ownership_labels.get(ownership, ownership)
+
+    context_labels = {
+        "personal_task": "resume context",
+        "resume_review": "resume context",
+        "contract_review": "contract context",
+        "hr_matters": "HR context",
+        "medical_health": "medical context",
+        "code_review": "code review context",
+        "customer_data": "customer data context",
+        "financial_analysis": "financial context",
+        "internal_comms": "internal comms context",
+        "legal_strategy": "legal context",
+        "competitive_intel": "competitive intel context",
+        "creative_writing": "creative writing context",
+    }
+    context_label = context_labels.get(context_category, context_category)
+
+    if decision == "allow":
+        return f"{entity_text} \u2192 allowed ({ownership_label}, {context_label})"
+    elif decision == "pseudonymize":
+        return f"{entity_text} \u2192 pseudonymized ({ownership_label} {entity_type.lower()})"
+    elif decision == "redact":
+        return f"{entity_text} \u2192 redacted ({ownership_label} {entity_type.lower()}, {context_label})"
+    return f"{entity_text} \u2192 {decision} ({ownership_label})"
 
 
 async def _check_kill_switch(org_id: str) -> bool:
@@ -474,11 +526,58 @@ async def pseudonymize_text(request: PseudonymizeRequest):
         )
         policy_decision = evaluate_policy(rules, policy_ctx, compliance_templates)
 
+        # 7b. Per-entity ownership classification + policy decisions
+        entity_decision_list: list[EntityDecision] = []
+        skip_entities: set[str] = set()
+
+        if merged:
+            ownership_results = classify_entity_ownership(
+                text=request.text,
+                entities=merged,
+                context_category=context.category,
+            )
+
+            # Build a lookup from entity text to ownership
+            ownership_by_text: dict[str, str] = {}
+            for ow in ownership_results:
+                ownership_by_text[ow.entity_text] = ow.ownership
+
+            for entity in merged:
+                entity_text = entity["text"]
+                entity_type = entity["type"]
+                ownership = ownership_by_text.get(entity_text, "unknown")
+
+                # Evaluate per-entity policy
+                entity_action = evaluate_entity_policy(
+                    entity=entity,
+                    ownership=ownership,
+                    context_category=context.category,
+                    rules=None,  # Use built-in defaults; custom rules come from org policy
+                )
+
+                # Build human-readable explanation
+                explanation = _build_entity_explanation(
+                    entity_text, entity_type, ownership, entity_action, context.category,
+                )
+
+                entity_decision_list.append(EntityDecision(
+                    entity_text=entity_text,
+                    entity_type=entity_type,
+                    ownership=ownership,
+                    decision=entity_action,
+                    explanation=explanation,
+                ))
+
+                # Track entities that should be skipped (allowed)
+                if entity_action == "allow":
+                    skip_entities.add(entity_text)
+
         # 8. Pseudonymize (if policy says pseudonymize or allow)
         pseudonymizer = _get_or_create_pseudonymizer(session_id, org_id)
         if policy_decision.action in ("pseudonymize", "allow") and merged:
             masked_text, pseudonym_map, _ = pseudonymizer.pseudonymize(
                 text=request.text, entities=merged,
+                skip_entities=skip_entities if skip_entities else None,
             )
         elif policy_decision.action == "block":
             # Block — don't pseudonymize, return empty
@@ -554,6 +653,7 @@ async def pseudonymize_text(request: PseudonymizeRequest):
             processing_time_ms=round(processing_time, 2),
             session_id=session_id,
             dry_run_matches=dry_run_response,
+            entity_decisions=entity_decision_list,
         )
     except HTTPException:
         raise

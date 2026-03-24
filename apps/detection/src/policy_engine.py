@@ -197,6 +197,128 @@ DEFAULT_RULES: list[dict] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Credential types — always pseudonymize regardless of ownership
+# ---------------------------------------------------------------------------
+
+CREDENTIAL_TYPES: set[str] = {
+    "SSN", "CREDIT_CARD", "API_KEY", "DATABASE_URI", "PRIVATE_KEY",
+    "AWS_CREDENTIAL", "GCP_CREDENTIAL", "AZURE_CREDENTIAL", "AUTH_TOKEN",
+    "ACCOUNT_NUMBER", "PASSPORT_NUMBER", "DRIVERS_LICENSE", "MEDICAL_RECORD",
+}
+
+
+# ---------------------------------------------------------------------------
+# Per-entity policy evaluation
+# ---------------------------------------------------------------------------
+
+def evaluate_entity_policy(
+    entity: dict,  # {type, text, start, end, confidence, source}
+    ownership: str,  # 'self', 'third_party', 'public', 'internal', 'unknown'
+    context_category: str,
+    rules: list[dict] | None = None,
+) -> str:
+    """
+    Per-entity policy decision: 'allow' | 'pseudonymize' | 'redact'.
+
+    Evaluates a single entity against ownership classification and context
+    to determine the appropriate action. Custom rules (if provided) are
+    checked first; otherwise the built-in default logic applies.
+
+    Priority order:
+    1. Custom rules (first match wins)
+    2. Credential types → always pseudonymize
+    3. Context-specific overrides (contract_review, hr_matters, etc.)
+    4. Ownership-based defaults
+    """
+    entity_type = entity.get("type", "")
+
+    # --- Phase 1: Custom rules (first match wins) ---
+    if rules:
+        for rule in rules:
+            condition = rule.get("if", {})
+            # Check entity type match
+            rule_type = condition.get("entity_type")
+            rule_type_in = condition.get("entity_type_in")
+            rule_ownership = condition.get("ownership")
+            rule_context = condition.get("context")
+
+            type_match = (
+                rule_type is None and rule_type_in is None
+            ) or (
+                rule_type == "*"
+            ) or (
+                rule_type is not None and rule_type == entity_type
+            ) or (
+                rule_type_in is not None and entity_type in rule_type_in
+            )
+
+            ownership_match = rule_ownership is None or rule_ownership == ownership
+            context_match = rule_context is None or rule_context == context_category
+
+            if type_match and ownership_match and context_match:
+                action = rule.get("then", "pseudonymize")
+                # Map prompt-level actions to entity-level actions
+                if action == "block":
+                    return "redact"
+                if action == "warn":
+                    return "pseudonymize"
+                if action in ("allow", "pseudonymize", "redact"):
+                    return action
+                return "pseudonymize"
+
+    # --- Phase 2: Credential types → ALWAYS pseudonymize ---
+    if entity_type in CREDENTIAL_TYPES:
+        return "pseudonymize"
+
+    # --- Phase 3: Context-specific overrides ---
+
+    # contract_review: ALL entities pseudonymized (legal docs are high-risk)
+    if context_category == "contract_review":
+        return "pseudonymize"
+
+    # medical_health: ALL entities pseudonymized (HIPAA)
+    if context_category == "medical_health":
+        return "pseudonymize"
+
+    # hr_matters: ALL PERSON entities pseudonymized (employee data)
+    if context_category == "hr_matters" and entity_type == "PERSON":
+        return "pseudonymize"
+
+    # resume_review / personal_task: self-owned common types are allowed
+    if context_category in ("resume_review", "personal_task") and ownership == "self":
+        if entity_type in ("ORGANIZATION", "PERSON", "DATE", "MONETARY_AMOUNT", "LOCATION"):
+            return "allow"
+
+    # code_review: self-owned entities are allowed
+    if context_category == "code_review" and ownership == "self":
+        return "allow"
+
+    # --- Phase 4: Ownership-based defaults ---
+
+    # EMAIL has special ownership handling
+    if entity_type == "EMAIL":
+        if ownership == "self":
+            return "allow"
+        if ownership == "third_party":
+            return "pseudonymize"
+        # internal / unknown / public → pseudonymize for caution
+        return "pseudonymize" if ownership in ("internal", "unknown") else "allow"
+
+    # Ownership-based defaults for all other entity types
+    if ownership == "self":
+        return "allow"
+    if ownership == "third_party":
+        return "pseudonymize"
+    if ownership == "public":
+        return "allow"
+    if ownership == "internal":
+        return "pseudonymize"
+
+    # unknown ownership → err on side of caution
+    return "pseudonymize"
+
+
 def evaluate_policy(
     rules: list[dict],
     context: PolicyContext,
