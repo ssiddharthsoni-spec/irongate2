@@ -98,6 +98,9 @@ function replacePseudonymsFixed(
   text: string,
   reverseMap: Record<string, string>
 ): string {
+  // New architecture: all fragments (person first/last names, org abbreviations)
+  // are pre-registered as first-class map entries by buildReverseMapWithFragments.
+  // replacePseudonyms just does boundary-aware matching — no Strategy 4/5 needed.
   const entries = Object.entries(reverseMap)
     .filter(([k]) => k && k.length >= 2)
     .sort((a, b) => b[0].length - a[0].length);
@@ -107,7 +110,7 @@ function replacePseudonymsFixed(
   for (const [pseudonym, original] of entries) {
     if (pseudonym === original) continue;
 
-    // Strategy 1: boundary-aware exact match (case-sensitive)
+    // Boundary-aware exact match (case-sensitive)
     try {
       const esc = pseudonym.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const prefix = /^[a-zA-Z]/.test(pseudonym) ? '(?<![a-zA-Z])' : /^\d/.test(pseudonym) ? '(?<![\\d.])' : '';
@@ -117,7 +120,7 @@ function replacePseudonymsFixed(
       result = result.replace(regexCS, () => original);
     } catch { /* skip */ }
 
-    // Strategy 3: case-insensitive boundary-aware
+    // Case-insensitive boundary-aware
     try {
       const esc = pseudonym.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const prefix = /^[a-zA-Z]/.test(pseudonym) ? '(?<![a-zA-Z])' : '';
@@ -126,26 +129,6 @@ function replacePseudonymsFixed(
       regexCI.lastIndex = 0;
       result = result.replace(regexCI, () => original);
     } catch { /* skip */ }
-
-    // Strategy 5: nameFragments (FIX-2 — uses 'gi' not 'g')
-    if (looksLikePersonName(pseudonym) && looksLikePersonName(original)) {
-      const pWords = pseudonym.split(/\s+/);
-      const oWords = original.split(/\s+/);
-      const pairs: [string, string][] = pWords.length === oWords.length
-        ? pWords.map((w, i) => [w, oWords[i]])
-        : [[pWords[0], oWords[0]], [pWords[pWords.length - 1], oWords[oWords.length - 1]]];
-
-      for (const [pWord, oWord] of pairs) {
-        if (pWord.length < 3 || oWord.length < 2 || pWord === oWord) continue;
-        try {
-          const esc = pWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          // FIX-2: 'gi' — was 'g' before the fix
-          const fragRegex = new RegExp(`(?<![a-zA-Z])${esc}(?![a-zA-Z])`, 'gi');
-          fragRegex.lastIndex = 0;
-          result = result.replace(fragRegex, () => oWord);
-        } catch { /* skip */ }
-      }
-    }
   }
   return result;
 }
@@ -279,45 +262,33 @@ describe('FIX-3: Server-mode addReverseMapping generates fragment keys', () => {
 
 describe('FIX-2: nameFragments regex is case-insensitive (gi)', () => {
   it('SCENARIO 6 — lowercase "james" after section number (e.g. "2a. james") is replaced', () => {
-    // In a PIP document response the AI may write:
-    //   "2a. james received feedback on his attendance."
-    // After the fix, 'gi' regex catches lowercase 'james'.
-
-    const reverseMap: Record<string, string> = {
+    // In the new architecture, fragment keys are in the map via buildReverseMapWithFragments.
+    // "James" → "David" is a first-class map entry, caught by case-insensitive regex.
+    const reverseMap = buildReverseMapWithFragments({
       'James Mitchell': 'David Park',
-    };
+    });
     const text = '2a. james received feedback on his attendance.';
 
-    // OLD (case-sensitive 'g'): no replacement
-    const buggy = replacePseudonymsBuggy(text, reverseMap);
-    expect(buggy).toContain('james'); // BUG — not replaced
-
-    // FIXED ('gi'): replaced correctly
     const fixed = replacePseudonymsFixed(text, reverseMap);
     expect(fixed).not.toContain('james');
     expect(fixed).toContain('David');
   });
 
   it('SCENARIO 7 — all-caps "JAMES" (e.g. section heading) is replaced', () => {
-    const reverseMap: Record<string, string> = {
+    const reverseMap = buildReverseMapWithFragments({
       'James Mitchell': 'David Park',
-    };
+    });
     const text = 'PERFORMANCE CONCERNS: JAMES failed to meet the Q3 targets.';
 
-    // OLD: "JAMES" not caught by case-sensitive fragment regex
-    const buggy = replacePseudonymsBuggy(text, reverseMap);
-    expect(buggy).toContain('JAMES');
-
-    // FIXED: 'gi' catches it; replacement is always correctly-cased original "David"
     const fixed = replacePseudonymsFixed(text, reverseMap);
     expect(fixed).not.toContain('JAMES');
     expect(fixed).toContain('David');
   });
 
   it('SCENARIO 8 — mixed case "jAmEs" (corrupted / copy-paste artefact) is replaced', () => {
-    const reverseMap: Record<string, string> = {
+    const reverseMap = buildReverseMapWithFragments({
       'James Mitchell': 'David Park',
-    };
+    });
     const text = 'As noted, jAmEs has not met expectations.';
 
     const fixed = replacePseudonymsFixed(text, reverseMap);

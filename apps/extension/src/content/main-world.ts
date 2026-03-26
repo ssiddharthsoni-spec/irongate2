@@ -1203,8 +1203,24 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
     _scheduleMapPersist();
   }
 
-  // Known org suffixes — these should NEVER be mapped as standalone partial words.
-  // Mapping "Corp" → "Salesforce" causes "TechCorp" → "TechSalesforce" and other garbling.
+  // ── Generate all name/org fragment variants ──────────────────────────────
+  //
+  // DESIGN: LLMs abbreviate pseudonyms unpredictably. Instead of trying to
+  // catch every reformulation at replacement time (Strategy 4/5 etc.), we
+  // pre-register ALL likely variants as first-class map entries here.
+  // replacePseudonyms then just does simple boundary-aware matching.
+  //
+  // Two rules govern what gets a fragment key:
+  //   1. ORG_SUFFIXES are never fragment keys (Corp, Holdings, etc. are generic)
+  //   2. Everything else is allowed — if we generated the pseudonym, we must
+  //      be able to de-pseudo every abbreviation of it
+  //
+  // The old COMMON_WORD_BLOCKLIST is removed. It was the root cause of
+  // de-pseudo leaks: it blocked our own pseudonym words (Contoso, Northwind)
+  // from fragment mapping. The only guard needed is: don't create a fragment
+  // where the fragment text appears inside the original (prevents recursive
+  // expansion on DOM observer re-scan).
+
   const ORG_SUFFIX_SET = new Set([
     'corporation', 'corp', 'corp.', 'inc', 'inc.', 'llc', 'ltd', 'ltd.',
     'partners', 'group', 'holdings', 'capital', 'enterprises', 'associates',
@@ -1213,113 +1229,59 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
     'bank', 'labs', 'co', 'co.', 'company', 'industries', 'foundation',
   ]);
 
-  // Common English words that could cause false-positive matches in normal prose.
-  // ARCHITECTURAL RULE: A word is blocked from fragment mapping ONLY if it is
-  // (a) a generic English word AND (b) NOT the first word of this very pseudonym.
-  // This prevents "Contoso Holdings" → blocking "Contoso" from fragment mapping,
-  // which caused de-pseudo leaks when LLMs abbreviated to "Contoso's".
-  const COMMON_WORD_BLOCKLIST = new Set([
-    'alpine', 'summit', 'horizon', 'coastal', 'beacon', 'pinnacle', 'vertex',
-    'aurora', 'catalyst', 'zenith', 'atlas', 'nexus', 'titan',
-    'vanguard', 'ember', 'falcon',
-    'dynamics', 'ventures', 'analytics',
-    'research', 'systems', 'strategies', 'securities', 'media', 'financial',
-  ]);
-
-  // Multi-word name variants: LLMs often abbreviate or drop suffixes.
-  // "Adatum Corporation" → also map "Adatum"
-  // "Meridian Capital Partners" → also map "Meridian Capital", "Meridian"
   const isPerson = entityType === 'PERSON';
   const words = pseudonym.split(/\s+/);
   const origWords = original.split(/\s+/);
+  const origLower = original.toLowerCase();
 
-  // The pseudonym's own first word is ALWAYS allowed as a fragment key —
-  // it's our generated name, and the AI may abbreviate "Contoso Holdings"
-  // to just "Contoso's". Without this, COMMON_WORD_BLOCKLIST blocks our
-  // own pseudonyms from fragment mapping, causing de-pseudo leaks.
-  const pseudoFirstWord = words[0]?.toLowerCase();
-  const isOwnPseudonymWord = (w: string) => w.toLowerCase() === pseudoFirstWord;
+  // Helper: safe to add a fragment key?
+  const canAddFragment = (key: string): boolean => {
+    if (!key || key.length < 3) return false;
+    if (map[key]) return false;  // don't overwrite existing entry
+    if (ORG_SUFFIX_SET.has(key.toLowerCase())) return false;  // generic suffix
+    if (origLower.includes(key.toLowerCase())) return false;  // prevents recursive expansion
+    return true;
+  };
 
-  // PERSON name fragments: add first/last name to the map so the DOM observer
-  // can replace standalone "James" → "David" after React re-renders overwrite
-  // the stream-level de-pseudo. Without this, Strategy 5 in replacePseudonyms
-  // fixes the stream but React reverts it, and the DOM observer can't re-fix
-  // because "James" isn't a map key.
-  //
-  // Also runs for entityType='server' when the names look like person names —
-  // the server path uses type='server' (not 'PERSON'), so isPerson is false,
-  // but we still need fragment keys for the DOM observer to catch standalone
-  // first-name references (e.g., "James" instead of "James Mitchell") in AI
-  // responses after React re-renders overwrite the stream-level replacement.
+  // ── PERSON fragments: "James Mitchell" → also map "James" → "David", "Mitchell" → "Park"
   const looksLikePerson = isPerson || (looksLikePersonName(pseudonym) && looksLikePersonName(original));
   if (words.length >= 2 && looksLikePerson && origWords.length >= 2 && words.length === origWords.length) {
     for (let i = 0; i < words.length; i++) {
       const pWord = words[i];
       const oWord = origWords[i];
-      // Guards: must be long enough, not the same word, not already mapped
       if (pWord.length < 3 || oWord.length < 2) continue;
       if (pWord.toLowerCase() === oWord.toLowerCase()) continue;
-      // Don't overwrite existing entry (another full-name or org mapping takes priority)
-      if (map[pWord]) continue;
-      // Don't create a mapping where the fragment appears in the original
-      // (would cause "David Park" → "David David" on observer re-scan)
-      if (original.toLowerCase().includes(pWord.toLowerCase())) continue;
-      // For server-mode entries, looksLikePersonName() returns true for any two
-      // capitalised words — guard against org suffixes ("Securities", "Capital")
-      // and common ambiguous words ("Alpine", "Summit") slipping through as
-      // fragment keys and causing false-positive replacements in responses.
-      if (ORG_SUFFIX_SET.has(pWord.toLowerCase())) continue;
-      if (COMMON_WORD_BLOCKLIST.has(pWord.toLowerCase()) && !isOwnPseudonymWord(pWord)) continue;
-      map[pWord] = oWord;
+      if (canAddFragment(pWord)) {
+        map[pWord] = oWord;
+      }
     }
   }
 
-  if (words.length >= 2 && !isPerson) {
-    // Map the first word ONLY if:
-    // 1. It's distinctive (not a common suffix or common English word)
-    // 2. The corresponding original word is >= 4 chars (avoid "JP", "GE" etc.)
-    // 3. Map to the FULL original (not just the first word) to prevent garbling
-    // GUARD: Never create a fragment mapping where the fragment word appears
-    // inside the original value. This causes recursive expansion:
-    // e.g., "Project" → "Project Horizon" would turn "Project Horizon" →
-    // "Project Horizon Horizon" on each observer cycle.
-    const origLower = original.toLowerCase();
-
-    const firstWord = words[0];
-    const firstOrig = origWords[0] || original;
-    if (firstWord.length >= 4 && firstOrig.length >= 4 && !map[firstWord]
-        && !ORG_SUFFIX_SET.has(firstWord.toLowerCase())
-        && (!COMMON_WORD_BLOCKLIST.has(firstWord.toLowerCase()) || isOwnPseudonymWord(firstWord))
-        && !origLower.includes(firstWord.toLowerCase())) {
-      map[firstWord] = original;
+  // ── ORG/PROJECT/OTHER fragments: "Contoso Holdings" → also map "Contoso" → full original
+  if (words.length >= 2 && !looksLikePerson) {
+    // First word → full original  (AI writes "Contoso's" instead of "Contoso Holdings")
+    if (words[0].length >= 4 && canAddFragment(words[0])) {
+      map[words[0]] = original;
     }
-    // For 3+ word names, also map the first two words
+    // First two words for 3+ word names → full original
     if (words.length >= 3) {
       const firstTwo = words.slice(0, 2).join(' ');
-      if (!map[firstTwo] && !origLower.includes(firstTwo.toLowerCase())) {
+      if (canAddFragment(firstTwo)) {
         map[firstTwo] = original;
       }
     }
-    // Map the last word ONLY if it's NOT a common suffix/word,
-    // the corresponding original word is >= 4 chars,
-    // AND the fragment doesn't appear in the original (prevents recursive expansion)
-    const lastWord = words[words.length - 1];
-    const lastOrig = origWords[origWords.length - 1] || original;
-    if (lastWord.length >= 4 && lastOrig.length >= 4 && !map[lastWord]
-        && !ORG_SUFFIX_SET.has(lastWord.toLowerCase())
-        && (!COMMON_WORD_BLOCKLIST.has(lastWord.toLowerCase()) || isOwnPseudonymWord(lastWord))
-        && !origLower.includes(lastWord.toLowerCase())) {
-      map[lastWord] = original;
-    }
-    // Drop common org suffixes: "Adatum Corporation" → "Adatum"
-    const ORG_SUFFIXES = /\s+(Corporation|Corp\.?|Inc\.?|LLC|Ltd\.?|Partners|Group|Holdings|Capital|Enterprises|Associates|International|Technologies|Solutions|Services|Consulting|Management|Investments|Advisors|Advisory|Fund|Trust|Bank|Labs|Co\.?)$/i;
-    const withoutSuffix = pseudonym.replace(ORG_SUFFIXES, '');
-    if (withoutSuffix !== pseudonym && withoutSuffix.length >= 3) {
-      if (!map[withoutSuffix]
-          && (!COMMON_WORD_BLOCKLIST.has(withoutSuffix.toLowerCase()) || isOwnPseudonymWord(withoutSuffix))
-          && !origLower.includes(withoutSuffix.toLowerCase())) {
-        map[withoutSuffix] = original;
+    // Last word → full original (only if distinctive, not a suffix)
+    if (words.length >= 2) {
+      const lastWord = words[words.length - 1];
+      if (lastWord.length >= 4 && canAddFragment(lastWord)) {
+        map[lastWord] = original;
       }
+    }
+    // Suffix-stripped: "Adatum Corporation" → "Adatum" → full original
+    const ORG_SUFFIX_RE = /\s+(Corporation|Corp\.?|Inc\.?|LLC|Ltd\.?|Partners|Group|Holdings|Capital|Enterprises|Associates|International|Technologies|Solutions|Services|Consulting|Management|Investments|Advisors|Advisory|Fund|Trust|Bank|Labs|Co\.?)$/i;
+    const withoutSuffix = pseudonym.replace(ORG_SUFFIX_RE, '');
+    if (withoutSuffix !== pseudonym && canAddFragment(withoutSuffix)) {
+      map[withoutSuffix] = original;
     }
   }
 
@@ -1506,20 +1468,15 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
 let _regexCacheVersion = 0;  // Bumped by addReverseMapping()
 let _regexCacheBuiltVersion = -1;  // Version when cache was last built
 let _regexCacheMap: Record<string, string> | null = null;  // Map identity when cache was last built
-interface NameFragment {
-  regex: RegExp;
-  replacement: string;
-}
 interface CachedPseudoEntry {
   pseudonym: string;
   original: string;
-  regexCS: RegExp | null;      // Strategy 1: case-sensitive boundary-aware
-  regexCI: RegExp | null;      // Strategy 3: case-insensitive boundary-aware
+  regexCS: RegExp | null;      // case-sensitive boundary-aware
+  regexCI: RegExp | null;      // case-insensitive boundary-aware
   jsonPseudo: string;
   jsonOrig: string;
   json2Pseudo: string;
   json2Orig: string;
-  nameFragments: NameFragment[];  // First/last name fragment replacements
 }
 let _regexCache: CachedPseudoEntry[] = [];
 
@@ -1549,25 +1506,11 @@ function looksLikePersonName(s: string): boolean {
 
 function buildRegexCache(reverseMap: Record<string, string>): CachedPseudoEntry[] {
   const entries = Object.entries(reverseMap)
-    .filter(([k]) => k && k.length >= 2)
-    .sort((a, b) => b[0].length - a[0].length);
+    .filter(([k]) => k && k.length >= 2);
 
-  // Pre-compute which first/last name fragments are ambiguous across pseudonyms.
-  // A fragment is ambiguous if two different PERSON pseudonyms share the same
-  // first or last name word — replacing it would be non-deterministic.
-  const nameWordCounts = new Map<string, number>();
-  for (const [pseudonym, original] of entries) {
-    if (!looksLikePersonName(pseudonym) || !looksLikePersonName(original)) continue;
-    const words = pseudonym.split(/\s+/);
-    for (const w of words) {
-      const wLower = w.toLowerCase();
-      nameWordCounts.set(wLower, (nameWordCounts.get(wLower) || 0) + 1);
-    }
-  }
-
-  // BUG-23: Sort entries by pseudonym length DESCENDING before building cache.
+  // Sort entries by pseudonym length DESCENDING before building cache.
   // Longer pseudonyms must be replaced first to prevent substring collisions.
-  // E.g., "ALPINE-001" must be replaced before "ALPINE" to avoid corruption.
+  // E.g., "Contoso Holdings" must be replaced before "Contoso".
   return entries
     .filter(([pseudonym, original]) => pseudonym !== original)
     .sort((a, b) => b[0].length - a[0].length)
@@ -1592,52 +1535,12 @@ function buildRegexCache(reverseMap: Record<string, string>): CachedPseudoEntry[
       const jsonPseudo = jsonStringEscape(pseudonym);
       const jsonOrig = jsonStringEscape(original);
 
-      // Build name fragment replacements for PERSON entries.
-      // E.g., "James Mitchell" → "David Park": also replace standalone "James" → "David"
-      // and "Mitchell" → "Park". Only if the fragment is unambiguous (not shared
-      // by another pseudonym) and long enough to avoid false positives.
-      const nameFragments: NameFragment[] = [];
-      if (looksLikePersonName(pseudonym) && looksLikePersonName(original)) {
-        const pWords = pseudonym.split(/\s+/);
-        const oWords = original.split(/\s+/);
-        // Map each pseudonym word to the corresponding original word
-        const pairs: [string, string][] = [];
-        if (pWords.length === oWords.length) {
-          for (let i = 0; i < pWords.length; i++) pairs.push([pWords[i], oWords[i]]);
-        } else {
-          // Different word counts: just map first→first, last→last
-          pairs.push([pWords[0], oWords[0]]);
-          if (pWords.length >= 2 && oWords.length >= 2) {
-            pairs.push([pWords[pWords.length - 1], oWords[oWords.length - 1]]);
-          }
-        }
-        const seen = new Set<string>();
-        for (const [pWord, oWord] of pairs) {
-          if (pWord.length < 3 || oWord.length < 2) continue;
-          if (pWord === oWord) continue;
-          if (seen.has(pWord.toLowerCase())) continue;
-          seen.add(pWord.toLowerCase());
-          // Skip if this name word appears in multiple pseudonyms (ambiguous)
-          if ((nameWordCounts.get(pWord.toLowerCase()) || 0) > 1) continue;
-          try {
-            const esc = pWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            // Case-insensitive ('gi') so "james", "James", "JAMES" are all caught.
-            // The replacement is always the correctly-cased original word (e.g. "David").
-            nameFragments.push({
-              regex: new RegExp(`(?<![a-zA-Z])${esc}(?![a-zA-Z])`, 'gi'),
-              replacement: oWord,
-            });
-          } catch { /* regex failed */ }
-        }
-      }
-
       return {
         pseudonym, original,
         regexCS, regexCI,
         jsonPseudo, jsonOrig,
         json2Pseudo: jsonStringEscape(jsonPseudo),
         json2Orig: jsonStringEscape(jsonOrig),
-        nameFragments,
       };
     });
 }
@@ -1683,33 +1586,10 @@ function replacePseudonyms(text: string, reverseMap: Record<string, string>): st
       result = result.replace(regexCI, () => original);
     }
 
-    // Strategy 4: Plain substring fallback (no word-boundary requirement).
-    // Minimum 8 chars to avoid false-positive partial matches on short words.
-    if (pseudonym.length >= 8 && result.includes(pseudonym)) {
-      result = result.split(pseudonym).join(original);
-    } else if (pseudonym.length >= 8) {
-      // Case-insensitive plain substring
-      const lowerResult = result.toLowerCase();
-      const lowerPseudo = pseudonym.toLowerCase();
-      if (lowerResult.includes(lowerPseudo)) {
-        let idx = lowerResult.indexOf(lowerPseudo);
-        while (idx !== -1) {
-          result = result.substring(0, idx) + original + result.substring(idx + pseudonym.length);
-          idx = result.toLowerCase().indexOf(lowerPseudo, idx + original.length);
-        }
-      }
-    }
-
-    // Strategy 5: Name fragment replacement for PERSON pseudonyms.
-    // LLMs often use just the first name ("James missed deadlines" instead of
-    // "James Mitchell missed deadlines"). This catches those references by
-    // replacing each name word individually. Only runs for unambiguous fragments
-    // (not shared by another pseudonym). Built in buildRegexCache, not in
-    // addReverseMapping, so it works reliably regardless of map mutation order.
-    for (const frag of entry.nameFragments) {
-      frag.regex.lastIndex = 0;
-      result = result.replace(frag.regex, () => frag.replacement);
-    }
+    // NOTE: Old Strategy 4 (substring fallback) and Strategy 5 (name fragment regex)
+    // were removed. All fragments (person first/last names, org abbreviations) are now
+    // pre-registered as first-class map entries by addReverseMapping(). They get their
+    // own regexCS/regexCI entries in the cache, so Strategies 1-3 handle them.
   }
   return result;
 }
