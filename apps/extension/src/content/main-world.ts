@@ -1586,11 +1586,29 @@ function replacePseudonyms(text: string, reverseMap: Record<string, string>): st
       result = result.replace(regexCI, () => original);
     }
 
-    // NOTE: Old Strategy 4 (substring fallback) and Strategy 5 (name fragment regex)
-    // were removed. All fragments (person first/last names, org abbreviations) are now
-    // pre-registered as first-class map entries by addReverseMapping(). They get their
-    // own regexCS/regexCI entries in the cache, so Strategies 1-3 handle them.
   }
+
+  // ── LEAK SCANNER: Defense-in-depth verification ──────────────────────────
+  // After all boundary-aware replacements, scan the result for ANY remaining
+  // pseudonym words. This catches edge cases that strategies 1-3 miss:
+  // possessives ("Contoso's"), hyphenated forms, punctuation-attached, etc.
+  //
+  // Uses aggressive case-insensitive substring matching (no word boundaries).
+  // Only runs on pseudonym keys >= 4 chars to avoid false positives on
+  // short common words.
+  const resultLower = result.toLowerCase();
+  for (const entry of _regexCache) {
+    const pseudoLower = entry.pseudonym.toLowerCase();
+    if (pseudoLower.length < 4) continue;
+    if (!resultLower.includes(pseudoLower)) continue;
+    // Found a leak — replace aggressively (no boundaries)
+    let idx = result.toLowerCase().indexOf(pseudoLower);
+    while (idx !== -1) {
+      result = result.substring(0, idx) + entry.original + result.substring(idx + entry.pseudonym.length);
+      idx = result.toLowerCase().indexOf(pseudoLower, idx + entry.original.length);
+    }
+  }
+
   return result;
 }
 
