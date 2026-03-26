@@ -33,10 +33,10 @@ export const ChatGPTAdapter: SiteAdapter = {
   interception: 'wire',
 
   apiPatterns: [
-    /chatgpt\.com\/backend-api\/conversation/,
-    /chat\.openai\.com\/backend-api\/conversation/,
-    /\/backend-api\/conversation/,
-    /\/backend-anon\/conversation/,
+    /chatgpt\.com\/backend-api\/(?:f\/)?conversation/,   // covers /backend-api/conversation AND /backend-api/f/conversation (2025+ routing)
+    /chat\.openai\.com\/backend-api\/(?:f\/)?conversation/,
+    /\/backend-api\/(?:f\/)?conversation/,               // generic fallback — matches both old + new ChatGPT routing
+    /\/backend-anon\/(?:f\/)?conversation/,
     /api\.openai\.com\/v1\/chat\/completions/,
   ],
 

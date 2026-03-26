@@ -1173,9 +1173,11 @@ function _scheduleMapPersist(): void {
   _mapPersistTimer = setTimeout(() => {
     _mapPersistPending = false;
     // Send current reverse map to content script for chrome.storage.session persistence
+    // Include _seq so stale restores can be rejected on page reload
     igPostMessage({
       type: 'IRON_GATE_PERSIST_REVERSE_MAP',
       map: { ...currentReverseMap },
+      _seq: _clearSequence,
     });
   }, 500);
 }
@@ -1511,10 +1513,28 @@ interface CachedPseudoEntry {
 }
 let _regexCache: CachedPseudoEntry[] = [];
 
-// Detect if a string looks like a person name: 2+ words, each capitalized
+// Detect if a string looks like a person name: 2+ words, each capitalized,
+// and the last word is NOT a common org suffix (Corp, Securities, etc.)
+const _ORG_SUFFIXES = new Set([
+  'inc', 'corp', 'corporation', 'llc', 'ltd', 'llp',
+  'associates', 'partners', 'group', 'foundation',
+  'hospital', 'center', 'centre', 'university', 'college',
+  'bank', 'insurance', 'industries', 'enterprises', 'holdings',
+  'capital', 'trust', 'fund', 'technologies', 'tech',
+  'solutions', 'services', 'consulting', 'management',
+  'investments', 'advisors', 'advisory', 'labs', 'laboratories',
+  'media', 'energy', 'resources', 'dynamics', 'systems',
+  'international', 'global', 'worldwide', 'agency',
+  'securities', 'networks', 'financial', 'ventures',
+  'software', 'analytics', 'robotics', 'automation',
+  'engineering', 'properties', 'realty', 'brands',
+]);
 function looksLikePersonName(s: string): boolean {
   const words = s.split(/\s+/);
-  return words.length >= 2 && words.every(w => /^[A-Z][a-z]/.test(w));
+  if (words.length < 2 || !words.every(w => /^[A-Z][a-z]/.test(w))) return false;
+  // Reject if last word is a common org suffix
+  if (_ORG_SUFFIXES.has(words[words.length - 1].toLowerCase())) return false;
+  return true;
 }
 
 function buildRegexCache(reverseMap: Record<string, string>): CachedPseudoEntry[] {
@@ -1829,6 +1849,7 @@ function clearReverseMapFully(): void {
     igPostMessage({
       type: 'IRON_GATE_PERSIST_REVERSE_MAP',
       map: {},
+      _seq: _clearSequence,
     });
     igLog('Cleared reverse map fully (map + observer + persisted storage)');
   }
@@ -3309,15 +3330,16 @@ const patchedFetch = async function patchedFetch(
     return originalFetch.call(window, input, init);
   }
 
-  // ── Clear stale reverse map at the START of a new LLM POST ──────────────────
+  // ── Clear stale reverse map — but ONLY for conversation POSTs ──────────────
   // Previous prompt's pseudonyms must be cleared BEFORE any async work (detection,
   // body extraction) so that concurrent GET responses aren't wrapped with stale
   // mappings. If this prompt needs pseudonymization, the map is repopulated below.
-  // This fixes the race where GET responses check currentReverseMap during the
-  // async detection window and find stale entries from the previous prompt.
-  if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
-    clearReverseMapFully();
-  }
+  //
+  // IMPORTANT: Do NOT clear for non-conversation POSTs (title generation, metadata
+  // updates, etc.) — those have short bodies (<50 chars) and their responses need
+  // de-pseudonymization using the CURRENT reverse map. Clearing here would wipe
+  // the map before the response can be de-pseudonymized.
+  // The clear is deferred to AFTER body extraction — only triggered when body >= 50 chars.
 
   // ── Skip fetch processing EARLY for platforms where DOM/WS handles request ──
   // CRITICAL: Must check BEFORE getBodyString() — reading the body (especially
@@ -3374,8 +3396,19 @@ const patchedFetch = async function patchedFetch(
   }
 
   if (!bodyString || bodyString.length < 50) {
+    // Small/empty POST bodies (e.g., Claude title generation, conversation metadata)
+    // still need response de-pseudonymization — the server generates titles from
+    // pseudonymized conversation text, so the response may contain fake names.
+    if (mode === 'proxy' && Object.keys(currentReverseMap).length > 0 && adapterIsLLMEndpoint(url, activeAdapter)) {
+      const response = await originalFetch.call(window, input, init);
+      return depseudonymizeResponse(response, { ...currentReverseMap });
+    }
     return originalFetch.call(window, input, init);
   }
+
+  // ── Clear reverse map now that we know this is a conversation POST (body >= 50 chars) ──
+  // Safe to clear: the map will be repopulated below if pseudonymization occurs.
+  clearReverseMapFully();
 
   // ChatGPT-specific diagnostic — ALWAYS log (not limited to first 15 calls)
   if (url.includes('chatgpt.com') || url.includes('chat.openai.com') || url.includes('/backend-api/') || url.includes('/conversation')) {
@@ -3569,6 +3602,15 @@ const patchedFetch = async function patchedFetch(
               type: 'IRON_GATE_AUDIT', promptText, allEntities,
               maskedText: '', mappings: [], level, score,
             });
+            // Notify user that entities were detected but context was benign
+            if (allEntities.length > 0) {
+              igPostMessage({
+                type: 'IRON_GATE_LOW_RISK_PASSTHROUGH',
+                entityCount: allEntities.length,
+                score,
+                entityTypes: [...new Set(allEntities.map(e => e.type))],
+              });
+            }
             // Clear stale reverse map — new prompt doesn't need de-pseudonymization
             clearReverseMapFully();
             return originalFetch.call(window, input, init);
@@ -3617,6 +3659,14 @@ const patchedFetch = async function patchedFetch(
                   ? '→ Private LLM not configured, falling back to pseudonymize'
                   : '',
             );
+          }
+          // Notify user when private LLM routing was requested but no endpoint is configured
+          if (lensRoute.route === 'private_llm' && !_privateLlmEndpoint) {
+            igPostMessage({
+              type: 'IRON_GATE_PRIVATE_LLM_FALLBACK',
+              reason: lensRoute.explanation || 'Sensitive content detected',
+              industry: lensRoute.industry || null,
+            });
           }
 
           // Build reverse map for de-pseudonymization (ACCUMULATE, don't replace)

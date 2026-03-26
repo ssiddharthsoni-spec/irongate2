@@ -92,6 +92,26 @@ const REGEX_PATTERNS: RegexPattern[] = [
     pattern: /(?<=[\|,\t]\s*(?:[A-Za-z]+\s+)*)[A-Z][a-z]{2,15}\s+[A-Z][a-z]{2,15}(?=\s*[\|,\t])/g,
     confidence: 0.78,
   },
+  // Names near colons/dashes (form-like context): "Name: Felix Drummond", "Patient — Lena Kovacs"
+  {
+    type: 'PERSON',
+    pattern: /(?<=(?:name|patient|client|employee|contact|applicant|candidate|borrower|insured|claimant|beneficiary|guardian|witness|tenant|landlord|sender|recipient|author|reviewer|assignee|owner|requestor)\s*(?::|—|-|–)\s*)[A-Z][a-z]{2,15}\s+[A-Z][a-z]{2,15}\b/gi,
+    confidence: 0.85,
+    contextual: true,
+  },
+  // Standalone names after conjunctions/enumerations: "and Felix Drummond", "including Lena Kovacs"
+  {
+    type: 'PERSON',
+    pattern: /\b(?:and|or|between|involving|versus|vs\.?|notify|include|includes|including|namely|specifically)\s+[A-Z][a-z]{2,15}\s+[A-Z][a-z]{2,15}\b/gi,
+    confidence: 0.6,
+    contextual: true,
+  },
+  // Names at start of line in structured HR/legal docs: "Felix Drummond, age 34"
+  {
+    type: 'PERSON',
+    pattern: /(?:^|\n)\s*[A-Z][a-z]{2,15}\s+[A-Z][a-z]{2,15}\s*(?=,\s*(?:age|born|dob|ssn|employee|male|female|\d{1,3}\s*(?:years?|yr)|residing))/gim,
+    confidence: 0.85,
+  },
   // ── Organization Names ────────────────────────────────────────────────
   // Multi-word capitalized names with common org suffixes
   {
@@ -179,6 +199,11 @@ const REGEX_PATTERNS: RegexPattern[] = [
     type: 'SSN',
     pattern: /\b\d{3}-\d{2}-\d{4}\b/g,
     confidence: 0.95,
+  },
+  {
+    type: 'SSN',
+    pattern: /\b\d{3}\.\d{2}\.\d{4}\b/g,
+    confidence: 0.9,
   },
   {
     type: 'SSN',
@@ -334,6 +359,19 @@ const REGEX_PATTERNS: RegexPattern[] = [
     type: 'ROUTING_NUMBER',
     pattern: /(?<=(?:routing\s+(?:number|no\.?|#)|ABA|RTN)\s*(?::|is|=)?\s*)\d{9}(?!\d)/gi,
     confidence: 0.85,
+  },
+  // ── Employer Identification Number (EIN) ────────────────────────────
+  // "EIN: 82-4491023", "tax ID: 12-3456789"
+  {
+    type: 'EIN',
+    pattern: /(?<=(?:EIN|employer\s+identification\s+number|tax\s+(?:ID|identification)\s*(?:number)?|FEIN|federal\s+(?:EIN|tax\s+ID))\s*(?::|is|=|#)?\s*)\d{2}-\d{7}/gi,
+    confidence: 0.9,
+  },
+  // Also match standalone XX-XXXXXXX format near business context
+  {
+    type: 'EIN',
+    pattern: /\b\d{2}-\d{7}\b/g,
+    confidence: 0.6,
   },
   // ── Passport Numbers (US format) ──────────────────────────────────────
   {
@@ -782,6 +820,40 @@ export function detectWithRegex(text: string): DetectedEntity[] {
 
   // Run patterns on original text
   entities.push(...runRegexPatterns(text));
+
+  // ── PII-proximity name scan ──────────────────────────────────────────────
+  // If the text already has high-value PII (SSN, DOB, phone, email, etc.),
+  // scan for standalone two-word capitalized names that regex patterns missed.
+  // Rationale: "Felix Drummond" alone is ambiguous, but "Felix Drummond" next to
+  // an SSN or DOB is almost certainly a person name.
+  const highValuePII = entities.some(e =>
+    ['SSN', 'CREDIT_CARD', 'DATE_OF_BIRTH', 'PHONE_NUMBER', 'EMAIL',
+     'MEDICAL_RECORD', 'BANK_ACCOUNT', 'DRIVERS_LICENSE', 'PASSPORT_NUMBER',
+     'INSURANCE_ID', 'ADDRESS'].includes(e.type)
+  );
+  if (highValuePII) {
+    const existingPersonSpans = new Set(
+      entities.filter(e => e.type === 'PERSON').map(e => `${e.start}-${e.end}`)
+    );
+    const nameRe = /\b[A-Z][a-z]{2,15}\s+[A-Z][a-z]{2,15}\b/g;
+    let m: RegExpExecArray | null;
+    while ((m = nameRe.exec(text)) !== null) {
+      const spanKey = `${m.index}-${m.index + m[0].length}`;
+      if (existingPersonSpans.has(spanKey)) continue;
+      if (isKnownNonPII(m[0])) continue;
+      // Check it's not an org suffix match
+      const words = m[0].split(/\s+/);
+      if (ORG_SUFFIX_SET.has(words[words.length - 1].toLowerCase())) continue;
+      entities.push({
+        type: 'PERSON',
+        text: m[0],
+        start: m.index,
+        end: m.index + m[0].length,
+        confidence: 0.6,
+        source: 'regex',
+      });
+    }
+  }
 
   // Suppress PERSON entities that overlap with ORGANIZATION entities at same span
   const orgSpans = new Set(

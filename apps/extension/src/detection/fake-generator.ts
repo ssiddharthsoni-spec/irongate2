@@ -99,6 +99,7 @@ export function generateFake(type: string, original: string): string {
       const b = Math.floor(randBetween(10, 99));
       const c = Math.floor(randBetween(1000, 9999));
       if (original.includes('-')) return a + '-' + b + '-' + c;
+      if (original.includes('.')) return a + '.' + b + '.' + c;
       if (original.includes(' ')) return a + ' ' + b + ' ' + c;
       return '' + a + b + c;
     }
@@ -289,6 +290,13 @@ export function generateFake(type: string, original: string): string {
       let fake = '';
       for (let i = 0; i < 9; i++) fake += Math.floor(secureRandom() * 10).toString();
       return fake;
+    }
+
+    case 'EIN': {
+      // EIN format: XX-XXXXXXX
+      const p1 = Math.floor(randBetween(10, 99));
+      const p2 = Math.floor(randBetween(1000000, 9999999));
+      return p1 + '-' + p2;
     }
 
     // Secrets — use obvious placeholders so they never leak

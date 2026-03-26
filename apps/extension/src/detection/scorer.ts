@@ -120,6 +120,7 @@ const ENTITY_WEIGHTS: Record<string, number> = {
   // Financial
   BANK_ACCOUNT: 30,
   ROUTING_NUMBER: 25,
+  EIN: 20,
   // Business metrics (VALUE_TYPES — detected but not pseudonymized)
   // Low weight: only sensitive when combined with named entities
   HEADCOUNT: 5,

@@ -446,6 +446,7 @@ export function generateFake(type: string, original: string): string {
       return Math.floor(_randBetween(10, 90)) + '%';
     }
 
+    case 'DATE_OF_BIRTH':
     case 'DATE': {
       const dateMatch = original.match(/^(\w+)\s+(\d{1,2})(?:st|nd|rd|th)?(.*)$/i);
       if (dateMatch) {
@@ -502,6 +503,7 @@ export function generateFake(type: string, original: string): string {
       const b = Math.floor(_randBetween(10, 99));
       const c = Math.floor(_randBetween(1000, 9999));
       if (original.includes('-')) return a + '-' + b + '-' + c;
+      if (original.includes('.')) return a + '.' + b + '.' + c;
       if (original.includes(' ')) return a + ' ' + b + ' ' + c;
       return '' + a + b + c;
     }
@@ -604,6 +606,23 @@ export function generateFake(type: string, original: string): string {
       let fake = '';
       for (let i = 0; i < original.length; i++) fake += chars[Math.floor(_secureRandom() * chars.length)];
       return fake;
+    }
+
+    case 'ADDRESS':
+      return Math.floor(_randBetween(100, 9999)) + ' ' +
+        ['Oak', 'Maple', 'Cedar', 'Pine', 'Elm', 'Birch', 'Walnut', 'Spruce'][Math.floor(_secureRandom() * 8)] + ' ' +
+        ['Street', 'Avenue', 'Drive', 'Lane', 'Court', 'Boulevard'][Math.floor(_secureRandom() * 6)];
+
+    case 'BANK_ACCOUNT':
+    case 'ROUTING_NUMBER':
+    case 'ACCOUNT_NUMBER':
+      return original.replace(/\d/g, () => Math.floor(_secureRandom() * 10).toString());
+
+    case 'EIN': {
+      // EIN format: XX-XXXXXXX
+      const p1 = Math.floor(_randBetween(10, 99));
+      const p2 = Math.floor(_randBetween(1000000, 9999999));
+      return p1 + '-' + p2;
     }
 
     default: {

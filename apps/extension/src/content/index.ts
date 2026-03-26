@@ -129,8 +129,10 @@ async function getTabMapKey(): Promise<string> {
       return _tabMapKey;
     }
   } catch { /* context invalidated */ }
-  // Fallback: use hostname (legacy behavior, better than nothing)
-  _tabMapKey = `reverse_map_${window.location.hostname}`;
+  // Fallback: use hostname + random session ID to prevent cross-tab contamination.
+  // Each content script instance gets its own unique key even on the same hostname.
+  const sessionId = Math.random().toString(36).substring(2, 10);
+  _tabMapKey = `reverse_map_${window.location.hostname}_${sessionId}`;
   return _tabMapKey;
 }
 let contextAlive = true;
@@ -522,10 +524,14 @@ function handleMainWorldMessages(event: MessageEvent) {
   // even if chrome.storage.session is somehow compromised.
   if (event.data?.type === 'IRON_GATE_PERSIST_REVERSE_MAP') {
     const map = event.data.map;
+    const seq = typeof event.data._seq === 'number' ? event.data._seq : 0;
     if (map && typeof map === 'object') {
       getTabMapKey().then((tabKey) => {
+        // Store _seq alongside the map so we can send it back on restore
         return encryptAndStore(tabKey, map).then((entryCount) => {
-          igLog(`Persisted reverse map (${entryCount} entries) to key ${tabKey}`);
+          // Persist _seq in a separate unencrypted key (it's just a counter, not PII)
+          chrome.storage.session.set({ [`${tabKey}_seq`]: seq }).catch(() => {});
+          igLog(`Persisted reverse map (${entryCount} entries, seq=${seq}) to key ${tabKey}`);
         });
       }).catch(() => {});
     }
@@ -534,17 +540,50 @@ function handleMainWorldMessages(event: MessageEvent) {
 
   // MAIN world requests persisted reverse map (after page refresh)
   if (event.data?.type === 'IRON_GATE_REQUEST_REVERSE_MAP') {
-    getTabMapKey().then((tabKey) => {
-      return loadAndDecrypt(tabKey).then((map) => {
-        if (map && Object.keys(map).length > 0) {
-          csPostMessage({
-            type: 'IRON_GATE_RESTORE_REVERSE_MAP',
-            map,
-          });
-          igLog(`Restored reverse map (${Object.keys(map).length} entries) from key ${tabKey}`);
-        }
-      });
+    getTabMapKey().then(async (tabKey) => {
+      const map = await loadAndDecrypt(tabKey);
+      if (map && Object.keys(map).length > 0) {
+        // Retrieve the stored _seq so main world can validate staleness
+        let seq = -1;
+        try {
+          const seqResult = await chrome.storage.session.get(`${tabKey}_seq`);
+          const stored = seqResult[`${tabKey}_seq`];
+          if (typeof stored === 'number') seq = stored;
+        } catch { /* ignore */ }
+        csPostMessage({
+          type: 'IRON_GATE_RESTORE_REVERSE_MAP',
+          map,
+          _seq: seq,
+        });
+        igLog(`Restored reverse map (${Object.keys(map).length} entries, seq=${seq}) from key ${tabKey}`);
+      }
     }).catch(() => {});
+    return;
+  }
+
+  // Private LLM routing fallback — notify user their content was pseudonymized instead
+  if (event.data?.type === 'IRON_GATE_PRIVATE_LLM_FALLBACK') {
+    if (toasts) {
+      toasts.show({
+        title: 'Private LLM Not Configured',
+        message: 'This content was flagged for private LLM routing but no endpoint is configured. Data was pseudonymized before sending to the cloud AI.',
+        type: 'warning',
+      });
+    }
+    return;
+  }
+
+  // Low-risk passthrough — entities detected but context deemed benign
+  if (event.data?.type === 'IRON_GATE_LOW_RISK_PASSTHROUGH') {
+    const count = event.data.entityCount || 0;
+    const types = (event.data.entityTypes || []).join(', ');
+    if (toasts && count > 0) {
+      toasts.show({
+        title: 'Low Risk — Sent Unmodified',
+        message: `${count} data point${count > 1 ? 's' : ''} detected (${types}) but context appears benign. Review if this message contains sensitive data.`,
+        type: 'tip',
+      });
+    }
     return;
   }
 
