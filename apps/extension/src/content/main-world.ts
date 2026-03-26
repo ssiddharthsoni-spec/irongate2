@@ -1213,14 +1213,16 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
     'bank', 'labs', 'co', 'co.', 'company', 'industries', 'foundation',
   ]);
 
-  // Common English words that appear in fake org names (Alpine Securities, Summit Analytics, etc.)
-  // These must NEVER be reverse-map keys — they'd match normal prose and garble the response.
+  // Common English words that could cause false-positive matches in normal prose.
+  // ARCHITECTURAL RULE: A word is blocked from fragment mapping ONLY if it is
+  // (a) a generic English word AND (b) NOT the first word of this very pseudonym.
+  // This prevents "Contoso Holdings" → blocking "Contoso" from fragment mapping,
+  // which caused de-pseudo leaks when LLMs abbreviated to "Contoso's".
   const COMMON_WORD_BLOCKLIST = new Set([
     'alpine', 'summit', 'horizon', 'coastal', 'beacon', 'pinnacle', 'vertex',
-    'meridian', 'crestline', 'ridgepoint', 'oakmont', 'silverleaf', 'tailspin',
-    'woodgrove', 'northwind', 'contoso', 'adatum', 'fabrikam', 'proseware',
-    'lucerne', 'aurora', 'catalyst', 'zenith', 'atlas', 'nexus', 'titan',
-    'vanguard', 'ember', 'falcon', 'dynamics', 'ventures', 'analytics',
+    'aurora', 'catalyst', 'zenith', 'atlas', 'nexus', 'titan',
+    'vanguard', 'ember', 'falcon',
+    'dynamics', 'ventures', 'analytics',
     'research', 'systems', 'strategies', 'securities', 'media', 'financial',
   ]);
 
@@ -1230,6 +1232,13 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
   const isPerson = entityType === 'PERSON';
   const words = pseudonym.split(/\s+/);
   const origWords = original.split(/\s+/);
+
+  // The pseudonym's own first word is ALWAYS allowed as a fragment key —
+  // it's our generated name, and the AI may abbreviate "Contoso Holdings"
+  // to just "Contoso's". Without this, COMMON_WORD_BLOCKLIST blocks our
+  // own pseudonyms from fragment mapping, causing de-pseudo leaks.
+  const pseudoFirstWord = words[0]?.toLowerCase();
+  const isOwnPseudonymWord = (w: string) => w.toLowerCase() === pseudoFirstWord;
 
   // PERSON name fragments: add first/last name to the map so the DOM observer
   // can replace standalone "James" → "David" after React re-renders overwrite
@@ -1260,7 +1269,7 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
       // and common ambiguous words ("Alpine", "Summit") slipping through as
       // fragment keys and causing false-positive replacements in responses.
       if (ORG_SUFFIX_SET.has(pWord.toLowerCase())) continue;
-      if (COMMON_WORD_BLOCKLIST.has(pWord.toLowerCase())) continue;
+      if (COMMON_WORD_BLOCKLIST.has(pWord.toLowerCase()) && !isOwnPseudonymWord(pWord)) continue;
       map[pWord] = oWord;
     }
   }
@@ -1280,7 +1289,7 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
     const firstOrig = origWords[0] || original;
     if (firstWord.length >= 4 && firstOrig.length >= 4 && !map[firstWord]
         && !ORG_SUFFIX_SET.has(firstWord.toLowerCase())
-        && !COMMON_WORD_BLOCKLIST.has(firstWord.toLowerCase())
+        && (!COMMON_WORD_BLOCKLIST.has(firstWord.toLowerCase()) || isOwnPseudonymWord(firstWord))
         && !origLower.includes(firstWord.toLowerCase())) {
       map[firstWord] = original;
     }
@@ -1298,7 +1307,7 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
     const lastOrig = origWords[origWords.length - 1] || original;
     if (lastWord.length >= 4 && lastOrig.length >= 4 && !map[lastWord]
         && !ORG_SUFFIX_SET.has(lastWord.toLowerCase())
-        && !COMMON_WORD_BLOCKLIST.has(lastWord.toLowerCase())
+        && (!COMMON_WORD_BLOCKLIST.has(lastWord.toLowerCase()) || isOwnPseudonymWord(lastWord))
         && !origLower.includes(lastWord.toLowerCase())) {
       map[lastWord] = original;
     }
@@ -1306,7 +1315,8 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
     const ORG_SUFFIXES = /\s+(Corporation|Corp\.?|Inc\.?|LLC|Ltd\.?|Partners|Group|Holdings|Capital|Enterprises|Associates|International|Technologies|Solutions|Services|Consulting|Management|Investments|Advisors|Advisory|Fund|Trust|Bank|Labs|Co\.?)$/i;
     const withoutSuffix = pseudonym.replace(ORG_SUFFIXES, '');
     if (withoutSuffix !== pseudonym && withoutSuffix.length >= 3) {
-      if (!map[withoutSuffix] && !COMMON_WORD_BLOCKLIST.has(withoutSuffix.toLowerCase())
+      if (!map[withoutSuffix]
+          && (!COMMON_WORD_BLOCKLIST.has(withoutSuffix.toLowerCase()) || isOwnPseudonymWord(withoutSuffix))
           && !origLower.includes(withoutSuffix.toLowerCase())) {
         map[withoutSuffix] = original;
       }
