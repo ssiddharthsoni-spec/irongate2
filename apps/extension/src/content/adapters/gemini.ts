@@ -14,6 +14,16 @@ import type { SiteAdapter } from './base';
  * - Fetch/XHR proxy is explicitly SKIPPED
  */
 
+/** Reject elements inside conversation response containers to avoid reading old messages */
+function isInsideResponse(el: HTMLElement): boolean {
+  return !!(
+    el.closest('model-response') ||
+    el.closest('.response-container') ||
+    el.closest('.conversation-container message-content') ||
+    el.closest('[data-content-type="response"]')
+  );
+}
+
 /** Deep querySelector that pierces open Shadow DOMs */
 function deepQuery(root: Document | Element | ShadowRoot, selector: string, depth = 0): HTMLElement | null {
   if (depth > 10) return null; // Prevent runaway recursion in deeply nested Shadow DOMs
@@ -30,6 +40,34 @@ function deepQuery(root: Document | Element | ShadowRoot, selector: string, dept
     }
   }
   return null;
+}
+
+/** Deep querySelectorAll — returns LAST match not inside a response container */
+function deepQueryLast(root: Document | Element | ShadowRoot, selector: string): HTMLElement | null {
+  // Light DOM: get all matches, return last one not in a response
+  const all = root.querySelectorAll(selector);
+  for (let i = all.length - 1; i >= 0; i--) {
+    const el = all[i] as HTMLElement;
+    if (!isInsideResponse(el)) return el;
+  }
+  // Shadow DOM fallback — collect all and return last safe one
+  const results: HTMLElement[] = [];
+  function walk(r: Document | Element | ShadowRoot, d: number) {
+    if (d > 10) return;
+    try {
+      const matches = r.querySelectorAll(selector);
+      for (const m of matches) {
+        if (!isInsideResponse(m as HTMLElement)) results.push(m as HTMLElement);
+      }
+    } catch { /* invalid selector */ }
+    const children = r.querySelectorAll('*');
+    for (let i = 0; i < children.length; i++) {
+      const sr = (children[i] as any).shadowRoot;
+      if (sr) walk(sr, d + 1);
+    }
+  }
+  walk(root, 0);
+  return results.length > 0 ? results[results.length - 1] : null;
 }
 
 export const GeminiAdapter: SiteAdapter = {
@@ -154,16 +192,12 @@ export const GeminiAdapter: SiteAdapter = {
   },
 
   findInput(): HTMLElement | null {
-    // Light DOM first
+    // CRITICAL: In multi-turn conversations, Gemini may have multiple
+    // contenteditable elements (in response containers, code blocks, etc.).
+    // Use deepQueryLast to get the LAST match not inside a response container.
+    // The input box is always at the bottom of the page.
     for (const sel of this.inputSelectors) {
-      try {
-        const el = document.querySelector(sel) as HTMLElement;
-        if (el) return el;
-      } catch { /* invalid selector */ }
-    }
-    // Shadow DOM
-    for (const sel of this.inputSelectors) {
-      const el = deepQuery(document, sel);
+      const el = deepQueryLast(document, sel);
       if (el) return el;
     }
     return null;

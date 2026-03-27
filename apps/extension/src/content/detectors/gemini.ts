@@ -1,6 +1,16 @@
 // Last verified: 2025-05-01
 import { AIToolDetector } from './types';
 
+/** Reject elements inside conversation response containers to avoid reading old messages */
+function _isInsideResponse(el: HTMLElement): boolean {
+  return !!(
+    el.closest('model-response') ||
+    el.closest('.response-container') ||
+    el.closest('.conversation-container message-content') ||
+    el.closest('[data-content-type="response"]')
+  );
+}
+
 export const GeminiDetector: AIToolDetector = {
   id: 'gemini',
   name: 'Gemini',
@@ -10,6 +20,11 @@ export const GeminiDetector: AIToolDetector = {
     // Gemini uses a rich text editor — try specific selectors first,
     // then fall back to generic contenteditable with role="textbox".
     // Must match the selectors in adapters/gemini.ts.
+    //
+    // CRITICAL: In multi-turn conversations, Gemini may have multiple
+    // .ql-editor elements (in response containers, editable code blocks, etc.).
+    // We must reject any element inside a conversation response and prefer the
+    // LAST match (the input box is always at the bottom of the page).
     const selectors = [
       '.ql-editor[contenteditable="true"]',
       'rich-textarea .ql-editor',
@@ -21,16 +36,25 @@ export const GeminiDetector: AIToolDetector = {
       'textarea',
     ];
     for (const sel of selectors) {
-      const el = document.querySelector(sel) as HTMLElement | null;
-      if (el) return el;
+      // Use querySelectorAll and pick the LAST match that isn't inside a
+      // conversation response container. The input box is always at the
+      // bottom, so the last match is the safest bet.
+      const all = document.querySelectorAll(sel);
+      for (let i = all.length - 1; i >= 0; i--) {
+        const el = all[i] as HTMLElement;
+        if (_isInsideResponse(el)) continue;
+        return el;
+      }
     }
     // Last resort — generic contenteditable, but only if it looks like an input
     // (has some reasonable size and is visible)
     const allCE = document.querySelectorAll('div[contenteditable="true"]');
-    for (const el of allCE) {
-      const rect = (el as HTMLElement).getBoundingClientRect();
+    for (let i = allCE.length - 1; i >= 0; i--) {
+      const el = allCE[i] as HTMLElement;
+      if (_isInsideResponse(el)) continue;
+      const rect = el.getBoundingClientRect();
       if (rect.height > 20 && rect.height < 500 && rect.width > 200) {
-        return el as HTMLElement;
+        return el;
       }
     }
     return null;
