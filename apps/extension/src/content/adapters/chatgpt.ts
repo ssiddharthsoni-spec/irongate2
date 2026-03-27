@@ -101,28 +101,37 @@ export const ChatGPTAdapter: SiteAdapter = {
   extractPrompt(body: string): string | null {
     try {
       const parsed = JSON.parse(body);
+      if (!parsed?.messages || !Array.isArray(parsed.messages)) return null;
 
-      // ChatGPT backend: { messages: [{ content: { parts: [...] } }] }
-      if (parsed?.messages?.[0]?.content?.parts) {
-        const last = parsed.messages[parsed.messages.length - 1];
-        if (last?.content?.parts) return last.content.parts.join('\n');
-        return parsed.messages[0].content.parts.join('\n');
-      }
+      // Find the LAST user message — ChatGPT sends full conversation history,
+      // the current prompt is always the last user message.
+      // Must check multiple author formats: ChatGPT uses author.role, OpenAI uses role.
+      const msgs = parsed.messages;
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i];
+        const isUser = m.role === 'user'
+          || m.author === 'user'
+          || m.author?.role === 'user';
+        if (!isUser) continue;
 
-      // OpenAI API: { messages: [{ role, content }] }
-      if (parsed?.messages && Array.isArray(parsed.messages)) {
-        const lastUser = [...parsed.messages].reverse().find(
-          (m: any) => m.role === 'user' || m.author === 'user' || m.author?.role === 'user'
-        );
-        if (lastUser) {
-          if (typeof lastUser.content === 'string') return lastUser.content;
-          if (typeof lastUser.text === 'string') return lastUser.text;
-          if (Array.isArray(lastUser.content)) {
-            return lastUser.content
-              .filter((c: any) => c.type === 'text')
-              .map((c: any) => c.text)
-              .join('\n');
-          }
+        // ChatGPT backend format: { content: { content_type: 'text', parts: ['...'] } }
+        if (m.content?.parts && Array.isArray(m.content.parts)) {
+          const text = m.content.parts
+            .filter((p: any) => typeof p === 'string')
+            .join('\n');
+          if (text.length > 0) return text;
+        }
+        // String content (OpenAI API format)
+        if (typeof m.content === 'string' && m.content.length > 0) return m.content;
+        // Text field variant
+        if (typeof m.text === 'string' && m.text.length > 0) return m.text;
+        // Array content (multi-part OpenAI format)
+        if (Array.isArray(m.content)) {
+          const text = m.content
+            .filter((c: any) => c.type === 'text' && typeof c.text === 'string')
+            .map((c: any) => c.text)
+            .join('\n');
+          if (text.length > 0) return text;
         }
       }
 

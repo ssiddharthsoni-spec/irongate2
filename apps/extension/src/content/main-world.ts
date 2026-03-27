@@ -698,9 +698,19 @@ function extractPrompt(body: any): string | null {
     const parsed = typeof body === 'string' ? JSON.parse(body) : body;
 
     // ChatGPT backend: { messages: [{ content: { parts: [...] } }] }
+    // CRITICAL: Find the LAST USER message, not the last message overall.
+    // If the last message doesn't have content.parts, DON'T fall back to
+    // messages[0] (system message) — search backwards for the last user message.
     if (parsed?.messages?.[0]?.content?.parts) {
-      const last = parsed.messages[parsed.messages.length - 1];
-      if (last?.content?.parts) return last.content.parts.join('\n');
+      for (let i = parsed.messages.length - 1; i >= 0; i--) {
+        const m = parsed.messages[i];
+        const isUser = m.role === 'user' || m.author === 'user' || m.author?.role === 'user';
+        if (m.content?.parts && Array.isArray(m.content.parts)) {
+          const text = m.content.parts.filter((p: any) => typeof p === 'string').join('\n');
+          if (text.length > 0 && (isUser || i === parsed.messages.length - 1)) return text;
+        }
+      }
+      // Final fallback: first message with parts (should rarely reach here)
       return parsed.messages[0].content.parts.join('\n');
     }
 
