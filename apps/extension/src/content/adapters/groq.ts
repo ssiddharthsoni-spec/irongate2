@@ -54,7 +54,7 @@ export const GroqAdapter: SiteAdapter = {
       }
       if (typeof p?.prompt === 'string') { p.prompt = replacement; return JSON.stringify(p); }
       if (typeof p?.query === 'string') { p.query = replacement; return JSON.stringify(p); }
-      if (original.length >= 20) {
+      if (original.length >= 10) {
         const esc = jsonStringEscape(original);
         if (body.includes(esc)) return body.replace(esc, jsonStringEscape(replacement));
       }

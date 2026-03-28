@@ -105,17 +105,7 @@
       }
     ]
   },
-  "web_accessible_resources": [
-    {
-      "resources": ["intelligence/model_weights.json"],
-      "matches": [
-        "https://chatgpt.com/*",
-        "https://chat.openai.com/*",
-        "https://claude.ai/*",
-        "https://gemini.google.com/*"
-      ]
-    }
-  ],
+  "web_accessible_resources": [],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; style-src 'self'; img-src 'self'; object-src 'none'; connect-src https://irongate-api.onrender.com 'self';"
   }

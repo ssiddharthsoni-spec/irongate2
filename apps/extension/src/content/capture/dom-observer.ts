@@ -97,7 +97,7 @@ export function createDOMObserver(
       // Also listen for 'input' events as a backup
       input.addEventListener('input', handleMutation);
 
-      console.log('[Iron Gate] DOM observer attached to prompt input');
+      // DOM observer attached — diagnostic info suppressed in production
 
       // ── CRITICAL: Read initial text immediately ──
       // If text was already in the input (e.g. pasted before observer attached),
@@ -198,6 +198,8 @@ export function createDOMObserver(
       clearInterval(navigationCheck);
       // Clean up current input listener
       detachCurrentInput();
+      currentInput = null;
+      lastText = '';
     },
   };
 }

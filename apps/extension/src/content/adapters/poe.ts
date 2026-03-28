@@ -63,7 +63,7 @@ export const PoeAdapter: SiteAdapter = {
       // Align with extractPrompt's findLongestString fallback:
       // If extraction found a value via generic search, replacement must use
       // JSON-escaped string substitution to find and replace it in the body.
-      if (original.length >= 20) {
+      if (original.length >= 10) {
         const esc = jsonStringEscape(original);
         if (body.includes(esc)) return body.replace(esc, jsonStringEscape(replacement));
       }

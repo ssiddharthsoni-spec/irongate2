@@ -96,11 +96,17 @@ export interface ConfidenceRouterConfig {
   semanticClassify?: (text: string) => Promise<SemanticClassification>;
 }
 
+// ── Zone Boundary Constants ───────────────────────────────────────────────────
+/** Maximum score for green zone (pass through) */
+const GREEN_ZONE_MAX = 25;
+/** Maximum score for amber zone (escalate) */
+const AMBER_ZONE_MAX = 60;
+
 // ── Zone Classification ──────────────────────────────────────────────────────
 
 export function scoreToZone(score: number): Zone {
-  if (score <= 25) return 'green';
-  if (score <= 60) return 'amber';
+  if (score <= GREEN_ZONE_MAX) return 'green';
+  if (score <= AMBER_ZONE_MAX) return 'amber';
   return 'red';
 }
 
@@ -114,7 +120,7 @@ export function zoneToAction(zone: Zone): 'pass' | 'warn' | 'block' {
 
 // ── Confidence Router ────────────────────────────────────────────────────────
 
-export function createConfidenceRouter(config: ConfidenceRouterConfig) {
+export function createConfidenceRouter(config: ConfidenceRouterConfig): { route: (text: string, tier1Score: SensitivityScore, tier1LatencyMs: number, signalGate?: SignalGateInput) => Promise<RoutingDecision> } {
   const {
     adapters,
     escalateAmber = true,
@@ -174,7 +180,7 @@ export function createConfidenceRouter(config: ConfidenceRouterConfig) {
           semanticSignal = true;
           const boostedScore = Math.min(100, highestScore + semantic.totalBoost);
           const boostedZone = scoreToZone(boostedScore);
-          const boostedLevel = boostedScore <= 25 ? 'low' : boostedScore <= 60 ? 'medium' : boostedScore <= 85 ? 'high' : 'critical';
+          const boostedLevel = boostedScore <= GREEN_ZONE_MAX ? 'low' : boostedScore <= AMBER_ZONE_MAX ? 'medium' : boostedScore <= 85 ? 'high' : 'critical';
 
           tiersConsulted.push({
             tier: 1,
@@ -233,7 +239,7 @@ export function createConfidenceRouter(config: ConfidenceRouterConfig) {
             timeout(tierTimeoutMs, adapter.tier),
           ]);
 
-          // Validate tier adapter result before using it
+          // Validate tier adapter result before using it (H-15: NaN/Infinity guard)
           if (!result || typeof result.score !== 'number' || !Number.isFinite(result.score)) {
             onTierError?.(adapter.tier, new Error(`Tier ${adapter.tier} returned invalid result`));
             continue;

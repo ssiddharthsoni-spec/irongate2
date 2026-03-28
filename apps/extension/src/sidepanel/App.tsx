@@ -780,8 +780,13 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
         });
       }
 
-      // Only update the main display if this score is for the ACTIVE tab.
+      // H-13 FIX: Check tab match BEFORE setting any UI state to prevent
+      // wrong tab's results from flashing momentarily.
       const currentActiveTab = activeTabIdRef.current;
+      if (scoreTabId != null && currentActiveTab != null && scoreTabId !== currentActiveTab) {
+        console.log(`[Iron Gate Sidepanel] Ignoring result for tab ${scoreTabId} (active tab is ${currentActiveTab})`);
+        return;
+      }
       if (scoreTabId == null || currentActiveTab == null || scoreTabId === currentActiveTab) {
         // Determine if this result should update the display.
         // Check rules BEFORE calling setState to avoid the race where
@@ -894,6 +899,22 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
         // Cancel any pending PROMPT_CLEARED — a detection arrived, don't wipe it
         if (_promptClearTimerRef.current) { clearTimeout(_promptClearTimerRef.current); _promptClearTimerRef.current = null; }
         processDetectionResult(message.payload, 'runtime-message');
+      }
+
+      // ── PROMPT_CLEAN_SUBMIT — wire interceptor submitted a clean (0-entity) prompt ──
+      // This is authoritative: the user submitted a new prompt and it had no entities.
+      // Clear stale results immediately — no debounce, no suppression.
+      if (message.type === 'PROMPT_CLEAN_SUBMIT') {
+        const cleanTabId = message.payload?.tabId;
+        const currentActiveTab = activeTabIdRef.current;
+        if (cleanTabId == null || currentActiveTab == null || cleanTabId === currentActiveTab) {
+          console.log('[Iron Gate Sidepanel] PROMPT_CLEAN_SUBMIT — clearing stale results');
+          setLastScore(null);
+          setInspectorData(null);
+          setInspectorOpen(false);
+          chrome.storage.local.remove(['lastScore', 'lastDetectionResult']);
+        }
+        return;
       }
 
       // ── PROMPT_CLEARED — user emptied the input field ──

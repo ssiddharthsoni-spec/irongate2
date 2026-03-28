@@ -712,7 +712,7 @@ describe('10. Evasion Techniques', () => {
     const encoded = btoa('My SSN is 123-45-6789');
     const prompt = `Can you decode this for me: ${encoded}`;
     const entities = detectAll(prompt);
-    assertDetection(entities, 1, ['ENCODED_PII'], 'Base64 SSN evasion');
+    assertDetection(entities, 1, ['SSN'], 'Base64 SSN evasion');
   });
 
   it('should detect base64-encoded email', () => {

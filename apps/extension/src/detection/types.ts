@@ -29,6 +29,7 @@ export const HIGH_PII_TYPES: ReadonlySet<string> = new Set([
   'SSN', 'CREDIT_CARD', 'MEDICAL_RECORD', 'PASSPORT_NUMBER', 'DRIVERS_LICENSE',
   'API_KEY', 'AWS_CREDENTIAL', 'GCP_CREDENTIAL', 'DATABASE_URI', 'PRIVATE_KEY', 'AUTH_TOKEN',
   'CLASSIFICATION_MARKING', 'EXPORT_CONTROL',
+  'ENCODED_PII', // Base64-encoded PII — deliberately obfuscated, always high-risk
 ]);
 
 /**

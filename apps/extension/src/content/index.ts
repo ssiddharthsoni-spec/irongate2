@@ -14,7 +14,7 @@ if ((window as any)[CS_MARKER]) {
   // Tell the old instance to shut down — we're taking over
   window.dispatchEvent(new CustomEvent('iron-gate-cs-replaced'));
   _isReplacement = true;
-  console.log('[IronGate] Replacing old content script instance');
+  console.log('[Iron Gate] Replacing old content script instance');
 }
 (window as any)[CS_MARKER] = true;
 
@@ -439,7 +439,7 @@ function handleMainWorldMessages(event: MessageEvent) {
           if (response?.error) {
             console.warn(`[Iron Gate] File scan failed for "${fileName}":`, response.error);
           } else if (response?.score !== undefined) {
-            console.log(`[Iron Gate] File scan complete: "${fileName}" → score=${response.score}, level=${response.level}, entities=${response.entitiesFound}`);
+            igLog(`File scan complete: "${fileName}" → score=${response.score}, level=${response.level}, entities=${response.entitiesFound}`);
           } else if (response?.metadataOnly) {
             igLog(`File metadata noted (awaiting full content): ${fileName}`);
           } else {
@@ -573,6 +573,19 @@ function handleMainWorldMessages(event: MessageEvent) {
     return;
   }
 
+  // Clean submit — 0 entities detected, clear stale sidepanel results
+  if (event.data?.type === 'IRON_GATE_CLEAN_SUBMIT') {
+    chrome.runtime.sendMessage({
+      type: 'PROMPT_CLEAN_SUBMIT',
+      payload: {
+        score: event.data.score || 0,
+        level: event.data.level || 'low',
+        promptLength: event.data.promptLength || 0,
+      },
+    }).catch(() => {});
+    return;
+  }
+
   // Low-risk passthrough — entities detected but context deemed benign
   if (event.data?.type === 'IRON_GATE_LOW_RISK_PASSTHROUGH') {
     const count = event.data.entityCount || 0;
@@ -615,7 +628,7 @@ function handleMainWorldMessages(event: MessageEvent) {
     const entities = Array.isArray(event.data.entities) ? event.data.entities.slice(0, 1000) : [];
     const mappings = Array.isArray(event.data.mappings) ? event.data.mappings.slice(0, 1000) : [];
 
-    console.log(`[Iron Gate CS] MAIN world ${isProxy ? 'INTERCEPTED' : 'AUDIT'} — ${entityCount} entities (${level}, score=${score}), entities array length: ${entities.length}, mappings: ${mappings.length}`);
+    igLog(`CS MAIN world ${isProxy ? 'INTERCEPTED' : 'AUDIT'} — ${entityCount} entities (${level}, score=${score}), entities array length: ${entities.length}, mappings: ${mappings.length}`);
 
     const relayPayload = {
       score: score ?? (level === 'critical' ? 95 : level === 'high' ? 75 : level === 'medium' ? 45 : 15),
@@ -636,30 +649,14 @@ function handleMainWorldMessages(event: MessageEvent) {
       wireIntercept: event.data.wireIntercept === true, // authoritative wire-level result — sidepanel must not suppress
     };
 
-    // Check if extension context is still alive before attempting relay
-    if (!chrome.runtime?.id) {
-      console.error(
-        '%c[Iron Gate] Extension was updated — please refresh this page to restore protection.',
-        'color: #ef4444; font-weight: bold; font-size: 14px',
-      );
-      // Inject visible warning into the page
-      try {
-        const existing = document.getElementById('iron-gate-refresh-banner');
-        if (!existing) {
-          const banner = document.createElement('div');
-          banner.id = 'iron-gate-refresh-banner';
-          banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:999999;background:#ef4444;color:white;padding:10px 20px;font-family:system-ui;font-size:14px;text-align:center;cursor:pointer;';
-          banner.textContent = '⚠️ Iron Gate was updated. Click here or refresh this page to restore protection.';
-          banner.onclick = () => window.location.reload();
-          document.body.appendChild(banner);
-        }
-      } catch { /* DOM manipulation may fail */ }
-      return;
-    }
-
-    // PRIMARY: Send via chrome.runtime.sendMessage
+    // M-9 fix: Atomic check-and-relay — capture runtime ref and send in the same
+    // synchronous block to eliminate TOCTOU race where context invalidates between
+    // the liveness check and the sendMessage call.
     try {
-      chrome.runtime.sendMessage({
+      const rt = chrome.runtime;
+      if (!rt?.id) throw new Error('Extension context invalidated');
+      // Send IMMEDIATELY in the same synchronous tick as the liveness check
+      rt.sendMessage({
         type: 'SENSITIVITY_SCORE',
         payload: relayPayload,
       }).then(() => {
@@ -680,6 +677,26 @@ function handleMainWorldMessages(event: MessageEvent) {
         }
       });
     } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (errMsg.includes('Extension context invalidated') || errMsg.includes('invalidated')) {
+        console.error(
+          '%c[Iron Gate] Extension was updated — please refresh this page to restore protection.',
+          'color: #ef4444; font-weight: bold; font-size: 14px',
+        );
+        contextAlive = false;
+        try {
+          const existing = document.getElementById('iron-gate-refresh-banner');
+          if (!existing) {
+            const banner = document.createElement('div');
+            banner.id = 'iron-gate-refresh-banner';
+            banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:999999;background:#ef4444;color:white;padding:10px 20px;font-family:system-ui;font-size:14px;text-align:center;cursor:pointer;';
+            banner.textContent = '\u26a0\ufe0f Iron Gate was updated. Click here or refresh this page to restore protection.';
+            banner.onclick = () => window.location.reload();
+            document.body.appendChild(banner);
+          }
+        } catch { /* DOM manipulation may fail */ }
+        return;
+      }
       console.warn('[Iron Gate] runtime.sendMessage threw:', err);
     }
 
@@ -694,7 +711,7 @@ function handleMainWorldMessages(event: MessageEvent) {
         chrome.storage.local.set({
           lastDetectionResult: { ...relayPayload, _storageTimestamp: _ts },
         }).then(() => {
-          console.log('[Iron Gate CS] Storage backup written successfully, ts:', _ts, 'isProxy:', relayPayload.isProxy, 'entities:', relayPayload.entities?.length);
+          igLog('CS Storage backup written successfully, ts:', _ts, 'isProxy:', relayPayload.isProxy, 'entities:', relayPayload.entities?.length);
         }).catch((err: unknown) => {
           console.warn('[Iron Gate CS] Storage backup FAILED:', err);
         });
@@ -870,7 +887,7 @@ function initialize() {
           const text = _fbDetector.extractPromptText(input);
           if (text && text.length > 5 && text !== _fbLastText) {
             _fbLastText = text;
-            console.log(`[Iron Gate RT] Captured ${text.length} chars from ${_fbDetector.id} — sending PROMPT_DETECTED`);
+            igLog(`RT Captured ${text.length} chars from ${_fbDetector.id} — sending PROMPT_DETECTED`);
             try {
               chrome.runtime.sendMessage({
                 type: 'PROMPT_DETECTED',

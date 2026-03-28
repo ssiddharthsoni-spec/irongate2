@@ -110,6 +110,14 @@ async function getManagedValues(): Promise<Record<string, any> | null> {
   }
 }
 
+// ── Validation constants ──────────────────────────────────────────────────────
+/** Maximum allowed length for URL config values */
+const MAX_URL_LENGTH = 2048;
+/** Maximum allowed length for name/identifier config values */
+const MAX_NAME_LENGTH = 256;
+/** Maximum allowed length for API key config values */
+const MAX_API_KEY_LENGTH = 512;
+
 function safeBool(val: any, fallback: boolean): boolean {
   return typeof val === 'boolean' ? val : fallback;
 }
@@ -117,37 +125,59 @@ function safeNum(val: any, fallback: number, min: number, max: number): number {
   const n = typeof val === 'number' ? val : fallback;
   return Math.max(min, Math.min(max, n));
 }
-function safeStr(val: any, fallback: string): string {
-  return typeof val === 'string' ? val : fallback;
+function safeStr(val: any, fallback: string, maxLen: number = MAX_NAME_LENGTH): string {
+  if (typeof val !== 'string') return fallback;
+  return val.length > maxLen ? val.substring(0, maxLen) : val;
+}
+function safeUrl(val: any, fallback: string): string {
+  if (typeof val !== 'string') return fallback;
+  if (val.length > MAX_URL_LENGTH) return fallback;
+  // Basic URL shape validation — must start with http:// or https://
+  if (val && !val.startsWith('http://') && !val.startsWith('https://')) return fallback;
+  return val;
+}
+function safeApiKey(val: any, fallback: string): string {
+  if (typeof val !== 'string') return fallback;
+  if (val.length > MAX_API_KEY_LENGTH) return fallback;
+  return val;
 }
 
 function resolveTierConfig(source: Record<string, any>): TierConfig {
   return {
     tier2Enabled: safeBool(source.tier2Enabled, DEFAULT_TIER_CONFIG.tier2Enabled),
-    tier2Endpoint: safeStr(source.tier2Endpoint, DEFAULT_TIER_CONFIG.tier2Endpoint),
-    tier2Model: safeStr(source.tier2Model, DEFAULT_TIER_CONFIG.tier2Model),
+    tier2Endpoint: safeUrl(source.tier2Endpoint, DEFAULT_TIER_CONFIG.tier2Endpoint),
+    tier2Model: safeStr(source.tier2Model, DEFAULT_TIER_CONFIG.tier2Model, MAX_NAME_LENGTH),
     tier2Protocol: source.tier2Protocol === 'openai' ? 'openai' : DEFAULT_TIER_CONFIG.tier2Protocol,
     tier2TimeoutMs: safeNum(source.tier2TimeoutMs, DEFAULT_TIER_CONFIG.tier2TimeoutMs, 1000, 30000),
     glinerEnabled: safeBool(source.glinerEnabled, DEFAULT_TIER_CONFIG.glinerEnabled),
     tier25Enabled: safeBool(source.tier25Enabled, DEFAULT_TIER_CONFIG.tier25Enabled),
     tier3Enabled: safeBool(source.tier3Enabled, DEFAULT_TIER_CONFIG.tier3Enabled),
-    tier3Endpoint: safeStr(source.tier3Endpoint, DEFAULT_TIER_CONFIG.tier3Endpoint),
+    tier3Endpoint: safeUrl(source.tier3Endpoint, DEFAULT_TIER_CONFIG.tier3Endpoint),
     tier3TimeoutMs: safeNum(source.tier3TimeoutMs, DEFAULT_TIER_CONFIG.tier3TimeoutMs, 1000, 30000),
     semanticEnabled: safeBool(source.semanticEnabled, DEFAULT_TIER_CONFIG.semanticEnabled),
-    semanticCentroidsUrl: safeStr(source.semanticCentroidsUrl, DEFAULT_TIER_CONFIG.semanticCentroidsUrl),
-    amberMinScore: safeNum(source.amberMinScore, DEFAULT_TIER_CONFIG.amberMinScore, 0, 100),
-    redMinScore: safeNum(source.redMinScore, DEFAULT_TIER_CONFIG.redMinScore, 0, 100),
+    semanticCentroidsUrl: safeUrl(source.semanticCentroidsUrl, DEFAULT_TIER_CONFIG.semanticCentroidsUrl),
+    // H-11 FIX: Enforce amberMinScore < redMinScore to prevent score inversion bypass
+    amberMinScore: Math.min(
+      safeNum(source.amberMinScore, DEFAULT_TIER_CONFIG.amberMinScore, 0, 100),
+      safeNum(source.redMinScore, DEFAULT_TIER_CONFIG.redMinScore, 0, 100) - 1,
+    ),
+    redMinScore: Math.max(
+      safeNum(source.amberMinScore, DEFAULT_TIER_CONFIG.amberMinScore, 0, 100) + 1,
+      safeNum(source.redMinScore, DEFAULT_TIER_CONFIG.redMinScore, 0, 100),
+    ),
   };
 }
 
 function resolveLocalLLMConfig(source: Record<string, any>): LocalLLMConfig | null {
-  const endpoint = source.localLLMEndpoint || source.localLLM_endpoint;
+  const rawEndpoint = source.localLLMEndpoint || source.localLLM_endpoint;
+  if (!rawEndpoint) return null;
+  const endpoint = safeUrl(rawEndpoint, '');
   if (!endpoint) return null;
   return {
     endpoint,
-    model: source.localLLMModel || source.localLLM_model || 'llama3.2:3b',
+    model: safeStr(source.localLLMModel || source.localLLM_model || 'llama3.2:3b', 'llama3.2:3b', MAX_NAME_LENGTH),
     enableDetection: source.localLLMEnabled !== false,
-    timeoutMs: source.localLLMTimeout || source.localLLM_timeout || 5000,
+    timeoutMs: safeNum(source.localLLMTimeout || source.localLLM_timeout || 5000, 5000, 1000, 30000),
   };
 }
 
@@ -172,13 +202,16 @@ export async function resolveConfig(): Promise<ResolvedConfig> {
   const managed = await getManagedValues();
   const local = await getLocalValues();
 
-  if (managed?.apiKey) {
+  // H-10 FIX: Check if managed storage has ANY config, not just apiKey.
+  // Empty string apiKey was a bypass vector — admin could deploy apiKey: "" to silently disable.
+  const isManagedMode = managed && (managed.apiKey != null || managed.firmMode || managed.firmId);
+  if (isManagedMode) {
     return {
-      apiKey: managed.apiKey,
-      apiUrl: managed.apiUrl || DEFAULT_API_URL,
+      apiKey: safeApiKey(managed.apiKey, ''),
+      apiUrl: safeUrl(managed.apiUrl, DEFAULT_API_URL) || DEFAULT_API_URL,
       firmMode: (managed.firmMode === 'audit' ? 'audit' : 'proxy'),
-      firmId: managed.firmId || local.connectionState?.firmId || null,
-      firmName: managed.firmName || local.connectionState?.firmName || null,
+      firmId: safeStr(managed.firmId || local.connectionState?.firmId || null, null as any, MAX_NAME_LENGTH),
+      firmName: safeStr(managed.firmName || local.connectionState?.firmName || null, null as any, MAX_NAME_LENGTH),
       isManaged: true,
       localLLM: resolveLocalLLMConfig(managed) || resolveLocalLLMConfig(local),
       tiers: resolveTierConfig(managed),

@@ -56,7 +56,7 @@ export const DeepSeekAdapter: SiteAdapter = {
         }
         return JSON.stringify(p);
       }
-      if (original.length >= 20) {
+      if (original.length >= 10) {
         const esc = jsonStringEscape(original);
         if (body.includes(esc)) return body.replace(esc, jsonStringEscape(replacement));
       }

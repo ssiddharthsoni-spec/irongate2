@@ -194,5 +194,27 @@ export const rateLimitMiddleware = createMiddleware(async (c, next) => {
     return c.json({ error: 'Rate limit exceeded' }, 429);
   }
 
+  // M-23: Also rate-limit by x-api-key header to prevent bypass via proxy rotation.
+  // If a request carries an API key, enforce a separate per-key limit so that
+  // rotating IPs with the same key still gets throttled.
+  const apiKey = c.req.header('x-api-key');
+  if (apiKey) {
+    const apiKeyKey = `apikey:${apiKey}`;
+    let apiKeyResult: { count: number; remaining: number; resetTime: number };
+    try {
+      const redisClient = getRedisClient();
+      if (redisClient) {
+        apiKeyResult = await checkRedis(redisClient, apiKeyKey);
+      } else {
+        apiKeyResult = await checkInMemory(apiKeyKey);
+      }
+    } catch {
+      apiKeyResult = await checkInMemory(apiKeyKey);
+    }
+    if (apiKeyResult.count > MAX_REQUESTS) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
+  }
+
   await next();
 });

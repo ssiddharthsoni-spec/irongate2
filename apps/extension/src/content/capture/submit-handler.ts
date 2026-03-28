@@ -42,7 +42,7 @@ export function installSubmitHandler(
     // If this is OUR re-triggered submit after pseudonymization, let it through
     if (isOurSubmit) {
       isOurSubmit = false;
-      console.log('[Iron Gate] Allowing our re-triggered submit through');
+      // Allowing our re-triggered submit through
       return;
     }
 
@@ -69,13 +69,13 @@ export function installSubmitHandler(
 
     const submitButton = det.getSubmitTrigger();
     if (submitButton) {
-      console.log('[Iron Gate] Re-triggering submit via button click');
+      // Re-triggering submit via button click
       submitButton.click();
     } else {
       // Fallback: simulate Enter key on the input
       const input = det.getPromptInput();
       if (input) {
-        console.log('[Iron Gate] Re-triggering submit via Enter key');
+        // Re-triggering submit via Enter key
         input.dispatchEvent(new KeyboardEvent('keydown', {
           key: 'Enter',
           code: 'Enter',

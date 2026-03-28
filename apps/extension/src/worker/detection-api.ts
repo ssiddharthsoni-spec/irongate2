@@ -150,7 +150,7 @@ export async function pseudonymizeViaApi(
   } = {},
 ): Promise<PseudonymizeResult | null> {
   if (!canAttemptApiCall()) {
-    console.warn('[IronGate] Detection API circuit breaker open — using local fallback');
+    console.warn('[Iron Gate] Detection API circuit breaker open — using local fallback');
     return null;
   }
 
@@ -215,7 +215,7 @@ export async function pseudonymizeViaApi(
       throw error; // Don't swallow kill switch — it must propagate
     }
     onApiFailure();
-    console.error('[IronGate] Detection API call failed:', error);
+    console.error('[Iron Gate] Detection API call failed:', error);
     return null; // Caller falls back to local regex
   }
 }

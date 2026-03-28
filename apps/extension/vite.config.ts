@@ -98,12 +98,12 @@ function inlineMainWorldPlugin() {
                 }
               }
             } else {
-              // Create new entry with all site matches
-              war.push({
-                matches: ['<all_urls>'],
-                resources: loaderResources,
-                use_dynamic_url: false,
-              });
+              // Fail the build instead of silently falling back to <all_urls>
+              throw new Error(
+                '[inline-main-world] No CRXJS web_accessible_resources entry found. ' +
+                'Cannot safely add loader resources — refusing to use <all_urls> fallback. ' +
+                'Ensure CRXJS generates a manifest entry with use_dynamic_url before this plugin runs.'
+              );
             }
 
             manifestJson.web_accessible_resources = war;

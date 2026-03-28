@@ -32,6 +32,10 @@ let authState: AuthState = {
 
 // The derived CryptoKey — held in memory while service worker is alive
 let encryptionKey: CryptoKey | null = null;
+// M-10 fix: TTL for memoized key — re-fetch from session storage periodically
+// to pick up key rotations (e.g., after re-login or session refresh).
+let _encryptionKeyTimestamp = 0;
+const ENCRYPTION_KEY_TTL_MS = 5 * 60 * 1000; // 5 minutes
 // Guard against concurrent getEncryptionKey() calls (TOCTOU race)
 let _encryptionKeyPromise: Promise<CryptoKey | null> | null = null;
 
@@ -46,7 +50,11 @@ let _encryptionKeyPromise: Promise<CryptoKey | null> | null = null;
  * Uses a promise guard to prevent concurrent double-derivation.
  */
 async function getEncryptionKey(): Promise<CryptoKey | null> {
-  if (encryptionKey) return encryptionKey;
+  // M-10: Return cached key only if within TTL — stale keys are re-derived
+  // from session storage to pick up any key rotation (e.g., re-login).
+  if (encryptionKey && (Date.now() - _encryptionKeyTimestamp) < ENCRYPTION_KEY_TTL_MS) {
+    return encryptionKey;
+  }
 
   // If another call is already deriving, wait for it instead of double-deriving
   if (_encryptionKeyPromise) return _encryptionKeyPromise;
@@ -59,6 +67,7 @@ async function getEncryptionKey(): Promise<CryptoKey | null> {
         const { masterSecret, salt } = session[ENCRYPTION_KEY_SESSION];
         const saltBytes = new Uint8Array(salt);
         encryptionKey = await deriveKey(masterSecret, saltBytes);
+        _encryptionKeyTimestamp = Date.now();
         return encryptionKey;
       }
     } catch {
@@ -126,6 +135,7 @@ async function initEncryptionKey(firmId: string, encryptionSalt?: string): Promi
     : crypto.getRandomValues(new Uint8Array(16));
 
   encryptionKey = await deriveKey(masterSecret, salt);
+  _encryptionKeyTimestamp = Date.now();
 
   // Persist key material in session storage (survives SW restart)
   try {
@@ -310,6 +320,7 @@ export async function clearCredentials(): Promise<void> {
   };
 
   encryptionKey = null;
+  _encryptionKeyTimestamp = 0;
 
   try {
     await chrome.storage.local.remove([

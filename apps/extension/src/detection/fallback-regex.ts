@@ -6,6 +6,81 @@
 import type { DetectedEntity } from './types';
 import { isKnownNonPII } from './known-phrases';
 
+// ── M-12: Stopwords that look like first names but are common English words ──
+// Only suppress when context suggests they're used as common words (lowercase
+// or followed by verbs/articles). When title-cased and in PII context, allow them.
+const FIRST_NAME_STOPWORDS = new Set([
+  'will', 'may', 'mark', 'bill', 'grace', 'hope', 'faith',
+  'chase', 'grant', 'art', 'dawn', 'joy', 'august', 'lance',
+  'wade', 'cliff', 'brook', 'dale', 'glen', 'heath', 'holly',
+  'iris', 'ivy', 'jasmine', 'lily', 'olive', 'pearl', 'robin',
+  'rose', 'ruby', 'sage', 'violet', 'sterling', 'chance',
+]);
+
+/**
+ * M-12: Check if a PERSON match is likely a false positive because the first
+ * word is a common English word used in non-name context.
+ * Returns true if the match should be SUPPRESSED (is a false positive).
+ */
+function isStopwordFalsePositive(text: string, matchStart: number, matchText: string): boolean {
+  const firstName = matchText.split(/\s+/)[0];
+  if (!firstName || !FIRST_NAME_STOPWORDS.has(firstName.toLowerCase())) return false;
+
+  // If preceded by a title (Dr., Mr., etc.), it's likely a real name
+  const before = text.substring(Math.max(0, matchStart - 10), matchStart);
+  if (/(?:Dr|Mr|Mrs|Ms|Prof|Rev)\.?\s*$/i.test(before)) return false;
+
+  // If preceded by a name-context keyword, it's likely a real name
+  if (/(?:employee|patient|client|named|called|name[:\s])\s*$/i.test(before)) return false;
+
+  // If preceded by an article/pronoun/preposition that suggests common-word usage, suppress
+  if (/\b(?:the|a|an|this|that|these|those|my|your|his|her|its|our|their|I|we|they|you|he|she|it|to|can|could|would|should|shall|must|might)\s+$/i.test(before)) return true;
+
+  // If followed by a verb suggesting common-word usage (e.g., "Will travel", "May cause")
+  const after = text.substring(matchStart + matchText.length, matchStart + matchText.length + 30);
+  if (/^\s+(?:be\b|have\b|has\b|had\b|do\b|does\b|did\b|is\b|are\b|was\b|were\b|not\b|also\b|likely\b|cause\b|help\b|need\b|want\b|require\b|come\b|go\b|make\b|take\b|get\b|give\b|keep\b|let\b|begin\b|seem\b|show\b|try\b|use\b|work\b|call\b|provide\b|become\b|leave\b|remain\b|result\b|happen\b|continue\b)/i.test(after)) return true;
+
+  return false;
+}
+
+// ── M-14: Port numbers and version strings that trigger PHONE_NUMBER false positives ──
+const COMMON_PORT_NUMBERS = new Set([
+  '80', '443', '3000', '3001', '3306', '4200', '4443', '5000', '5432', '5500',
+  '6379', '8000', '8080', '8443', '8888', '9000', '9090', '9200', '9300',
+  '27017', '27018',
+]);
+
+/**
+ * M-14: Check if a PHONE_NUMBER match is actually a port number, version string,
+ * or code-like context that should be excluded.
+ */
+function isCodeLikeFalsePositive(text: string, matchStart: number, matchText: string): boolean {
+  // Check for version strings: v1.2.3, 1.2.3, version 2.0.1
+  const before30 = text.substring(Math.max(0, matchStart - 30), matchStart);
+  if (/(?:v(?:ersion)?\s*\.?\s*|@)\s*$/i.test(before30)) return true;
+  // Version-like pattern: short digits separated by dots (e.g., "1.2.3", "10.0.1")
+  // Exclude phone-like patterns where segments are 3+ digits (e.g., "555.123.4567")
+  const dotDigits = matchText.replace(/[\s()-+]/g, '');
+  if (/^\d{1,3}\.\d{1,3}\.\d{1,4}$/.test(dotDigits)) {
+    const segments = dotDigits.split('.');
+    // Phone numbers have at least one segment with 3+ digits; versions have short segments
+    const maxSegmentLen = Math.max(...segments.map(s => s.length));
+    if (maxSegmentLen <= 2) return true; // e.g., "1.2.3", "10.0.1" — version
+  }
+
+  // Check for port numbers: ":8080", "port 3000", "localhost:5000"
+  const beforeContext = text.substring(Math.max(0, matchStart - 20), matchStart);
+  const digits = matchText.replace(/[\s\-().+]/g, '');
+  if (COMMON_PORT_NUMBERS.has(digits)) {
+    if (/(?::|port\s*|localhost\s*:?\s*)$/i.test(beforeContext)) return true;
+  }
+
+  // Check for code-like context: preceded by common code patterns
+  if (/(?:0x[0-9a-f]*|0b[01]*|port|listen|bind|connect|localhost|127\.0\.0\.1|::)\s*[:=]?\s*$/i.test(beforeContext)) return true;
+
+  return false;
+}
+
 interface RegexPattern {
   type: string;
   pattern: RegExp;
@@ -128,14 +203,14 @@ const REGEX_PATTERNS: RegexPattern[] = [
   // Organizations after contextual keywords (multi-word names)
   {
     type: 'ORGANIZATION',
-    pattern: /\b(?:company|firm|corporation|organization|entity|employer|contractor|vendor|supplier|client|subsidiary|parent\s+company|activist(?:\s+fund)?|investor|fund|bank|lender)\s*(?::|called|named|is|,)?\s+[A-Z][a-z]+(?:\s+(?:[A-Z][a-z]+|&|No\.\s*\d+|of|the|and))+\b/gi,
+    pattern: /\b(?:company|firm|corporation|organization|entity|employer|contractor|vendor|supplier|subsidiary|parent\s+company|activist(?:\s+fund)?|investor|fund|bank|lender)\s*(?::|called|named|is|,)?\s+[A-Z][a-z]+(?:\s+(?:[A-Z][a-z]+|&|No\.\s*\d+|of|the|and))+\b/gi,
     confidence: 0.75,
     contextual: true,
   },
   // Organizations after contextual keywords (single-word names like "Blackstone", "ModaGlobal")
   {
     type: 'ORGANIZATION',
-    pattern: /\b(?:company|firm|corporation|organization|entity|employer|contractor|vendor|supplier|client|subsidiary|parent\s+company|activist(?:\s+fund)?|investor|fund|bank|lender|PE\s+firm|PE\s+owner|backed\s+by|acquired\s+by|owned\s+by)\s*(?::|called|named|is|,)?\s+([A-Z][a-zA-Z]{2,})\b/gi,
+    pattern: /\b(?:company|firm|corporation|organization|entity|employer|contractor|vendor|supplier|subsidiary|parent\s+company|activist(?:\s+fund)?|investor|fund|bank|lender|PE\s+firm|PE\s+owner|backed\s+by|acquired\s+by|owned\s+by)\s*(?::|called|named|is|,)?\s+([A-Z][a-zA-Z]{2,})\b/gi,
     confidence: 0.7,
     contextual: true,
   },
@@ -230,7 +305,7 @@ const REGEX_PATTERNS: RegexPattern[] = [
   // ── Email Addresses ───────────────────────────────────────────────────
   {
     type: 'EMAIL',
-    pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g,
+    pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
     confidence: 0.95,
   },
   // ── Phone Numbers (US formats) ────────────────────────────────────────
@@ -289,7 +364,7 @@ const REGEX_PATTERNS: RegexPattern[] = [
   // "by N%" after reduction verbs: "reducing by 80%", "cut by 30%", "decreased by 15%"
   {
     type: 'PERCENTAGE',
-    pattern: /\b(?:reduc\w+|cut\w*|decreas\w+|increas\w+|grow\w*|rais\w+|lower\w*|slash\w*|trim\w*|shrink\w*|expand\w*)\b[^.]{0,30}\b(\d{1,3}(?:\.\d{1,2})?%)/gi,
+    pattern: /\b(?:reduc\w{0,10}|cut\w{0,8}|decreas\w{0,10}|increas\w{0,10}|grow\w{0,8}|rais\w{0,10}|lower\w{0,8}|slash\w{0,8}|trim\w{0,8}|shrink\w{0,8}|expand\w{0,8})\b[^.]{0,30}\b(\d{1,3}(?:\.\d{1,2})?%)/gi,
     confidence: 0.7,
   },
   // ── Named Locations (geographic, facilities) ────────────────────────
@@ -562,11 +637,36 @@ const REGEX_PATTERNS: RegexPattern[] = [
     pattern: /\bSG\.[A-Za-z0-9_-]{22,}\.[A-Za-z0-9_-]{22,}\b/g,
     confidence: 0.9,
   },
-  // JWT tokens
+  // JWT tokens — M-16: match 2+ base64url segments (standard 3-part and 2-part/multi-part)
+  // 3-part JWTs (header.payload.signature) — highest confidence
   {
     type: 'AUTH_TOKEN',
     pattern: /\beyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/g,
     confidence: 0.85,
+  },
+  // 2-part JWTs (header.payload, unsigned) — lower confidence
+  {
+    type: 'AUTH_TOKEN',
+    pattern: /\beyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,}\b(?!\.[A-Za-z0-9_-])/g,
+    confidence: 0.7,
+  },
+  // Multi-segment tokens (4+ segments, e.g., nested/extended JWTs)
+  {
+    type: 'AUTH_TOKEN',
+    pattern: /\beyJ[A-Za-z0-9_-]{20,}(?:\.[A-Za-z0-9_-]{20,}){3,}\b/g,
+    confidence: 0.8,
+  },
+  // Anthropic API Keys (M-15)
+  {
+    type: 'API_KEY',
+    pattern: /\bsk-ant-[A-Za-z0-9_-]{20,}/g,
+    confidence: 0.95,
+  },
+  // HuggingFace API Tokens (M-15)
+  {
+    type: 'API_KEY',
+    pattern: /\bhf_[A-Za-z0-9]{20,}/g,
+    confidence: 0.95,
   },
 
   // ── Insurance / Actuarial ──────────────────────────────────────────────
@@ -651,7 +751,10 @@ const REGEX_PATTERNS: RegexPattern[] = [
 /** Zero-width and invisible characters that can be inserted to evade detection */
 const ZERO_WIDTH_RE = /[\u200B\u200C\u200D\uFEFF\u00AD\u034F\u061C\u180E\u2060\u2061\u2062\u2063\u2064\u206A-\u206F]/g;
 
-/** Detect base64-encoded strings that decode to PII-like content */
+/** Detect base64-encoded strings that decode to PII-like content.
+ * Returns both the ENCODED_PII marker (for the base64 blob) AND individual
+ * entities extracted from the decoded content (SSN, PERSON, EMAIL, etc.)
+ * so the scorer treats them with full weight. */
 function detectBase64PII(text: string): DetectedEntity[] {
   const entities: DetectedEntity[] = [];
   // Match base64 strings of reasonable length (24-500 chars)
@@ -660,21 +763,83 @@ function detectBase64PII(text: string): DetectedEntity[] {
   while ((m = b64re.exec(text)) !== null) {
     // Skip excessively long base64 strings to avoid performance issues
     if (m[0].length > 2000) continue;
+    // Skip JWT token segments — JWTs are "header.payload.signature" where each segment
+    // is base64url. These are handled by the secret scanner, not base64 PII detection.
+    const before = text.substring(Math.max(0, m.index - 1), m.index);
+    const after = text.substring(m.index + m[0].length, m.index + m[0].length + 1);
+    if (before === '.' || after === '.') continue;
+    // Also skip if the match looks like a JWT header (starts with eyJ)
+    if (m[0].startsWith('eyJ')) continue;
     try {
       const decoded = atob(m[0]);
       // Only flag if decoded text looks like ASCII text with PII markers
       if (!/^[\x20-\x7E\r\n\t]+$/.test(decoded)) continue;
-      // Check if decoded text contains common PII patterns
-      if (/\b\d{3}-\d{2}-\d{4}\b/.test(decoded) ||                   // SSN
-          /\b[A-Z][a-z]+\s+[A-Z][a-z]+\b/.test(decoded) ||           // Names
-          /\b[\w.-]+@[\w.-]+\.\w{2,}\b/.test(decoded) ||              // Email
-          /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/.test(decoded)) { // CC
+
+      let hasPII = false;
+
+      // Check for SSN — extract the actual SSN from decoded text
+      const ssnMatch = decoded.match(/\b(\d{3}-\d{2}-\d{4})\b/);
+      if (ssnMatch) {
+        hasPII = true;
+        entities.push({
+          type: 'SSN',
+          text: m[0], // Keep the base64 blob as the entity text for pseudonymization
+          start: m.index,
+          end: m.index + m[0].length,
+          confidence: 0.95,
+          source: 'regex',
+        });
+      }
+
+      // Check for person names
+      const nameMatches = decoded.match(/\b[A-Z][a-z]+\s+[A-Z][a-z]+\b/g);
+      if (nameMatches) {
+        hasPII = true;
+        // Add first name as PERSON entity (maps to the base64 blob position)
+        entities.push({
+          type: 'PERSON',
+          text: m[0],
+          start: m.index,
+          end: m.index + m[0].length,
+          confidence: 0.85,
+          source: 'regex',
+        });
+      }
+
+      // Check for email
+      if (/\b[\w.-]+@[\w.-]+\.\w{2,}\b/.test(decoded)) {
+        hasPII = true;
+        entities.push({
+          type: 'EMAIL',
+          text: m[0],
+          start: m.index,
+          end: m.index + m[0].length,
+          confidence: 0.9,
+          source: 'regex',
+        });
+      }
+
+      // Check for credit card
+      if (/\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/.test(decoded)) {
+        hasPII = true;
+        entities.push({
+          type: 'CREDIT_CARD',
+          text: m[0],
+          start: m.index,
+          end: m.index + m[0].length,
+          confidence: 0.9,
+          source: 'regex',
+        });
+      }
+
+      // Always add an ENCODED_PII marker if any PII was found
+      if (hasPII) {
         entities.push({
           type: 'ENCODED_PII',
           text: m[0],
           start: m.index,
           end: m.index + m[0].length,
-          confidence: 0.8,
+          confidence: 0.95,
           source: 'regex',
         });
       }
@@ -720,6 +885,16 @@ function runRegexPatterns(text: string): DetectedEntity[] {
 
       // Suppress PERSON entities that match known non-PII phrases (companies, places, tech terms)
       if (type === 'PERSON' && isKnownNonPII(matchText)) {
+        continue;
+      }
+
+      // M-12: Suppress PERSON matches where first name is a common English word in non-name context
+      if (type === 'PERSON' && isStopwordFalsePositive(text, matchStart, matchText)) {
+        continue;
+      }
+
+      // M-14: Suppress PHONE_NUMBER matches that are port numbers, version strings, or code patterns
+      if (type === 'PHONE_NUMBER' && isCodeLikeFalsePositive(text, matchStart, matchText)) {
         continue;
       }
 
@@ -843,7 +1018,8 @@ export function detectWithRegex(text: string): DetectedEntity[] {
       if (isKnownNonPII(m[0])) continue;
       // Check it's not an org suffix match
       const words = m[0].split(/\s+/);
-      if (ORG_SUFFIX_SET.has(words[words.length - 1].toLowerCase())) continue;
+      const lastWord = words[words.length - 1];
+      if (lastWord && ORG_SUFFIX_SET.has(lastWord.toLowerCase())) continue;
       entities.push({
         type: 'PERSON',
         text: m[0],
@@ -883,6 +1059,14 @@ function removeOverlaps(entities: DetectedEntity[]): DetectedEntity[] {
         a.start === b.start && a.end === b.end) return -1;
     if (b.type === 'PERSON' && a.type === 'LOCATION' &&
         a.start === b.start && a.end === b.end) return 1;
+    // PERSON vs ORGANIZATION tiebreak: prefer PERSON when spans overlap.
+    // "Client Teresa Finch" matches ORG (via "client" keyword) AND PERSON
+    // (via "client + Name Name" pattern). Person names are higher priority
+    // when paired with high-value PII like SSN. DEF-010 fix.
+    if (a.type === 'PERSON' && b.type === 'ORGANIZATION' &&
+        a.start < b.end && a.end > b.start) return -1;
+    if (b.type === 'PERSON' && a.type === 'ORGANIZATION' &&
+        a.start < b.end && a.end > b.start) return 1;
     if (b.confidence !== a.confidence) return b.confidence - a.confidence;
     return (b.end - b.start) - (a.end - a.start);
   });

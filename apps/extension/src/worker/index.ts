@@ -21,7 +21,7 @@ import { TOTAL_ENTITIES_DETECTED, WEEKLY_SCAN_COUNT } from '../shared/storage-ke
 import { startKillSwitchPoller } from '../security/kill-switch-poller';
 import {
   enforceCompliance, setActiveFrameworks, needsProfileRefresh,
-  getActiveFrameworks, type ComplianceEnforcementResult,
+  getActiveFrameworks,
 } from '../shared/compliance-enforcer';
 import { trackShadowAI, getShadowAIStats } from './shadow-ai-tracker';
 import { detectWithLocalLLM, resetLocalLLMHealth } from './local-llm-detector';
@@ -200,24 +200,30 @@ async function getDictEncryptionKey(): Promise<CryptoKey> {
   if (_dictCryptoKey) return _dictCryptoKey;
   // Store key in session storage — clears on browser close for security.
   // Falls back to local storage for migration from older versions.
-  const stored = await chrome.storage.session.get(DICT_ENC_KEY_NAME);
-  if (stored[DICT_ENC_KEY_NAME]) {
-    const raw = Uint8Array.from(atob(stored[DICT_ENC_KEY_NAME]), c => c.charCodeAt(0));
-    _dictCryptoKey = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
-  } else {
-    // Check legacy local storage location
-    const legacy = await chrome.storage.local.get(DICT_ENC_KEY_NAME);
-    if (legacy[DICT_ENC_KEY_NAME]) {
-      const raw = Uint8Array.from(atob(legacy[DICT_ENC_KEY_NAME]), c => c.charCodeAt(0));
+  try {
+    const stored = await chrome.storage.session.get(DICT_ENC_KEY_NAME);
+    if (stored[DICT_ENC_KEY_NAME]) {
+      const raw = Uint8Array.from(atob(stored[DICT_ENC_KEY_NAME]), c => c.charCodeAt(0));
       _dictCryptoKey = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
-      // Migrate to session storage and remove from local
-      await chrome.storage.session.set({ [DICT_ENC_KEY_NAME]: legacy[DICT_ENC_KEY_NAME] });
-      await chrome.storage.local.remove(DICT_ENC_KEY_NAME);
     } else {
-      _dictCryptoKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
-      const raw = await crypto.subtle.exportKey('raw', _dictCryptoKey);
-      await chrome.storage.session.set({ [DICT_ENC_KEY_NAME]: btoa(String.fromCharCode(...new Uint8Array(raw))) });
+      // Check legacy local storage location
+      const legacy = await chrome.storage.local.get(DICT_ENC_KEY_NAME);
+      if (legacy[DICT_ENC_KEY_NAME]) {
+        const raw = Uint8Array.from(atob(legacy[DICT_ENC_KEY_NAME]), c => c.charCodeAt(0));
+        _dictCryptoKey = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
+        // Migrate to session storage and remove from local
+        await chrome.storage.session.set({ [DICT_ENC_KEY_NAME]: legacy[DICT_ENC_KEY_NAME] });
+        await chrome.storage.local.remove(DICT_ENC_KEY_NAME);
+      } else {
+        _dictCryptoKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+        const raw = await crypto.subtle.exportKey('raw', _dictCryptoKey);
+        await chrome.storage.session.set({ [DICT_ENC_KEY_NAME]: btoa(String.fromCharCode(...new Uint8Array(raw))) });
+      }
     }
+  } catch (cryptoErr) {
+    // Crypto operation failed — generate a fresh ephemeral key as fallback
+    igLog('Crypto key load failed, generating ephemeral key:', cryptoErr);
+    _dictCryptoKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
   }
   return _dictCryptoKey;
 }
@@ -614,7 +620,8 @@ resolveConfig().then((config) => {
         try {
           chrome.tabs.query({}, (tabs) => {
             if (!chrome.runtime?.id) return;
-            for (const tab of tabs || []) {
+            if (chrome.runtime.lastError || !tabs) return;
+            for (const tab of tabs) {
               if (tab.id) {
                 chrome.tabs.sendMessage(tab.id, {
                   type: 'PROCESSING_MODE_CHANGED',
@@ -701,7 +708,7 @@ async function loadTabStates(): Promise<Record<number, TabState>> {
     const result = await chrome.storage.session.get(TAB_STATE_KEY);
     return result[TAB_STATE_KEY] || {};
   } catch (err) {
-    console.warn('[IronGate] loadTabStates storage read failed:', err instanceof Error ? err.message : String(err));
+    console.warn('[Iron Gate] loadTabStates storage read failed:', err instanceof Error ? err.message : String(err));
     return {};
   }
 }
@@ -750,11 +757,43 @@ async function removeTabState(tabId: number): Promise<void> {
   await saveTabStates(states);
 }
 
+// ── M-8 fix: Sequential processing queue for PROMPT_DETECTED per tab ────────
+// Multiple tabs can send PROMPT_DETECTED simultaneously, causing race conditions
+// in shared worker state. This queue serializes processing per tab while allowing
+// different tabs to process in parallel.
+const _promptQueue = new Map<number, Promise<any>>();
+
+function enqueuePromptDetected(
+  message: { type: string; payload?: any; nonce?: string },
+  sender: chrome.runtime.MessageSender,
+): Promise<any> {
+  const tabId = sender.tab?.id ?? 0;
+  const prev = _promptQueue.get(tabId) ?? Promise.resolve();
+  const next = prev
+    .then(() => handleMessage(message, sender))
+    .catch((err) => {
+      console.error('[Iron Gate] Queued PROMPT_DETECTED error:', err);
+      return { error: err instanceof Error ? err.message : String(err) };
+    });
+  _promptQueue.set(tabId, next);
+  // Cleanup: remove from map once resolved to prevent memory leak
+  next.finally(() => {
+    if (_promptQueue.get(tabId) === next) _promptQueue.delete(tabId);
+  });
+  return next;
+}
+
 // Listen for messages from content scripts
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   let responded = false;
   const safeRespond = (val: any) => { if (!responded) { responded = true; sendResponse(val); } };
-  handleMessage(message, sender)
+
+  // M-8: Serialize PROMPT_DETECTED per tab to prevent race conditions
+  const handler = message.type === 'PROMPT_DETECTED'
+    ? enqueuePromptDetected(message, sender)
+    : handleMessage(message, sender);
+
+  handler
     .then(safeRespond)
     .catch((err) => {
       console.error('[Iron Gate] Message handler error:', err);
@@ -805,6 +844,15 @@ async function handleMessage(
   message: { type: string; payload?: any; nonce?: string },
   sender: chrome.runtime.MessageSender
 ): Promise<any> {
+  // L-16: Validate message type is a non-empty string
+  if (!message || typeof message.type !== 'string' || message.type.length === 0) {
+    return { error: 'Invalid message: missing or empty type' };
+  }
+  // L-16: Cap message type length to prevent abuse
+  if (message.type.length > 64) {
+    return { error: 'Invalid message: type too long' };
+  }
+
   // Nonce validation for sensitive messages
   if (NONCE_REQUIRED.has(message.type)) {
     const nonce = message.nonce;
@@ -973,7 +1021,7 @@ async function handleMessage(
         localSecrets = scanForSecrets(text);
       } catch (regexErr) {
         igLog('Regex/secret scan error (continuing with empty results):', regexErr);
-        console.warn('[IronGate] Regex/secret scan failed — detection degraded', regexErr instanceof Error ? regexErr.message : String(regexErr));
+        console.warn('[Iron Gate] Regex/secret scan failed — detection degraded', regexErr instanceof Error ? regexErr.message : String(regexErr));
         // Flag degraded detection in the result so the UI can show a warning
         _pipelineWarnings.push('regex_scan_failed');
       }
@@ -1023,7 +1071,7 @@ async function handleMessage(
         }
       } catch (err) {
         igLog('Agent detector error (falling back to regex):', err);
-        console.warn('[IronGate] Agent detector failed — falling back to regex-only', err instanceof Error ? err.message : String(err));
+        console.warn('[Iron Gate] Agent detector failed — falling back to regex-only', err instanceof Error ? err.message : String(err));
         _pipelineWarnings.push('agent_detector_failed');
         agentAvailable = false; // Force fallback to regex
       }
@@ -1632,6 +1680,26 @@ async function handleMessage(
       return { error: 'All retries exhausted' };
     }
 
+    // ── PROMPT_CLEAN_SUBMIT — wire interceptor found 0 entities on a real user prompt ──
+    // Unlike PROMPT_CLEARED (input field emptied) this is an authoritative signal
+    // that a new prompt was submitted and it's clean. Clears stale sidepanel results
+    // without the debounce/suppress logic that PROMPT_CLEARED has.
+    case 'PROMPT_CLEAN_SUBMIT': {
+      const cleanTabId = sender.tab?.id;
+      if (cleanTabId) {
+        igLog('PROMPT_CLEAN_SUBMIT: clearing stale sidepanel results');
+        chrome.runtime.sendMessage({
+          type: 'PROMPT_CLEAN_SUBMIT',
+          payload: {
+            tabId: cleanTabId,
+            score: message.payload?.score || 0,
+            level: message.payload?.level || 'low',
+          },
+        }).catch(() => {});
+      }
+      return { received: true };
+    }
+
     // ── PROMPT_CLEARED — user emptied the input field ──
     // Broadcast to sidepanel so it resets stale detection results.
     // Suppress for a window after an authoritative SENSITIVITY_SCORE
@@ -2054,11 +2122,16 @@ async function handleMessage(
       // Hash the entity text before sending — raw PII must never leave the browser
       let entityHash = '';
       if (entityText) {
-        const data = new TextEncoder().encode(entityText);
-        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-        entityHash = Array.from(new Uint8Array(hashBuffer))
-          .map((b: number) => b.toString(16).padStart(2, '0'))
-          .join('');
+        try {
+          const data = new TextEncoder().encode(entityText);
+          const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+          entityHash = Array.from(new Uint8Array(hashBuffer))
+            .map((b: number) => b.toString(16).padStart(2, '0'))
+            .join('');
+        } catch {
+          // Crypto digest failed — send feedback without hash (non-critical)
+          entityHash = '';
+        }
       }
 
       try {
@@ -2448,7 +2521,7 @@ async function syncPolicies(): Promise<void> {
         iron_gate_policies_updated: Date.now(),
       });
     } catch (err) {
-      console.warn('[IronGate] policy storage write failed:', err instanceof Error ? err.message : String(err));
+      console.warn('[Iron Gate] policy storage write failed:', err instanceof Error ? err.message : String(err));
     }
 
     igLog('Policies synced', { updatedAt: response.updatedAt });
@@ -2695,7 +2768,7 @@ async function reinjectAllTabs(): Promise<void> {
     }
 
     if (injectedCount > 0) {
-      console.log(`[Iron Gate] Re-injected content scripts into ${injectedCount} AI tool tab(s)`);
+      igLog(`Re-injected content scripts into ${injectedCount} AI tool tab(s)`);
     }
   } finally {
     _reinjectInProgress = false;
@@ -2708,7 +2781,7 @@ chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install' || details.reason === 'update') {
     // Clear stale API URL on update so new default is used
     chrome.storage.local.remove('apiBaseUrl').catch(() => {});
-    reinjectAllTabs();
+    reinjectAllTabs().catch(() => {});
 
     // NLI/GLiNER in-browser ML removed (3.5) — server-side GPT-4o-mini
     // via Tier 3 adapter replaces both with better accuracy and no 69MB download.
@@ -2717,10 +2790,10 @@ chrome.runtime.onInstalled.addListener((details) => {
 
 // Also re-inject on every service worker startup — covers developer reload
 // (which may not always fire onInstalled with reason='update')
-reinjectAllTabs();
+reinjectAllTabs().catch(() => {});
 
 // Restore conversation context from session storage (survives service worker restart)
-restoreConversationTrackers();
+restoreConversationTrackers().catch(() => {});
 
 /**
  * Self-contained inline fetch interceptor — injected via chrome.scripting.executeScript({ func })
@@ -3206,8 +3279,13 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 /** SHA-256 hash of prompt text — we never store or transmit plaintext prompts */
 async function hashText(text: string): Promise<string> {
-  const data = new TextEncoder().encode(text);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  try {
+    const data = new TextEncoder().encode(text);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  } catch {
+    // Crypto API unavailable — return empty hash (non-critical for event logging)
+    return '';
+  }
 }

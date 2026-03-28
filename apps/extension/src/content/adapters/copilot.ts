@@ -191,10 +191,10 @@ export const CopilotAdapter: SiteAdapter = {
     return null;
   },
 
-  // Internal helper: recursively walk an object to find the longest string > 50 chars
+  // Internal helper: recursively walk an object to find the longest string > 5 chars
   _walkForText(obj: any, maxDepth = 10, seen?: Set<any>): string | null {
     if (maxDepth <= 0) return null;
-    if (typeof obj === 'string' && obj.length > 50) return obj;
+    if (typeof obj === 'string' && obj.length > 5) return obj;
     if (!obj || typeof obj !== 'object') return null;
     // Cycle detection
     if (!seen) seen = new Set();

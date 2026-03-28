@@ -170,6 +170,9 @@ let processingMode: 'local' | 'server' = (window as any).__IRON_GATE_PROCESSING_
   try { return localStorage.getItem('ig_last_mode') === 'server' ? 'server' : 'local'; } catch { return 'local'; }
 })();
 let currentReverseMap: Record<string, string> = {};
+let _reverseMapRestored = false;
+let _activeStreamCount = 0;
+let _pendingClear = false;
 let _lastConversationPath: string = window.location.pathname;
 
 // ─── Private LLM config (set via IRON_GATE_SET_PRIVATE_LLM from content script)
@@ -386,12 +389,16 @@ window.addEventListener('message', (event) => {
         } else if (restoreSeq < 0 && _lastClearTime > 0 && Date.now() - _lastClearTime < 5000) {
           igLog(`RESTORE_REVERSE_MAP ignored (legacy) — clearReverseMapFully() ran ${Date.now() - _lastClearTime}ms ago`);
         } else {
-          // REPLACE, not merge — prevents stale entries from previous sessions
-          // accumulating in the map across multiple restore events.
-          currentReverseMap = {};
+          // M-1 FIX: MERGE restored entries, but only add keys that don't
+          // already exist in the current map. This prevents the restore from
+          // overwriting entries added by a pseudonymization that raced ahead
+          // of the restore completing.
           for (const [k, v] of entries) {
-            currentReverseMap[k] = v as string;
+            if (!(k in currentReverseMap)) {
+              currentReverseMap[k] = v as string;
+            }
           }
+          _reverseMapRestored = true;
           _regexCacheVersion++;
           console.log(
             `%c[Iron Gate MAIN] Restored ${count} reverse pseudonym mappings from session`,
@@ -517,6 +524,12 @@ function sanitizeMappingsForTransit(mappings: PseudonymMapping[]): Array<{ pseud
 // Global forward map: original → fake (persists across messages in a conversation)
 let currentForwardMap: Record<string, string> = {};
 
+// Per-session cryptographic proxy nonce — prevents prompt injection bypass (C-2).
+// Old approach used a guessable string 'enterprise privacy tool' that attackers could
+// include in their prompt to skip pseudonymization entirely.
+const _proxyNonce = '__IG_' + Array.from(crypto.getRandomValues(new Uint8Array(16)))
+  .map(b => b.toString(16).padStart(2, '0')).join('') + '__';
+
 // Entity types that are ANALYTICAL VALUES — detected and scored for sensitivity,
 // but NOT pseudonymized. Replacing these with fakes corrupts the AI's analysis
 // (e.g., fake salaries produce wrong gap calculations). They're only sensitive
@@ -565,6 +578,21 @@ function pseudonymizeLocal(text: string, entities: DetectedEntity[]): PseudonymR
     if (!pseudonym) {
       // Check global forward map (from previous messages in conversation)
       pseudonym = currentForwardMap[normalizedText];
+    }
+    // DEF-014: Fuzzy forward map lookup — detection may extract slightly different
+    // text across turns (extra whitespace, trailing punctuation, case differences).
+    // Without this, the same real entity gets different pseudonyms across turns,
+    // leaking the real name when the LLM quotes Turn 1's pseudonym in Turn 2.
+    if (!pseudonym) {
+      const normLower = normalizedText.toLowerCase().replace(/\s+/g, ' ');
+      for (const [orig, fake] of Object.entries(currentForwardMap)) {
+        if (orig.toLowerCase().replace(/\s+/g, ' ') === normLower) {
+          pseudonym = fake;
+          // Also register the exact text variant so future lookups are instant
+          currentForwardMap[normalizedText] = fake;
+          break;
+        }
+      }
     }
     if (!pseudonym) {
       // Generate a new realistic fake — ensure uniqueness:
@@ -1170,7 +1198,7 @@ function executiveLensRoute(text: string, entities: DetectedEntity[]): { route: 
  * Add a mapping to the reverse map, including common LLM reformatting variants.
  * E.g., "June 4th" → also adds "June 4"; percentages add "X percent" variant.
  */
-const MAX_MAP_SIZE = 500;
+const MAX_MAP_SIZE = 2000; // Raised from 500 — variant generation creates 10-20 entries per entity
 
 // Debounced persistence: batch map updates to content script
 let _mapPersistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1250,6 +1278,15 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
     if (map[key]) return false;  // don't overwrite existing entry
     if (ORG_SUFFIX_SET.has(key.toLowerCase())) return false;  // generic suffix
     if (origLower.includes(key.toLowerCase())) return false;  // prevents recursive expansion
+    // DEF-012: Don't add fragment if it's a substring of an existing pseudonym key
+    // (e.g., fragment "Angela" would corrupt email pseudonym "angela.kumar@example.com"
+    // during replacement — the fragment match fires first and garbles the email)
+    const keyLower = key.toLowerCase();
+    for (const existingKey of Object.keys(map)) {
+      if (existingKey.length > key.length && existingKey.toLowerCase().includes(keyLower)) {
+        return false;
+      }
+    }
     return true;
   };
 
@@ -1414,6 +1451,40 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
     if (!map[slashKey]) map[slashKey] = original;
     const slashPadded = m.padStart(2, '0') + '/' + d.padStart(2, '0') + '/' + fullYear;
     if (!map[slashPadded]) map[slashPadded] = original;
+    // DEF-013: Written-out date variants for numeric pseudonyms
+    // LLMs reformat "07/18/1981" → "July 18, 1981" — must catch these.
+    // CRITICAL: The original side must ALSO be in spelled-out form so the user
+    // sees "November 22, 1978" (not raw "11/22/1978") when the LLM writes dates.
+    const MONTH_FULL_NUM = ['', 'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'];
+    const MONTH_SHORT_NUM = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const mi = parseInt(m), di = parseInt(d);
+    // Parse the ORIGINAL date to generate matching spelled-out original
+    const origDateMatch = original.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+    const origIsoMatch = original.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    let origSpelled = original; // fallback to raw original
+    if (origDateMatch) {
+      const om = parseInt(origDateMatch[1]), od = parseInt(origDateMatch[3] || origDateMatch[2]);
+      const oy = origDateMatch[3] || origDateMatch[2];
+      const origFullYear = oy.length === 2 ? (parseInt(oy) > 50 ? '19' + oy : '20' + oy) : oy;
+      if (om >= 1 && om <= 12) origSpelled = MONTH_FULL_NUM[om] + ' ' + od + ', ' + origFullYear;
+    } else if (origIsoMatch) {
+      const om = parseInt(origIsoMatch[2]), od = parseInt(origIsoMatch[3]);
+      if (om >= 1 && om <= 12) origSpelled = MONTH_FULL_NUM[om] + ' ' + od + ', ' + origIsoMatch[1];
+    }
+    // Also parse original as written date
+    const origWrittenMatch = original.match(/^(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})$/i);
+    if (origWrittenMatch) origSpelled = original; // already spelled out
+    if (mi >= 1 && mi <= 12) {
+      const dayStr = String(di);
+      if (!map[MONTH_FULL_NUM[mi] + ' ' + dayStr + ', ' + fullYear]) map[MONTH_FULL_NUM[mi] + ' ' + dayStr + ', ' + fullYear] = origSpelled;
+      if (!map[MONTH_SHORT_NUM[mi] + ' ' + dayStr + ', ' + fullYear]) map[MONTH_SHORT_NUM[mi] + ' ' + dayStr + ', ' + fullYear] = origSpelled;
+      const ord = (di === 1 || di === 21 || di === 31) ? 'st' : (di === 2 || di === 22) ? 'nd' : (di === 3 || di === 23) ? 'rd' : 'th';
+      if (!map[MONTH_FULL_NUM[mi] + ' ' + dayStr + ord + ', ' + fullYear]) map[MONTH_FULL_NUM[mi] + ' ' + dayStr + ord + ', ' + fullYear] = origSpelled;
+      if (!map[MONTH_FULL_NUM[mi] + ' ' + dayStr + ' ' + fullYear]) map[MONTH_FULL_NUM[mi] + ' ' + dayStr + ' ' + fullYear] = origSpelled;
+      if (!map[dayStr + ' ' + MONTH_FULL_NUM[mi] + ' ' + fullYear]) map[dayStr + ' ' + MONTH_FULL_NUM[mi] + ' ' + fullYear] = origSpelled;
+    }
   }
 
   // ISO format: "2020-07-21" → also generate US variants and written-out formats
@@ -1427,22 +1498,36 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
     if (!map[mi + '-' + di + '-' + y]) map[mi + '-' + di + '-' + y] = original;
     if (!map[m + '-' + d + '-' + y]) map[m + '-' + d + '-' + y] = original;
     // Written-out: "July 21, 2020", "Jul 21, 2020"
+    // DEF-013: Map spelled-out pseudonym → spelled-out original (not numeric original)
     const MONTH_FULL = ['', 'January', 'February', 'March', 'April', 'May', 'June',
       'July', 'August', 'September', 'October', 'November', 'December'];
     const MONTH_SHORT = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    // Parse original date to generate matching spelled-out original
+    const origDateMatchISO = original.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+    const origIsoMatchISO = original.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    let isoOrigSpelled = original;
+    if (origDateMatchISO) {
+      const om = parseInt(origDateMatchISO[1]), od = parseInt(origDateMatchISO[2]);
+      const oy = origDateMatchISO[3];
+      const origFY = oy.length === 2 ? (parseInt(oy) > 50 ? '19' + oy : '20' + oy) : oy;
+      if (om >= 1 && om <= 12) isoOrigSpelled = MONTH_FULL[om] + ' ' + od + ', ' + origFY;
+    } else if (origIsoMatchISO) {
+      const om = parseInt(origIsoMatchISO[2]), od = parseInt(origIsoMatchISO[3]);
+      if (om >= 1 && om <= 12) isoOrigSpelled = MONTH_FULL[om] + ' ' + od + ', ' + origIsoMatchISO[1];
+    }
     if (mi >= 1 && mi <= 12) {
       const dayStr = String(di);
       // "July 21, 2020" and "Jul 21, 2020"
-      if (!map[MONTH_FULL[mi] + ' ' + dayStr + ', ' + y]) map[MONTH_FULL[mi] + ' ' + dayStr + ', ' + y] = original;
-      if (!map[MONTH_SHORT[mi] + ' ' + dayStr + ', ' + y]) map[MONTH_SHORT[mi] + ' ' + dayStr + ', ' + y] = original;
+      if (!map[MONTH_FULL[mi] + ' ' + dayStr + ', ' + y]) map[MONTH_FULL[mi] + ' ' + dayStr + ', ' + y] = isoOrigSpelled;
+      if (!map[MONTH_SHORT[mi] + ' ' + dayStr + ', ' + y]) map[MONTH_SHORT[mi] + ' ' + dayStr + ', ' + y] = isoOrigSpelled;
       // With ordinal: "July 21st, 2020"
       const ord = (di === 1 || di === 21 || di === 31) ? 'st' : (di === 2 || di === 22) ? 'nd' : (di === 3 || di === 23) ? 'rd' : 'th';
-      if (!map[MONTH_FULL[mi] + ' ' + dayStr + ord + ', ' + y]) map[MONTH_FULL[mi] + ' ' + dayStr + ord + ', ' + y] = original;
+      if (!map[MONTH_FULL[mi] + ' ' + dayStr + ord + ', ' + y]) map[MONTH_FULL[mi] + ' ' + dayStr + ord + ', ' + y] = isoOrigSpelled;
       // Without comma: "July 21 2020"
-      if (!map[MONTH_FULL[mi] + ' ' + dayStr + ' ' + y]) map[MONTH_FULL[mi] + ' ' + dayStr + ' ' + y] = original;
+      if (!map[MONTH_FULL[mi] + ' ' + dayStr + ' ' + y]) map[MONTH_FULL[mi] + ' ' + dayStr + ' ' + y] = isoOrigSpelled;
       // "21 July 2020" (international format)
-      if (!map[dayStr + ' ' + MONTH_FULL[mi] + ' ' + y]) map[dayStr + ' ' + MONTH_FULL[mi] + ' ' + y] = original;
+      if (!map[dayStr + ' ' + MONTH_FULL[mi] + ' ' + y]) map[dayStr + ' ' + MONTH_FULL[mi] + ' ' + y] = isoOrigSpelled;
     }
     // Without leading zeros: 2020-7-21
     const noZeroKey = y + '-' + mi + '-' + di;
@@ -1508,7 +1593,9 @@ const _ORG_SUFFIXES = new Set([
 ]);
 function looksLikePersonName(s: string): boolean {
   const words = s.split(/\s+/);
-  if (words.length < 2 || !words.every(w => /^[A-Z][a-z]/.test(w))) return false;
+  if (words.length < 2) return false;
+  // L-7 FIX: Handle apostrophes (O'Brien), hyphens (Soo-Jin), and all-caps (JOHN)
+  if (!words.every(w => /^[A-Z][a-z'-]/.test(w) || /^[A-Z]{2,}$/.test(w) || /^[A-Z]'[A-Z][a-z]/.test(w))) return false;
   // Reject if last word is a common org suffix
   if (_ORG_SUFFIXES.has(words[words.length - 1].toLowerCase())) return false;
   return true;
@@ -1603,19 +1690,38 @@ function replacePseudonyms(text: string, reverseMap: Record<string, string>): st
   // pseudonym words. This catches edge cases that strategies 1-3 miss:
   // possessives ("Contoso's"), hyphenated forms, punctuation-attached, etc.
   //
-  // Uses aggressive case-insensitive substring matching (no word boundaries).
-  // Only runs on pseudonym keys >= 4 chars to avoid false positives on
-  // short common words.
-  const resultLower = result.toLowerCase();
+  // Guards against false positives:
+  //   1. Skip short keys (< 7 chars) — "Park", "May", "Lee" appear in normal text
+  //   2. Skip fragment keys that are substrings of LONGER pseudonym keys —
+  //      e.g., "Emily" (fragment) must not match inside already-de-pseudoed
+  //      "emily.rogers@redwoodcorp.io" email address (DEF-012)
+  //   3. Only match at word-ish boundaries (alphanumeric transitions)
+  //
+  // L-1/L-2 PERF FIX: Precompute substring exclusion set once, avoid repeated toLowerCase()
+  const _leakLongerKeys = _regexCache.map(e => e.pseudonym.toLowerCase());
+  const _leakExcluded = new Set<string>();
+  for (const entry of _regexCache) {
+    const pl = entry.pseudonym.toLowerCase();
+    if (pl.length < 7) continue;
+    for (const longer of _leakLongerKeys) {
+      if (longer.length > pl.length && longer.includes(pl)) {
+        _leakExcluded.add(pl);
+        break;
+      }
+    }
+  }
+  let resultLowerLeak = result.toLowerCase(); // compute once, rebuild only on mutation
   for (const entry of _regexCache) {
     const pseudoLower = entry.pseudonym.toLowerCase();
-    if (pseudoLower.length < 4) continue;
-    if (!resultLower.includes(pseudoLower)) continue;
+    if (pseudoLower.length < 7) continue;
+    if (_leakExcluded.has(pseudoLower)) continue;
+    if (!resultLowerLeak.includes(pseudoLower)) continue;
     // Found a leak — replace aggressively (no boundaries)
-    let idx = result.toLowerCase().indexOf(pseudoLower);
+    let idx = resultLowerLeak.indexOf(pseudoLower);
     while (idx !== -1) {
       result = result.substring(0, idx) + entry.original + result.substring(idx + entry.pseudonym.length);
-      idx = result.toLowerCase().indexOf(pseudoLower, idx + entry.original.length);
+      resultLowerLeak = result.toLowerCase(); // rebuild after mutation
+      idx = resultLowerLeak.indexOf(pseudoLower, idx + entry.original.length);
     }
   }
 
@@ -1644,6 +1750,9 @@ let _persistentPollTimer: ReturnType<typeof setInterval> | null = null;
 let _persistentReplacementCount = 0;
 // WeakSet of text nodes we just modified — observer skips these once then forgets
 const _igOurMutations = new WeakSet<Node>();
+// M-3 FIX: WeakSet to prevent concurrent depseudonymizeUserBubble calls from
+// double-processing the same node. Check+add BEFORE mutation, not after.
+const _igBubbleProcessed = new WeakSet<Node>();
 // Pending rapid follow-up scan
 let _rapidScanPending = false;
 // BUG-21: Session sequence number for clearReverseMapFully() — used to reject stale
@@ -1744,8 +1853,18 @@ const turnCoordinator = (() => {
  *   4. Leaking into sidepanel as stale swap data
  */
 function clearReverseMapFully(): void {
+  // M-4 FIX: If there are active SSE streams being de-pseudonymized,
+  // defer the clear until all streams complete. This prevents wiping
+  // the map mid-stream when the user navigates to a new conversation.
+  if (_activeStreamCount > 0) {
+    _pendingClear = true;
+    igLog(`clearReverseMapFully: deferred — ${_activeStreamCount} active stream(s)`);
+    return;
+  }
+
   const hadEntries = Object.keys(currentReverseMap).length > 0;
   currentReverseMap = {};
+  _pendingClear = false;
   _clearSequence++;
   _lastClearTime = Date.now();
   _regexCacheVersion++;
@@ -1770,6 +1889,18 @@ function clearReverseMapFully(): void {
       _seq: _clearSequence,
     });
     igLog('Cleared reverse map fully (map + observer + persisted storage)');
+  }
+}
+
+/**
+ * M-4: Called when a de-pseudo stream ends. Decrements active stream count
+ * and executes any deferred clearReverseMapFully() if all streams are done.
+ */
+function _onStreamEnd(): void {
+  _activeStreamCount = Math.max(0, _activeStreamCount - 1);
+  if (_activeStreamCount === 0 && _pendingClear) {
+    igLog('All active streams ended — executing deferred clearReverseMapFully()');
+    clearReverseMapFully();
   }
 }
 
@@ -1918,6 +2049,10 @@ function depseudonymizeUserBubble(reverseMap: Record<string, string>): void {
     let node: Text | null;
     while ((node = walker.nextNode() as Text | null)) {
       if (!node.textContent || node.textContent.length <= 2) continue;
+      // M-3 FIX: Check and add to WeakSet BEFORE replacement to prevent
+      // concurrent calls from double-processing the same node.
+      if (_igBubbleProcessed.has(node)) continue;
+      _igBubbleProcessed.add(node);
       // Use the SAME replacePseudonyms engine as stream de-pseudo.
       const replaced = replacePseudonyms(node.textContent, reverseMap);
       if (replaced !== node.textContent) {
@@ -2011,7 +2146,10 @@ function stripOffsetAnnotations(text: string): string {
 function depseudonymizeResponseRaw(response: Response, reverseMap: Record<string, string>): Response {
   if (!response.body || response.bodyUsed) return response;
 
-  const mapKeys = Object.keys(reverseMap);
+  // M-6 fix: Snapshot the reverse map at stream-creation time so that
+  // concurrent pseudonymization from another prompt cannot pollute this stream.
+  const snapshotMap = { ...reverseMap };
+  const mapKeys = Object.keys(snapshotMap);
   if (mapKeys.length === 0) return response;
 
   // BUG-35: Use igLog only (rate-limited) — console.log here caused spam with 100+ entity convos
@@ -2024,6 +2162,9 @@ function depseudonymizeResponseRaw(response: Response, reverseMap: Record<string
     console.warn('[Iron Gate MAIN] depseudonymizeResponseRaw: getReader() failed —', readerErr instanceof Error ? readerErr.message : String(readerErr));
     return response;
   }
+
+  // M-4: Track active stream for deferred clear
+  _activeStreamCount++;
 
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
@@ -2040,12 +2181,13 @@ function depseudonymizeResponseRaw(response: Response, reverseMap: Record<string
         if (done) {
           // Flush held-back content
           if (holdback.length > 0) {
-            const replaced = replacePseudonyms(holdback, reverseMap);
+            const replaced = replacePseudonyms(holdback, snapshotMap);
             if (replaced !== holdback) totalReplacements++;
             controller.enqueue(encoder.encode(replaced));
           }
           igLog(`depseudonymizeResponseRaw: stream complete — ${chunkCount} chunks, ${totalReplacements} replacements`);
           controller.close();
+          _onStreamEnd(); // M-4
           return;
         }
 
@@ -2058,7 +2200,7 @@ function depseudonymizeResponseRaw(response: Response, reverseMap: Record<string
         holdback = decoded.substring(safeLen);
 
         if (safeText.length > 0) {
-          const replaced = replacePseudonyms(safeText, reverseMap);
+          const replaced = replacePseudonyms(safeText, snapshotMap);
           if (replaced !== safeText) totalReplacements++;
           controller.enqueue(encoder.encode(replaced));
         }
@@ -2077,6 +2219,7 @@ function depseudonymizeResponseRaw(response: Response, reverseMap: Record<string
         } catch {
           try { controller.error(err); } catch { /* already closed */ }
         }
+        _onStreamEnd(); // M-4
       }
     },
   });
@@ -2103,7 +2246,10 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
     return response;
   }
 
-  const mapKeys = Object.keys(reverseMap);
+  // M-6 fix: Snapshot the reverse map at stream-creation time so that
+  // concurrent pseudonymization from another prompt cannot pollute this stream.
+  const snapshotMap = { ...reverseMap };
+  const mapKeys = Object.keys(snapshotMap);
   if (mapKeys.length === 0) {
     igLog('depseudonymizeResponse: no mappings — returning response as-is');
     return response;
@@ -2113,7 +2259,7 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
   const strategy = activeAdapter?.responseStreamStrategy || 'sse-content';
   console.log(`[Iron Gate DEPSEUDO] Strategy dispatch: adapter=${activeAdapter?.id || 'null'}, strategy=${strategy}, adapterProp=${activeAdapter?.responseStreamStrategy ?? 'MISSING'}`);
   if (strategy === 'raw-chunk') {
-    return depseudonymizeResponseRaw(response, reverseMap);
+    return depseudonymizeResponseRaw(response, snapshotMap);
   }
   if (strategy === 'none') {
     return response;
@@ -2129,6 +2275,10 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
     console.warn('[Iron Gate MAIN] depseudonymizeResponse: getReader() failed —', readerErr instanceof Error ? readerErr.message : String(readerErr));
     return response;
   }
+
+  // M-4: Track active stream for deferred clear
+  _activeStreamCount++;
+
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
 
@@ -2220,7 +2370,7 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
     // in case the response uses a non-SSE streaming format (e.g. raw JSON lines)
     if (!line.startsWith('data: ')) {
       if (line.length > 10) {
-        const replaced = replacePseudonyms(line, reverseMap);
+        const replaced = replacePseudonyms(line, snapshotMap);
         if (replaced !== line) totalReplacements++;
         return replaced;
       }
@@ -2232,7 +2382,7 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
     // Pass through non-JSON payloads
     if (!payload.startsWith('{') && !payload.startsWith('[')) {
       // Raw text replacement fallback
-      const replaced = replacePseudonyms(payload, reverseMap);
+      const replaced = replacePseudonyms(payload, snapshotMap);
       if (replaced !== payload) totalReplacements++;
       return 'data: ' + replaced;
     }
@@ -2243,7 +2393,7 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
       parsed = JSON.parse(payload);
     } catch {
       // Invalid JSON — raw text replacement fallback
-      const replaced = replacePseudonyms(payload, reverseMap);
+      const replaced = replacePseudonyms(payload, snapshotMap);
       if (replaced !== payload) totalReplacements++;
       return 'data: ' + replaced;
     }
@@ -2256,7 +2406,7 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
       }
       // No content field (metadata event, etc.) — pass through with raw replacement
       const reser = JSON.stringify(parsed);
-      const replaced = replacePseudonyms(reser, reverseMap);
+      const replaced = replacePseudonyms(reser, snapshotMap);
       if (replaced !== reser) totalReplacements++;
       return 'data: ' + replaced;
     }
@@ -2274,7 +2424,7 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
       // are in the accumulated text, "James Park" appears contiguously.
       // Replace in the full content — the frontend always shows the latest
       // version, so corrections appear seamlessly with no flicker.
-      const replaced = replacePseudonyms(content, reverseMap);
+      const replaced = replacePseudonyms(content, snapshotMap);
       if (replaced !== content) totalReplacements++;
       stripAnnotations(parsed);
       injectContent(parsed, mode, replaced);
@@ -2285,12 +2435,19 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
     // Each event has only the new token. Accumulate into a running buffer,
     // replace in the full buffer, diff to compute the corrected delta.
     deltaAccumulator += content;
-    const replaced = replacePseudonyms(deltaAccumulator, reverseMap);
+    const replaced = replacePseudonyms(deltaAccumulator, snapshotMap);
     if (replaced !== deltaAccumulator) totalReplacements++;
 
     // Hold back the last maxPseudoLen chars — might be a partial pseudonym.
     // Only emit what's safe (won't change when more content arrives).
-    const safeLen = Math.max(emittedDeltaLen, replaced.length - maxPseudoLen);
+    // H-3 FIX: Use deltaAccumulator length (not replaced length) to compute safe boundary.
+    // When replacement shortens text ("Jonathan" → "John"), replaced.length < deltaAccumulator.length,
+    // and the old formula could advance safeLen beyond the actual safe boundary.
+    const unreplacedSafeLen = deltaAccumulator.length - maxPseudoLen;
+    // Map the unreplaced safe boundary to the replaced string's coordinate space.
+    // The ratio of replaced/unreplaced lengths gives the approximate mapping.
+    const ratio = deltaAccumulator.length > 0 ? replaced.length / deltaAccumulator.length : 1;
+    const safeLen = Math.max(emittedDeltaLen, Math.floor(unreplacedSafeLen * ratio));
     const newDelta = replaced.substring(emittedDeltaLen, safeLen);
     emittedDeltaLen = safeLen;
 
@@ -2329,7 +2486,7 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
 
           // Flush held-back delta content
           if (emittedDeltaLen < deltaAccumulator.length) {
-            const replaced = replacePseudonyms(deltaAccumulator, reverseMap);
+            const replaced = replacePseudonyms(deltaAccumulator, snapshotMap);
             const finalDelta = replaced.substring(emittedDeltaLen);
             if (finalDelta.length > 0) {
               // Emit as a raw data line (the stream is ending, format doesn't matter)
@@ -2340,6 +2497,7 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
           igLog(`depseudonymizeResponse: stream complete — ${chunkCount} chunks, ${totalReplacements} replacements`);
           console.log(`[Iron Gate DEPSEUDO] Stream complete — ${chunkCount} chunks, ${totalReplacements} replacements, deltaAccum=${deltaAccumulator.length} chars`);
           controller.close();
+          _onStreamEnd(); // M-4
           return;
         }
 
@@ -2379,6 +2537,7 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
         } catch {
           try { controller.error(err); } catch { /* already closed */ }
         }
+        _onStreamEnd(); // M-4
       }
     },
   });
@@ -2676,7 +2835,8 @@ function _checkConversationBoundary(): void {
     //   Poe:        /chat/{botName}/{chatId}
     const convIdPatterns = [
       /\/c\/([^/?#]+)/,             // ChatGPT, Copilot
-      /\/chat\/([^/?#]+)/,          // Claude, Poe
+      /\/chat\/[^/?#]+\/([^/?#]+)/, // Poe: /chat/{botName}/{chatId} — capture chatId, not botName
+      /\/chat\/([^/?#]+)/,          // Claude: /chat/{uuid}
       /\/app\/([^/?#]+)/,           // Gemini
       /\/search\/([^/?#]+)/,        // Perplexity
       /\/a\/chat\/s\/([^/?#]+)/,    // DeepSeek
@@ -3100,7 +3260,8 @@ function _readFileToBase64AndPost(file: File, source: string): void {
       const scanEntry = pendingFileScans.get(fileKey);
       if (scanEntry && scanEntry.status === 'scanning') {
         scanEntry.status = 'complete';
-        scanEntry.result = { score: 0, level: 'low', entities: [], explanation: 'File read error — failing open', entitiesFound: 0, decision: 'allow', error: true };
+        // H-9 FIX: Fail CLOSED — unreadable files (encrypted, corrupted) should block, not allow.
+        scanEntry.result = { score: 100, level: 'critical', entities: [], explanation: 'File read error — blocked (cannot verify safety)', entitiesFound: 0, decision: 'block', error: true };
       }
     });
   } catch (outerErr) {
@@ -3324,9 +3485,15 @@ const patchedFetch = async function patchedFetch(
     return originalFetch.call(window, input, init);
   }
 
-  // ── Clear reverse map now that we know this is a conversation POST (body >= 50 chars) ──
-  // Safe to clear: the map will be repopulated below if pseudonymization occurs.
-  clearReverseMapFully();
+  // ── PRESERVE reverse map across turns (DEF-008 + DEF-009 fix) ──
+  // DO NOT clear the map here. Previous turn's pseudonyms must survive so that:
+  //   1. The LLM's response to a clean Turn 2 can still be de-pseudonymized
+  //      (the response may reference Turn 1's pseudonymized names)
+  //   2. The persistent DOM observer stays alive to protect user bubbles
+  //      against React re-renders (Claude WebSocket updates)
+  // The map has MAX_MAP_SIZE (2000 entries) with LRU eviction, so unbounded
+  // growth is already guarded against.
+  // Map IS cleared on: page navigation, new conversation URL, explicit clear.
 
   // ChatGPT-specific diagnostic — ALWAYS log (not limited to first 15 calls)
   if (url.includes('chatgpt.com') || url.includes('chat.openai.com') || url.includes('/backend-api/') || url.includes('/conversation')) {
@@ -3366,10 +3533,10 @@ const patchedFetch = async function patchedFetch(
 
     // Prevent double pseudonymization: if this body was already proxied
     // (e.g., ChatGPT sends /prepare then /conversation with same data),
-    // skip the second interception.
-    const PROXY_MARKER = 'enterprise privacy tool';
-    if (bodyString.includes(PROXY_MARKER)) {
-      igLog('Body already contains proxy marker — skipping double pseudonymization');
+    // skip the second interception. Uses a per-session cryptographic nonce
+    // that can't be guessed or injected by user prompts (C-2 fix).
+    if (_proxyNonce && bodyString.includes(_proxyNonce)) {
+      igLog('Body contains session proxy nonce — skipping double pseudonymization');
       return originalFetch.call(window, input, init);
     }
 
@@ -3377,6 +3544,19 @@ const patchedFetch = async function patchedFetch(
       // Adapter-first extraction: use the active adapter's platform-specific
       // parser, falling back to the generic multi-format extractor.
       const promptText = activeAdapter?.extractPrompt(bodyString) ?? extractPrompt(bodyString);
+
+      // ── DIAGNOSTIC: Log extraction result for all platforms ──
+      console.log(
+        '%c[Iron Gate DIAG] extractPrompt result',
+        'color: #f59e0b; font-weight: bold',
+        {
+          adapter: activeAdapter?.id || 'generic',
+          bodyLength: bodyString.length,
+          promptLength: promptText?.length ?? 0,
+          promptPreview: promptText ? promptText.substring(0, 300) : '(null)',
+          url: typeof input === 'string' ? input : (input as Request)?.url?.substring(0, 100),
+        }
+      );
 
       if (!promptText || promptText.length < 10) {
         igLog(`extractPrompt returned ${promptText === null ? 'null' : `${promptText?.length} chars`} — body: ${bodyString.length} chars`);
@@ -3399,7 +3579,11 @@ const patchedFetch = async function patchedFetch(
                 type: 'IRON_GATE_AUDIT', promptText, allEntities: [],
                 maskedText: '', mappings: [], level: 'low', score: serverResult.sensitivityScore || 0,
               });
-              clearReverseMapFully();
+              // DEF-009 FIX: Wrap response with previous turn's reverse map
+              if (Object.keys(currentReverseMap).length > 0) {
+                const response = await originalFetch.call(window, input, init);
+                return depseudonymizeResponse(response, { ...currentReverseMap });
+              }
               return originalFetch.call(window, input, init);
             }
 
@@ -3492,6 +3676,21 @@ const patchedFetch = async function patchedFetch(
 
         igLog(`Detected ${allEntities.length} entities in prompt (${promptText.length} chars)`);
 
+        // ── DIAGNOSTIC: Log every detected entity for debugging ──
+        if (allEntities.length > 0) {
+          console.log(
+            '%c[Iron Gate DIAG] Detected entities:',
+            'color: #f59e0b; font-weight: bold',
+            allEntities.map(e => ({ type: e.type, text: (e as any).text?.substring(0, 40) || (e as any).value?.substring(0, 40), confidence: (e as any).confidence }))
+          );
+        } else {
+          console.warn(
+            '%c[Iron Gate DIAG] ZERO entities detected from prompt:',
+            'color: #ef4444; font-weight: bold',
+            { promptLength: promptText.length, promptPreview: promptText.substring(0, 500) }
+          );
+        }
+
         // ── Always run scoring pipeline (contextual keywords matter even without entities) ──
         // Prompts like "Q3 revenue projections ($18.4M), layoffs (12 people),
         // acquisition of BetaWorks" contain ZERO regex entities but are highly
@@ -3529,8 +3728,12 @@ const patchedFetch = async function patchedFetch(
                 entityTypes: [...new Set(allEntities.map(e => e.type))],
               });
             }
-            // Clear stale reverse map — new prompt doesn't need de-pseudonymization
-            clearReverseMapFully();
+            // ── DEF-009 FIX: Wrap response with previous turn's reverse map ──
+            // Don't clear the map — Turn 1's pseudonyms may appear in the response.
+            if (Object.keys(currentReverseMap).length > 0) {
+              const response = await originalFetch.call(window, input, init);
+              return depseudonymizeResponse(response, { ...currentReverseMap });
+            }
             return originalFetch.call(window, input, init);
           }
 
@@ -3558,8 +3761,11 @@ const patchedFetch = async function patchedFetch(
               type: 'IRON_GATE_AUDIT', promptText, allEntities,
               maskedText: '', mappings: [], level, score,
             });
-            // Clear stale reverse map — new prompt doesn't need de-pseudonymization
-            clearReverseMapFully();
+            // ── DEF-009 FIX: Wrap response with previous turn's reverse map ──
+            if (Object.keys(currentReverseMap).length > 0) {
+              const response = await originalFetch.call(window, input, init);
+              return depseudonymizeResponse(response, { ...currentReverseMap });
+            }
             return originalFetch.call(window, input, init);
           }
 
@@ -3838,12 +4044,29 @@ const patchedFetch = async function patchedFetch(
             'color: #818cf8; font-weight: bold',
           );
 
-          // Clear stale reverse map — previous prompt's pseudonyms are no longer relevant.
-          clearReverseMapFully();
           turnCoordinator.submit({
             type: 'IRON_GATE_AUDIT', promptText, allEntities: [],
             maskedText: '', mappings: [], level, score,
           });
+
+          // ── CRITICAL: Clear stale sidepanel results ──
+          igPostMessage({
+            type: 'IRON_GATE_CLEAN_SUBMIT',
+            score,
+            level,
+            promptLength: promptText.length,
+          });
+
+          // ── DEF-009 FIX: Wrap response with PREVIOUS turn's reverse map ──
+          // The LLM has Turn 1's pseudonymized names in context. Even though
+          // Turn 2 has no new entities, the response may reference those
+          // pseudonyms. De-pseudonymize the response so the user sees real names.
+          if (Object.keys(currentReverseMap).length > 0) {
+            igLog(`PROXY MODE — passthrough with ${Object.keys(currentReverseMap).length} existing reverse map entries, wrapping response for multi-turn de-pseudo`);
+            const response = await originalFetch.call(window, input, init);
+            return depseudonymizeResponse(response, { ...currentReverseMap });
+          }
+          return originalFetch.call(window, input, init);
         }
       } else {
         igLog(`PROXY MODE — no prompt extracted from body (${bodyString.length} chars), passing through`);
@@ -3913,7 +4136,11 @@ const patchedFetch = async function patchedFetch(
     })();
   }
 
-  // Pass through to original fetch — no delay
+  // Pass through to original fetch — wrap with de-pseudo if map has entries
+  if (Object.keys(currentReverseMap).length > 0 && adapterIsLLMEndpoint(url, activeAdapter)) {
+    const response = await originalFetch.call(window, input, init);
+    return depseudonymizeResponse(response, { ...currentReverseMap });
+  }
   return originalFetch.call(window, input, init);
 }
 
@@ -4240,7 +4467,7 @@ XMLHttpRequest.prototype.send = function(body?: any) {
                 type: 'IRON_GATE_AUDIT', promptText, allEntities,
                 maskedText: '', mappings: [], level, score,
               });
-              clearReverseMapFully();
+              // DEF-014: Do NOT clear reverse map here — previous turns' mappings must persist
               return originalXHRSend.call(this, body);
             }
 
@@ -4255,7 +4482,7 @@ XMLHttpRequest.prototype.send = function(body?: any) {
                 type: 'IRON_GATE_AUDIT', promptText, allEntities,
                 maskedText: '', mappings: [], level, score,
               });
-              clearReverseMapFully();
+              // DEF-014: Do NOT clear reverse map here — previous turns' mappings must persist
               return originalXHRSend.call(this, body);
             }
 
@@ -4304,7 +4531,7 @@ XMLHttpRequest.prototype.send = function(body?: any) {
           } else {
             // No entities but contextual score may be high — report real score
             igLog(`XHR: no entities found (contextual score=${score}), sending original`);
-            clearReverseMapFully();
+            // DEF-014: Do NOT clear reverse map here — previous turns' mappings must persist
             turnCoordinator.submit({
               type: 'IRON_GATE_AUDIT', promptText, allEntities: [],
               maskedText: '', mappings: [], level, score,
@@ -4312,9 +4539,15 @@ XMLHttpRequest.prototype.send = function(body?: any) {
           }
         }
       } catch (err) {
-        console.warn('[Iron Gate MAIN] XHR proxy error — blocking to protect sensitive data:', err);
-        // Fail CLOSED: do not send original body with PII
-        return;
+        console.error(
+          '%c[Iron Gate SECURITY] XHR proxy error — BLOCKED to protect sensitive data',
+          'color: #ef4444; font-weight: bold', err,
+        );
+        // H-1 FIX: Fail CLOSED with user notification (was silently dropping request).
+        // Send empty body so XHR completes with an error the platform can handle,
+        // rather than leaving the request hanging forever.
+        igPostMessage({ type: 'IRON_GATE_XHR_BLOCKED', error: 'Proxy error — request blocked to protect PII' });
+        return originalXHRSend.call(this, '');
       }
     }
 
@@ -4391,9 +4624,13 @@ function _reEncodeBinary(text: string, wasBinary: boolean, format: 'arraybuffer'
 
 let pendingCopilotPseudo: { original: string; maskedText: string } | null = null;
 let pendingCopilotTimer: ReturnType<typeof setTimeout> | null = null;
+// H-14: Track whether a pending pseudo expired — if WS frame arrives after expiry,
+// we must block it rather than sending raw PII
+let _copilotPseudoExpired = false;
 
 function setPendingCopilotPseudo(pseudo: { original: string; maskedText: string }) {
   pendingCopilotPseudo = pseudo;
+  _copilotPseudoExpired = false; // Clear expired flag on new pseudo
   if (pendingCopilotTimer) clearTimeout(pendingCopilotTimer);
   // 30s TTL — Copilot's SignalR can be slow (reconnects, Azure edge latency).
   // 10s was too short and caused pseudonymization to silently fail on slow connections.
@@ -4401,14 +4638,21 @@ function setPendingCopilotPseudo(pseudo: { original: string; maskedText: string 
   pendingCopilotTimer = setTimeout(() => {
     if (pendingCopilotPseudo === pseudo) {
       // BUG-29: Log expiration with details so silent failures are diagnosable
-      console.warn(`[Iron Gate] Copilot WS: Pending pseudo EXPIRED after 30s (original=${pseudo.original.length}c, elapsed=${Date.now() - _pendingSetAt}ms). Pseudonymization lost for this message.`);
+      console.warn(`[Iron Gate] Copilot WS: Pending pseudo EXPIRED after 30s (original=${pseudo.original.length}c, elapsed=${Date.now() - _pendingSetAt}ms). Next WS frame will be BLOCKED.`);
       pendingCopilotPseudo = null;
+      _copilotPseudoExpired = true; // H-14: Flag so WS handler blocks the next frame
     }
     pendingCopilotTimer = null;
   }, 30000);
 }
 
 function applyCopilotSignalRPseudo(data: string): string {
+  // H-14: If a pending pseudo expired, block the frame (don't send raw PII)
+  if (!pendingCopilotPseudo && _copilotPseudoExpired) {
+    console.warn('%c[Iron Gate SECURITY] Copilot WS: BLOCKED — pending pseudo expired, frame arrived too late', 'color: #ef4444; font-weight: bold');
+    _copilotPseudoExpired = false;
+    return '';
+  }
   if (!pendingCopilotPseudo) return data;
   const { original, maskedText } = pendingCopilotPseudo;
 
@@ -4461,8 +4705,15 @@ function applyCopilotSignalRPseudo(data: string): string {
     return frames.join(RS);
   }
 
-  igLog(`Copilot WS: No match in SignalR frame (frame=${data.length}c, orig=${original.length}c)`);
-  return data;
+  // C-4 FIX: Fail CLOSED — if we can't pseudonymize, block the frame.
+  // Returning unmodified data would silently leak raw PII to Copilot.
+  console.warn(
+    '%c[Iron Gate SECURITY] Copilot WS: BLOCKED — could not pseudonymize SignalR frame',
+    'color: #ef4444; font-weight: bold',
+    `(frame=${data.length}c, orig=${original.length}c)`,
+  );
+  pendingCopilotPseudo = null; // Clear so user can retry
+  return ''; // Empty string blocks the frame — Copilot will show an error or retry
 }
 
 function _walkPseudoSignalR(obj: any): { value: any; changed: boolean } {
@@ -4578,13 +4829,10 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
             wasBinary = true;
             originalBinaryFormat = 'view';
           } else {
-            // Blob — can't decode synchronously. Fail-closed in proxy mode:
-            // if we can't inspect it, we can't guarantee it's safe.
-            if (mode === 'proxy') {
-              console.warn('[Iron Gate MAIN] WS: Blob frame BLOCKED in proxy mode — cannot inspect for PII');
-              return; // block
-            }
-            return originalSend(data); // audit mode: passthrough
+            // Blob — binary data (e.g., images, audio, protobuf).
+            // These are not text prompts and cannot contain user-typed PII.
+            // Pass through unchanged in all modes (M-5 fix).
+            return originalSend(data);
           }
         } catch (decodeErr) {
           // Binary decode failed. Fail-closed in proxy mode:
@@ -4619,8 +4867,10 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
       // text, this proxy won't find entities and passes through harmlessly.
       if (mode === 'proxy') {
         try {
-          // Skip very short frames — Socket.IO heartbeats/acks (e.g. "2", "3", "40", "42")
-          if (strData.length < 20 && /^\d{1,3}$/.test(strData.trim())) {
+          // Skip Socket.IO control frames: "0" (CONNECT), "1" (DISCONNECT), "2" (PING),
+          // "3" (PONG), "40" (CONNECT/ns). Do NOT skip "42" — that's MESSAGE type containing user data.
+          // M-20 FIX: Old regex /^\d{1,3}$/ was too broad and skipped actual messages.
+          if (strData.length < 10 && /^[0-3](?:0|1)?$/.test(strData.trim())) {
             return _sendResult(strData);
           }
 
@@ -4833,8 +5083,8 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
       // Copilot/Bing WS connections are skipped (returned early above).
       if (mode === 'audit') {
         try {
-          // Skip very short frames — Socket.IO heartbeats/acks
-          if (strData.length < 20 && /^\d{1,3}$/.test(strData.trim())) {
+          // Skip Socket.IO control frames only (not "42" MESSAGE type)
+          if (strData.length < 10 && /^[0-3](?:0|1)?$/.test(strData.trim())) {
             return _sendResult(strData);
           }
           // Adapter-first WS extraction, then generic + offset fallbacks
@@ -5125,7 +5375,7 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
 
     if (allEntities.length === 0) {
       igLog(`${source} DOM: no entities (contextual score=${score}), not pseudonymizing`);
-      clearReverseMapFully();
+      // DEF-014: Do NOT clear reverse map here — previous turns' mappings must persist
       // Report contextual score so sidepanel shows real risk
       turnCoordinator.submit({
         type: 'IRON_GATE_AUDIT', promptText: text, allEntities: [],
@@ -5141,7 +5391,7 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
         type: 'IRON_GATE_AUDIT', promptText: text, allEntities,
         maskedText: '', mappings: [], level, score,
       });
-      clearReverseMapFully();
+      // DEF-014: Do NOT clear reverse map here — previous turns' mappings must persist
       return null;
     }
 
@@ -5156,7 +5406,7 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
         type: 'IRON_GATE_AUDIT', promptText: text, allEntities,
         maskedText: '', mappings: [], level, score,
       });
-      clearReverseMapFully();
+      // DEF-014: Do NOT clear reverse map here — previous turns' mappings must persist
       return null;
     }
 

@@ -116,6 +116,26 @@ if (process.env.CHROME_EXTENSION_ID) {
 
 // Global middleware
 
+// 0. M-25: Content-Type validation — reject POST/PUT without application/json
+// (exempt: Stripe webhooks which send raw body, health endpoints, and multipart uploads)
+app.use('*', createMiddleware(async (c, next) => {
+  const method = c.req.method;
+  if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
+    const contentType = c.req.header('content-type') || '';
+    const path = c.req.path;
+    // Exempt paths that legitimately use non-JSON content types
+    const exempt = path.startsWith('/v1/webhooks/stripe')
+      || path.startsWith('/health')
+      || path.startsWith('/healthz')
+      || path.startsWith('/readyz')
+      || contentType.includes('multipart/form-data');
+    if (!exempt && !contentType.includes('application/json')) {
+      return c.json({ error: 'Content-Type must be application/json' }, 415);
+    }
+  }
+  await next();
+}));
+
 // 1. Request body size limit — prevent memory exhaustion attacks (10 MB)
 app.use('*', bodyLimit({ maxSize: 10 * 1024 * 1024 }));
 
@@ -133,8 +153,10 @@ app.use('*', requestLoggerMiddleware);
 app.use(
   '*',
   cors({
+    // M-26: Strict CORS — only allow known dashboard, localhost (dev), and registered extension origins
     origin: (origin) => {
-      if (!origin) return allowedOrigins[0];
+      // No origin header = server-to-server or same-origin; don't reflect any origin
+      if (!origin) return null;
       // Only allow registered Iron Gate Chrome extension IDs
       if (origin.startsWith('chrome-extension://')) {
         const extId = origin.replace('chrome-extension://', '');
@@ -440,9 +462,11 @@ app.get('/internal/cron/retention', async (c) => {
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
 
 // Error handler — returns 400 for Zod validation errors, 500 for everything else
+// M-24: In production, never leak stack traces or internal paths to clients
 app.onError((err, c) => {
+  const isProd = process.env.NODE_ENV === 'production';
   if (err instanceof z.ZodError) {
-    return c.json({ error: 'Validation error', details: err.errors }, 400);
+    return c.json({ error: 'Validation error', details: isProd ? 'Invalid request data' : err.errors }, 400);
   }
   const requestId = (c.get as any)('requestId');
   // Report to Sentry if initialized
@@ -457,8 +481,12 @@ app.onError((err, c) => {
       },
     });
   }
-  logger.error('Unhandled error', { error: err instanceof Error ? err.message : String(err), requestId });
-  return c.json({ error: 'Internal server error' }, 500);
+  logger.error('Unhandled error', { error: err instanceof Error ? err.message : String(err), stack: err instanceof Error ? err.stack : undefined, requestId });
+  // In production, return only a generic message with the request ID for correlation
+  if (isProd) {
+    return c.json({ error: 'Internal server error', requestId }, 500);
+  }
+  return c.json({ error: 'Internal server error', message: err instanceof Error ? err.message : String(err), requestId }, 500);
 });
 
 // ── Startup Validation ──────────────────────────────────────────────────────

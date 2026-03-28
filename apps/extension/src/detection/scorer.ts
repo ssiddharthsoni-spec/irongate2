@@ -173,6 +173,57 @@ const VOLUME_SCORES = {
   VERY_LONG: 20,
 };
 
+// ── Named scoring constants ─────────────────────────────────────────────────
+// Thresholds and caps referenced in the scoring pipeline.
+// Extracted as named constants for clarity and single-source-of-truth.
+
+/** Minimum score guaranteed for a single always-critical entity (e.g., SSN) */
+const SINGLE_CRITICAL_ENTITY_FLOOR = 61;
+/** Minimum score guaranteed for two or more always-critical entities */
+const MULTI_CRITICAL_ENTITY_FLOOR = 86;
+/** Contextual keyword score at which multiplier suppression is disabled */
+const CONTEXTUAL_KEYWORD_SAFETY_THRESHOLD = 15;
+/** Contextual keyword score that triggers a minimum score floor of 30 */
+const CONTEXTUAL_KEYWORD_MEDIUM_FLOOR_THRESHOLD = 20;
+/** Floor score when contextual keywords reach CONTEXTUAL_KEYWORD_MEDIUM_FLOOR_THRESHOLD */
+const CONTEXTUAL_KEYWORD_MEDIUM_FLOOR = 30;
+/** Contextual keyword score that triggers a minimum score floor of 50 */
+const CONTEXTUAL_KEYWORD_HIGH_FLOOR_THRESHOLD = 35;
+/** Floor score when contextual keywords reach CONTEXTUAL_KEYWORD_HIGH_FLOOR_THRESHOLD */
+const CONTEXTUAL_KEYWORD_HIGH_FLOOR = 50;
+/** Maximum self-referential score ceiling (resume/bio with all entities suppressed) */
+const SELF_REFERENTIAL_CEILING = 20;
+/** Entity score cap — prevents single-layer dominance */
+const ENTITY_SCORE_CAP = 70;
+/** Context score cap */
+const CONTEXT_SCORE_CAP = 25;
+/** Legal boost cap */
+const LEGAL_BOOST_CAP = 25;
+/** Co-occurrence boost cap */
+const CO_OCCURRENCE_BOOST_CAP = 30;
+/** NaN fail-safe score when critical floor is 0 */
+const NAN_FAILSAFE_SCORE = 70;
+/** Minimum confidence for intent classification to affect scoring */
+const INTENT_CONFIDENCE_THRESHOLD = 0.7;
+/** Minimum confidence for entity context multiplier to take effect */
+const ENTITY_CONTEXT_CONFIDENCE_THRESHOLD = 0.7;
+/** Minimum confidence for document type multiplier to take effect */
+const DOC_TYPE_CONFIDENCE_THRESHOLD = 0.25;
+/** Minimum confidence for critical contextual markers */
+const CRITICAL_MARKER_CONFIDENCE = 0.88;
+/** Entity proximity distance for co-occurrence boost (chars) */
+const CO_OCCURRENCE_PROXIMITY = 100;
+/** Type combination bonus multiplier for 3+ unique types */
+const TYPE_COMBO_BONUS_3PLUS = 1.3;
+/** Type combination bonus multiplier for 2 unique types */
+const TYPE_COMBO_BONUS_2 = 1.15;
+/** Count bonus multiplier for 10+ entities */
+const COUNT_BONUS_10PLUS = 1.4;
+/** Count bonus multiplier for 5+ entities */
+const COUNT_BONUS_5PLUS = 1.2;
+/** Context window around each entity for keyword proximity check (chars) */
+const ENTITY_CONTEXT_WINDOW = 200;
+
 /**
  * Compute the sensitivity score for a given text and detected entities.
  */
@@ -191,7 +242,7 @@ export function computeScore(
   // Low-confidence classifications (fallback to 'general') should not
   // shift scores — preserves backward compatibility with existing tests.
   const rawIntentWeight = getIntentWeight(intentClassification);
-  let intentWeight = intentClassification.confidence >= 0.7
+  let intentWeight = intentClassification.confidence >= INTENT_CONFIDENCE_THRESHOLD
     ? rawIntentWeight
     : 1.0;
 
@@ -236,7 +287,7 @@ export function computeScore(
       const confidence = Number.isFinite(ce.confidence) ? ce.confidence : 0.5;
       const rawMultiplier = getContextRiskMultiplier(ce);
       // Only use context multiplier when confident (≥0.7)
-      const effectiveMultiplier = ce.contextConfidence >= 0.7 ? rawMultiplier : 1.0;
+      const effectiveMultiplier = ce.contextConfidence >= ENTITY_CONTEXT_CONFIDENCE_THRESHOLD ? rawMultiplier : 1.0;
       baseSum += w * confidence;
       weightedSum += w * confidence * effectiveMultiplier;
     }
@@ -248,7 +299,7 @@ export function computeScore(
   // Classify document type for paragraph-level understanding:
   // litigation memo (2.0x), financial data (1.8x), casual question (0.5x), etc.
   const docClassification = classifyDocument(text);
-  let documentTypeMultiplier = docClassification.confidence >= 0.25
+  let documentTypeMultiplier = docClassification.confidence >= DOC_TYPE_CONFIDENCE_THRESHOLD
     ? (DOCUMENT_TYPE_MULTIPLIERS[docClassification.type] ?? 1.0)
     : 1.0;
 
@@ -306,7 +357,7 @@ export function computeScore(
           Math.abs(entity.start - marker.end),
           Math.abs(marker.start - entity.end),
         );
-        if (distance < 100) {
+        if (distance < CO_OCCURRENCE_PROXIMITY) {
           // Close proximity between entity and keyword → boost
           coOccurrenceBoost += 5;
 
@@ -326,7 +377,7 @@ export function computeScore(
         }
       }
     }
-    coOccurrenceBoost = Math.min(30, coOccurrenceBoost); // Cap at 30
+    coOccurrenceBoost = Math.min(CO_OCCURRENCE_BOOST_CAP, coOccurrenceBoost);
   }
 
   // Safety: if contextual keywords indicate high sensitivity, don't let
@@ -342,7 +393,7 @@ export function computeScore(
     intentResult.suppressions.length > 0 &&
     intentResult.suppressions.length === entities.length;
 
-  if (contextualKeywordScore >= 15 && !selfRefFull) {
+  if (contextualKeywordScore >= CONTEXTUAL_KEYWORD_SAFETY_THRESHOLD && !selfRefFull) {
     if (documentTypeMultiplier < 1.0) documentTypeMultiplier = 1.0;
     if (coOccurrenceMultiplier < 1.0) coOccurrenceMultiplier = 1.0;
     if (intentWeight < 1.0) intentWeight = 1.0;
@@ -355,13 +406,13 @@ export function computeScore(
   // of the arithmetic. A CEO/GC would never accept "medium" for these:
 
   // Floor 1: ALWAYS_CRITICAL entity types (SSN, credentials, classified markings)
-  // should NEVER score below "high" (61). Two or more = "critical" (86).
+  // should NEVER score below "high". Two or more = "critical".
   const alwaysCriticalEntities = contextualEntities.filter(e => HIGH_PII_TYPES.has(e.type));
   let criticalFloor = 0;
   if (alwaysCriticalEntities.length >= 2) {
-    criticalFloor = 86; // Two SSNs, or SSN + credential = always critical
+    criticalFloor = MULTI_CRITICAL_ENTITY_FLOOR;
   } else if (alwaysCriticalEntities.length === 1) {
-    criticalFloor = 61; // Single SSN or credential = at minimum "high"
+    criticalFloor = SINGLE_CRITICAL_ENTITY_FLOOR;
   }
 
   // Floor 2: Critical contextual categories with high confidence.
@@ -372,12 +423,12 @@ export function computeScore(
     'healthcare_phi', 'government_classified',
   ]);
   const criticalMarkers = contextualMarkers.filter(
-    m => CRITICAL_CATEGORIES.has(m.category) && m.confidence >= 0.88
+    m => CRITICAL_CATEGORIES.has(m.category) && m.confidence >= CRITICAL_MARKER_CONFIDENCE
   );
   if (criticalMarkers.length >= 2) {
-    criticalFloor = Math.max(criticalFloor, 86);
+    criticalFloor = Math.max(criticalFloor, MULTI_CRITICAL_ENTITY_FLOOR);
   } else if (criticalMarkers.length === 1 && criticalMarkers[0].weight >= 25) {
-    criticalFloor = Math.max(criticalFloor, 61);
+    criticalFloor = Math.max(criticalFloor, SINGLE_CRITICAL_ENTITY_FLOOR);
   }
 
   // Floor 3: Multi-signal amplification — when BOTH PII entities AND contextual
@@ -385,8 +436,8 @@ export function computeScore(
   // dangerous than either alone. (Person + Deal Codename + Financial Terms)
   const hasEntities = contextualEntities.length > 0;
   const hasContextual = contextualMarkers.length > 0;
-  if (hasEntities && hasContextual && contextualKeywordScore >= 20) {
-    criticalFloor = Math.max(criticalFloor, 61);
+  if (hasEntities && hasContextual && contextualKeywordScore >= CONTEXTUAL_KEYWORD_MEDIUM_FLOOR_THRESHOLD) {
+    criticalFloor = Math.max(criticalFloor, SINGLE_CRITICAL_ENTITY_FLOOR);
   }
 
   // Floor 4: FERPA compliance hard-block — education records (student IDs,
@@ -398,14 +449,14 @@ export function computeScore(
   );
   const hasPersonEntity = contextualEntities.some(e => e.type === 'PERSON');
   if ((hasFerpaKeywords && hasPersonEntity) || hasStudentEntity) {
-    criticalFloor = Math.max(criticalFloor, 61);
+    criticalFloor = Math.max(criticalFloor, SINGLE_CRITICAL_ENTITY_FLOOR);
   }
 
   // Safety: don't let intent suppression reduce score when dangerous
   // contextual keywords are present (M&A deal + "research" shouldn't suppress).
   // Exception: self-referential tasks (resume/bio) where keywords describe
   // the user's work history, not active deals.
-  if (contextualKeywordScore >= 15 && !selfRefFull) {
+  if (contextualKeywordScore >= CONTEXTUAL_KEYWORD_SAFETY_THRESHOLD && !selfRefFull) {
     intentSuppMultiplier = Math.max(intentSuppMultiplier, 1.0);
   }
 
@@ -414,18 +465,51 @@ export function computeScore(
     return (Number.isFinite(value) && value >= 0) ? value : fallback;
   }
 
-  // ── Multiplicative Scoring (v2) ────────────────────────────────────────
-  // finalScore = baseSignals × intentWeight × structureMultiplier
-  //   × entityContextFactor × documentTypeMultiplier × coOccurrenceMultiplier
-  //   × intentSuppMultiplier (v1 compat)
-  let rawScore =
-    (entityScore + volumeScore + contextScore + legalBoost + contextualKeywordScore + relationshipBoost + coOccurrenceBoost) *
-    safeMultiplier(intentWeight) *
-    safeMultiplier(structureMultiplier) *
-    safeMultiplier(entityContextFactor) *
-    safeMultiplier(documentTypeMultiplier) *
-    safeMultiplier(coOccurrenceMultiplier) *
-    safeMultiplier(intentSuppMultiplier);
+  // ── Multiplicative Scoring with Diminishing Returns (v2.1 — M-17) ─────
+  // Pure multiplication of many factors can saturate to 100 too quickly or
+  // produce unexpected jumps. Apply diminishing returns: collect all
+  // amplifying factors (> 1.0), sort descending, and apply each with
+  // decreasing weight. Suppressive factors (< 1.0) are applied directly
+  // since they reduce the score (no saturation risk).
+  const baseScore = entityScore + volumeScore + contextScore + legalBoost + contextualKeywordScore + relationshipBoost + coOccurrenceBoost;
+
+  const allMultipliers = [
+    safeMultiplier(intentWeight),
+    safeMultiplier(structureMultiplier),
+    safeMultiplier(entityContextFactor),
+    safeMultiplier(documentTypeMultiplier),
+    safeMultiplier(coOccurrenceMultiplier),
+    safeMultiplier(intentSuppMultiplier),
+  ];
+
+  // Separate amplifying (> 1.0) and suppressive (<= 1.0) multipliers
+  const amplifying: number[] = [];
+  let suppressiveProduct = 1.0;
+  for (const m of allMultipliers) {
+    if (m > 1.0) {
+      amplifying.push(m);
+    } else {
+      suppressiveProduct *= m;
+    }
+  }
+
+  // Apply amplifying multipliers with diminishing returns:
+  // First factor at full strength, subsequent factors contribute less.
+  // Each additional factor's BOOST (amount above 1.0) is dampened by 0.7^n.
+  let amplifiedScore = baseScore;
+  if (amplifying.length > 0) {
+    // Sort descending so strongest amplifier gets full weight
+    amplifying.sort((a, b) => b - a);
+    let dampening = 1.0;
+    for (const factor of amplifying) {
+      const boost = factor - 1.0; // The amplification amount (e.g., 1.5 → 0.5)
+      amplifiedScore += baseScore * boost * dampening;
+      dampening *= 0.7; // Each subsequent factor is 70% as strong
+    }
+  }
+
+  // Apply suppressive multipliers directly (they reduce score, no saturation risk)
+  let rawScore = amplifiedScore * suppressiveProduct;
 
   // ── Self-Referential Score Ceiling ────────────────────────────────────
   // When intent suppression identified a self-referential task (resume, bio,
@@ -444,7 +528,7 @@ export function computeScore(
   const allEntitiesSuppressed = intentResult.suppressions.length > 0 &&
     intentResult.suppressions.length === entities.length;
   if (intentResult.isSelfReferential && allEntitiesSuppressed && !hasHighPII) {
-    rawScore = Math.min(rawScore, 20);
+    rawScore = Math.min(rawScore, SELF_REFERENTIAL_CEILING);
   }
 
   // Floor: contextual keywords ≥20 → minimum score of 30
@@ -452,15 +536,15 @@ export function computeScore(
   // score fall below "medium" territory regardless of entity suppression.
   // Exception: self-referential tasks where keywords describe work history.
   const selfRefFullSuppression = intentResult.isSelfReferential && allEntitiesSuppressed;
-  if (contextualKeywordScore >= 20 && rawScore < 30 && !selfRefFullSuppression) {
-    rawScore = 30;
+  if (contextualKeywordScore >= CONTEXTUAL_KEYWORD_MEDIUM_FLOOR_THRESHOLD && rawScore < CONTEXTUAL_KEYWORD_MEDIUM_FLOOR && !selfRefFullSuppression) {
+    rawScore = CONTEXTUAL_KEYWORD_MEDIUM_FLOOR;
   }
 
   // Floor: contextual keywords ≥35 → minimum score of 50
   // Strong keyword signal (M&A, medical, legal) deserves solid medium rating
   // even when entity detection is weak.
-  if (contextualKeywordScore >= 35 && rawScore < 50 && !selfRefFullSuppression) {
-    rawScore = 50;
+  if (contextualKeywordScore >= CONTEXTUAL_KEYWORD_HIGH_FLOOR_THRESHOLD && rawScore < CONTEXTUAL_KEYWORD_HIGH_FLOOR && !selfRefFullSuppression) {
+    rawScore = CONTEXTUAL_KEYWORD_HIGH_FLOOR;
   }
 
   // Apply critical floor — never let arithmetic under-rate existential risks
@@ -468,8 +552,8 @@ export function computeScore(
 
   // Guard against NaN from multiplier chain — ALWAYS fail safe (high), never fail open (low)
   if (!Number.isFinite(rawScore)) {
-    console.error('[IronGate Scorer] NaN detected in score chain — defaulting to HIGH (fail-safe)');
-    rawScore = Math.max(criticalFloor, 70);
+    console.error('[Iron Gate] NaN detected in score chain — defaulting to HIGH (fail-safe)');
+    rawScore = Math.max(criticalFloor, NAN_FAILSAFE_SCORE);
   }
 
   // Clamp to 0-100
@@ -485,9 +569,9 @@ export function computeScore(
   // Derive contextCategory from intent classification + document type for ownership decisions.
   // Priority: specific intent > document type > general
   // 'casual_question' is the document classifier's default/fallback type.
-  const contextCategory = intentClassification.confidence >= 0.7 && intentClassification.intent !== 'general'
+  const contextCategory = intentClassification.confidence >= INTENT_CONFIDENCE_THRESHOLD && intentClassification.intent !== 'general'
     ? intentClassification.intent  // e.g., 'resume_review', 'code_review', 'research'
-    : docClassification.confidence >= 0.25 && docClassification.type !== 'casual_question'
+    : docClassification.confidence >= DOC_TYPE_CONFIDENCE_THRESHOLD && docClassification.type !== 'casual_question'
       ? docClassification.type       // e.g., 'litigation_doc', 'financial_data'
       : 'general';
 
@@ -534,19 +618,19 @@ function computeEntityScore(
   // Entity combination bonus: multiple different entity types = more risky
   const uniqueTypes = new Set(entities.map((e) => e.type));
   if (uniqueTypes.size >= 3) {
-    score *= 1.3; // 30% bonus for 3+ different types
+    score *= TYPE_COMBO_BONUS_3PLUS;
   } else if (uniqueTypes.size >= 2) {
-    score *= 1.15; // 15% bonus for 2 types
+    score *= TYPE_COMBO_BONUS_2;
   }
 
   // Count bonus: many entities = document was likely pasted
   if (entities.length >= 10) {
-    score *= 1.4;
+    score *= COUNT_BONUS_10PLUS;
   } else if (entities.length >= 5) {
-    score *= 1.2;
+    score *= COUNT_BONUS_5PLUS;
   }
 
-  return Math.min(70, score); // Cap entity score at 70
+  return Math.min(ENTITY_SCORE_CAP, score);
 }
 
 function computeVolumeScore(text: string): number {
@@ -566,8 +650,8 @@ function computeContextScore(text: string, entities: DetectedEntity[]): number {
 
   // Check for legal keywords near entities
   for (const entity of entities) {
-    const surroundingStart = Math.max(0, entity.start - 200);
-    const surroundingEnd = Math.min(text.length, entity.end + 200);
+    const surroundingStart = Math.max(0, entity.start - ENTITY_CONTEXT_WINDOW);
+    const surroundingEnd = Math.min(text.length, entity.end + ENTITY_CONTEXT_WINDOW);
     const surrounding = lowerText.substring(surroundingStart, surroundingEnd);
 
     for (const keyword of LEGAL_KEYWORDS) {
@@ -578,7 +662,7 @@ function computeContextScore(text: string, entities: DetectedEntity[]): number {
     }
   }
 
-  return Math.min(25, score); // Cap context score at 25
+  return Math.min(CONTEXT_SCORE_CAP, score);
 }
 
 function computeLegalBoost(text: string): number {
@@ -604,7 +688,7 @@ function computeLegalBoost(text: string): number {
     boost += 10;
   }
 
-  return Math.min(25, boost); // Cap legal boost at 25
+  return Math.min(LEGAL_BOOST_CAP, boost);
 }
 
 export function scoreToLevel(score: number): SensitivityLevel {

@@ -258,7 +258,7 @@ export function createFileUploadMonitor(
     walkAndObserveShadowRoots(document);
   }, 5000);
 
-  console.log('[Iron Gate] File upload monitor started');
+  // File upload monitor started
 
   return {
     destroy() {
@@ -269,7 +269,7 @@ export function createFileUploadMonitor(
       shadowObservers.length = 0;
       clearInterval(shadowScanInterval);
       processedFiles.clear();
-      console.log('[Iron Gate] File upload monitor stopped');
+      // File upload monitor stopped
     },
   };
 }

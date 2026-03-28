@@ -69,7 +69,7 @@ export async function validateFirmOwnership(
   }
 
   const result = await db.execute(
-    sql.raw(`SELECT 1 FROM "${table}" WHERE id = '${recordId}' AND firm_id = '${firmId}' LIMIT 1`),
+    sql`SELECT 1 FROM ${sql.raw(`"${table}"`)} WHERE id = ${recordId} AND firm_id = ${firmId} LIMIT 1`,
   );
 
   return (result as unknown as any[]).length > 0;

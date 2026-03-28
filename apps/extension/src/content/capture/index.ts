@@ -9,8 +9,7 @@ import { installSubmitHandler, type SubmitHandlerHandle, type SubmitMode } from 
 import { createClipboardMonitor, type ClipboardMonitorHandle, type ClipboardEvent as IronClipboardEvent } from './clipboard-monitor';
 import { createFileUploadMonitor, type FileUploadMonitorHandle, type FileUploadEvent } from './file-upload-monitor';
 import { showBlockOverlay } from '../ui/block-overlay';
-import { showScanIndicator, hideScanIndicator } from '../ui/scan-indicator';
-import { injectProxyResponse } from '../ui/response-injector';
+import { showScanIndicator } from '../ui/scan-indicator';
 import { detectWithRegex } from '../../detection/fallback-regex';
 import { computeScore } from '../../detection/scorer';
 import { pseudonymizeLocal } from '../../detection/pseudonymizer';
@@ -76,7 +75,7 @@ function replaceInputText(input: HTMLElement, newText: string): void {
 
     if (!success) {
       // Fallback: direct DOM manipulation + events
-      console.log('[Iron Gate] execCommand failed, using direct DOM manipulation');
+      // execCommand failed — falling back to direct DOM manipulation
       input.textContent = newText;
       input.dispatchEvent(new InputEvent('input', {
         bubbles: true,
@@ -111,7 +110,7 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
 
   // Handler: real-time typing detection
   function onPromptChange(text: string) {
-    console.log(`[Iron Gate] onPromptChange: ${text.length} chars from ${detector.id}`);
+    // Prompt text changed — send to worker for analysis
     sendToWorker('PROMPT_DETECTED', {
       text,
       aiToolId: detector.id,
@@ -166,7 +165,7 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
 
   // Handler: file upload detected
   async function onFileUpload(event: FileUploadEvent) {
-    console.log(`[Iron Gate] File upload detected: ${event.fileName} (${event.fileSize} bytes)`);
+    // File upload detected — send to worker for analysis
 
     // Send to service worker for analysis
     try {
@@ -353,7 +352,7 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
       if (!replacedBody) return null;
 
       const transformedStr = JSON.stringify(replacedBody);
-      console.log(`[Iron Gate] Proxy: pseudonymized ${allEntities.length} entities (score: ${scoreResult.score}, level: ${scoreResult.level})`);
+      // Proxy: pseudonymized entities before sending to LLM
 
       // Notify worker about the transformation
       sendToWorker('PROMPT_PSEUDONYMIZED', {
@@ -375,7 +374,7 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
 
   return {
     start() {
-      console.log(`[Iron Gate] Starting capture engine for ${detector.name}`);
+      // Starting capture engine
 
       // Each installer is wrapped in try-catch to prevent partial initialization.
       // If one fails, the others still run — fail-open on capture, not fail-closed on the whole engine.
@@ -394,7 +393,7 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
       try { fileUploadMonitor = createFileUploadMonitor(onFileUpload); }
       catch (e) { console.error('[Iron Gate] File upload monitor install failed:', e); }
 
-      console.log(`[Iron Gate] Capture engine started for ${detector.name}`);
+      // Capture engine started
     },
 
     stop() {
@@ -410,7 +409,7 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
       clipboardMonitor = null;
       fileUploadMonitor = null;
 
-      console.log(`[Iron Gate] Capture engine stopped for ${detector.name}`);
+      // Capture engine stopped
     },
 
     updateConfig(newConfig: Partial<CaptureEngineConfig>) {
@@ -418,7 +417,7 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
         config.mode = newConfig.mode;
         submitHandler?.updateMode(newConfig.mode);
         // Note: bodyTransformer reads config.mode dynamically, so no need to reinstall
-        console.log(`[Iron Gate] Capture engine mode updated to: ${config.mode}`);
+        // Capture engine mode updated
       }
     },
   };

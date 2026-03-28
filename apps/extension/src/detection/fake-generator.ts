@@ -89,9 +89,12 @@ export function generateFake(type: string, original: string): string {
         [...FAKE_NAMES_F, ...FAKE_NAMES_M],
         'EMAIL_NAME',
       );
-      const parts = fakeName.toLowerCase().split(' ');
+      // M-27 FIX: Handle names with fewer than 2 parts (single names, hyphenated)
+      const parts = fakeName.toLowerCase().split(/[\s-]+/);
+      const firstName = parts[0] || 'user';
+      const lastName = parts.length > 1 ? parts[parts.length - 1] : 'account';
       const domain = FAKE_EMAIL_DOMAINS[Math.floor(secureRandom() * FAKE_EMAIL_DOMAINS.length)];
-      return parts[0] + '.' + parts[1] + '@' + domain;
+      return firstName + '.' + lastName + '@' + domain;
     }
 
     case 'SSN': {

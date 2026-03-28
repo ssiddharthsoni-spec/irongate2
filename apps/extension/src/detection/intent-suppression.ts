@@ -255,21 +255,20 @@ const FIRST_PERSON_PATTERNS: RegExp[] = [
 // ─── Entity types that should NEVER be suppressed regardless of intent ──────
 // These are too dangerous to pass through even if the user "intends" to share them.
 
-const NEVER_SUPPRESS_TYPES = new Set([
+// H-16: Derive from ALWAYS_CRITICAL_TYPES (single source of truth in types.ts)
+// plus domain-specific types that should never be suppressed by intent detection.
+const NEVER_SUPPRESS_TYPES: ReadonlySet<string> = new Set([
+  ...ALWAYS_CRITICAL_TYPES,
   'SSN',
   'CREDIT_CARD',
   'ACCOUNT_NUMBER',
   'PASSPORT_NUMBER',
   'DRIVERS_LICENSE',
   'MEDICAL_RECORD',
-  'API_KEY',
-  'AWS_CREDENTIAL',
-  'GCP_CREDENTIAL',
-  'DATABASE_URI',
   'AUTH_TOKEN',
-  'PRIVATE_KEY',
   'CLASSIFICATION_MARKING',
   'CUI_MARKING',
+  'EXPORT_CONTROL',
   'UK_NINO',
   'CANADIAN_SIN',
   'INDIAN_AADHAAR',
@@ -392,7 +391,13 @@ export function applyIntentSuppression(
     safeTypes.add('EMAIL');
   }
 
+  // M-18: Cap entities examined for self-referential suppression at 20.
+  // With many entities, checking hasDataRecordContext() for each is O(n×m).
+  // Beyond 20 entities, skip suppression for the remainder (treat as unsuppressed).
+  const SELF_REF_ENTITY_CAP = 20;
+
   // Process each entity
+  let suppressionChecks = 0;
   const adjusted = entities.map(entity => {
     // NEVER suppress critical/dangerous types
     if (NEVER_SUPPRESS_TYPES.has(entity.type)) {
@@ -401,6 +406,12 @@ export function applyIntentSuppression(
 
     // Check if this entity type is safe given the detected intent
     if (safeTypes.has(entity.type)) {
+      // M-18: Cap the number of entities we examine for self-referential suppression
+      if (isSelfReferentialTask && suppressionChecks >= SELF_REF_ENTITY_CAP) {
+        return entity; // Over cap — don't suppress, keep as-is
+      }
+      suppressionChecks++;
+
       // Additional safety: don't suppress if there are ALSO dangerous
       // context markers (legal keywords, data record patterns, etc.)
       if (hasDataRecordContext(text, entity)) {

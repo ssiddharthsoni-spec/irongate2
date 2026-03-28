@@ -178,7 +178,7 @@ export function installFetchInterceptor(
       try {
         const result = bodyTransformer(url, init.body);
         if (result) {
-          console.log(`[Iron Gate] Fetch interceptor: pseudonymized prompt before sending to ${url}`);
+          // Fetch interceptor: pseudonymized prompt before sending to LLM
           return originalFetch.apply(this, [input, { ...init, body: result.transformed }]);
         }
       } catch (err) {

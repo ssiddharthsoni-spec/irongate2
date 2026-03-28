@@ -101,12 +101,43 @@ export const ChatGPTAdapter: SiteAdapter = {
   extractPrompt(body: string): string | null {
     try {
       const parsed = JSON.parse(body);
-      if (!parsed?.messages || !Array.isArray(parsed.messages)) return null;
+      if (!parsed?.messages || !Array.isArray(parsed.messages)) {
+        // ── DIAGNOSTIC: Log what we got if not messages format ──
+        console.log(
+          '%c[Iron Gate DIAG] ChatGPT extractPrompt: body is NOT messages format',
+          'color: #f59e0b; font-weight: bold',
+          { topLevelKeys: Object.keys(parsed || {}), bodyLength: body.length, bodyPreview: body.substring(0, 200) }
+        );
+        return null;
+      }
+
+      // ── DIAGNOSTIC: Log full message structure for debugging ──
+      const msgs = parsed.messages;
+      console.log(
+        '%c[Iron Gate DIAG] ChatGPT extractPrompt: message structure',
+        'color: #f59e0b; font-weight: bold',
+        {
+          messageCount: msgs.length,
+          messages: msgs.map((m: any, i: number) => ({
+            index: i,
+            role: m.role,
+            authorRole: m.author?.role,
+            author: typeof m.author === 'string' ? m.author : undefined,
+            contentType: typeof m.content,
+            hasContentParts: !!(m.content?.parts),
+            contentPartsCount: m.content?.parts?.length,
+            contentPartTypes: m.content?.parts?.map((p: any) => typeof p),
+            contentLength: typeof m.content === 'string' ? m.content.length
+              : m.content?.parts?.[0] ? String(m.content.parts[0]).length : 0,
+            contentPreview: typeof m.content === 'string' ? m.content.substring(0, 80)
+              : m.content?.parts?.[0] ? String(m.content.parts[0]).substring(0, 80) : '(none)',
+          })),
+        }
+      );
 
       // Find the LAST user message — ChatGPT sends full conversation history,
       // the current prompt is always the last user message.
       // Must check multiple author formats: ChatGPT uses author.role, OpenAI uses role.
-      const msgs = parsed.messages;
       for (let i = msgs.length - 1; i >= 0; i--) {
         const m = msgs[i];
         const isUser = m.role === 'user'
@@ -119,10 +150,24 @@ export const ChatGPTAdapter: SiteAdapter = {
           const text = m.content.parts
             .filter((p: any) => typeof p === 'string')
             .join('\n');
-          if (text.length > 0) return text;
+          if (text.length > 0) {
+            console.log(
+              '%c[Iron Gate DIAG] ChatGPT extractPrompt: found user msg at index ' + i,
+              'color: #22c55e; font-weight: bold',
+              { textLength: text.length, textPreview: text.substring(0, 200) }
+            );
+            return text;
+          }
         }
         // String content (OpenAI API format)
-        if (typeof m.content === 'string' && m.content.length > 0) return m.content;
+        if (typeof m.content === 'string' && m.content.length > 0) {
+          console.log(
+            '%c[Iron Gate DIAG] ChatGPT extractPrompt: found user msg (string content) at index ' + i,
+            'color: #22c55e; font-weight: bold',
+            { textLength: m.content.length, textPreview: m.content.substring(0, 200) }
+          );
+          return m.content;
+        }
         // Text field variant
         if (typeof m.text === 'string' && m.text.length > 0) return m.text;
         // Array content (multi-part OpenAI format)
@@ -133,10 +178,22 @@ export const ChatGPTAdapter: SiteAdapter = {
             .join('\n');
           if (text.length > 0) return text;
         }
+
+        // ── DIAGNOSTIC: User message found but no extractable text ──
+        console.warn(
+          '%c[Iron Gate DIAG] ChatGPT extractPrompt: user msg at index ' + i + ' has NO extractable text',
+          'color: #ef4444; font-weight: bold',
+          { content: m.content, contentType: typeof m.content }
+        );
       }
 
+      console.warn(
+        '%c[Iron Gate DIAG] ChatGPT extractPrompt: NO user message found in ' + msgs.length + ' messages',
+        'color: #ef4444; font-weight: bold'
+      );
       return null;
-    } catch {
+    } catch (err) {
+      console.warn('[Iron Gate DIAG] ChatGPT extractPrompt: JSON parse failed', err);
       return null;
     }
   },
@@ -146,14 +203,14 @@ export const ChatGPTAdapter: SiteAdapter = {
       const parsed = JSON.parse(body);
 
       // ChatGPT backend format
-      if (parsed?.messages?.[0]?.content?.parts) {
+      if (parsed?.messages && Array.isArray(parsed.messages) && parsed.messages.length > 0) {
         const lastIdx = parsed.messages.length - 1;
         const lastMsg = parsed.messages[lastIdx];
         if (lastMsg?.content?.parts) {
           lastMsg.content.parts = [replacement];
         } else if (lastMsg) {
-          // Last message lacks content.parts — set content directly
-          lastMsg.content = { content_type: 'text', parts: [replacement] };
+          // Preserve original content structure (plain string for OpenAI API format)
+          lastMsg.content = typeof lastMsg.content === 'string' ? replacement : { content_type: 'text', parts: [replacement] };
         }
         return JSON.stringify(parsed);
       }
