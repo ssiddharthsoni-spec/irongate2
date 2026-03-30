@@ -196,14 +196,33 @@ let _reverseMapRestored = false;
 // flagged. This fixes DEF-016: "follow-up with prior PII scores too low".
 const _sessionEntities = new Set<string>();
 
-/** Check if text references entities from prior turns */
+/** Check if text references entities from prior turns.
+ * Uses both full-entity matching AND individual word matching for person names.
+ * This catches "Sarah Chen" when the registry has "Dr. Sarah Chen" or vice versa.
+ */
 function _countSessionEntityReferences(text: string): number {
   if (_sessionEntities.size === 0) return 0;
   const textLower = text.toLowerCase();
   let count = 0;
+  const counted = new Set<string>(); // avoid double-counting
+
   for (const entity of _sessionEntities) {
-    if (entity.length >= 4 && textLower.includes(entity.toLowerCase())) {
-      count++;
+    const entityLower = entity.toLowerCase();
+    // Full entity match
+    if (entityLower.length >= 4 && textLower.includes(entityLower)) {
+      if (!counted.has(entityLower)) { counted.add(entityLower); count++; }
+      continue;
+    }
+    // Word-level matching: check if individual words from the entity appear
+    // in the text. "Sarah Chen" matches if both "sarah" and "chen" appear.
+    // Only for multi-word entities (person names, org names).
+    const words = entityLower.split(/\s+/).filter(w => w.length >= 3);
+    if (words.length >= 2) {
+      const allWordsPresent = words.every(w => textLower.includes(w));
+      if (allWordsPresent && !counted.has(entityLower)) {
+        counted.add(entityLower);
+        count++;
+      }
     }
   }
   return count;
@@ -2289,9 +2308,47 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
   function processSSELine(line: string): string | null {
     // Pass through empty lines (SSE event separators)
     if (line === '') return '';
-    // Non-data lines (event types, comments, ids) — still apply raw replacement
-    // in case the response uses a non-SSE streaming format (e.g. raw JSON lines)
+    // Non-data lines: could be event types, comments, or raw JSON lines.
+    // ChatGPT 2025+ sends raw JSON patch lines without "data: " prefix:
+    //   {"o":"patch","v":[{"p":"/message/content/parts/0","o":"append","v":"text"}]}
+    // These MUST be parsed and content-extracted, not just raw-replaced.
     if (!line.startsWith('data: ')) {
+      // Try JSON parsing for raw JSON lines (ChatGPT 2025+ patch format)
+      if (line.startsWith('{') && line.length > 10) {
+        try {
+          const parsed = JSON.parse(line);
+          const extracted = extractContent(parsed);
+          if (extracted) {
+            chunkCount++;
+            const { mode, content } = extracted;
+            if (mode === 'accumulated') {
+              const replaced = replacePseudonyms(content, snapshotMap);
+              if (replaced !== content) totalReplacements++;
+              stripAnnotations(parsed);
+              injectContent(parsed, mode, replaced);
+              return JSON.stringify(parsed);
+            } else {
+              deltaAccumulator += content;
+              const replaced = replacePseudonyms(deltaAccumulator, snapshotMap);
+              if (replaced !== deltaAccumulator) totalReplacements++;
+              const unreplacedSafeLen = deltaAccumulator.length - maxPseudoLen;
+              const ratio = deltaAccumulator.length > 0 ? replaced.length / deltaAccumulator.length : 1;
+              const safeLen = Math.max(emittedDeltaLen, Math.floor(unreplacedSafeLen * ratio));
+              const newDelta = replaced.substring(emittedDeltaLen, safeLen);
+              emittedDeltaLen = safeLen;
+              injectContent(parsed, mode, newDelta.length > 0 ? newDelta : '');
+              return JSON.stringify(parsed);
+            }
+          }
+          // Parsed but no content — raw replacement on serialized JSON
+          const reser = JSON.stringify(parsed);
+          const replaced = replacePseudonyms(reser, snapshotMap);
+          if (replaced !== reser) totalReplacements++;
+          return replaced;
+        } catch {
+          // Not valid JSON — fall through to raw replacement
+        }
+      }
       if (line.length > 10) {
         const replaced = replacePseudonyms(line, snapshotMap);
         if (replaced !== line) totalReplacements++;
@@ -3623,16 +3680,82 @@ const patchedFetch = async function patchedFetch(
         let score = fullScore.score;
         let level = fullScore.level;
 
-        // DEF-016: Boost score when follow-up references entities from prior turns.
-        // Even if the regex doesn't re-detect them (e.g., "Can you summarize what
-        // Sarah said?" won't detect "Sarah" alone as PII), the session registry
-        // knows "Sarah Chen" was pseudonymized in Turn 1. References to prior
-        // entities should prevent GREEN passthrough.
+        // DEF-016: When follow-up references entities from prior turns, force
+        // pseudonymization using the existing forward map. This prevents the
+        // #1 defect: names sent in plaintext in follow-up turns.
+        //
+        // Strategy: if the forward map contains entries that appear in the
+        // follow-up text, apply forward-map pseudonymization directly —
+        // bypassing the score gate entirely. This is safe because the forward
+        // map only contains entities WE previously pseudonymized.
         const sessionRefCount = _countSessionEntityReferences(promptText);
+        if (sessionRefCount > 0 && Object.keys(currentForwardMap).length > 0) {
+          // Apply forward-map replacement: find any known original entities in
+          // the prompt text and replace them with their established pseudonyms.
+          let pseudonymizedText = promptText;
+          const sessionMappings: PseudonymMapping[] = [];
+          // Sort by length descending to prevent substring collisions
+          const fwdEntries = Object.entries(currentForwardMap)
+            .sort((a, b) => b[0].length - a[0].length);
+          for (const [original, pseudonym] of fwdEntries) {
+            if (original.length < 3) continue;
+            if (!pseudonymizedText.toLowerCase().includes(original.toLowerCase())) continue;
+            // Boundary-aware replacement (case-insensitive)
+            try {
+              const escaped = original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const prefix = /^[a-zA-Z]/.test(original) ? '(?<![a-zA-Z])' : '';
+              const suffix = /[a-zA-Z]$/.test(original) ? '(?![a-zA-Z])' : '';
+              const regex = new RegExp(prefix + escaped + suffix, 'gi');
+              const before = pseudonymizedText;
+              pseudonymizedText = pseudonymizedText.replace(regex, () => pseudonym);
+              if (pseudonymizedText !== before) {
+                sessionMappings.push({ original, pseudonym, type: 'SESSION_ENTITY' });
+              }
+            } catch { /* regex failed */ }
+          }
+
+          if (sessionMappings.length > 0) {
+            console.log(
+              `%c[Iron Gate WIRE] DEF-016 FIX: Follow-up references ${sessionRefCount} session entities — force-pseudonymizing ${sessionMappings.length} entities from forward map`,
+              'color: #f97316; font-weight: bold; font-size: 13px',
+            );
+
+            // Add these to the reverse map for de-pseudonymization
+            for (const m of sessionMappings) {
+              addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
+            }
+            const requestReverseMap = { ...currentReverseMap };
+
+            // Replace prompt in body
+            const modifiedBody = activeAdapter?.replacePrompt(bodyString, promptText, pseudonymizedText)
+              ?? replacePrompt(bodyString, promptText, pseudonymizedText);
+
+            if (modifiedBody) {
+              // Report to sidepanel
+              turnCoordinator.submit({
+                type: 'IRON_GATE_INTERCEPTED', promptText, allEntities,
+                maskedText: pseudonymizedText,
+                mappings: sanitizeMappingsForTransit(sessionMappings),
+                level: 'high', score: Math.max(score, 50),
+              });
+
+              // Start DOM observer + rescans
+              startPersistentDomDepseudo();
+
+              const newInit = { ...init, body: modifiedBody };
+              if (!url.includes('/backend-api/conversation') && !url.includes('/backend-anon/')) {
+                depseudonymizeUserBubble(requestReverseMap);
+              }
+              const response = await originalFetch.call(window, input, newInit);
+              return depseudonymizeResponse(response, requestReverseMap);
+            }
+          }
+        }
+        // Standard score boost as fallback (for cases where forward map replacement fails)
         if (sessionRefCount > 0 && score < 40) {
           const boost = Math.min(40, sessionRefCount * 15);
           const boostedScore = Math.min(100, score + boost);
-          igLog(`DEF-016: Follow-up references ${sessionRefCount} session entities — boosting score ${score} → ${boostedScore}`);
+          igLog(`DEF-016: Follow-up score boost ${score} → ${boostedScore}`);
           score = boostedScore;
           level = scoreToLevel(score);
         }
@@ -5366,6 +5489,10 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
 
     for (const m of pseudoResult.mappings) {
       addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
+      // DEF-016: Register in session entity registry for follow-up scoring
+      if (m.original.length >= 4) {
+        _sessionEntities.add(m.original);
+      }
     }
 
     // Start persistent DOM observer so the AI response gets de-pseudonymized

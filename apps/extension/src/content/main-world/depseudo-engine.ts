@@ -91,11 +91,15 @@ export function buildRegexCache(reverseMap: Record<string, string>): CachedPseud
         const startsWithDigit = /^\d/.test(pseudonym);
         const endsWithDigit = /\d$/.test(pseudonym);
         const startsWithDollar = pseudonym.startsWith('$');
+        // DEF-021/025: Include hyphen and dot in word boundaries to prevent
+        // "Meridian" matching inside "meridian-legal.com" or "meridian.corp.io".
+        // Hyphens and dots connect words in URLs/domains/emails — treating them
+        // as boundaries causes fragment collisions.
         const prefix = startsWithDollar ? '\\$*'
           : startsWithDigit ? '(?<![\\d.])'
-          : startsWithAlpha ? '(?<![a-zA-Z])'
+          : startsWithAlpha ? '(?<![a-zA-Z.\\-])'
           : '';
-        const suffix = endsWithDigit ? '(?![\\d.])' : endsWithAlpha ? '(?![a-zA-Z])' : '';
+        const suffix = endsWithDigit ? '(?![\\d.])' : endsWithAlpha ? '(?![a-zA-Z.\\-])' : '';
         regexCS = new RegExp(prefix + escaped + suffix, 'g');
         regexCI = new RegExp(prefix + escaped + suffix, 'gi');
       } catch { /* regex failed */ }

@@ -460,6 +460,32 @@ const REGEX_PATTERNS: RegexPattern[] = [
     pattern: /\b[A-Z]\d{7,8}\b/g,
     confidence: 0.5,
   },
+  // State-format driver's licenses: WA-SMITH-J-1234567, CA-DL-12345678, etc.
+  {
+    type: 'DRIVERS_LICENSE',
+    pattern: /\b[A-Z]{2}-[A-Z]+-[A-Z]-\d{5,9}\b/g,
+    confidence: 0.7,
+  },
+  // ── CVV / CVC / Security Codes ─────────────────────────────────────
+  // Only match 3-4 digit numbers preceded by CVV/CVC/security code context
+  {
+    type: 'CVV',
+    pattern: /\b(?:CVV|CVC|CVV2|CVC2|security\s+code|verification\s+(?:code|number|value))\s*[:#]?\s*(\d{3,4})\b/gi,
+    confidence: 0.9,
+  },
+  // ── Bank Routing Numbers ───────────────────────────────────────────
+  // US ABA routing numbers: 9 digits, often preceded by "routing" context
+  {
+    type: 'ROUTING_NUMBER',
+    pattern: /\b(?:routing|ABA|transit)\s*(?:#|no\.?|number)?\s*[:#]?\s*(0[0-9]\d{7})\b/gi,
+    confidence: 0.85,
+  },
+  // Standalone 9-digit routing number (starts with 0-3, specific to US banks)
+  {
+    type: 'ROUTING_NUMBER',
+    pattern: /\brouting\s*[:#]?\s*(\d{9})\b/gi,
+    confidence: 0.7,
+  },
   // ── Account Numbers ───────────────────────────────────────────────────
   {
     type: 'ACCOUNT_NUMBER',
