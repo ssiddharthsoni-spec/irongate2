@@ -445,7 +445,18 @@ app.route('/v1/agent', agentRoutes);
 app.get('/internal/cron/retention', async (c) => {
   const cronSecret = process.env.CRON_SECRET;
   const provided = c.req.header('Authorization');
-  if (!cronSecret || provided !== `Bearer ${cronSecret}`) {
+  if (!cronSecret || !provided) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  // Use timing-safe comparison to prevent timing attacks on the secret
+  const expected = `Bearer ${cronSecret}`;
+  try {
+    const a = Buffer.from(provided);
+    const b = Buffer.from(expected);
+    if (a.byteLength !== b.byteLength || !crypto.timingSafeEqual(a, b)) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+  } catch {
     return c.json({ error: 'Unauthorized' }, 401);
   }
   try {

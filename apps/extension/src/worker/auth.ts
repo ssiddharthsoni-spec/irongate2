@@ -213,8 +213,12 @@ async function encryptedGet(keys: string[]): Promise<Record<string, unknown>> {
       const decrypted = await decrypt(stored[k] as string, key);
       result[k] = JSON.parse(decrypted);
     } catch {
-      // Decryption failed — might be legacy plaintext data
-      result[k] = stored[k];
+      // Decryption failed — do NOT fall back to raw stored value.
+      // Returning plaintext on failure would let an attacker inject
+      // malicious auth state by writing directly to chrome.storage.local.
+      // Force re-authentication instead.
+      authLog(`Decryption failed for key "${k}" — discarding (re-auth required)`);
+      result[k] = null;
     }
   }
 

@@ -617,9 +617,9 @@ function handleMainWorldMessages(event: MessageEvent) {
     const isProxy = event.data.type === 'IRON_GATE_INTERCEPTED';
     const promptHash = sanitizeString(event.data.promptHash, 128);
     const promptLength = clampNumber(event.data.promptLength, 0, 10_000_000, 0);
-    // Original prompt is safe to relay — it's already visible in the page DOM
-    // (the user typed it), so postMessage adds no additional exposure.
-    const originalPrompt = sanitizeString(event.data.originalPrompt, MAX_STRING_LEN);
+    // originalPrompt is no longer sent via postMessage (security: prevents page-script
+    // interception). The sidepanel uses maskedPrompt for display instead.
+    const originalPrompt = '';
     const maskedPrompt = sanitizeString(event.data.maskedPrompt, MAX_STRING_LEN);
     const entityCount = clampNumber(event.data.entityCount, 0, 10000, 0);
     const rawLevel = sanitizeString(event.data.level, 20);

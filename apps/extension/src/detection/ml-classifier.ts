@@ -18,29 +18,35 @@ interface SensitivityClassifierInstance {
 }
 
 let classifier: SensitivityClassifierInstance | null = null;
-let loading = false;
+let _loadingPromise: Promise<SensitivityClassifierInstance | null> | null = null;
 
 async function getClassifier(): Promise<SensitivityClassifierInstance | null> {
   if (classifier) return classifier;
-  if (loading) return null;
 
-  loading = true;
-  try {
-    // Dynamic import of the inference module (JS, no type declarations)
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-expect-error — untyped JS module
-    const mod = await import('../../intelligence/inference.js');
-    const instance = new mod.SensitivityClassifier() as SensitivityClassifierInstance;
-    const weightsUrl = chrome.runtime.getURL('intelligence/model_weights.json');
-    await instance.load(weightsUrl);
-    classifier = instance;
-    return classifier;
-  } catch (err) {
-    console.warn('[Iron Gate] ML classifier load failed:', err);
-    return null;
-  } finally {
-    loading = false;
-  }
+  // Use a shared promise so concurrent callers all wait for the same load
+  // instead of racing (previous pattern: loading flag + return null = dropped callers)
+  if (_loadingPromise) return _loadingPromise;
+
+  _loadingPromise = (async () => {
+    try {
+      // Dynamic import of the inference module (JS, no type declarations)
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-expect-error — untyped JS module
+      const mod = await import('../../intelligence/inference.js');
+      const instance = new mod.SensitivityClassifier() as SensitivityClassifierInstance;
+      const weightsUrl = chrome.runtime.getURL('intelligence/model_weights.json');
+      await instance.load(weightsUrl);
+      classifier = instance;
+      return classifier;
+    } catch (err) {
+      console.warn('[Iron Gate] ML classifier load failed:', err);
+      return null;
+    } finally {
+      _loadingPromise = null;
+    }
+  })();
+
+  return _loadingPromise;
 }
 
 /**

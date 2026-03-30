@@ -21,6 +21,13 @@ import type { SiteAdapter } from './adapters';
 import { generateFake } from './main-world/fake-data';
 import { detectWithRegex } from '../detection/fallback-regex';
 import { scanForSecrets, isNaturalLanguage } from './main-world/entity-patterns';
+import {
+  jsonStringEscape,
+  looksLikePersonName,
+  buildRegexCache,
+  replacePseudonymsCore,
+  type CachedPseudoEntry,
+} from './main-world/depseudo-engine';
 
 // ─── Full Scoring Pipeline ──────────────────────────────────────────────────
 // Import the REAL scoring pipeline — intent suppression, context analysis,
@@ -37,22 +44,32 @@ import { classifyEntityOwnership, type OwnershipType } from '../detection/entity
 // try to run this script. Only the first execution should proceed.
 // Uses a crypto-random token stored on a non-enumerable Symbol property
 // so page scripts cannot easily detect or spoof the guard.
-const _IG_GUARD_SYM = Symbol.for('__ig_main_world_guard');
-const _IG_GUARD_STATE = (window as any)[_IG_GUARD_SYM] as { status: string; since: number; token: string; nonce?: string } | undefined;
+// Use a non-discoverable property name for the guard. Symbol.for() is globally
+// accessible and would let page scripts read guard state (including session nonces).
+// A random property key on a non-enumerable property prevents this.
+const _IG_GUARD_KEY = '__ig_mw_' + Array.from(crypto.getRandomValues(new Uint8Array(8)),
+  b => b.toString(16).padStart(2, '0')).join('');
+// Check for any existing guard from a prior injection (uses data-attribute on <html>
+// since the prior injection's random key is unknown to us)
+const _IG_GUARD_ATTR = document.documentElement.getAttribute('data-ig-guard');
+const _IG_GUARD_STATE = _IG_GUARD_ATTR
+  ? ((): { status: string; since: number; token: string } | undefined => {
+      try { return JSON.parse(_IG_GUARD_ATTR); } catch { return undefined; }
+    })()
+  : undefined;
 
 if (_IG_GUARD_STATE?.status === 'active') {
   console.log('[Iron Gate MAIN] Already active — re-sending heartbeat for late content script');
-  // CRITICAL: Use the REAL nonce from the active instance, not a fake one.
-  // The content script validates all messages against the nonce from the first
-  // heartbeat it receives. Using a different nonce causes ALL subsequent messages
-  // to be silently rejected by the nonce check.
-  const _activeNonce = _IG_GUARD_STATE.nonce || '';
+  // The nonce is NO LONGER stored on the guard (security fix: prevents page scripts
+  // from reading it via the guard). The first injection's nonce is already known to
+  // the content script, so a duplicate heartbeat without nonce is harmless — the
+  // content script will ignore it if it already has a valid session.
   window.postMessage({
     type: 'IRON_GATE_HEARTBEAT',
     version: '0.2.7',
     timestamp: Date.now(),
     mode: (window as any).__IRON_GATE_MODE || 'proxy',
-    _nonce: _activeNonce,
+    _duplicate: true,
     _mid: crypto.randomUUID(),
   }, window.location.origin);
 } else if (_IG_GUARD_STATE?.status === 'loading') {
@@ -62,12 +79,12 @@ if (_IG_GUARD_STATE?.status === 'active') {
   } else {
     // Previous injection crashed — reset and allow retry
     console.warn(`[Iron Gate MAIN] ⚠️ Previous init stuck at 'loading' for ${elapsed}ms — RESETTING for retry`);
-    delete (window as any)[_IG_GUARD_SYM];
+    document.documentElement.removeAttribute('data-ig-guard');
   }
 }
 
 // Use a flag to wrap all initialization — prevents duplicate setup
-if (!(window as any)[_IG_GUARD_SYM]) {
+if (!_IG_GUARD_STATE) {
 
 // ─── Hashing ─────────────────────────────────────────────────────────────────
 // SHA-256 hash — raw PII is hashed before leaving via postMessage so that
@@ -110,9 +127,9 @@ function notifyContentScript(
     type,
     promptHash: '',  // hash not needed for sidepanel delivery
     promptLength: promptText.length,
-    // Original prompt IS safe to send via postMessage — it's already visible
-    // in the page DOM (the user typed it). No additional exposure risk.
-    originalPrompt: promptText,
+    // Do NOT send originalPrompt via postMessage — any page script can
+    // listen for these messages and extract the raw prompt text.
+    // The content script can reconstruct from DOM if needed.
     maskedPrompt: maskedText,
     mappings,
     entityCount: allEntities.length,
@@ -171,6 +188,26 @@ let processingMode: 'local' | 'server' = (window as any).__IRON_GATE_PROCESSING_
 })();
 let currentReverseMap: Record<string, string> = {};
 let _reverseMapRestored = false;
+
+// ─── Session Entity Registry ──────────────────────────────────────────────
+// Tracks original entity text from prior turns. When a follow-up message
+// references these entities (even without re-detecting them as PII), the
+// score is boosted to prevent GREEN passthrough of PII that was previously
+// flagged. This fixes DEF-016: "follow-up with prior PII scores too low".
+const _sessionEntities = new Set<string>();
+
+/** Check if text references entities from prior turns */
+function _countSessionEntityReferences(text: string): number {
+  if (_sessionEntities.size === 0) return 0;
+  const textLower = text.toLowerCase();
+  let count = 0;
+  for (const entity of _sessionEntities) {
+    if (entity.length >= 4 && textLower.includes(entity.toLowerCase())) {
+      count++;
+    }
+  }
+  return count;
+}
 let _activeStreamCount = 0;
 let _pendingClear = false;
 let _lastConversationPath: string = window.location.pathname;
@@ -216,12 +253,8 @@ function _updateServerTimeout(ms: number) {
   if (ms >= 2000 && ms <= 30000) _serverProcessTimeoutMs = ms;
 }
 
-// Listen for timeout config from content script
-window.addEventListener('message', (e) => {
-  if (e.data?.type === 'IRON_GATE_SET_SERVER_TIMEOUT' && typeof e.data.timeoutMs === 'number') {
-    _updateServerTimeout(e.data.timeoutMs);
-  }
-});
+// IRON_GATE_SET_SERVER_TIMEOUT listener is registered in the main message handler
+// below (after isValidContentScriptMessage is defined) to satisfy TypeScript ordering.
 
 function requestServerProcess(text: string, aiToolId: string): Promise<ServerProcessResult> {
   const requestId = crypto.randomUUID();
@@ -250,14 +283,12 @@ function requestServerProcess(text: string, aiToolId: string): Promise<ServerPro
 // chrome.storage.session is NOT accessible to page scripts (unlike sessionStorage)
 // and is cleared when the browser closes.
 
-// Execution flag — uses Symbol-keyed property to prevent page-script spoofing
+// Execution flag — stored as data-attribute on <html> (findable by future injections)
+// Guard token stays in a closure-scoped variable, NOT on a global property.
 const _igGuardToken = crypto.getRandomValues(new Uint8Array(16)).reduce((s, b) => s + b.toString(16).padStart(2, '0'), '');
-Object.defineProperty(window, _IG_GUARD_SYM, {
-  value: { status: 'loading', since: Date.now(), token: _igGuardToken },
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
+document.documentElement.setAttribute('data-ig-guard', JSON.stringify({
+  status: 'loading', since: Date.now(), token: _igGuardToken,
+}));
 (window as any).__IRON_GATE_MAIN_WORLD = 'loading';
 
 // Always-visible startup log (not gated behind debug flag)
@@ -347,6 +378,10 @@ window.addEventListener('message', (event) => {
         );
       }
     }
+  }
+  // Server timeout config from content script (H-14: validated by nonce check above)
+  if (event.data?.type === 'IRON_GATE_SET_SERVER_TIMEOUT' && typeof event.data.timeoutMs === 'number') {
+    _updateServerTimeout(event.data.timeoutMs);
   }
   // Server-mode processing response from content script
   if (event.data?.type === 'IRON_GATE_SERVER_PROCESS_RESPONSE') {
@@ -985,14 +1020,7 @@ function findLastIndex<T>(arr: T[], predicate: (item: T) => boolean): number {
 }
 
 /** Escape a string for safe embedding in JSON (matching how JSON.stringify would escape it) */
-function jsonStringEscape(str: string): string {
-  return str
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, '\\n')
-    .replace(/\r/g, '\\r')
-    .replace(/\t/g, '\\t');
-}
+// jsonStringEscape() — imported from ./main-world/depseudo-engine
 
 // ─── Simplified Scoring ─────────────────────────────────────────────────────
 
@@ -1554,6 +1582,27 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
     }
   }
 
+  // ── EMAIL variants: handle case changes and display formatting ──────────
+  // LLMs may output pseudonym emails in different case: "Anna.Peterson@RedwoodCorp.io"
+  // when the pseudonym was "anna.peterson@redwoodcorp.io". The boundary-aware regex
+  // handles case-insensitive matching (Strategy 3), but emails also need:
+  //   1. Lowercase variant (most common LLM output)
+  //   2. Title-case local part variant (some LLMs capitalize names in emails)
+  //   3. JSON-encoded variant (for SSE streams)
+  if (entityType === 'EMAIL' && pseudonym.includes('@')) {
+    const lower = pseudonym.toLowerCase();
+    if (lower !== pseudonym && !map[lower]) map[lower] = original;
+    const upper = pseudonym.toUpperCase();
+    if (upper !== pseudonym && !map[upper]) map[upper] = original;
+    // Local part variants: anna.peterson → Anna.Peterson
+    const [localPart, domain] = pseudonym.split('@');
+    if (localPart && domain) {
+      const titleLocal = localPart.replace(/\b\w/g, c => c.toUpperCase());
+      const titleVariant = titleLocal + '@' + domain;
+      if (titleVariant !== pseudonym && !map[titleVariant]) map[titleVariant] = original;
+    }
+  }
+
   // Persist to sessionStorage when modifying the global map (not snapshots)
   // Reverse map is in-memory only — no persistence to sessionStorage (security)
 }
@@ -1563,84 +1612,10 @@ function addReverseMapping(map: Record<string, string>, pseudonym: string, origi
 let _regexCacheVersion = 0;  // Bumped by addReverseMapping()
 let _regexCacheBuiltVersion = -1;  // Version when cache was last built
 let _regexCacheMap: Record<string, string> | null = null;  // Map identity when cache was last built
-interface CachedPseudoEntry {
-  pseudonym: string;
-  original: string;
-  regexCS: RegExp | null;      // case-sensitive boundary-aware
-  regexCI: RegExp | null;      // case-insensitive boundary-aware
-  jsonPseudo: string;
-  jsonOrig: string;
-  json2Pseudo: string;
-  json2Orig: string;
-}
+// CachedPseudoEntry, looksLikePersonName, _ORG_SUFFIXES — imported from ./main-world/depseudo-engine
 let _regexCache: CachedPseudoEntry[] = [];
 
-// Detect if a string looks like a person name: 2+ words, each capitalized,
-// and the last word is NOT a common org suffix (Corp, Securities, etc.)
-const _ORG_SUFFIXES = new Set([
-  'inc', 'corp', 'corporation', 'llc', 'ltd', 'llp',
-  'associates', 'partners', 'group', 'foundation',
-  'hospital', 'center', 'centre', 'university', 'college',
-  'bank', 'insurance', 'industries', 'enterprises', 'holdings',
-  'capital', 'trust', 'fund', 'technologies', 'tech',
-  'solutions', 'services', 'consulting', 'management',
-  'investments', 'advisors', 'advisory', 'labs', 'laboratories',
-  'media', 'energy', 'resources', 'dynamics', 'systems',
-  'international', 'global', 'worldwide', 'agency',
-  'securities', 'networks', 'financial', 'ventures',
-  'software', 'analytics', 'robotics', 'automation',
-  'engineering', 'properties', 'realty', 'brands',
-]);
-function looksLikePersonName(s: string): boolean {
-  const words = s.split(/\s+/);
-  if (words.length < 2) return false;
-  // L-7 FIX: Handle apostrophes (O'Brien), hyphens (Soo-Jin), and all-caps (JOHN)
-  if (!words.every(w => /^[A-Z][a-z'-]/.test(w) || /^[A-Z]{2,}$/.test(w) || /^[A-Z]'[A-Z][a-z]/.test(w))) return false;
-  // Reject if last word is a common org suffix
-  if (_ORG_SUFFIXES.has(words[words.length - 1].toLowerCase())) return false;
-  return true;
-}
-
-function buildRegexCache(reverseMap: Record<string, string>): CachedPseudoEntry[] {
-  const entries = Object.entries(reverseMap)
-    .filter(([k]) => k && k.length >= 2);
-
-  // Sort entries by pseudonym length DESCENDING before building cache.
-  // Longer pseudonyms must be replaced first to prevent substring collisions.
-  // E.g., "Contoso Holdings" must be replaced before "Contoso".
-  return entries
-    .filter(([pseudonym, original]) => pseudonym !== original)
-    .sort((a, b) => b[0].length - a[0].length)
-    .map(([pseudonym, original]) => {
-      let regexCS: RegExp | null = null;
-      let regexCI: RegExp | null = null;
-      try {
-        const escaped = pseudonym.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const startsWithAlpha = /^[a-zA-Z]/.test(pseudonym);
-        const endsWithAlpha = /[a-zA-Z]$/.test(pseudonym);
-        const startsWithDigit = /^\d/.test(pseudonym);
-        const endsWithDigit = /\d$/.test(pseudonym);
-        const startsWithDollar = pseudonym.startsWith('$');
-        const prefix = startsWithDollar ? '\\$*'
-          : startsWithDigit ? '(?<![\\d.])'
-          : startsWithAlpha ? '(?<![a-zA-Z])'
-          : '';
-        const suffix = endsWithDigit ? '(?![\\d.])' : endsWithAlpha ? '(?![a-zA-Z])' : '';
-        regexCS = new RegExp(prefix + escaped + suffix, 'g');
-        regexCI = new RegExp(prefix + escaped + suffix, 'gi');
-      } catch { /* regex failed */ }
-      const jsonPseudo = jsonStringEscape(pseudonym);
-      const jsonOrig = jsonStringEscape(original);
-
-      return {
-        pseudonym, original,
-        regexCS, regexCI,
-        jsonPseudo, jsonOrig,
-        json2Pseudo: jsonStringEscape(jsonPseudo),
-        json2Orig: jsonStringEscape(jsonOrig),
-      };
-    });
-}
+// buildRegexCache() — imported from ./main-world/depseudo-engine
 
 function replacePseudonyms(text: string, reverseMap: Record<string, string>): string {
   // Build/rebuild regex cache when reverseMap changes.
@@ -1653,79 +1628,8 @@ function replacePseudonyms(text: string, reverseMap: Record<string, string>): st
     _regexCache = buildRegexCache(reverseMap);
   }
 
-  let result = text;
-
-  for (const entry of _regexCache) {
-    const { pseudonym, original, regexCS, regexCI, jsonPseudo, jsonOrig, json2Pseudo, json2Orig } = entry;
-
-    // Strategy 1: Boundary-aware exact match (case-sensitive)
-    // IMPORTANT: Use arrow function as replacer to avoid $ being interpreted
-    // as special replacement patterns ($1, $$, $&, etc.).
-    // NOTE: All strategies run (no `continue`) because the same pseudonym can appear
-    // in both plain-text and JSON-encoded forms within a single SSE chunk.
-    if (regexCS) {
-      regexCS.lastIndex = 0;
-      result = result.replace(regexCS, () => original);
-    }
-
-    // Strategy 2: JSON-escaped match (SSE streams contain JSON-encoded strings)
-    if (jsonPseudo !== pseudonym && result.includes(jsonPseudo)) {
-      result = result.split(jsonPseudo).join(jsonOrig);
-    }
-    // Double-escaped: Gemini batchexecute responses use nested escaping
-    if (json2Pseudo !== jsonPseudo && result.includes(json2Pseudo)) {
-      result = result.split(json2Pseudo).join(json2Orig);
-    }
-
-    // Strategy 3: Case-insensitive boundary-aware match (catches case variants missed by S1)
-    if (regexCI) {
-      regexCI.lastIndex = 0;
-      result = result.replace(regexCI, () => original);
-    }
-
-  }
-
-  // ── LEAK SCANNER: Defense-in-depth verification ──────────────────────────
-  // After all boundary-aware replacements, scan the result for ANY remaining
-  // pseudonym words. This catches edge cases that strategies 1-3 miss:
-  // possessives ("Contoso's"), hyphenated forms, punctuation-attached, etc.
-  //
-  // Guards against false positives:
-  //   1. Skip short keys (< 7 chars) — "Park", "May", "Lee" appear in normal text
-  //   2. Skip fragment keys that are substrings of LONGER pseudonym keys —
-  //      e.g., "Emily" (fragment) must not match inside already-de-pseudoed
-  //      "emily.rogers@redwoodcorp.io" email address (DEF-012)
-  //   3. Only match at word-ish boundaries (alphanumeric transitions)
-  //
-  // L-1/L-2 PERF FIX: Precompute substring exclusion set once, avoid repeated toLowerCase()
-  const _leakLongerKeys = _regexCache.map(e => e.pseudonym.toLowerCase());
-  const _leakExcluded = new Set<string>();
-  for (const entry of _regexCache) {
-    const pl = entry.pseudonym.toLowerCase();
-    if (pl.length < 7) continue;
-    for (const longer of _leakLongerKeys) {
-      if (longer.length > pl.length && longer.includes(pl)) {
-        _leakExcluded.add(pl);
-        break;
-      }
-    }
-  }
-  let resultLowerLeak = result.toLowerCase(); // compute once, rebuild only on mutation
-  for (const entry of _regexCache) {
-    const pseudoLower = entry.pseudonym.toLowerCase();
-    if (pseudoLower.length < 7) continue;
-    if (_leakExcluded.has(pseudoLower)) continue;
-    if (!resultLowerLeak.includes(pseudoLower)) continue;
-    // Found a leak — replace aggressively (no boundaries)
-    let idx = resultLowerLeak.indexOf(pseudoLower);
-    while (idx !== -1) {
-      result = result.substring(0, idx) + entry.original + result.substring(idx + entry.pseudonym.length);
-      resultLowerLeak = result.toLowerCase(); // rebuild after mutation
-      idx = resultLowerLeak.indexOf(pseudoLower, idx + entry.original.length);
-    }
-  }
-
-  return result;
+  // Delegate to the stateless core engine (extracted to depseudo-engine.ts)
+  return replacePseudonymsCore(text, _regexCache);
 }
 
 /**
@@ -2323,6 +2227,19 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
     if (typeof completion === 'string') {
       return { mode: 'accumulated', content: completion };
     }
+    // ChatGPT 2025+ JSON SSE: {"p":"...path...","o":"append","v":"text"}
+    if (parsed?.o === 'append' && typeof parsed?.v === 'string' && parsed?.p?.includes('/content/parts')) {
+      return { mode: 'delta', content: parsed.v };
+    }
+    if (parsed?.o === 'add' && typeof parsed?.v === 'string' && parsed?.p?.includes('/content/parts')) {
+      return { mode: 'accumulated', content: parsed.v };
+    }
+    if (parsed?.v?.message?.content?.parts) {
+      const vParts = parsed.v.message.content.parts;
+      if (Array.isArray(vParts) && typeof vParts[0] === 'string') {
+        return { mode: 'accumulated', content: vParts[0] };
+      }
+    }
     return null;
   }
 
@@ -2339,14 +2256,20 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
     if (mode === 'accumulated') {
       if (parsed?.message?.content?.parts) {
         parsed.message.content.parts[0] = content;
+      } else if (parsed?.v?.message?.content?.parts) {
+        parsed.v.message.content.parts[0] = content;
       } else if (parsed?.completion !== undefined) {
         parsed.completion = content;
+      } else if (parsed?.o === 'add' && typeof parsed?.v === 'string') {
+        parsed.v = content;
       }
     } else {
       if (parsed?.choices?.[0]?.delta?.content !== undefined) {
         parsed.choices[0].delta.content = content;
       } else if (parsed?.delta?.text !== undefined) {
         parsed.delta.text = content;
+      } else if (parsed?.o === 'append' && typeof parsed?.v === 'string') {
+        parsed.v = content;
       }
     }
   }
@@ -2862,6 +2785,7 @@ function _checkConversationBoundary(): void {
       igLog(`URL changed: ${prevPath} → ${currentPath} — different conversation, resetting pseudonym maps`);
       clearReverseMapFully();
       currentForwardMap = {};
+      _sessionEntities.clear();
       pendingFileScans.clear();
       dismissScanIndicator();
     } else {
@@ -3696,8 +3620,22 @@ const patchedFetch = async function patchedFetch(
         // acquisition of BetaWorks" contain ZERO regex entities but are highly
         // sensitive. Contextual keywords catch these.
         const fullScore = computeScore(promptText, allEntities as DetectedEntity[]);
-        const score = fullScore.score;
-        const level = fullScore.level;
+        let score = fullScore.score;
+        let level = fullScore.level;
+
+        // DEF-016: Boost score when follow-up references entities from prior turns.
+        // Even if the regex doesn't re-detect them (e.g., "Can you summarize what
+        // Sarah said?" won't detect "Sarah" alone as PII), the session registry
+        // knows "Sarah Chen" was pseudonymized in Turn 1. References to prior
+        // entities should prevent GREEN passthrough.
+        const sessionRefCount = _countSessionEntityReferences(promptText);
+        if (sessionRefCount > 0 && score < 40) {
+          const boost = Math.min(40, sessionRefCount * 15);
+          const boostedScore = Math.min(100, score + boost);
+          igLog(`DEF-016: Follow-up references ${sessionRefCount} session entities — boosting score ${score} → ${boostedScore}`);
+          score = boostedScore;
+          level = scoreToLevel(score);
+        }
 
         igLog(`Full score: ${score} (${level}) — entities: ${allEntities.length}, breakdown: entity=${fullScore.breakdown.entityScore}, context=${fullScore.breakdown.contextScore}, docType=${fullScore.breakdown.documentTypeMultiplier}`);
 
@@ -3797,12 +3735,28 @@ const patchedFetch = async function patchedFetch(
           // This ensures multi-turn conversations can de-pseudonymize across requests
           for (const m of pseudoResult.mappings) {
             addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
+            // DEF-016: Register original entity text in session registry so
+            // follow-up messages referencing it get elevated scoring
+            if (m.original.length >= 4) {
+              _sessionEntities.add(m.original);
+            }
           }
           // Log the full reverse map for diagnostics
           const mapEntries = Object.entries(currentReverseMap);
           igLog(`Reverse map: ${mapEntries.length} entries`);
           // Save a snapshot for this request's response de-pseudonymization
           const requestReverseMap = { ...currentReverseMap };
+
+          // DEF-014: After adding new mappings, ensure DOM observer is active and
+          // schedule aggressive rescans. Claude (and similar platforms) re-render
+          // the entire conversation from server state when a new turn is sent.
+          // Without this, Turn 1's content reverts to pseudonym values because
+          // the framework overwrites DOM after our stream de-pseudo.
+          startPersistentDomDepseudo();
+          // Aggressive rescans at multiple intervals to beat framework re-renders
+          setTimeout(() => scanTextNodes(document.body), 200);
+          setTimeout(() => scanTextNodes(document.body), 800);
+          setTimeout(() => scanTextNodes(document.body), 2000);
 
           // ── Private LLM Routing ──
           // When Executive Lens routes to private_llm and an endpoint is configured,
@@ -5722,8 +5676,10 @@ igPostMessage({
   adapter: activeAdapter?.name || null,
 });
 
-// Mark as active using Symbol-keyed guard — store nonce so duplicates can send valid heartbeats
-(window as any)[_IG_GUARD_SYM] = { status: 'active', since: Date.now(), token: _igGuardToken, nonce: _IG_MSG_NONCE };
+// Mark as active — nonce is NOT stored on the guard (security: prevents page-script extraction)
+document.documentElement.setAttribute('data-ig-guard', JSON.stringify({
+  status: 'active', since: Date.now(), token: _igGuardToken,
+}));
 (window as any).__IRON_GATE_MAIN_WORLD = 'active';
 (window as any).__IRON_GATE_MODE = mode;
 
@@ -5746,7 +5702,7 @@ console.log(
     '\n\nError:', initError,
     '\n\nResetting guard to allow retry on next injection.'
   );
-  delete (window as any)[_IG_GUARD_SYM];
+  document.documentElement.removeAttribute('data-ig-guard');
 }
 
 } // End of duplicate execution guard

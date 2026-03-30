@@ -36,17 +36,22 @@ interface ClassifyResponse {
 export function createTier3ServerAdapter(config: Tier3Config): TierAdapter {
   let consecutiveFailures = 0;
   let _disabled = false;
+  let _recoveryTimer: ReturnType<typeof setTimeout> | null = null;
   const MAX_FAILURES = 3;
   const RECOVERY_MS = 60_000;
 
-  // Auto-recovery timer
-  setInterval(() => {
-    if (_disabled) {
-      console.log('[Iron Gate] Tier 3 server adapter auto-recovery: resetting circuit breaker');
-      consecutiveFailures = 0;
-      _disabled = false;
-    }
-  }, RECOVERY_MS);
+  /** Schedule a one-shot recovery timer (only when disabled). Avoids leaked setInterval. */
+  function scheduleRecovery() {
+    if (_recoveryTimer) return; // already scheduled
+    _recoveryTimer = setTimeout(() => {
+      _recoveryTimer = null;
+      if (_disabled) {
+        console.log('[Iron Gate] Tier 3 server adapter auto-recovery: resetting circuit breaker');
+        consecutiveFailures = 0;
+        _disabled = false;
+      }
+    }, RECOVERY_MS);
+  }
 
   return {
     tier: 3,
@@ -98,6 +103,7 @@ export function createTier3ServerAdapter(config: Tier3Config): TierAdapter {
         consecutiveFailures++;
         if (consecutiveFailures >= MAX_FAILURES) {
           _disabled = true;
+          scheduleRecovery();
           console.warn(`[Iron Gate] Tier 3 server adapter disabled after ${MAX_FAILURES} failures (auto-recovery in ${RECOVERY_MS / 1000}s)`);
         }
         throw err;

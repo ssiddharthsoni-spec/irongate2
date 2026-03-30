@@ -853,17 +853,19 @@ async function handleMessage(
     return { error: 'Invalid message: type too long' };
   }
 
-  // Nonce validation for sensitive messages
+  // Nonce validation for sensitive messages — nonce is MANDATORY
   if (NONCE_REQUIRED.has(message.type)) {
     const nonce = message.nonce;
-    if (nonce && _seenNonces.has(nonce)) {
+    if (!nonce || typeof nonce !== 'string') {
+      igLog('BLOCKED — missing nonce for sensitive message:', message.type);
+      return { ok: false, error: 'Missing nonce' };
+    }
+    if (_seenNonces.has(nonce)) {
       igLog('BLOCKED — replayed nonce:', message.type);
       return { ok: false, error: 'Replayed message' };
     }
-    if (nonce) {
-      _seenNonces.add(nonce);
-      _nonceTimestamps.set(nonce, Date.now());
-    }
+    _seenNonces.add(nonce);
+    _nonceTimestamps.set(nonce, Date.now());
   }
 
   // ── Kill switch: block ALL prompt processing when active ──

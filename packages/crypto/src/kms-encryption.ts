@@ -74,14 +74,30 @@ function base64ToUint8(base64: string): Uint8Array {
 // ---------------------------------------------------------------------------
 
 /**
- * Derive a local master key (KEK) from a firmKeyId.
+ * Derive a local master key (KEK) from a firmKeyId AND a server-provided secret.
+ * The firmKeyId alone is not secret (visible in API responses, URLs, DB records).
+ * The serverSecret ensures that only authorized parties can derive the KEK.
+ *
  * In production this would be replaced by an AWS KMS call.
+ *
+ * @param firmKeyId - The firm's unique identifier
+ * @param serverSecret - A secret provided by the server (e.g., IRON_GATE_ENCRYPTION_SECRET)
+ *                       that ensures the KEK cannot be derived from public information alone
  */
-async function deriveLocalMasterKey(firmKeyId: string): Promise<CryptoKey> {
+async function deriveLocalMasterKey(firmKeyId: string, serverSecret?: string): Promise<CryptoKey> {
+  if (!serverSecret) {
+    throw new Error(
+      'KMS local master key derivation requires a server secret. ' +
+      'The firmKeyId alone is not secret material and must not be used as sole input.'
+    );
+  }
+
   const encoder = new TextEncoder();
+  // Combine firmKeyId + serverSecret so the KEK depends on both
+  const combined = encoder.encode(`${firmKeyId}:${serverSecret}`);
   const keyMaterial = await crypto.subtle.importKey(
     'raw',
-    encoder.encode(firmKeyId),
+    combined,
     'PBKDF2',
     false,
     ['deriveKey'],
@@ -113,8 +129,8 @@ async function deriveLocalMasterKey(firmKeyId: string): Promise<CryptoKey> {
  * @param firmKeyId - Identifier for the firm's master key
  * @returns The plaintext CryptoKey, the wrapped DEK, and the wrapping IV
  */
-export async function generateDataKey(firmKeyId: string): Promise<DataKeyResult> {
-  const masterKey = await deriveLocalMasterKey(firmKeyId);
+export async function generateDataKey(firmKeyId: string, serverSecret?: string): Promise<DataKeyResult> {
+  const masterKey = await deriveLocalMasterKey(firmKeyId, serverSecret);
 
   // Generate a random AES-256-GCM DEK
   const dek = await crypto.subtle.generateKey(
@@ -157,8 +173,9 @@ export async function generateDataKey(firmKeyId: string): Promise<DataKeyResult>
 export async function encryptForFirm(
   firmKeyId: string,
   plaintext: string,
+  serverSecret?: string,
 ): Promise<EnvelopeEncryptedPayload> {
-  const { plaintextKey, encryptedDek, iv } = await generateDataKey(firmKeyId);
+  const { plaintextKey, encryptedDek, iv } = await generateDataKey(firmKeyId, serverSecret);
 
   const encoder = new TextEncoder();
   const dataIv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
@@ -200,8 +217,9 @@ export async function decryptForFirm(
   encryptedDek: string,
   encryptedData: string,
   iv: string,
+  serverSecret?: string,
 ): Promise<string> {
-  const masterKey = await deriveLocalMasterKey(firmKeyId);
+  const masterKey = await deriveLocalMasterKey(firmKeyId, serverSecret);
 
   // Unwrap the DEK
   const wrapIv = base64ToUint8(iv);

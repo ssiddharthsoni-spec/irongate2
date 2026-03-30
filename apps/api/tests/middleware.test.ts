@@ -23,7 +23,7 @@ describe('Security Headers Middleware', () => {
     expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
     expect(res.headers.get('X-Frame-Options')).toBe('DENY');
     expect(res.headers.get('X-XSS-Protection')).toBe('0');
-    expect(res.headers.get('Content-Security-Policy')).toBe("default-src 'self'");
+    expect(res.headers.get('Content-Security-Policy')).toBe("default-src 'none'; script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src 'none'; media-src 'none'; font-src 'none'; connect-src 'self'; style-src 'none'");
     expect(res.headers.get('Referrer-Policy')).toBe('strict-origin-when-cross-origin');
     expect(res.headers.get('Permissions-Policy')).toBe('camera=(), microphone=(), geolocation=()');
   });

@@ -51,6 +51,33 @@ export const ChatGPTAdapter: SiteAdapter = {
     if (Array.isArray(parts) && typeof parts[0] === 'string') {
       return { mode: 'accumulated' as const, content: parts[0] };
     }
+    // ChatGPT 2025+ JSON SSE format: {"p":"path","o":"add/patch","v":{...}}
+    // The text content is nested inside the "v" object at varying paths.
+    // Common patterns:
+    //   {"p":"/message/content/parts/0","o":"append","v":"text chunk"}
+    //   {"p":"/message/content/parts/0","o":"add","v":"full text"}
+    //   {"p":"...","o":"patch","v":[{"p":"...","o":"append","v":"chunk"}]}
+    if (parsed?.o === 'append' && typeof parsed?.v === 'string' && parsed?.p?.includes('/content/parts')) {
+      return { mode: 'delta' as const, content: parsed.v };
+    }
+    if (parsed?.o === 'add' && typeof parsed?.v === 'string' && parsed?.p?.includes('/content/parts')) {
+      return { mode: 'accumulated' as const, content: parsed.v };
+    }
+    // Nested patch format: v is an array of operations
+    if (parsed?.o === 'patch' && Array.isArray(parsed?.v)) {
+      for (const op of parsed.v) {
+        if (op?.o === 'append' && typeof op?.v === 'string' && op?.p?.includes('/content/parts')) {
+          return { mode: 'delta' as const, content: op.v };
+        }
+      }
+    }
+    // Deeply nested: v.message.content.parts[0]
+    if (parsed?.v?.message?.content?.parts) {
+      const vParts = parsed.v.message.content.parts;
+      if (Array.isArray(vParts) && typeof vParts[0] === 'string') {
+        return { mode: 'accumulated' as const, content: vParts[0] };
+      }
+    }
     // OpenAI API delta: choices[0].delta.content
     const delta = parsed?.choices?.[0]?.delta?.content;
     if (typeof delta === 'string') {
@@ -62,6 +89,19 @@ export const ChatGPTAdapter: SiteAdapter = {
   injectResponseContent(parsed: any, mode: 'accumulated' | 'delta', content: string) {
     if (mode === 'accumulated' && parsed?.message?.content?.parts) {
       parsed.message.content.parts[0] = content;
+    } else if (mode === 'accumulated' && parsed?.v?.message?.content?.parts) {
+      parsed.v.message.content.parts[0] = content;
+    } else if (parsed?.o === 'append' && typeof parsed?.v === 'string' && parsed?.p?.includes('/content/parts')) {
+      parsed.v = content;
+    } else if (parsed?.o === 'add' && typeof parsed?.v === 'string' && parsed?.p?.includes('/content/parts')) {
+      parsed.v = content;
+    } else if (parsed?.o === 'patch' && Array.isArray(parsed?.v)) {
+      for (const op of parsed.v) {
+        if (op?.o === 'append' && typeof op?.v === 'string' && op?.p?.includes('/content/parts')) {
+          op.v = content;
+          break;
+        }
+      }
     } else if (parsed?.choices?.[0]?.delta?.content !== undefined) {
       parsed.choices[0].delta.content = content;
     }
