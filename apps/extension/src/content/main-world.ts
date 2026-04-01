@@ -86,6 +86,32 @@ if (_IG_GUARD_STATE?.status === 'active') {
 // Use a flag to wrap all initialization — prevents duplicate setup
 if (!_IG_GUARD_STATE) {
 
+// ─── Production Console Gate ─────────────────────────────────────────────────
+// Gate ALL console output behind localStorage debug flag. In production,
+// console.log statements leak internal state (adapter strategies, pseudonym
+// maps, pipeline details) to DevTools. This replaces console methods with
+// no-ops unless 'ironGateDebug' is set in localStorage.
+let _IG_DEBUG = false;
+try { _IG_DEBUG = localStorage.getItem('ironGateDebug') === 'true'; } catch {}
+const _origConsole = { log: console.log.bind(console), warn: console.warn.bind(console), error: console.error.bind(console) };
+if (!_IG_DEBUG) {
+  // In production: suppress all console.log, keep warn/error only for critical issues
+  console.log = (..._args: any[]) => {}; // suppressed
+  // Wrap warn/error to only output Iron Gate messages when debug is off
+  const _origWarn = console.warn;
+  const _origError = console.error;
+  console.warn = (...args: any[]) => {
+    const msg = typeof args[0] === 'string' ? args[0] : '';
+    if (msg.includes('[Iron Gate')) return; // suppress internal warnings
+    _origWarn.apply(console, args);
+  };
+  console.error = (...args: any[]) => {
+    const msg = typeof args[0] === 'string' ? args[0] : '';
+    if (msg.includes('[Iron Gate')) return; // suppress internal errors
+    _origError.apply(console, args);
+  };
+}
+
 // ─── Hashing ─────────────────────────────────────────────────────────────────
 // SHA-256 hash — raw PII is hashed before leaving via postMessage so that
 // no other page script can intercept the original sensitive text.
@@ -2246,12 +2272,20 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
     if (typeof completion === 'string') {
       return { mode: 'accumulated', content: completion };
     }
-    // ChatGPT 2025+ JSON SSE: {"p":"...path...","o":"append","v":"text"}
-    if (parsed?.o === 'append' && typeof parsed?.v === 'string' && parsed?.p?.includes('/content/parts')) {
+    // ChatGPT 2025+ JSON patch: {"o":"append/add/patch","v":"text or [ops]"}
+    // Match on operation type broadly — path format varies across versions
+    if (parsed?.o === 'append' && typeof parsed?.v === 'string' && parsed.v.length > 0) {
       return { mode: 'delta', content: parsed.v };
     }
-    if (parsed?.o === 'add' && typeof parsed?.v === 'string' && parsed?.p?.includes('/content/parts')) {
+    if (parsed?.o === 'add' && typeof parsed?.v === 'string' && parsed.v.length > 0 && parsed?.p?.includes('content')) {
       return { mode: 'accumulated', content: parsed.v };
+    }
+    if (parsed?.o === 'patch' && Array.isArray(parsed?.v)) {
+      for (const op of parsed.v) {
+        if (op?.o === 'append' && typeof op?.v === 'string' && op.v.length > 0) {
+          return { mode: 'delta', content: op.v };
+        }
+      }
     }
     if (parsed?.v?.message?.content?.parts) {
       const vParts = parsed.v.message.content.parts;
@@ -2289,6 +2323,13 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
         parsed.delta.text = content;
       } else if (parsed?.o === 'append' && typeof parsed?.v === 'string') {
         parsed.v = content;
+      } else if (parsed?.o === 'patch' && Array.isArray(parsed?.v)) {
+        for (const op of parsed.v) {
+          if ((op?.o === 'append' || op?.o === 'add') && typeof op?.v === 'string') {
+            op.v = content;
+            break;
+          }
+        }
       }
     }
   }
@@ -3509,6 +3550,13 @@ const patchedFetch = async function patchedFetch(
     // prevent flicker — user message bubble shows original text from React state.
     if (activeAdapter?.interception === 'dom-presubmit') {
       igLog('DOM pre-submit adapter — skipping fetch body modification (DOM layer handles proxy)');
+      // DEF-016 ROOT CAUSE FIX: Even though DOM pre-submit handles pseudonymization,
+      // the RESPONSE still needs de-pseudonymization with the accumulated reverse map.
+      // Without this, Turn 2's response on Gemini leaks Turn 1's pseudonyms.
+      if (Object.keys(currentReverseMap).length > 0 && adapterIsLLMEndpoint(url, activeAdapter)) {
+        const response = await originalFetch.call(window, input, init);
+        return depseudonymizeResponse(response, { ...currentReverseMap });
+      }
       return originalFetch.call(window, input, init);
     }
 
@@ -5450,10 +5498,47 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
     const score = fullScore.score;
     const level = scoreToLevel(score);
 
+    // DEF-016 ROOT CAUSE FIX (DOM path): Check session entity registry BEFORE
+    // the score gate. If the text references entities from prior turns, force-
+    // pseudonymize using the forward map — even if the current score is low.
+    const domSessionRefCount = _countSessionEntityReferences(text);
+    if (domSessionRefCount > 0 && Object.keys(currentForwardMap).length > 0) {
+      let pseudonymizedText = text;
+      const sessionMappings: PseudonymMapping[] = [];
+      const fwdEntries = Object.entries(currentForwardMap)
+        .sort((a, b) => b[0].length - a[0].length);
+      for (const [original, pseudonym] of fwdEntries) {
+        if (original.length < 3) continue;
+        if (!pseudonymizedText.toLowerCase().includes(original.toLowerCase())) continue;
+        try {
+          const escaped = original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const prefix = /^[a-zA-Z]/.test(original) ? '(?<![a-zA-Z])' : '';
+          const suffix = /[a-zA-Z]$/.test(original) ? '(?![a-zA-Z])' : '';
+          const regex = new RegExp(prefix + escaped + suffix, 'gi');
+          const before = pseudonymizedText;
+          pseudonymizedText = pseudonymizedText.replace(regex, () => pseudonym);
+          if (pseudonymizedText !== before) {
+            sessionMappings.push({ original, pseudonym, type: 'SESSION_ENTITY' });
+          }
+        } catch { /* regex failed */ }
+      }
+      if (sessionMappings.length > 0) {
+        igLog(`${source} DOM DEF-016: Force-pseudonymizing ${sessionMappings.length} session entities`);
+        for (const m of sessionMappings) {
+          addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
+        }
+        startPersistentDomDepseudo();
+        turnCoordinator.submit({
+          type: 'IRON_GATE_INTERCEPTED', promptText: text, allEntities,
+          maskedText: pseudonymizedText, mappings: sanitizeMappingsForTransit(sessionMappings),
+          level: 'high', score: Math.max(score, 50),
+        });
+        return { maskedText: pseudonymizedText, mappings: sessionMappings };
+      }
+    }
+
     if (allEntities.length === 0) {
       igLog(`${source} DOM: no entities (contextual score=${score}), not pseudonymizing`);
-      // DEF-014: Do NOT clear reverse map here — previous turns' mappings must persist
-      // Report contextual score so sidepanel shows real risk
       turnCoordinator.submit({
         type: 'IRON_GATE_AUDIT', promptText: text, allEntities: [],
         maskedText: '', mappings: [], level, score,
@@ -5468,7 +5553,6 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
         type: 'IRON_GATE_AUDIT', promptText: text, allEntities,
         maskedText: '', mappings: [], level, score,
       });
-      // DEF-014: Do NOT clear reverse map here — previous turns' mappings must persist
       return null;
     }
 

@@ -57,17 +57,25 @@ export const ChatGPTAdapter: SiteAdapter = {
     //   {"p":"/message/content/parts/0","o":"append","v":"text chunk"}
     //   {"p":"/message/content/parts/0","o":"add","v":"full text"}
     //   {"p":"...","o":"patch","v":[{"p":"...","o":"append","v":"chunk"}]}
-    if (parsed?.o === 'append' && typeof parsed?.v === 'string' && parsed?.p?.includes('/content/parts')) {
+    // ChatGPT 2025+ JSON patch format — match on operation type.
+    // The path "p" varies across ChatGPT versions, so we match broadly:
+    //   {"o":"append","v":"text chunk","p":"/message/content/parts/0"}
+    //   {"o":"append","v":"text","p":"/conversation/messages/.../content/parts/0"}
+    //   {"o":"add","v":"full text","p":"..."}
+    if (parsed?.o === 'append' && typeof parsed?.v === 'string' && parsed.v.length > 0) {
       return { mode: 'delta' as const, content: parsed.v };
     }
-    if (parsed?.o === 'add' && typeof parsed?.v === 'string' && parsed?.p?.includes('/content/parts')) {
+    if (parsed?.o === 'add' && typeof parsed?.v === 'string' && parsed.v.length > 0 && parsed?.p?.includes('content')) {
       return { mode: 'accumulated' as const, content: parsed.v };
     }
     // Nested patch format: v is an array of operations
     if (parsed?.o === 'patch' && Array.isArray(parsed?.v)) {
       for (const op of parsed.v) {
-        if (op?.o === 'append' && typeof op?.v === 'string' && op?.p?.includes('/content/parts')) {
+        if (op?.o === 'append' && typeof op?.v === 'string' && op.v.length > 0) {
           return { mode: 'delta' as const, content: op.v };
+        }
+        if (op?.o === 'add' && typeof op?.v === 'string' && op.v.length > 0 && op?.p?.includes('content')) {
+          return { mode: 'accumulated' as const, content: op.v };
         }
       }
     }
@@ -91,13 +99,17 @@ export const ChatGPTAdapter: SiteAdapter = {
       parsed.message.content.parts[0] = content;
     } else if (mode === 'accumulated' && parsed?.v?.message?.content?.parts) {
       parsed.v.message.content.parts[0] = content;
-    } else if (parsed?.o === 'append' && typeof parsed?.v === 'string' && parsed?.p?.includes('/content/parts')) {
+    } else if (parsed?.o === 'append' && typeof parsed?.v === 'string') {
       parsed.v = content;
-    } else if (parsed?.o === 'add' && typeof parsed?.v === 'string' && parsed?.p?.includes('/content/parts')) {
+    } else if (parsed?.o === 'add' && typeof parsed?.v === 'string') {
       parsed.v = content;
     } else if (parsed?.o === 'patch' && Array.isArray(parsed?.v)) {
       for (const op of parsed.v) {
-        if (op?.o === 'append' && typeof op?.v === 'string' && op?.p?.includes('/content/parts')) {
+        if (op?.o === 'append' && typeof op?.v === 'string') {
+          op.v = content;
+          break;
+        }
+        if (op?.o === 'add' && typeof op?.v === 'string') {
           op.v = content;
           break;
         }

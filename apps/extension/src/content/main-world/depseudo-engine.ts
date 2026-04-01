@@ -209,8 +209,13 @@ export function replacePseudonymsCore(text: string, cache: CachedPseudoEntry[]):
       const charBefore = idx > 0 ? resultLowerLeak.charCodeAt(idx - 1) : 32;
       const charAfter = idx + pseudoLower.length < resultLowerLeak.length
         ? resultLowerLeak.charCodeAt(idx + pseudoLower.length) : 32;
-      const isAlphaNum = (c: number) => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
-      if (isAlphaNum(charBefore) || isAlphaNum(charAfter)) {
+      // DEF-021/025 ROOT CAUSE FIX: Include dot (46) and hyphen (45) as "connected"
+      // characters. Without this, the leak scanner treats "meridian-legal.com" as
+      // having a word boundary after "meridian" and replaces it — corrupting the domain.
+      const isWordConnected = (c: number) =>
+        (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) // alphanumeric
+        || c === 45 || c === 46; // hyphen, dot — connect words in URLs/domains/emails
+      if (isWordConnected(charBefore) || isWordConnected(charAfter)) {
         idx = resultLowerLeak.indexOf(pseudoLower, idx + pseudoLower.length);
         continue;
       }
