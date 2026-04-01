@@ -3476,8 +3476,12 @@ const patchedFetch = async function patchedFetch(
       return skipResponse;
     }
 
-    // For dom-capture-wire adapters (Copilot): pass through IMMEDIATELY.
-    // Do NOT read body, do NOT wrap response, do NOT add async overhead.
+    // For dom-capture-wire adapters (Copilot): pass through without body modification.
+    // But still wrap response with de-pseudo if we have mappings from prior turns.
+    if (Object.keys(currentReverseMap).length > 0 && adapterIsLLMEndpoint(url, activeAdapter)) {
+      const response = await originalFetch.call(window, input, init);
+      return depseudonymizeResponse(response, { ...currentReverseMap });
+    }
     return originalFetch.call(window, input, init);
   }
 
@@ -3566,6 +3570,11 @@ const patchedFetch = async function patchedFetch(
     // that can't be guessed or injected by user prompts (C-2 fix).
     if (_proxyNonce && bodyString.includes(_proxyNonce)) {
       igLog('Body contains session proxy nonce — skipping double pseudonymization');
+      // Still wrap response with de-pseudo — the response may contain pseudonyms
+      if (Object.keys(currentReverseMap).length > 0) {
+        const response = await originalFetch.call(window, input, init);
+        return depseudonymizeResponse(response, { ...currentReverseMap });
+      }
       return originalFetch.call(window, input, init);
     }
 
@@ -3646,6 +3655,7 @@ const patchedFetch = async function patchedFetch(
             if (serverResult.reverseMap) {
               for (const [pseudonym, original] of Object.entries(serverResult.reverseMap)) {
                 addReverseMapping(currentReverseMap, pseudonym, original, 'server');
+                if (original.length >= 4) _sessionEntities.add(original);
               }
             }
             const requestReverseMap = { ...currentReverseMap };
@@ -4117,7 +4127,12 @@ const patchedFetch = async function patchedFetch(
                 'color: #ef4444; font-weight: bold; font-size: 13px',
                 '\nError:', fetchErr
               );
-              // Fail OPEN: send the original unmodified request so the user isn't stuck
+              // Fail OPEN: send the original unmodified request so the user isn't stuck.
+              // Still wrap response with de-pseudo — prior turn's pseudonyms may be in response.
+              if (Object.keys(currentReverseMap).length > 0) {
+                const failOpenResponse = await originalFetch.call(window, input, init);
+                return depseudonymizeResponse(failOpenResponse, { ...currentReverseMap });
+              }
               return originalFetch.call(window, input, init);
             }
 
@@ -4136,6 +4151,11 @@ const patchedFetch = async function patchedFetch(
                 `%c[Iron Gate WIRE] ⚠️ Tool rejected modified body (${modifiedResponse.status}) — sending original (fail-open)`,
                 'color: #f59e0b; font-weight: bold',
               );
+              // Still wrap response with de-pseudo for multi-turn consistency
+              if (Object.keys(currentReverseMap).length > 0) {
+                const failOpenResponse = await originalFetch.call(window, input, init);
+                return depseudonymizeResponse(failOpenResponse, { ...currentReverseMap });
+              }
               return originalFetch.call(window, input, init);
             }
 
@@ -4581,8 +4601,16 @@ XMLHttpRequest.prototype.send = function(body?: any) {
 
           // Always run scoring (contextual keywords matter even with 0 entities)
           const fullScore = computeScore(promptText, allEntities as DetectedEntity[]);
-          const score = fullScore.score;
-          const level = fullScore.level;
+          let score = fullScore.score;
+          let level = fullScore.level;
+
+          // DEF-016: Session entity boost for XHR path (same as fetch proxy)
+          const xhrSessionRefCount = _countSessionEntityReferences(promptText);
+          if (xhrSessionRefCount > 0 && score < 40) {
+            const boost = Math.min(40, xhrSessionRefCount * 15);
+            score = Math.min(100, score + boost);
+            level = scoreToLevel(score);
+          }
 
           if (allEntities.length > 0) {
             // GREEN ZONE: benign context → pass through
@@ -4592,7 +4620,6 @@ XMLHttpRequest.prototype.send = function(body?: any) {
                 type: 'IRON_GATE_AUDIT', promptText, allEntities,
                 maskedText: '', mappings: [], level, score,
               });
-              // DEF-014: Do NOT clear reverse map here — previous turns' mappings must persist
               return originalXHRSend.call(this, body);
             }
 
@@ -4614,6 +4641,8 @@ XMLHttpRequest.prototype.send = function(body?: any) {
             // Accumulate mappings (don't overwrite)
             for (const m of pseudoResult.mappings) {
               addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
+              // DEF-016: Register in session entity registry
+              if (m.original.length >= 4) _sessionEntities.add(m.original);
             }
             const xhrReverseMap = { ...currentReverseMap };
 
@@ -4639,11 +4668,9 @@ XMLHttpRequest.prototype.send = function(body?: any) {
                 Object.defineProperty(this, 'responseText', {
                   get() {
                     const text = originalGet?.get?.call(this) ?? this.response ?? '';
-                    let result = typeof text === 'string' ? text : '';
-                    for (const [pseudonym, original] of Object.entries(reverseMap)) {
-                      result = result.split(pseudonym).join(original);
-                    }
-                    return result;
+                    const raw = typeof text === 'string' ? text : '';
+                    // Use replacePseudonyms for boundary-aware replacement (not naive split/join)
+                    return replacePseudonyms(raw, reverseMap);
                   },
                   configurable: true,
                 });
@@ -4849,7 +4876,10 @@ function _walkPseudoSignalR(obj: any): { value: any; changed: boolean } {
     if (all.length > 0) {
       const result = pseudonymizeLocal(obj, all);
       if (result.maskedText !== obj) {
-        for (const m of result.mappings) addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
+        for (const m of result.mappings) {
+          addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
+          if (m.original.length >= 4) _sessionEntities.add(m.original);
+        }
         return { value: result.maskedText, changed: true };
       }
     }
@@ -5089,6 +5119,7 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
 
               for (const m of pseudoResult.mappings) {
                 addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
+                if (m.original.length >= 4) _sessionEntities.add(m.original);
               }
 
               let modifiedData: string | null = null;
@@ -5163,6 +5194,7 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
                     }
                     binaryModified = binaryModified.split(orig).join(fake);
                     addReverseMapping(currentReverseMap, fake.trim(), orig);
+                    if (orig.length >= 4) _sessionEntities.add(orig);
                     anyBinaryReplaced = true;
                   }
                   if (anyBinaryReplaced) {
