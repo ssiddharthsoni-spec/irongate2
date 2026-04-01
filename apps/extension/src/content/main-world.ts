@@ -215,6 +215,11 @@ let processingMode: 'local' | 'server' = (window as any).__IRON_GATE_PROCESSING_
 let currentReverseMap: Record<string, string> = {};
 let _reverseMapRestored = false;
 
+// registerPseudonymization() and wrapResponse() are defined after all their
+// dependencies (addReverseMapping, startPersistentDomDepseudo, scanTextNodes,
+// depseudonymizeResponse, activeAdapter) to satisfy TypeScript lexical ordering.
+// See section before patchedFetch (~line 3350).
+
 // ─── Session Entity Registry ──────────────────────────────────────────────
 // Tracks original entity text from prior turns. When a follow-up message
 // references these entities (even without re-detecting them as PII), the
@@ -3371,6 +3376,46 @@ function detectFileMetadataInJson(body: string, url: string): void {
   }
 }
 
+// ─── Centralized Pseudonymization Hook ───────────────────────────────────
+// ARCHITECTURAL FIX: Every code path that pseudonymizes text must call this
+// single function. It handles ALL post-pseudonymization actions:
+//   1. addReverseMapping (with all variants)
+//   2. _sessionEntities registration
+//   3. DOM observer kickstart + aggressive rescans
+//
+// Previously, these actions were scattered across 9+ call sites. Missing any
+// one created a bypass gap (DEF-016, DEF-014).
+
+function registerPseudonymization(
+  mappings: Array<{ pseudonym: string; original: string; type: string }>,
+  options?: { skipDomRescan?: boolean },
+): void {
+  for (const m of mappings) {
+    addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
+    if (m.original.length >= 4) {
+      _sessionEntities.add(m.original);
+    }
+  }
+  if (!options?.skipDomRescan && mappings.length > 0) {
+    startPersistentDomDepseudo();
+    setTimeout(() => scanTextNodes(document.body), 200);
+    setTimeout(() => scanTextNodes(document.body), 800);
+    setTimeout(() => scanTextNodes(document.body), 2000);
+  }
+}
+
+// ─── Centralized Response Wrapper ────────────────────────────────────────
+// Every code path that returns a fetch Response for an LLM endpoint should
+// use this. It wraps with depseudonymizeResponse when the reverse map has entries.
+
+function wrapResponse(response: Response, url: string, snapshotMap?: Record<string, string>): Response {
+  const map = snapshotMap || (Object.keys(currentReverseMap).length > 0 ? { ...currentReverseMap } : null);
+  if (map && Object.keys(map).length > 0 && adapterIsLLMEndpoint(url, activeAdapter)) {
+    return depseudonymizeResponse(response, map);
+  }
+  return response;
+}
+
 // ─── Patch window.fetch ────────────────────────────────────────────────────
 
 const originalFetch = window.fetch;
@@ -3653,10 +3698,12 @@ const patchedFetch = async function patchedFetch(
 
             // Pseudonymized: swap in the pseudonymized text
             if (serverResult.reverseMap) {
-              for (const [pseudonym, original] of Object.entries(serverResult.reverseMap)) {
-                addReverseMapping(currentReverseMap, pseudonym, original, 'server');
-                if (original.length >= 4) _sessionEntities.add(original);
-              }
+              registerPseudonymization(
+                Object.entries(serverResult.reverseMap).map(([pseudonym, original]) =>
+                  ({ pseudonym, original: original as string, type: 'server' })
+                ),
+                { skipDomRescan: true }, // server mode handles response via stream
+              );
             }
             const requestReverseMap = { ...currentReverseMap };
 
@@ -3778,10 +3825,7 @@ const patchedFetch = async function patchedFetch(
               'color: #f97316; font-weight: bold; font-size: 13px',
             );
 
-            // Add these to the reverse map for de-pseudonymization
-            for (const m of sessionMappings) {
-              addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
-            }
+            registerPseudonymization(sessionMappings);
             const requestReverseMap = { ...currentReverseMap };
 
             // Replace prompt in body
@@ -3912,32 +3956,10 @@ const patchedFetch = async function patchedFetch(
             });
           }
 
-          // Build reverse map for de-pseudonymization (ACCUMULATE, don't replace)
-          // This ensures multi-turn conversations can de-pseudonymize across requests
-          for (const m of pseudoResult.mappings) {
-            addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
-            // DEF-016: Register original entity text in session registry so
-            // follow-up messages referencing it get elevated scoring
-            if (m.original.length >= 4) {
-              _sessionEntities.add(m.original);
-            }
-          }
-          // Log the full reverse map for diagnostics
-          const mapEntries = Object.entries(currentReverseMap);
-          igLog(`Reverse map: ${mapEntries.length} entries`);
-          // Save a snapshot for this request's response de-pseudonymization
+          // Centralized: register all mappings + session entities + DOM observer
+          registerPseudonymization(pseudoResult.mappings);
+          igLog(`Reverse map: ${Object.keys(currentReverseMap).length} entries`);
           const requestReverseMap = { ...currentReverseMap };
-
-          // DEF-014: After adding new mappings, ensure DOM observer is active and
-          // schedule aggressive rescans. Claude (and similar platforms) re-render
-          // the entire conversation from server state when a new turn is sent.
-          // Without this, Turn 1's content reverts to pseudonym values because
-          // the framework overwrites DOM after our stream de-pseudo.
-          startPersistentDomDepseudo();
-          // Aggressive rescans at multiple intervals to beat framework re-renders
-          setTimeout(() => scanTextNodes(document.body), 200);
-          setTimeout(() => scanTextNodes(document.body), 800);
-          setTimeout(() => scanTextNodes(document.body), 2000);
 
           // ── Private LLM Routing ──
           // When Executive Lens routes to private_llm and an endpoint is configured,
@@ -4638,12 +4660,8 @@ XMLHttpRequest.prototype.send = function(body?: any) {
               return originalXHRSend.call(this, body);
             }
 
-            // Accumulate mappings (don't overwrite)
-            for (const m of pseudoResult.mappings) {
-              addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
-              // DEF-016: Register in session entity registry
-              if (m.original.length >= 4) _sessionEntities.add(m.original);
-            }
+            // Centralized: register all mappings + session entities + DOM observer
+            registerPseudonymization(pseudoResult.mappings, { skipDomRescan: true });
             const xhrReverseMap = { ...currentReverseMap };
 
             const modifiedBody = activeAdapter?.replacePrompt(bodyStr, promptText, pseudoResult.maskedText) ?? replacePrompt(bodyStr, promptText, pseudoResult.maskedText);
@@ -4876,10 +4894,7 @@ function _walkPseudoSignalR(obj: any): { value: any; changed: boolean } {
     if (all.length > 0) {
       const result = pseudonymizeLocal(obj, all);
       if (result.maskedText !== obj) {
-        for (const m of result.mappings) {
-          addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
-          if (m.original.length >= 4) _sessionEntities.add(m.original);
-        }
+        registerPseudonymization(result.mappings, { skipDomRescan: true });
         return { value: result.maskedText, changed: true };
       }
     }
@@ -5117,10 +5132,7 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
                 return originalSend(data);
               }
 
-              for (const m of pseudoResult.mappings) {
-                addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
-                if (m.original.length >= 4) _sessionEntities.add(m.original);
-              }
+              registerPseudonymization(pseudoResult.mappings, { skipDomRescan: true });
 
               let modifiedData: string | null = null;
               let replacementMethod = 'none';
@@ -5193,8 +5205,7 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
                       }
                     }
                     binaryModified = binaryModified.split(orig).join(fake);
-                    addReverseMapping(currentReverseMap, fake.trim(), orig);
-                    if (orig.length >= 4) _sessionEntities.add(orig);
+                    registerPseudonymization([{ pseudonym: fake.trim(), original: orig, type: 'WS_BINARY' }], { skipDomRescan: true });
                     anyBinaryReplaced = true;
                   }
                   if (anyBinaryReplaced) {
@@ -5556,10 +5567,7 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
       }
       if (sessionMappings.length > 0) {
         igLog(`${source} DOM DEF-016: Force-pseudonymizing ${sessionMappings.length} session entities`);
-        for (const m of sessionMappings) {
-          addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
-        }
-        startPersistentDomDepseudo();
+        registerPseudonymization(sessionMappings);
         turnCoordinator.submit({
           type: 'IRON_GATE_INTERCEPTED', promptText: text, allEntities,
           maskedText: pseudonymizedText, mappings: sanitizeMappingsForTransit(sessionMappings),
@@ -5603,13 +5611,8 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
       return null;
     }
 
-    for (const m of pseudoResult.mappings) {
-      addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
-      // DEF-016: Register in session entity registry for follow-up scoring
-      if (m.original.length >= 4) {
-        _sessionEntities.add(m.original);
-      }
-    }
+    // Centralized: register all mappings + session entities + DOM observer
+    registerPseudonymization(pseudoResult.mappings);
 
     // Start persistent DOM observer so the AI response gets de-pseudonymized
     // as it streams in. Critical for DOM-only adapters (Gemini) where there's
