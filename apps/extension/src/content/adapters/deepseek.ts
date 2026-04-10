@@ -18,6 +18,7 @@ export const DeepSeekAdapter: SiteAdapter = {
   hostPatterns: [/chat\.deepseek\.com/],
   transport: 'fetch',
   interception: 'wire',
+  responseStreamStrategy: 'sse-content', // OpenAI-compatible delta format
 
   apiPatterns: [/chat\.deepseek\.com\/api/],
   fileUploadPatterns: [/chat\.deepseek\.com\/api\/v0\/chat\/upload/],
@@ -27,6 +28,18 @@ export const DeepSeekAdapter: SiteAdapter = {
   inputSelectors: ['#chat-input', 'textarea'],
   submitSelectors: ['#chat-input-send-btn', 'button[aria-label="Send"]'],
   responseSelectors: ['.markdown-body'],
+
+  // OpenAI-compatible delta format: {"choices":[{"delta":{"content":"text"}}]}
+  extractResponseContent(parsed: any) {
+    const delta = parsed?.choices?.[0]?.delta?.content;
+    if (typeof delta === 'string') return { mode: 'delta' as const, content: delta };
+    return null;
+  },
+  injectResponseContent(parsed: any, _mode: 'accumulated' | 'delta', content: string) {
+    if (parsed?.choices?.[0]?.delta?.content !== undefined) {
+      parsed.choices[0].delta.content = content;
+    }
+  },
 
   extractPrompt(body: string): string | null {
     try {

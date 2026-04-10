@@ -30,6 +30,7 @@ export const PerplexityAdapter: SiteAdapter = {
 
   transport: 'websocket-socketio',
   interception: 'wire',
+  responseStreamStrategy: 'sse-content',
 
   apiPatterns: [
     /perplexity\.ai\/api/,
@@ -55,6 +56,36 @@ export const PerplexityAdapter: SiteAdapter = {
   responseSelectors: [
     '.prose',
   ],
+
+  // Perplexity uses Socket.IO frames: 42["query_progress",{"text":"..."}]
+  // and OpenAI-compatible JSON for some endpoints
+  extractResponseContent(parsed: any) {
+    // Socket.IO event: parsed is an array [eventName, data]
+    if (Array.isArray(parsed) && parsed.length >= 2) {
+      const data = parsed[1];
+      if (typeof data?.text === 'string') return { mode: 'accumulated' as const, content: data.text };
+      if (typeof data?.answer === 'string') return { mode: 'accumulated' as const, content: data.answer };
+    }
+    // JSON response with text field
+    if (typeof parsed?.text === 'string') return { mode: 'accumulated' as const, content: parsed.text };
+    if (typeof parsed?.answer === 'string') return { mode: 'accumulated' as const, content: parsed.answer };
+    const delta = parsed?.choices?.[0]?.delta?.content;
+    if (typeof delta === 'string') return { mode: 'delta' as const, content: delta };
+    return null;
+  },
+  injectResponseContent(parsed: any, _mode: 'accumulated' | 'delta', content: string) {
+    if (Array.isArray(parsed) && parsed.length >= 2) {
+      const data = parsed[1];
+      if (typeof data?.text === 'string') data.text = content;
+      else if (typeof data?.answer === 'string') data.answer = content;
+      return;
+    }
+    if (typeof parsed?.text === 'string') parsed.text = content;
+    else if (typeof parsed?.answer === 'string') parsed.answer = content;
+    else if (parsed?.choices?.[0]?.delta?.content !== undefined) {
+      parsed.choices[0].delta.content = content;
+    }
+  },
 
   extractPrompt(body: string): string | null {
     try {

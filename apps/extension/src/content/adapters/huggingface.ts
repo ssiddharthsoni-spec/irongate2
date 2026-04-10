@@ -18,6 +18,7 @@ export const HuggingFaceAdapter: SiteAdapter = {
   hostPatterns: [/huggingface\.co/],
   transport: 'fetch',
   interception: 'wire',
+  responseStreamStrategy: 'sse-content',
 
   apiPatterns: [/huggingface\.co\/chat\/.*\/message/],
   fileUploadPatterns: [/huggingface\.co\/chat\/.*\/upload/, /huggingface\.co\/chat\/.*\/file/],
@@ -27,6 +28,24 @@ export const HuggingFaceAdapter: SiteAdapter = {
   inputSelectors: ['textarea', 'div[contenteditable="true"]'],
   submitSelectors: ['button[type="submit"]', 'button[aria-label*="send" i]'],
   responseSelectors: ['.prose', '.markdown-body', '[class*="assistant"]'],
+
+  // HuggingFace chat uses a JSON-line stream: {"type":"stream","token":"text"}
+  // and OpenAI-compatible delta for inference API.
+  extractResponseContent(parsed: any) {
+    if (parsed?.type === 'stream' && typeof parsed?.token === 'string') {
+      return { mode: 'delta' as const, content: parsed.token };
+    }
+    const delta = parsed?.choices?.[0]?.delta?.content;
+    if (typeof delta === 'string') return { mode: 'delta' as const, content: delta };
+    return null;
+  },
+  injectResponseContent(parsed: any, _mode: 'accumulated' | 'delta', content: string) {
+    if (parsed?.type === 'stream' && typeof parsed?.token === 'string') {
+      parsed.token = content;
+    } else if (parsed?.choices?.[0]?.delta?.content !== undefined) {
+      parsed.choices[0].delta.content = content;
+    }
+  },
 
   extractPrompt(body: string): string | null {
     try {

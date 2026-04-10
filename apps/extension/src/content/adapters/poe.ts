@@ -19,6 +19,7 @@ export const PoeAdapter: SiteAdapter = {
   hostPatterns: [/poe\.com/],
   transport: 'fetch',
   interception: 'wire',
+  responseStreamStrategy: 'sse-content',
 
   apiPatterns: [/poe\.com\/api/],
   fileUploadPatterns: [/poe\.com\/api\/gql_upload_POST/],
@@ -37,6 +38,22 @@ export const PoeAdapter: SiteAdapter = {
   responseSelectors: [
     '[class*="Message_botMessageBubble"]',
   ],
+
+  // Poe uses GraphQL subscriptions over fetch — response shape: {"data":{"messageAdded":{"text":"..."}}}
+  extractResponseContent(parsed: any) {
+    const text = parsed?.data?.messageAdded?.text;
+    if (typeof text === 'string') return { mode: 'accumulated' as const, content: text };
+    const delta = parsed?.choices?.[0]?.delta?.content;
+    if (typeof delta === 'string') return { mode: 'delta' as const, content: delta };
+    return null;
+  },
+  injectResponseContent(parsed: any, _mode: 'accumulated' | 'delta', content: string) {
+    if (parsed?.data?.messageAdded?.text !== undefined) {
+      parsed.data.messageAdded.text = content;
+    } else if (parsed?.choices?.[0]?.delta?.content !== undefined) {
+      parsed.choices[0].delta.content = content;
+    }
+  },
 
   extractPrompt(body: string): string | null {
     try {

@@ -18,6 +18,7 @@ export const YouAdapter: SiteAdapter = {
   hostPatterns: [/you\.com/],
   transport: 'fetch',
   interception: 'wire',
+  responseStreamStrategy: 'sse-content',
 
   apiPatterns: [/you\.com\/api/],
   fileUploadPatterns: [/you\.com\/api\/.*upload/, /you\.com\/api\/.*file/, /you\.com\/api\/.*import/],
@@ -27,6 +28,22 @@ export const YouAdapter: SiteAdapter = {
   inputSelectors: ['textarea', 'input[type="text"]', 'div[contenteditable="true"]'],
   submitSelectors: ['button[type="submit"]', 'button[aria-label*="search" i]', 'button[aria-label*="send" i]'],
   responseSelectors: ['.prose', '[class*="answer"]', '[class*="response"]'],
+
+  // You.com uses youChatToken events: {"youChatToken":{"youChatToken":"text"}}
+  extractResponseContent(parsed: any) {
+    const token = parsed?.youChatToken?.youChatToken;
+    if (typeof token === 'string') return { mode: 'delta' as const, content: token };
+    const delta = parsed?.choices?.[0]?.delta?.content;
+    if (typeof delta === 'string') return { mode: 'delta' as const, content: delta };
+    return null;
+  },
+  injectResponseContent(parsed: any, _mode: 'accumulated' | 'delta', content: string) {
+    if (parsed?.youChatToken?.youChatToken !== undefined) {
+      parsed.youChatToken.youChatToken = content;
+    } else if (parsed?.choices?.[0]?.delta?.content !== undefined) {
+      parsed.choices[0].delta.content = content;
+    }
+  },
 
   extractPrompt(body: string): string | null {
     try {

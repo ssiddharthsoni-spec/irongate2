@@ -18,6 +18,7 @@ export const GroqAdapter: SiteAdapter = {
   hostPatterns: [/groq\.com/],
   transport: 'fetch',
   interception: 'wire',
+  responseStreamStrategy: 'sse-content', // OpenAI-compatible delta format
 
   apiPatterns: [/api\.groq\.com/],
   fileUploadPatterns: [/api\.groq\.com\/.*(?:file|upload)/i],
@@ -27,6 +28,17 @@ export const GroqAdapter: SiteAdapter = {
   inputSelectors: ['textarea', 'div[contenteditable="true"]'],
   submitSelectors: ['button[aria-label*="send" i]', 'button[aria-label*="submit" i]', 'button[type="submit"]'],
   responseSelectors: ['.markdown-body', '[class*="assistant"]', '.prose'],
+
+  extractResponseContent(parsed: any) {
+    const delta = parsed?.choices?.[0]?.delta?.content;
+    if (typeof delta === 'string') return { mode: 'delta' as const, content: delta };
+    return null;
+  },
+  injectResponseContent(parsed: any, _mode: 'accumulated' | 'delta', content: string) {
+    if (parsed?.choices?.[0]?.delta?.content !== undefined) {
+      parsed.choices[0].delta.content = content;
+    }
+  },
 
   extractPrompt(body: string): string | null {
     try {

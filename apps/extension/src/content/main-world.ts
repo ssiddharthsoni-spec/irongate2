@@ -3437,13 +3437,9 @@ const patchedFetch = async function patchedFetch(
   // pseudonymized conversation data (e.g., Claude reloads conversation via GET).
   // We MUST de-pseudonymize these responses or React re-renders with fake names.
   if (method !== 'POST' && method !== 'PUT' && method !== 'PATCH') {
-    // Only wrap responses from LLM API endpoints when we have active mappings
-    if (mode === 'proxy' && Object.keys(currentReverseMap).length > 0 && adapterIsLLMEndpoint(url, activeAdapter)) {
-      const response = await originalFetch.call(window, input, init);
-      igLog(`GET/non-POST de-pseudo: wrapping response from ${url.substring(0, 80)} (${Object.keys(currentReverseMap).length} mappings)`);
-      return depseudonymizeResponse(response, { ...currentReverseMap });
-    }
-    return originalFetch.call(window, input, init);
+    // GET/non-POST: no body to pseudonymize, but wrap response if map has entries
+    const response = await originalFetch.call(window, input, init);
+    return wrapResponse(response, url);
   }
 
   // ─── File Upload Detection (runs before LLM endpoint check) ──────────
@@ -3473,6 +3469,7 @@ const patchedFetch = async function patchedFetch(
   }
 
   if (!adapterIsLLMEndpoint(url, activeAdapter)) {
+    // Non-LLM endpoint: passthrough (wrapResponse no-ops since adapterIsLLMEndpoint check fails)
     return originalFetch.call(window, input, init);
   }
 
@@ -3511,23 +3508,14 @@ const patchedFetch = async function patchedFetch(
         }
       }
 
+      // dom-presubmit (Gemini): adapter handles request pseudonymization, we wrap response
       const skipResponse = await originalFetch.call(window, input, init);
-
-      if (mode === 'proxy' && Object.keys(currentReverseMap).length > 0) {
-        igLog(`De-pseudonymizing response for skipFetchProxy adapter (${Object.keys(currentReverseMap).length} mappings)`);
-        return depseudonymizeResponse(skipResponse, { ...currentReverseMap });
-      }
-
-      return skipResponse;
+      return wrapResponse(skipResponse, url);
     }
 
-    // For dom-capture-wire adapters (Copilot): pass through without body modification.
-    // But still wrap response with de-pseudo if we have mappings from prior turns.
-    if (Object.keys(currentReverseMap).length > 0 && adapterIsLLMEndpoint(url, activeAdapter)) {
-      const response = await originalFetch.call(window, input, init);
-      return depseudonymizeResponse(response, { ...currentReverseMap });
-    }
-    return originalFetch.call(window, input, init);
+    // dom-capture-wire (Copilot): WS handles request pseudonymization, we wrap response
+    const dcwResponse = await originalFetch.call(window, input, init);
+    return wrapResponse(dcwResponse, url);
   }
 
   // Extract the body — NEVER mutates input or init
@@ -3546,14 +3534,9 @@ const patchedFetch = async function patchedFetch(
   }
 
   if (!bodyString || bodyString.length < 50) {
-    // Small/empty POST bodies (e.g., Claude title generation, conversation metadata)
-    // still need response de-pseudonymization — the server generates titles from
-    // pseudonymized conversation text, so the response may contain fake names.
-    if (mode === 'proxy' && Object.keys(currentReverseMap).length > 0 && adapterIsLLMEndpoint(url, activeAdapter)) {
-      const response = await originalFetch.call(window, input, init);
-      return depseudonymizeResponse(response, { ...currentReverseMap });
-    }
-    return originalFetch.call(window, input, init);
+    // Small/empty POST bodies (Claude title gen, metadata) — wrap response anyway
+    const response = await originalFetch.call(window, input, init);
+    return wrapResponse(response, url);
   }
 
   // ── PRESERVE reverse map across turns (DEF-008 + DEF-009 fix) ──
@@ -3599,14 +3582,9 @@ const patchedFetch = async function patchedFetch(
     // prevent flicker — user message bubble shows original text from React state.
     if (activeAdapter?.interception === 'dom-presubmit') {
       igLog('DOM pre-submit adapter — skipping fetch body modification (DOM layer handles proxy)');
-      // DEF-016 ROOT CAUSE FIX: Even though DOM pre-submit handles pseudonymization,
-      // the RESPONSE still needs de-pseudonymization with the accumulated reverse map.
-      // Without this, Turn 2's response on Gemini leaks Turn 1's pseudonyms.
-      if (Object.keys(currentReverseMap).length > 0 && adapterIsLLMEndpoint(url, activeAdapter)) {
-        const response = await originalFetch.call(window, input, init);
-        return depseudonymizeResponse(response, { ...currentReverseMap });
-      }
-      return originalFetch.call(window, input, init);
+      // DOM pre-submit handles request pseudonymization; we wrap response.
+      const response = await originalFetch.call(window, input, init);
+      return wrapResponse(response, url);
     }
 
     // Prevent double pseudonymization: if this body was already proxied
@@ -3615,12 +3593,8 @@ const patchedFetch = async function patchedFetch(
     // that can't be guessed or injected by user prompts (C-2 fix).
     if (_proxyNonce && bodyString.includes(_proxyNonce)) {
       igLog('Body contains session proxy nonce — skipping double pseudonymization');
-      // Still wrap response with de-pseudo — the response may contain pseudonyms
-      if (Object.keys(currentReverseMap).length > 0) {
-        const response = await originalFetch.call(window, input, init);
-        return depseudonymizeResponse(response, { ...currentReverseMap });
-      }
-      return originalFetch.call(window, input, init);
+      const response = await originalFetch.call(window, input, init);
+      return wrapResponse(response, url);
     }
 
     try {
@@ -3662,12 +3636,9 @@ const patchedFetch = async function patchedFetch(
                 type: 'IRON_GATE_AUDIT', promptText, allEntities: [],
                 maskedText: '', mappings: [], level: 'low', score: serverResult.sensitivityScore || 0,
               });
-              // DEF-009 FIX: Wrap response with previous turn's reverse map
-              if (Object.keys(currentReverseMap).length > 0) {
-                const response = await originalFetch.call(window, input, init);
-                return depseudonymizeResponse(response, { ...currentReverseMap });
-              }
-              return originalFetch.call(window, input, init);
+              // Server passthrough: wrap response so prior-turn pseudonyms are restored
+              const passthroughResponse = await originalFetch.call(window, input, init);
+              return wrapResponse(passthroughResponse, url);
             }
 
             // Kill switch: org has disabled all AI tools
@@ -3891,13 +3862,9 @@ const patchedFetch = async function patchedFetch(
                 entityTypes: [...new Set(allEntities.map(e => e.type))],
               });
             }
-            // ── DEF-009 FIX: Wrap response with previous turn's reverse map ──
-            // Don't clear the map — Turn 1's pseudonyms may appear in the response.
-            if (Object.keys(currentReverseMap).length > 0) {
-              const response = await originalFetch.call(window, input, init);
-              return depseudonymizeResponse(response, { ...currentReverseMap });
-            }
-            return originalFetch.call(window, input, init);
+            // GREEN passthrough: wrap response so prior-turn pseudonyms are restored
+            const greenResponse = await originalFetch.call(window, input, init);
+            return wrapResponse(greenResponse, url);
           }
 
           // Selective pseudonymization: filter entities based on ownership context.
@@ -3924,12 +3891,9 @@ const patchedFetch = async function patchedFetch(
               type: 'IRON_GATE_AUDIT', promptText, allEntities,
               maskedText: '', mappings: [], level, score,
             });
-            // ── DEF-009 FIX: Wrap response with previous turn's reverse map ──
-            if (Object.keys(currentReverseMap).length > 0) {
-              const response = await originalFetch.call(window, input, init);
-              return depseudonymizeResponse(response, { ...currentReverseMap });
-            }
-            return originalFetch.call(window, input, init);
+            // Value-types only passthrough: wrap response so prior pseudonyms restored
+            const valTypeResponse = await originalFetch.call(window, input, init);
+            return wrapResponse(valTypeResponse, url);
           }
 
           // ── Executive Lens: determine routing ──
@@ -4149,13 +4113,9 @@ const patchedFetch = async function patchedFetch(
                 'color: #ef4444; font-weight: bold; font-size: 13px',
                 '\nError:', fetchErr
               );
-              // Fail OPEN: send the original unmodified request so the user isn't stuck.
-              // Still wrap response with de-pseudo — prior turn's pseudonyms may be in response.
-              if (Object.keys(currentReverseMap).length > 0) {
-                const failOpenResponse = await originalFetch.call(window, input, init);
-                return depseudonymizeResponse(failOpenResponse, { ...currentReverseMap });
-              }
-              return originalFetch.call(window, input, init);
+              // Fail OPEN: send original unmodified request, wrap response
+              const failOpenResponse = await originalFetch.call(window, input, init);
+              return wrapResponse(failOpenResponse, url);
             }
 
             const _t3 = performance.now();
@@ -4173,12 +4133,9 @@ const patchedFetch = async function patchedFetch(
                 `%c[Iron Gate WIRE] ⚠️ Tool rejected modified body (${modifiedResponse.status}) — sending original (fail-open)`,
                 'color: #f59e0b; font-weight: bold',
               );
-              // Still wrap response with de-pseudo for multi-turn consistency
-              if (Object.keys(currentReverseMap).length > 0) {
-                const failOpenResponse = await originalFetch.call(window, input, init);
-                return depseudonymizeResponse(failOpenResponse, { ...currentReverseMap });
-              }
-              return originalFetch.call(window, input, init);
+              // Tool rejected modified body: fail-open with original, wrap response
+              const failOpenResponse = await originalFetch.call(window, input, init);
+              return wrapResponse(failOpenResponse, url);
             }
 
             // De-pseudonymize the user's own message bubble in the DOM.
@@ -4228,12 +4185,9 @@ const patchedFetch = async function patchedFetch(
           // The LLM has Turn 1's pseudonymized names in context. Even though
           // Turn 2 has no new entities, the response may reference those
           // pseudonyms. De-pseudonymize the response so the user sees real names.
-          if (Object.keys(currentReverseMap).length > 0) {
-            igLog(`PROXY MODE — passthrough with ${Object.keys(currentReverseMap).length} existing reverse map entries, wrapping response for multi-turn de-pseudo`);
-            const response = await originalFetch.call(window, input, init);
-            return depseudonymizeResponse(response, { ...currentReverseMap });
-          }
-          return originalFetch.call(window, input, init);
+          // No-pseudonymization passthrough: wrap response for multi-turn consistency
+          const passthroughResponse = await originalFetch.call(window, input, init);
+          return wrapResponse(passthroughResponse, url);
         }
       } else {
         igLog(`PROXY MODE — no prompt extracted from body (${bodyString.length} chars), passing through`);
@@ -4303,12 +4257,9 @@ const patchedFetch = async function patchedFetch(
     })();
   }
 
-  // Pass through to original fetch — wrap with de-pseudo if map has entries
-  if (Object.keys(currentReverseMap).length > 0 && adapterIsLLMEndpoint(url, activeAdapter)) {
-    const response = await originalFetch.call(window, input, init);
-    return depseudonymizeResponse(response, { ...currentReverseMap });
-  }
-  return originalFetch.call(window, input, init);
+  // Final fallthrough: pass through with response wrapping
+  const response = await originalFetch.call(window, input, init);
+  return wrapResponse(response, url);
 }
 
 // ── Install fetch patch via Object.defineProperty (resilient against non-writable) ──

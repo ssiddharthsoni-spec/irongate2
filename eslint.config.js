@@ -16,6 +16,21 @@ export default tseslint.config(
     },
   },
   {
+    // Architecture invariants enforced via ESLint:
+    // - main-world.ts must not call console.* directly (gated console wrapper handles it)
+    // - addReverseMapping(currentReverseMap, ...) must only be called from registerPseudonymization
+    files: ["apps/extension/src/content/main-world.ts", "apps/extension/src/content/main-world/**/*.ts"],
+    rules: {
+      // Direct console.* calls in main-world leak internal state to DevTools.
+      // Use the production console gate at the top of main-world.ts which
+      // suppresses output unless localStorage.ironGateDebug === 'true'.
+      // This rule is currently advisory ('warn') because the gate at the top
+      // of main-world.ts wraps console at runtime — but moving to a logger
+      // helper is the cleaner long-term fix.
+      "no-console": ["warn", { allow: ["warn", "error"] }],
+    },
+  },
+  {
     ignores: [
       "node_modules/",
       "dist/",
