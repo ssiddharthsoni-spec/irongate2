@@ -341,6 +341,102 @@ describe('Architecture Invariants — Sovereign AI / Local-Only Mode Contract', 
     expect(workspace).toContain('llama3.2:3b');
   });
 
+  // ── v1.0 Final: audit sink, signed bundle, firm pseudonymizer ──────────
+
+  it('audit sink must implement all 5 destinations', () => {
+    const sinkPath = join(REPO_ROOT, 'apps/extension/src/audit/audit-sink.ts');
+    const src = readFileSync(sinkPath, 'utf8');
+    expect(src).toMatch(/class NullSink/);
+    expect(src).toMatch(/class WebhookSink/);
+    expect(src).toMatch(/class SyslogSink/);
+    expect(src).toMatch(/class S3PresignedSink/);
+    expect(src).toMatch(/class IronGateDashboardSink/);
+  });
+
+  it('audit sinks must validate HTTPS for external destinations', () => {
+    const src = readFileSync(join(REPO_ROOT, 'apps/extension/src/audit/audit-sink.ts'), 'utf8');
+    // Webhook sink rejects non-HTTPS URLs
+    expect(src).toMatch(/webhook url must be HTTPS/);
+    // Syslog sink rejects non-HTTPS URLs
+    expect(src).toMatch(/syslog url must be HTTPS/);
+    // S3 sink rejects non-HTTPS presigner URLs
+    expect(src).toMatch(/presignerUrl must be HTTPS/);
+  });
+
+  it('audit buffer must persist to IndexedDB and survive restarts', () => {
+    const src = readFileSync(join(REPO_ROOT, 'apps/extension/src/audit/audit-buffer.ts'), 'utf8');
+    expect(src).toMatch(/indexedDB\.open/);
+    expect(src).toMatch(/restorePersisted/);
+    // Must have retry queue with max age cap
+    expect(src).toMatch(/MAX_RETRY_AGE_MS/);
+  });
+
+  it('signed policy bundle loader must use Ed25519 + canonical JSON', () => {
+    const src = readFileSync(join(REPO_ROOT, 'apps/extension/src/policy/signed-bundle.ts'), 'utf8');
+    expect(src).toMatch(/Ed25519/);
+    expect(src).toMatch(/canonicalJsonStringify/);
+    // Public key is write-once
+    expect(src).toMatch(/A different public key is already bound/);
+    // Bundle expiry is checked
+    expect(src).toMatch(/Bundle expired/);
+  });
+
+  it('firm pseudonymizer must use HKDF with the firm key as the secret', () => {
+    const src = readFileSync(join(REPO_ROOT, 'apps/extension/src/policy/firm-pseudonymizer.ts'), 'utf8');
+    expect(src).toMatch(/HKDF/);
+    expect(src).toMatch(/firmKey must be 32 bytes/);
+    // Must derive bytes via SubtleCrypto, not Math.random
+    expect(src).toMatch(/crypto\.subtle\.deriveBits/);
+    // Must derive different bytes for different entity types (salt) and texts (info)
+    expect(src).toMatch(/salt:\s*toBufferSource\(salt\)|salt:\s*salt|encode\(entityType\)/);
+  });
+
+  it('firm pseudonymizer must produce SSNs in the 900-999 area code (no real-SSN collision)', () => {
+    const src = readFileSync(join(REPO_ROOT, 'apps/extension/src/policy/firm-pseudonymizer.ts'), 'utf8');
+    expect(src).toMatch(/900\s*\+\s*\(bytesToInt/);
+  });
+
+  it('firm pseudonymizer credit card output must use Luhn-valid digits', () => {
+    const src = readFileSync(join(REPO_ROOT, 'apps/extension/src/policy/firm-pseudonymizer.ts'), 'utf8');
+    expect(src).toMatch(/luhnCheckDigit/);
+  });
+
+  it('Mac and Windows installer build scripts must exist', () => {
+    expect(() => readFileSync(join(REPO_ROOT, 'enterprise/installer/build-mac-pkg.sh'), 'utf8')).not.toThrow();
+    expect(() => readFileSync(join(REPO_ROOT, 'enterprise/installer/build-windows-msi.ps1'), 'utf8')).not.toThrow();
+    expect(() => readFileSync(join(REPO_ROOT, 'enterprise/installer/MANIFEST.txt'), 'utf8')).not.toThrow();
+  });
+
+  it('Mac installer must register Ollama as a launchd service bound to localhost', () => {
+    const src = readFileSync(join(REPO_ROOT, 'enterprise/installer/build-mac-pkg.sh'), 'utf8');
+    expect(src).toMatch(/launchctl load/);
+    expect(src).toMatch(/127\.0\.0\.1:11434/);
+  });
+
+  it('Windows installer must register Ollama as a Windows service', () => {
+    const src = readFileSync(join(REPO_ROOT, 'enterprise/installer/build-windows-msi.ps1'), 'utf8');
+    expect(src).toMatch(/sc\.exe create/);
+  });
+
+  it('marketing landing page must declare zero-egress positioning prominently', () => {
+    const src = readFileSync(join(REPO_ROOT, 'marketing/index.html'), 'utf8');
+    expect(src).toMatch(/never leave/i);
+    expect(src).toMatch(/Sovereign/i);
+  });
+
+  it('security whitepaper must document the egress contract', () => {
+    const src = readFileSync(join(REPO_ROOT, 'enterprise/runbook/security-whitepaper.md'), 'utf8');
+    expect(src).toMatch(/egress/i);
+    expect(src).toMatch(/127\.0\.0\.1/);
+    expect(src).toMatch(/architecture invariant tests/i);
+  });
+
+  it('deployment runbook must include the fail-closed verification test', () => {
+    const src = readFileSync(join(REPO_ROOT, 'enterprise/runbook/deployment-runbook.md'), 'utf8');
+    expect(src).toMatch(/fail.closed/i);
+    expect(src).toMatch(/launchctl unload|stop the Ollama/i);
+  });
+
   it('IT health-check tool must exist and be standalone (no node_modules deps)', () => {
     const healthCheckPath = join(REPO_ROOT, 'scripts/irongate-healthcheck.mjs');
     const src = readFileSync(healthCheckPath, 'utf8');

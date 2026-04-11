@@ -1,0 +1,116 @@
+IronGate Enterprise Installer Manifest
+=======================================
+
+This file lists every artifact bundled in the IronGate Enterprise installer
+along with its SHA-256 hash, source URL, and license. Customer security teams
+use this file to verify byte-for-byte what they're deploying.
+
+Schema:    irongate.installer.manifest.v1
+Version:   1.0.0
+Generated: $(generated at build time by build-mac-pkg.sh / build-windows-msi.ps1)
+
+
+────────────────────────────────────────────────────────────────────────────
+COMPONENT 1: Ollama (local LLM inference runtime)
+────────────────────────────────────────────────────────────────────────────
+Name:        Ollama
+Version:     0.5.7
+Source:      https://github.com/ollama/ollama/releases/tag/v0.5.7
+License:     MIT (https://github.com/ollama/ollama/blob/main/LICENSE)
+Purpose:     Runs the local LLM inference for IronGate Tier 2 classification.
+             Listens on 127.0.0.1:11434 — bound to localhost only, never
+             accepts external connections.
+
+Mac SHA-256:     <computed at build time, written to dist/IronGate-Enterprise-1.0.pkg.sha256>
+Windows SHA-256: <computed at build time, written to dist/IronGate-Enterprise-1.0.msi.sha256>
+
+
+────────────────────────────────────────────────────────────────────────────
+COMPONENT 2: Llama 3.2 3B (sensitivity classification model)
+────────────────────────────────────────────────────────────────────────────
+Name:        Llama 3.2 3B Instruct
+Version:     3.2 (3B variant)
+Source:      https://ollama.com/library/llama3.2:3b
+License:     Llama 3.2 Community License Agreement
+             https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/LICENSE
+Purpose:     Classifies AMBER-zone prompts (business confidentiality without
+             direct PII) that the regex stack cannot handle.
+
+             IronGate selected this model after benchmarking 9 candidates:
+             - 28/30 accuracy on the IronGate scenario suite (93.3%)
+             - 5/6 accuracy on AMBER_ZONE (vs 1/6 for regex alone)
+             - 2.0 GB on disk
+             - 1309ms P50 latency on M1 Pro / 16GB RAM
+             - JSON schema compliance: 100% with Ollama format=json mode
+
+Validated alternatives (also acceptable):
+  - gemma4:e2b   (Google, 7.2GB, 93.3% accuracy)
+  - chrome-builtin (Chrome 138+ Gemini Nano, zero install)
+
+Models explicitly REJECTED for production:
+  - gemma3:4b   (over-flags business confidentiality, 20/30 — worse than regex alone)
+  - phi3:mini   (ties regex baseline with no AMBER improvement, 22/30)
+  - qwen2.5:3b  (false-alarm machine, 12/30)
+  - all 1B models (insufficient nuance for classification)
+
+
+────────────────────────────────────────────────────────────────────────────
+COMPONENT 3: IronGate Health Check
+────────────────────────────────────────────────────────────────────────────
+Name:        irongate-healthcheck.mjs
+Source:      Bundled (this repository, scripts/irongate-healthcheck.mjs)
+License:     IronGate proprietary
+Purpose:     Standalone diagnostic tool for IT engineers to verify deployment
+             health post-install. Outputs JSON for SIEM ingestion.
+Dependencies: Node.js 20+ runtime only — no node_modules
+
+
+────────────────────────────────────────────────────────────────────────────
+COMPONENT 4: IronGate Chrome Extension
+────────────────────────────────────────────────────────────────────────────
+Distribution:  Chrome Web Store (managed by Google) OR
+               Self-hosted CRX (for air-gapped deployments)
+License:       IronGate Commercial License
+Source:        https://github.com/irongate/irongate2 (private repository,
+               available under NDA for security review)
+Purpose:       The actual IronGate extension. Performs:
+                 - Tier 1 regex detection (always-on, runs in extension)
+                 - Tier 2 LLM classification (calls Ollama on 127.0.0.1:11434)
+                 - Pseudonymization
+                 - Stream de-pseudonymization
+                 - Audit log emission to customer-controlled sinks
+                 - Signed policy bundle verification (Ed25519)
+
+
+────────────────────────────────────────────────────────────────────────────
+NETWORK BEHAVIOR
+────────────────────────────────────────────────────────────────────────────
+After installation in local-only mode, the installed components make these
+network connections:
+
+  Ollama service              → 127.0.0.1:11434 (localhost only, never external)
+  IronGate extension          → 127.0.0.1:11434 (Ollama)
+  IronGate extension (audit)  → Customer-controlled audit sink URL (S3/syslog/webhook)
+                                 ONLY if auditLogDestination is set to a non-'none' value
+  IronGate extension (policy) → Customer-controlled policyBundleUrl
+                                 ONLY if policyBundleUrl is set
+  IronGate extension          → AI tool platforms (chatgpt.com, claude.ai, etc.)
+                                 — pseudonymized requests pass through here
+
+In local-only mode, NO network call is made to:
+  - irongate-api.onrender.com (IronGate's API server)
+  - api.openai.com or any cloud LLM provider
+  - Any IronGate-controlled domain
+
+This is enforced architecturally by the Tier 2 adapter and verified by the
+architecture invariant tests in the IronGate source repository.
+
+
+────────────────────────────────────────────────────────────────────────────
+SECURITY REVIEW POINTERS
+────────────────────────────────────────────────────────────────────────────
+For your security team, see:
+  - enterprise/runbook/security-whitepaper.md  (architecture, threat model)
+  - enterprise/runbook/deployment-runbook.md   (deployment procedures)
+  - apps/extension/tests/architecture-invariants.test.ts  (test-enforced contract)
+  - apps/extension/managed_schema.json  (managed policy contract)

@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IronGate — The AI DLP where your data never leaves your device</title>
+  <meta name="description" content="IronGate is the only AI Data Loss Prevention product that runs entirely on your device. Your prompts never touch our servers, OpenAI's servers, or any cloud. By design and by architecture." />
+  <meta property="og:title" content="IronGate — Sovereign AI DLP for regulated firms" />
+  <meta property="og:description" content="The only AI DLP where your prompts never leave your device. Built for law firms, hospitals, financial services, and defense contractors." />
+  <style>
+    :root {
+      --bg: #0a0e1a;
+      --panel: #131826;
+      --ink: #f8fafc;
+      --dim: #94a3b8;
+      --accent: #6366f1;
+      --accent-2: #818cf8;
+      --green: #22c55e;
+      --red: #ef4444;
+      --border: #1e2a3a;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .container { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+
+    /* ── Nav ───────────────────────────────────────────────────────────── */
+    nav {
+      padding: 24px 0;
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      background: rgba(10, 14, 26, 0.85);
+      backdrop-filter: blur(16px);
+      z-index: 100;
+    }
+    nav .container { display: flex; align-items: center; justify-content: space-between; }
+    .logo {
+      font-weight: 700;
+      font-size: 18px;
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .logo-mark {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+    }
+    .nav-links { display: flex; gap: 32px; font-size: 14px; }
+    .nav-links a { color: var(--dim); text-decoration: none; transition: color 150ms; }
+    .nav-links a:hover { color: var(--ink); }
+    .nav-cta {
+      background: var(--accent);
+      color: white;
+      padding: 8px 18px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: background 150ms;
+    }
+    .nav-cta:hover { background: var(--accent-2); }
+
+    /* ── Hero ──────────────────────────────────────────────────────────── */
+    .hero { padding: 80px 0 60px; text-align: center; }
+    .hero-eyebrow {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent-2);
+      padding: 6px 14px;
+      border: 1px solid var(--border);
+      border-radius: 100px;
+      margin-bottom: 24px;
+    }
+    .hero h1 {
+      font-size: clamp(36px, 5.5vw, 62px);
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+      font-weight: 700;
+      margin-bottom: 24px;
+    }
+    .hero h1 .em { color: var(--accent-2); }
+    .hero p.lede {
+      font-size: 19px;
+      color: var(--dim);
+      max-width: 720px;
+      margin: 0 auto 36px;
+      line-height: 1.5;
+    }
+    .hero-ctas { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+    .btn-primary, .btn-secondary {
+      padding: 14px 26px;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      text-decoration: none;
+      display: inline-block;
+      transition: all 150ms;
+    }
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-primary:hover { background: var(--accent-2); transform: translateY(-1px); }
+    .btn-secondary { background: transparent; color: var(--ink); border: 1px solid var(--border); }
+    .btn-secondary:hover { border-color: var(--accent-2); }
+
+    /* ── The diagram (the most important element on the page) ─────────── */
+    .diagram-section { padding: 60px 0; }
+    .diagram-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 36px;
+    }
+    .diagram-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
+    .diagram-col h3 {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--dim);
+      margin-bottom: 16px;
+      font-weight: 600;
+    }
+    .diagram-col.competitor h3 { color: #fca5a5; }
+    .diagram-col.irongate h3 { color: #86efac; }
+
+    .diagram-frame {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      font-size: 12px;
+      min-height: 280px;
+      position: relative;
+    }
+    .diagram-node {
+      display: inline-block;
+      padding: 8px 14px;
+      border-radius: 6px;
+      margin: 4px 0;
+      border: 1px solid var(--border);
+    }
+    .node-user { background: rgba(99, 102, 241, 0.1); border-color: var(--accent); }
+    .node-vendor { background: rgba(239, 68, 68, 0.1); border-color: var(--red); }
+    .node-cloud { background: rgba(239, 68, 68, 0.15); border-color: var(--red); color: #fca5a5; }
+    .node-device { background: rgba(34, 197, 94, 0.1); border-color: var(--green); color: #86efac; }
+    .arrow { color: var(--dim); margin: 6px 0; padding-left: 8px; }
+    .arrow.danger { color: #fca5a5; }
+    .arrow.safe { color: #86efac; }
+
+    .diagram-summary {
+      margin-top: 18px;
+      font-size: 13px;
+      color: var(--dim);
+    }
+    .diagram-summary .label { color: var(--ink); font-weight: 600; }
+
+    /* ── Pillars ───────────────────────────────────────────────────────── */
+    .pillars { padding: 80px 0; }
+    .section-title {
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      text-align: center;
+      margin-bottom: 48px;
+    }
+    .pillar-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+    .pillar {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+    }
+    .pillar-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 8px;
+      background: rgba(99, 102, 241, 0.15);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      margin-bottom: 16px;
+    }
+    .pillar h3 { font-size: 18px; margin-bottom: 10px; font-weight: 600; }
+    .pillar p { color: var(--dim); font-size: 14px; }
+
+    /* ── Compliance section ────────────────────────────────────────────── */
+    .compliance { padding: 80px 0; background: var(--panel); }
+    .compliance-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 60px; align-items: center; }
+    .compliance h2 { font-size: 32px; letter-spacing: -0.02em; margin-bottom: 20px; line-height: 1.2; }
+    .compliance p { color: var(--dim); font-size: 15px; margin-bottom: 16px; }
+    .compliance-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .stat {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+    }
+    .stat .number {
+      font-size: 36px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--accent-2);
+    }
+    .stat .number.compress { font-size: 28px; }
+    .stat .label { color: var(--dim); font-size: 13px; margin-top: 6px; }
+
+    /* ── Benchmark proof ───────────────────────────────────────────────── */
+    .benchmark { padding: 80px 0; }
+    .benchmark-table {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      overflow-x: auto;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+    th { color: var(--dim); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; font-family: ui-monospace, monospace; }
+    tr.winner { background: rgba(34, 197, 94, 0.05); }
+    tr.winner td:first-child { color: #86efac; font-weight: 600; }
+    tr.baseline { color: var(--dim); }
+
+    /* ── Who it's for ──────────────────────────────────────────────────── */
+    .industries { padding: 80px 0; background: var(--panel); }
+    .industry-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 32px; }
+    .industry {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+    }
+    .industry h4 { font-size: 16px; margin-bottom: 8px; }
+    .industry p { font-size: 13px; color: var(--dim); }
+
+    /* ── CTA ───────────────────────────────────────────────────────────── */
+    .final-cta { padding: 100px 0; text-align: center; }
+    .final-cta h2 { font-size: 42px; letter-spacing: -0.02em; margin-bottom: 18px; }
+    .final-cta p { color: var(--dim); font-size: 17px; max-width: 600px; margin: 0 auto 32px; }
+
+    /* ── Footer ────────────────────────────────────────────────────────── */
+    footer { padding: 40px 0; border-top: 1px solid var(--border); color: var(--dim); font-size: 13px; text-align: center; }
+
+    /* ── Mobile ────────────────────────────────────────────────────────── */
+    @media (max-width: 768px) {
+      .nav-links { display: none; }
+      .diagram-grid { grid-template-columns: 1fr; }
+      .compliance-grid { grid-template-columns: 1fr; }
+      .pillar-grid { grid-template-columns: 1fr; }
+      .industry-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ─── Nav ──────────────────────────────────────────────────────────── -->
+  <nav>
+    <div class="container">
+      <div class="logo">
+        <div class="logo-mark">🛡</div>
+        <span>IronGate</span>
+      </div>
+      <div class="nav-links">
+        <a href="#how-it-works">How it works</a>
+        <a href="#benchmark">Benchmark</a>
+        <a href="#compliance">Compliance</a>
+        <a href="#industries">Who it's for</a>
+      </div>
+      <a href="#contact" class="nav-cta">Request a demo</a>
+    </div>
+  </nav>
+
+  <!-- ─── Hero ─────────────────────────────────────────────────────────── -->
+  <section class="hero">
+    <div class="container">
+      <span class="hero-eyebrow">Sovereign AI for regulated firms</span>
+      <h1>The only AI DLP where your prompts<br/><span class="em">never leave your device</span>.</h1>
+      <p class="lede">
+        Other AI Data Loss Prevention products send your prompts to their cloud, then to OpenAI's cloud, then back. IronGate runs entirely on your laptop. No vendor cloud. No model API. No subpoena exposure. By design and by architecture.
+      </p>
+      <div class="hero-ctas">
+        <a href="#contact" class="btn-primary">Request enterprise demo</a>
+        <a href="#how-it-works" class="btn-secondary">See the architecture</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── The diagram ──────────────────────────────────────────────────── -->
+  <section class="diagram-section" id="how-it-works">
+    <div class="container">
+      <div class="diagram-card">
+        <div class="diagram-grid">
+          <div class="diagram-col competitor">
+            <h3>Other AI DLP products</h3>
+            <div class="diagram-frame">
+              <div class="diagram-node node-user">👤 User on laptop</div>
+              <div class="arrow danger">↓ Sends prompt with PII</div>
+              <div class="diagram-node node-vendor">🏢 DLP vendor's cloud</div>
+              <div class="arrow danger">↓ Sanitized text leaves device</div>
+              <div class="diagram-node node-cloud">☁️ OpenAI / Anthropic cloud</div>
+              <div class="arrow danger">↓ Classification result</div>
+              <div class="diagram-node node-vendor">🏢 DLP vendor's cloud</div>
+              <div class="arrow danger">↓ Decision returned</div>
+              <div class="diagram-node node-user">👤 User on laptop</div>
+            </div>
+            <div class="diagram-summary">
+              <div class="label" style="color:#fca5a5">Trust required from:</div>
+              The DLP vendor, the cloud LLM provider, every subprocessor, every breach surface, every subpoena.
+            </div>
+          </div>
+          <div class="diagram-col irongate">
+            <h3>IronGate Sovereign Mode</h3>
+            <div class="diagram-frame">
+              <div class="diagram-node node-user">👤 User on laptop</div>
+              <div class="arrow safe">↓ Detection runs locally</div>
+              <div class="diagram-node node-device">🛡 IronGate + Llama 3.2 3B (on device)</div>
+              <div class="arrow safe">↑ Decision returned (instant, local)</div>
+              <div class="diagram-node node-user">👤 User on laptop</div>
+              <div style="height: 14px"></div>
+              <div style="font-size: 11px; color: var(--dim); padding: 8px; border-top: 1px dashed var(--border); margin-top: 12px;">
+                ⚡ Zero outbound network calls during detection. Verified by architecture invariant tests in source.
+              </div>
+            </div>
+            <div class="diagram-summary">
+              <div class="label" style="color:#86efac">Trust required from:</div>
+              IronGate's open-source extension code. The model weights (publicly verifiable). Nothing else.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Pillars ──────────────────────────────────────────────────────── -->
+  <section class="pillars">
+    <div class="container">
+      <h2 class="section-title">Why Sovereign Mode</h2>
+      <div class="pillar-grid">
+        <div class="pillar">
+          <div class="pillar-icon">🛡</div>
+          <h3>Zero data egress</h3>
+          <p>No prompts leave the device. Not to us, not to OpenAI, not to anyone. Verified by tests, not just documentation.</p>
+        </div>
+        <div class="pillar">
+          <div class="pillar-icon">⚡</div>
+          <h3>Works offline</h3>
+          <p>Court rooms, planes, hospital networks, classified environments. Sovereign Mode keeps working when your network doesn't.</p>
+        </div>
+        <div class="pillar">
+          <div class="pillar-icon">📋</div>
+          <h3>1-day compliance review</h3>
+          <p>Your security team reads our 12-page whitepaper and confirms zero outbound calls. They're done in an afternoon. Not 6 months.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Compliance section ───────────────────────────────────────────── -->
+  <section class="compliance" id="compliance">
+    <div class="container">
+      <div class="compliance-grid">
+        <div>
+          <h2>Stop being a vendor security review.</h2>
+          <p>The General Counsel at your firm has banned ChatGPT. The reason isn't that AI is dangerous — it's that they can't get clean answers about where prompts go after employees paste them in.</p>
+          <p>IronGate makes that question trivial: <span style="color:var(--accent-2)">prompts go nowhere</span>. Detection runs on the device. The architecture guarantees it. Tests enforce it.</p>
+          <p>Your compliance team approves IronGate in days instead of months. Your employees get to use AI tools. Your firm stops being the one that says no.</p>
+        </div>
+        <div class="compliance-stats">
+          <div class="stat">
+            <div class="number">93%</div>
+            <div class="label">Detection accuracy on benchmark suite (vs 73% regex-only)</div>
+          </div>
+          <div class="stat">
+            <div class="number compress">0 calls</div>
+            <div class="label">Outbound network requests during detection in Sovereign Mode</div>
+          </div>
+          <div class="stat">
+            <div class="number compress">2 GB</div>
+            <div class="label">Local model footprint (Llama 3.2 3B, validated)</div>
+          </div>
+          <div class="stat">
+            <div class="number">1 day</div>
+            <div class="label">Typical security review (vs 6 months for cloud DLP)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Benchmark proof ──────────────────────────────────────────────── -->
+  <section class="benchmark" id="benchmark">
+    <div class="container">
+      <h2 class="section-title">We benchmarked 9 local models. We picked the best one.</h2>
+      <p style="text-align:center;color:var(--dim);max-width:680px;margin:0 auto 36px;font-size:15px;">
+        IronGate ran 30 real-world scenarios — coding, medical records, M&amp;A discussions, fictional PII references, edge cases — through every viable local LLM. The winners beat regex-only detection by 20 percentage points and run on a laptop.
+      </p>
+      <div class="benchmark-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th>Disk</th>
+              <th>Total accuracy</th>
+              <th>AMBER zone (the hard category)</th>
+              <th class="num">P50 latency</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="winner"><td>Llama 3.2 3B 🏆 default</td><td>2.0 GB</td><td>28/30 (93.3%)</td><td>5/6</td><td class="num">1309 ms</td></tr>
+            <tr><td>Gemma 4 E2B</td><td>7.2 GB</td><td>28/30 (93.3%)</td><td>5/6</td><td class="num">1361 ms</td></tr>
+            <tr><td>Chrome built-in Gemini Nano</td><td>4.0 GB (in Chrome)</td><td>28/30 (93.3%)</td><td>5/6</td><td class="num">1555 ms</td></tr>
+            <tr class="baseline"><td>Tier 1 regex (no LLM)</td><td>0</td><td>22/30 (73.3%)</td><td>1/6</td><td class="num">0 ms</td></tr>
+            <tr class="baseline"><td>Phi-3 Mini</td><td>2.2 GB</td><td>22/30 (73.3%)</td><td>1/6</td><td class="num">1164 ms</td></tr>
+            <tr class="baseline"><td>Gemma 3 4B</td><td>3.3 GB</td><td>20/30 (worse than regex)</td><td>0/6</td><td class="num">1671 ms</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="text-align:center;color:var(--dim);font-size:13px;margin-top:20px;">
+        Full benchmark methodology and results: <a href="#contact" style="color:var(--accent-2)">request the technical whitepaper</a>.
+      </p>
+    </div>
+  </section>
+
+  <!-- ─── Industries ───────────────────────────────────────────────────── -->
+  <section class="industries" id="industries">
+    <div class="container">
+      <h2 class="section-title">Built for the firms who can't buy cloud DLP</h2>
+      <div class="industry-grid">
+        <div class="industry">
+          <h4>⚖️ Law firms</h4>
+          <p>Attorney-client privilege, matter confidentiality, multi-party litigation. Compliance review collapses from months to days.</p>
+        </div>
+        <div class="industry">
+          <h4>🏥 Healthcare</h4>
+          <p>HIPAA-compliant by structure, not by policy. PHI never leaves the device — IronGate is not a Business Associate because there's no data to handle.</p>
+        </div>
+        <div class="industry">
+          <h4>🏛 Financial services</h4>
+          <p>Client PII, M&amp;A discussions, trading strategy. The same model that catches structured data also handles unnamed business confidentiality.</p>
+        </div>
+        <div class="industry">
+          <h4>🛡 Defense &amp; government</h4>
+          <p>Air-gapped deployments. Classified environments. Zero outbound calls means zero data exfil surface.</p>
+        </div>
+        <div class="industry">
+          <h4>📊 Accounting &amp; audit</h4>
+          <p>Client financials, tax data, SOC 2 customer data. Your audit trail stays in your SIEM, not ours.</p>
+        </div>
+        <div class="industry">
+          <h4>🔬 Life sciences</h4>
+          <p>Clinical trial data, patent-pending research, regulatory submissions. Open-source model weights you can verify yourself.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Final CTA ────────────────────────────────────────────────────── -->
+  <section class="final-cta" id="contact">
+    <div class="container">
+      <h2>Ready to give your compliance team a yes?</h2>
+      <p>30-minute demo. Live install on your machine. We'll show you the green badge in the sidepanel and the test that proves no cloud calls happen.</p>
+      <div class="hero-ctas">
+        <a href="mailto:enterprise@irongate.ai" class="btn-primary">enterprise@irongate.ai</a>
+        <a href="#" class="btn-secondary">Download security whitepaper</a>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="container">
+      © IronGate. Sovereign AI Data Loss Prevention. Built for firms who can't trust the cloud.
+    </div>
+  </footer>
+
+</body>
+</html>

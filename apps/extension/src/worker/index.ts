@@ -37,6 +37,10 @@ import {
   type Tier2Config,
   type ManagedDeploymentConfig,
 } from '../detection/tier2-adapter';
+import { initAuditBuffer, getAuditBuffer } from '../audit/audit-buffer';
+import type { AuditEntry } from '../audit/audit-sink';
+import { startPolicyBundlePoller, type PolicyBundle } from '../policy/signed-bundle';
+import { FirmPseudonymizer } from '../policy/firm-pseudonymizer';
 import { getSemanticClassifier } from '../detection/semantic-classifier';
 import { getWeightResolver } from '../detection/weight-resolver';
 import { createDictionaryMatcher, type DictionaryEntry } from '../detection/entity-dictionary';
@@ -173,14 +177,99 @@ chrome.runtime.onUpdateAvailable.addListener((details) => {
 
 let _deploymentMode: 'local-only' | 'hybrid' | 'server-only' = 'server-only';
 let _deploymentInitError: string | null = null;
+let _firmPseudonymizer: FirmPseudonymizer | null = null;
+let _stopPolicyPoller: (() => void) | null = null;
 
-initLocalLlmDeployment().then((cfg) => {
+/** Convert detection result into an audit entry that contains NO original PII text */
+function buildAuditEntry(args: {
+  aiTool: string;
+  zone: 'green' | 'amber' | 'red';
+  score: number;
+  entityCount: number;
+  entityTypes: string[];
+  action: 'allowed' | 'pseudonymized' | 'blocked' | 'low-risk-passthrough';
+  tier: 1 | 2 | 3;
+  pseudonymsApplied: number;
+  modelUsed?: string;
+  latencyMs?: number;
+  conversationId?: string;
+  turnNumber?: number;
+}): AuditEntry {
+  const cfg = (() => { try { return getLockedDeploymentConfig(); } catch { return null; } })();
+  return {
+    id: crypto.randomUUID(),
+    timestamp: new Date().toISOString(),
+    firmId: cfg?.firmId,
+    deviceHash: getDeviceHash(),
+    aiTool: args.aiTool,
+    zone: args.zone,
+    score: args.score,
+    entityCount: args.entityCount,
+    entityTypes: args.entityTypes,
+    action: args.action,
+    tier: args.tier,
+    pseudonymsApplied: args.pseudonymsApplied,
+    modelUsed: args.modelUsed,
+    latencyMs: args.latencyMs,
+    conversationId: args.conversationId,
+    turnNumber: args.turnNumber,
+  };
+}
+
+let _cachedDeviceHash: string | null = null;
+function getDeviceHash(): string {
+  if (_cachedDeviceHash) return _cachedDeviceHash;
+  // Stable per-device, non-reversible. Used for audit log correlation only.
+  // Synchronously generate from a stored device id (or create one).
+  const stored = localStorage.getItem('iron-gate-device-id');
+  const id = stored || (() => {
+    const v = crypto.randomUUID();
+    try { localStorage.setItem('iron-gate-device-id', v); } catch {}
+    return v;
+  })();
+  _cachedDeviceHash = id;
+  return id;
+}
+
+initLocalLlmDeployment().then(async (cfg) => {
   _deploymentMode = cfg.deploymentMode;
   igLog(`Deployment mode locked: ${cfg.deploymentMode}`);
+
+  // Initialize the audit buffer with the configured sink (default: 'none')
+  try {
+    initAuditBuffer(cfg.auditLogDestination || 'none', cfg.auditLogConfig || {});
+    igLog(`Audit sink initialized: ${cfg.auditLogDestination || 'none'}`);
+  } catch (err) {
+    igLog('Audit buffer init failed (non-fatal):', err);
+  }
+
+  // Initialize the per-firm deterministic pseudonymizer if a key is configured
+  if (cfg.pseudonymKey) {
+    try {
+      _firmPseudonymizer = new FirmPseudonymizer({ firmKey: cfg.pseudonymKey });
+      igLog('Firm pseudonymizer initialized — pseudonyms will be deterministic per-firm');
+    } catch (err) {
+      igLog('Firm pseudonymizer init failed (non-fatal):', err);
+    }
+  }
+
+  // Start the policy bundle poller if a customer-controlled URL is configured
+  if (cfg.policyBundleUrl) {
+    _stopPolicyPoller = startPolicyBundlePoller(
+      cfg.policyBundleUrl,
+      cfg.firmId,
+      (bundle: PolicyBundle) => {
+        igLog(`Policy bundle applied: ${bundle.firmId} issued ${bundle.issuedAt}`);
+        // TODO Phase 6: actually apply rules to detection state
+      },
+      (error: string) => {
+        igLog('Policy bundle fetch error (non-fatal):', error);
+      },
+    );
+  }
+
   if (cfg.deploymentMode !== 'server-only') {
     igLog(`Local LLM endpoint: ${cfg.localEndpoint || '(chrome-builtin)'}, model: ${cfg.localModel || '(default)'}`);
-    // Warm up the local model so the first user prompt isn't slow.
-    // Non-blocking — failures are reported via probeTier2Health, not thrown.
     warmupLocalLlm().then(() => {
       igLog('Local LLM warm-up complete');
     }).catch((err) => igLog('Local LLM warm-up failed:', err));
@@ -948,6 +1037,39 @@ async function handleMessage(
     // Content script asks for its tab ID (used for per-tab reverse map keying)
     case 'IRON_GATE_GET_TAB_ID': {
       return { tabId: sender.tab?.id ?? null };
+    }
+
+    case 'IRON_GATE_RECORD_AUDIT': {
+      // Detection code calls this to record an audit entry for the configured sink.
+      // Body must match the AuditEntry contract — no original PII text, just counts/types.
+      const buffer = getAuditBuffer();
+      if (!buffer || !message.payload) return { ok: false, error: 'audit buffer not initialized' };
+      try {
+        const entry = buildAuditEntry(message.payload as Parameters<typeof buildAuditEntry>[0]);
+        await buffer.recordEntry(entry);
+        return { ok: true, id: entry.id };
+      } catch (err) {
+        return { ok: false, error: (err as Error).message };
+      }
+    }
+
+    case 'IRON_GATE_GET_AUDIT_METRICS': {
+      const buffer = getAuditBuffer();
+      return buffer ? buffer.getMetrics() : { error: 'no audit buffer' };
+    }
+
+    case 'IRON_GATE_FIRM_PSEUDONYMIZE': {
+      // Detection code uses the firm pseudonymizer for deterministic per-firm fakes.
+      // Falls back to legacy random generation if no firm key is configured.
+      if (!_firmPseudonymizer) return { ok: false, fallback: true };
+      const { entityType, originalText } = message.payload || {};
+      if (!entityType || !originalText) return { ok: false, error: 'missing entityType or originalText' };
+      try {
+        const pseudonym = await _firmPseudonymizer.pseudonymize(entityType, originalText);
+        return { ok: true, pseudonym };
+      } catch (err) {
+        return { ok: false, error: (err as Error).message };
+      }
     }
 
     case 'IRON_GATE_GET_DEPLOYMENT_STATUS': {
