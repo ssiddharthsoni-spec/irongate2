@@ -167,6 +167,52 @@ function syncProcessingModeToMainWorld(processingMode: 'local' | 'server' | 'sha
   csPostMessage({ type: 'IRON_GATE_SET_PROCESSING_MODE', processingMode });
 }
 
+/**
+ * Push the Sovereign Mode enterprise policy to the MAIN world fetch proxy.
+ * Triggered at startup and whenever chrome.storage.managed changes.
+ *
+ * The policy includes:
+ *   - deploymentMode (local-only / hybrid / server-only)
+ *   - killSwitch (org-wide AI tool block)
+ *   - allowedAITools (firm's approved tool allowlist, null = all allowed)
+ *   - supportContact (shown in block messages)
+ *   - firmId (audit correlation)
+ *
+ * The MAIN world validates the message via the content-script nonce. Page
+ * scripts cannot forge this message — they don't know the nonce.
+ */
+function syncEnterprisePolicyToMainWorld(policy: {
+  deploymentMode?: string;
+  killSwitch?: boolean;
+  allowedAITools?: string[] | null;
+  supportContact?: string;
+  firmId?: string;
+}) {
+  csPostMessage({ type: 'IRON_GATE_SET_ENTERPRISE_POLICY', policy });
+}
+
+/** Read the full managed policy from chrome.storage.managed and push to main-world */
+async function pushManagedPolicyToMainWorld(): Promise<void> {
+  try {
+    const managed = await chrome.storage.managed.get(null);
+    syncEnterprisePolicyToMainWorld({
+      deploymentMode: typeof managed.deploymentMode === 'string' ? managed.deploymentMode : undefined,
+      killSwitch: typeof managed.killSwitch === 'boolean' ? managed.killSwitch : false,
+      allowedAITools: Array.isArray(managed.allowedAITools) ? managed.allowedAITools : null,
+      supportContact: typeof managed.supportContact === 'string' ? managed.supportContact : undefined,
+      firmId: typeof managed.firmId === 'string' ? managed.firmId : undefined,
+    });
+  } catch {
+    // chrome.storage.managed is unavailable in unmanaged installs (dev mode) —
+    // fall back to a permissive default so dev-mode users are not blocked.
+    syncEnterprisePolicyToMainWorld({
+      deploymentMode: 'server-only',
+      killSwitch: false,
+      allowedAITools: null,
+    });
+  }
+}
+
 // Send private LLM config to MAIN world for Executive Lens routing
 function syncPrivateLlmToMainWorld() {
   try {
@@ -229,6 +275,18 @@ resolveConfig().then((config) => {
   syncProcessingModeToMainWorld(config.processingMode);
   igLog('Initial processing mode:', config.processingMode);
 }).catch(() => {});
+
+// Push the enterprise managed policy (killSwitch, allowedAITools, supportContact)
+// to MAIN world immediately, and re-push whenever managed storage changes.
+// This is the bridge that lets IT's Intune/Jamf/Workspace policy reach the
+// fetch proxy that enforces it.
+pushManagedPolicyToMainWorld();
+chrome.storage.onChanged.addListener((_changes, area) => {
+  if (area === 'managed') {
+    igLog('Managed storage changed — re-pushing enterprise policy to MAIN world');
+    pushManagedPolicyToMainWorld();
+  }
+});
 
 // Watch for storage changes in both local AND managed areas
 chrome.storage.onChanged.addListener((changes, area) => {
@@ -612,6 +670,28 @@ function handleMainWorldMessages(event: MessageEvent) {
     return;
   }
 
+  // B1: Audit log relay — MAIN world → worker audit buffer
+  // Main-world posts IRON_GATE_RECORD_AUDIT with classification metadata
+  // (counts and types only, NO raw PII). Content script relays to the worker
+  // which batches via the configured audit sink.
+  if (event.data?.type === 'IRON_GATE_RECORD_AUDIT' && event.data?.payload) {
+    try {
+      // Defense-in-depth: reject any field that smells like raw prompt text.
+      // The audit buffer also runs its own PII check, but catching it here
+      // prevents the message from ever reaching chrome.runtime.
+      const p = event.data.payload;
+      const forbiddenFields = ['promptText', 'originalText', 'maskedText', 'entityText', 'rawPrompt'];
+      for (const field of forbiddenFields) {
+        if (field in p) {
+          console.warn(`[Iron Gate] REJECTED audit entry with forbidden field "${field}"`);
+          return;
+        }
+      }
+      chrome.runtime.sendMessage({ type: 'IRON_GATE_RECORD_AUDIT', payload: p }).catch(() => {});
+    } catch { /* worker may be asleep */ }
+    return;
+  }
+
   // Shared validation for INTERCEPTED/AUDIT
   if (event.data?.type === 'IRON_GATE_INTERCEPTED' || event.data?.type === 'IRON_GATE_AUDIT') {
     const isProxy = event.data.type === 'IRON_GATE_INTERCEPTED';
@@ -749,6 +829,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         engine?.updateConfig({ mode: message.payload.mode });
         syncModeToMainWorld(message.payload.mode);
         igLog('Mode switched to:', message.payload.mode);
+        sendResponse({ ok: true });
+        break;
+      case 'IRON_GATE_APPLY_POLICY_BUNDLE':
+        // B3: Forward signed bundle rules from worker to main-world.
+        // The worker has already verified the Ed25519 signature — we can trust
+        // the payload. Main-world applies the rules to its detection pipeline.
+        csPostMessage({
+          type: 'IRON_GATE_APPLY_POLICY_BUNDLE',
+          payload: message.payload,
+        });
+        igLog('Policy bundle rules forwarded to main-world');
         sendResponse({ ok: true });
         break;
       case 'PROCESSING_MODE_CHANGED':

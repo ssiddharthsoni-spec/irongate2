@@ -101,6 +101,12 @@ export interface ManagedDeploymentConfig {
 
   /** Customer firm identifier (for audit logs only, never sent to IronGate) */
   firmId?: string;
+
+  /** Internal IT support contact shown in block messages + error notifications */
+  supportContact?: string;
+
+  /** Firm-approved AI tool allowlist (adapter ids). Empty/null = all allowed. */
+  allowedAITools?: string[];
 }
 
 /**
@@ -280,6 +286,15 @@ function validateManagedConfig(raw: Partial<ManagedDeploymentConfig>): ManagedDe
 
   if (typeof raw.firmId === 'string' && raw.firmId.length > 0 && raw.firmId.length < 200) {
     validated.firmId = raw.firmId;
+  }
+
+  if (typeof raw.supportContact === 'string' && raw.supportContact.length > 0 && raw.supportContact.length < 500) {
+    validated.supportContact = raw.supportContact;
+  }
+
+  if (Array.isArray(raw.allowedAITools)) {
+    const allowed = raw.allowedAITools.filter((x): x is string => typeof x === 'string' && x.length > 0 && x.length < 50);
+    if (allowed.length > 0) validated.allowedAITools = allowed;
   }
 
   return validated;

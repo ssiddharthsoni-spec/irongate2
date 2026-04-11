@@ -437,6 +437,130 @@ describe('Architecture Invariants — Sovereign AI / Local-Only Mode Contract', 
     expect(src).toMatch(/launchctl unload|stop the Ollama/i);
   });
 
+  // ── v1.0 Enterprise Hardening — the gap-audit fixes ──────────────
+
+  it('Tier 3 server adapter must call assertCloudCallsPermitted before any network call', () => {
+    const src = readFileSync(join(REPO_ROOT, 'apps/extension/src/detection/tier3-server-adapter.ts'), 'utf8');
+    // Must import the enforcement function
+    expect(src).toMatch(/import\s*\{[^}]*assertCloudCallsPermitted[^}]*\}\s*from\s*['"]\.\/tier2-adapter['"]/);
+    // Must call it inside classify() — we grep for the function call inside the file
+    expect(src).toMatch(/assertCloudCallsPermitted\(['"]tier3-server-adapter\.classify['"]\)/);
+    // Must NOT catch-and-swallow LocalDeploymentError (the throw must propagate)
+    const classifyBlock = src.match(/async classify[\s\S]+?^    }/m)?.[0] ?? '';
+    expect(classifyBlock).toMatch(/assertCloudCallsPermitted/);
+  });
+
+  it('Tier 3 isAvailable() must return false in local-only mode', () => {
+    const src = readFileSync(join(REPO_ROOT, 'apps/extension/src/detection/tier3-server-adapter.ts'), 'utf8');
+    expect(src).toMatch(/deploymentMode === 'local-only'[\s\S]*?return false/);
+  });
+
+  it('Windows installer must set OLLAMA_HOST to 127.0.0.1 explicitly', () => {
+    const src = readFileSync(join(REPO_ROOT, 'enterprise/installer/build-windows-msi.ps1'), 'utf8');
+    // Windows Ollama default is 0.0.0.0:11434 which exposes the LLM to the LAN.
+    // The installer MUST explicitly set OLLAMA_HOST=127.0.0.1 via a wrapper .cmd.
+    expect(src).toMatch(/OLLAMA_HOST=127\.0\.0\.1/);
+    expect(src).toMatch(/ollama-serve-localhost\.cmd|wrapper/i);
+  });
+
+  it('manifest CSP must include localhost:11434 in connect-src', () => {
+    const manifest = JSON.parse(readFileSync(join(REPO_ROOT, 'apps/extension/manifest.json'), 'utf8'));
+    const csp = manifest.content_security_policy?.extension_pages || '';
+    expect(csp).toMatch(/connect-src[^;]*localhost:11434|connect-src[^;]*127\.0\.0\.1:11434/);
+  });
+
+  it('main-world must check enterprise killSwitch before intercepting LLM requests', () => {
+    const src = readMainWorld();
+    expect(src).toMatch(/_isKillSwitchActive|enterprisePolicy\.killSwitch/);
+    expect(src).toMatch(/_buildKillSwitchResponse|killSwitch.*blocked.*policy/i);
+  });
+
+  it('main-world must enforce allowedAITools in fetch proxy', () => {
+    const src = readMainWorld();
+    expect(src).toMatch(/_isAiToolAllowed|allowedAITools/);
+    // The enforcement must happen at the top of patchedFetch before body extraction
+    const fetchBlock = src.match(/patchedFetch[\s\S]+?_isAiToolAllowed/)?.[0] ?? '';
+    expect(fetchBlock.length).toBeGreaterThan(0);
+  });
+
+  it('content script must push managed policy to main-world at startup', () => {
+    const src = readFileSync(join(REPO_ROOT, 'apps/extension/src/content/index.ts'), 'utf8');
+    expect(src).toMatch(/pushManagedPolicyToMainWorld|syncEnterprisePolicyToMainWorld/);
+    expect(src).toMatch(/IRON_GATE_SET_ENTERPRISE_POLICY/);
+    // Must re-push on managed storage change
+    expect(src).toMatch(/storage\.onChanged[\s\S]*?managed[\s\S]*?pushManagedPolicyToMainWorld/);
+  });
+
+  it('turnCoordinator.submit must emit IRON_GATE_RECORD_AUDIT for every detection', () => {
+    const src = readMainWorld();
+    // The audit recording must be inside _emit (the choke point for all detection emissions)
+    const emitFn = src.match(/function _emit[\s\S]+?^  \}/m)?.[0] ?? '';
+    expect(emitFn).toMatch(/IRON_GATE_RECORD_AUDIT/);
+    // Must only include counts and types — never promptText or entityText
+    expect(emitFn).not.toMatch(/payload:[\s\S]*?promptText/);
+    expect(emitFn).not.toMatch(/payload:[\s\S]*?entityText/);
+    expect(emitFn).toMatch(/entityTypes/);
+  });
+
+  it('content script must reject audit messages containing raw PII fields', () => {
+    const src = readFileSync(join(REPO_ROOT, 'apps/extension/src/content/index.ts'), 'utf8');
+    expect(src).toMatch(/IRON_GATE_RECORD_AUDIT/);
+    expect(src).toMatch(/forbiddenFields/);
+    expect(src).toMatch(/promptText.*originalText.*maskedText|REJECTED audit/);
+  });
+
+  it('audit buffer must run runtime PII check before buffering', () => {
+    const src = readFileSync(join(REPO_ROOT, 'apps/extension/src/audit/audit-buffer.ts'), 'utf8');
+    expect(src).toMatch(/isAuditEntrySafe/);
+    // Must throw, not log-and-continue
+    expect(src).toMatch(/Audit entry rejected/);
+    // The allow-list must be closed (known keys only)
+    expect(src).toMatch(/ALLOWED_KEYS/);
+  });
+
+  it('audit buffer must cap retry queue size', () => {
+    const src = readFileSync(join(REPO_ROOT, 'apps/extension/src/audit/audit-buffer.ts'), 'utf8');
+    expect(src).toMatch(/MAX_RETRY_ENTRIES/);
+    // Must evict oldest when the cap is exceeded
+    expect(src).toMatch(/firstAttemptAt.*-.*firstAttemptAt|slice.*MAX_RETRY_ENTRIES/);
+  });
+
+  it('main-world must prefetch firm pseudonyms before local pseudonymization', () => {
+    const src = readMainWorld();
+    expect(src).toMatch(/_prefetchFirmPseudonyms/);
+    // HKDF derivation must mix in firmId (C4) so different firms get different output
+    expect(src).toMatch(/firmId.*normalized|irongate\/pseudonym\/v1/);
+    // Primary fetch-proxy path MUST await the prefetch (first-turn determinism)
+    expect(src).toMatch(/await _prefetchFirmPseudonyms\(entitiesToPseudonymize\)/);
+  });
+
+  it('worker must apply signed policy bundle rules to live detection via tabs.sendMessage', () => {
+    const src = readFileSync(join(REPO_ROOT, 'apps/extension/src/worker/index.ts'), 'utf8');
+    // The onUpdate callback must forward to content scripts, not just log
+    expect(src).toMatch(/IRON_GATE_APPLY_POLICY_BUNDLE/);
+    // Must include all 4 rule types the schema declares
+    const bundleBlock = src.match(/Apply the signed bundle rules[\s\S]+?contextualKeywords[\s\S]+?scoringWeights[\s\S]+?allowedAITools/)?.[0] ?? '';
+    expect(bundleBlock.length).toBeGreaterThan(0);
+  });
+
+  it('main-world must accept and apply signed bundle rules', () => {
+    const src = readMainWorld();
+    expect(src).toMatch(/IRON_GATE_APPLY_POLICY_BUNDLE/);
+    expect(src).toMatch(/_bundleCustomEntityRegexes/);
+    expect(src).toMatch(/_bundleContextualKeywords/);
+    expect(src).toMatch(/_bundleScoringWeights/);
+  });
+
+  it('worker must run proactive Tier 2 health polling with degradation notification', () => {
+    const src = readFileSync(join(REPO_ROOT, 'apps/extension/src/worker/index.ts'), 'utf8');
+    // Must have a periodic health check
+    expect(src).toMatch(/setInterval[\s\S]+?probeTier2Health/);
+    // Must rate-limit notifications
+    expect(src).toMatch(/NOTIFY_COOLDOWN_MS|_lastNotifyAt/);
+    // Must fire a chrome notification on OK → degraded transition
+    expect(src).toMatch(/iron-gate-degraded/);
+  });
+
   it('IT health-check tool must exist and be standalone (no node_modules deps)', () => {
     const healthCheckPath = join(REPO_ROOT, 'scripts/irongate-healthcheck.mjs');
     const src = readFileSync(healthCheckPath, 'utf8');

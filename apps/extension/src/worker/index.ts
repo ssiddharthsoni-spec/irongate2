@@ -260,7 +260,43 @@ initLocalLlmDeployment().then(async (cfg) => {
       cfg.firmId,
       (bundle: PolicyBundle) => {
         igLog(`Policy bundle applied: ${bundle.firmId} issued ${bundle.issuedAt}`);
-        // TODO Phase 6: actually apply rules to detection state
+        // B3: Apply the signed bundle rules to live detection state.
+        //
+        // The bundle can contain four types of overrides:
+        //   1. customEntities — additional regex patterns for entity detection
+        //   2. contextualKeywords — additional AMBER-zone keyword weights
+        //   3. scoringWeights — overrides for the scorer's entity weight table
+        //   4. allowedAITools — firm policy override for which AI tools are allowed
+        //
+        // We push the applicable rules to all active content scripts via the
+        // enterprise policy bridge. Content scripts then relay to main-world
+        // which applies the rules to its detection pipeline.
+        try {
+          const rules = bundle.rules || {};
+          // Broadcast the bundle-derived policy to all tabs
+          chrome.tabs.query({}).then((tabs) => {
+            for (const tab of tabs) {
+              if (!tab.id) continue;
+              chrome.tabs.sendMessage(tab.id, {
+                type: 'IRON_GATE_APPLY_POLICY_BUNDLE',
+                payload: {
+                  customEntities: Array.isArray(rules.customEntities) ? rules.customEntities : [],
+                  contextualKeywords: Array.isArray(rules.contextualKeywords) ? rules.contextualKeywords : [],
+                  scoringWeights: typeof rules.scoringWeights === 'object' && rules.scoringWeights ? rules.scoringWeights : {},
+                  allowedAITools: Array.isArray(rules.allowedAITools) ? rules.allowedAITools : null,
+                  customBlockMessage: typeof rules.customBlockMessage === 'string' ? rules.customBlockMessage : undefined,
+                },
+              }).catch(() => { /* tab may not have content script */ });
+            }
+          }).catch(() => {});
+          // Cache the bundle rules in storage so new tabs get them at load
+          chrome.storage.session.set({
+            irongateBundleRules: rules,
+            irongateBundleAppliedAt: new Date().toISOString(),
+          }).catch(() => {});
+        } catch (err) {
+          igLog('Bundle rule application failed (non-fatal):', err);
+        }
       },
       (error: string) => {
         igLog('Policy bundle fetch error (non-fatal):', error);
@@ -273,6 +309,45 @@ initLocalLlmDeployment().then(async (cfg) => {
     warmupLocalLlm().then(() => {
       igLog('Local LLM warm-up complete');
     }).catch((err) => igLog('Local LLM warm-up failed:', err));
+
+    // C2: Proactive degradation notification. Poll Tier 2 health every 2 minutes.
+    // When health transitions from OK → not OK, surface a desktop notification
+    // with the firm's supportContact so the user knows to act before they send
+    // more prompts to a degraded system. Rate-limited to one notification per
+    // 15 minutes to avoid spam.
+    let _lastHealthOk = true;
+    let _lastNotifyAt = 0;
+    const NOTIFY_COOLDOWN_MS = 15 * 60 * 1000;
+    const HEALTH_POLL_MS = 2 * 60 * 1000;
+    setInterval(async () => {
+      try {
+        const health = await probeTier2Health();
+        const currentlyOk = health.reachable && health.modelLoaded;
+        if (_lastHealthOk && !currentlyOk) {
+          // Transition OK → degraded
+          const now = Date.now();
+          if (now - _lastNotifyAt >= NOTIFY_COOLDOWN_MS) {
+            _lastNotifyAt = now;
+            const contact = (cfg as ManagedDeploymentConfig).supportContact || 'your IT administrator';
+            try {
+              chrome.notifications.create('iron-gate-degraded-' + now, {
+                type: 'basic',
+                iconUrl: chrome.runtime.getURL('public/icons/icon128.png'),
+                title: 'IronGate protection degraded',
+                message: `Local AI classification is offline. ${health.error || 'The Ollama service may have stopped.'} Contact ${contact}.`,
+                priority: 2,
+              });
+            } catch { /* notifications API unavailable */ }
+            igLog(`Tier 2 degraded: ${health.error || 'reachable=false'}`);
+          }
+        } else if (!_lastHealthOk && currentlyOk) {
+          igLog('Tier 2 recovered');
+        }
+        _lastHealthOk = currentlyOk;
+      } catch {
+        /* probe itself failed — don't notify, will retry next tick */
+      }
+    }, HEALTH_POLL_MS);
   }
 }).catch((err: unknown) => {
   // Hard fail-closed errors at startup are surfaced to the user via the sidepanel,

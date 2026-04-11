@@ -11,6 +11,7 @@
 
 import type { TierAdapter, TierResult } from './confidence-router';
 import { scoreToZone } from './confidence-router';
+import { assertCloudCallsPermitted, LocalDeploymentError } from './tier2-adapter';
 import type { SanitizedResult } from './sanitize-for-classify';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -58,10 +59,32 @@ export function createTier3ServerAdapter(config: Tier3Config): TierAdapter {
     name: 'server-classify',
 
     isAvailable(): boolean {
+      // P0 ENFORCEMENT: in local-only mode, Tier 3 is never available
+      // regardless of config.enabled or circuit-breaker state. We check the
+      // locked deployment config and return false for sovereign deployments.
+      // This is defense-in-depth on top of the classify() assertion below —
+      // callers that gate on isAvailable() get the right answer immediately
+      // without throwing.
+      try {
+        // Import lazily to avoid circular import at module load time
+        // getLockedDeploymentConfig throws if not yet initialized; we treat
+        // "not initialized" as "permit" (matches the tier2-adapter behavior
+        // of allowing dev-mode use without managed config).
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { getLockedDeploymentConfig } = require('./tier2-adapter');
+        const cfg = getLockedDeploymentConfig();
+        if (cfg?.deploymentMode === 'local-only') return false;
+      } catch { /* init not called — permit in dev mode */ }
       return (config.enabled !== false) && !_disabled;
     },
 
     async classify(text: string, tier1Result: TierResult): Promise<TierResult> {
+      // P0 ENFORCEMENT: hard-assert this is allowed. In local-only mode this
+      // throws LocalDeploymentError with code CLOUD_CALL_IN_LOCAL_MODE before
+      // any network request is made. Do NOT wrap in try/catch — the throw
+      // must propagate to the caller.
+      assertCloudCallsPermitted('tier3-server-adapter.classify');
+
       const timeoutMs = config.timeoutMs ?? 3000;
       const start = performance.now();
 
@@ -100,6 +123,10 @@ export function createTier3ServerAdapter(config: Tier3Config): TierAdapter {
           source: `server-classify:${response.sensitivity}${response.reason ? `:${response.reason}` : ''}`,
         };
       } catch (err) {
+        // Re-throw LocalDeploymentError immediately without incrementing the
+        // circuit breaker — it's not a transient failure, it's a contract
+        // violation that should surface to the caller as-is.
+        if (err instanceof LocalDeploymentError) throw err;
         consecutiveFailures++;
         if (consecutiveFailures >= MAX_FAILURES) {
           _disabled = true;

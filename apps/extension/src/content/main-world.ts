@@ -215,6 +215,112 @@ let processingMode: 'local' | 'server' = (window as any).__IRON_GATE_PROCESSING_
 let currentReverseMap: Record<string, string> = {};
 let _reverseMapRestored = false;
 
+// ─── Sovereign Mode Enterprise Policy (received from worker via bridge) ───
+// These come from chrome.storage.managed via the worker → content-script →
+// main-world postMessage chain. They're set at extension startup and can
+// only be changed by IT pushing a new managed policy — never by the user,
+// a page script, or the extension UI.
+type EnterprisePolicyState = {
+  deploymentMode: 'local-only' | 'hybrid' | 'server-only';
+  killSwitch: boolean;
+  allowedAITools: string[] | null; // null = all tools allowed; [] = no tools
+  supportContact: string;
+  firmId: string;
+};
+let _enterprisePolicy: EnterprisePolicyState = {
+  deploymentMode: 'server-only',
+  killSwitch: false,
+  allowedAITools: null,
+  supportContact: 'your IT administrator',
+  firmId: '',
+};
+
+// Per-firm pseudonym key (raw bytes) — set via enterprise policy message.
+// When present, all pseudonymization is deterministic per firm.
+let _firmKeyBytes: Uint8Array | null = null;
+const _firmFakeCache = new Map<string, string>();
+
+// B3: Signed policy bundle state — applied by the worker's bundle poller.
+// These override/augment the built-in detection rules. Mutations only happen
+// through IRON_GATE_APPLY_POLICY_BUNDLE which is nonce-validated.
+let _bundleCustomEntityRegexes: Array<{ type: string; regex: RegExp; confidence: number }> = [];
+let _bundleContextualKeywords: Array<{ keyword: string; weight: number; category: string }> = [];
+let _bundleScoringWeights: Record<string, number> = {};
+let _bundleCustomBlockMessage: string | null = null;
+
+function _isKillSwitchActive(): boolean {
+  return _enterprisePolicy.killSwitch === true;
+}
+
+// B2: _prefetchFirmPseudonyms is defined AFTER currentForwardMap is declared
+// (TypeScript ordering constraint). See the function body below.
+// Forward declaration via function expression so the fetch proxy can call it:
+let _prefetchFirmPseudonyms: (entities: Array<{ type: string; text: string }>) => Promise<void> =
+  async () => { /* replaced below after currentForwardMap is declared */ };
+
+/** Small pool selector for deterministic firm pseudonyms */
+function _firmFakeFromBytes(entityType: string, bytes: Uint8Array): string | null {
+  const n = ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]) >>> 0;
+  const FIRST = ['Alex','Amara','Ava','Bao','Bianca','Carlos','Chen','Diana','Elena','Fatima','Gabriel','Hana','Iris','James','Julia','Kai','Lily','Mei','Nora','Omar','Paul','Qiana','Raj','Sara','Tara','Uma','Victor','Wendy','Xander','Yuki','Zara'];
+  const LAST = ['Adams','Barros','Carter','Davis','Edwards','Fernandez','Garcia','Huang','Ito','Joshi','Kim','Liu','Martinez','Nguyen','Okafor','Park','Quinn','Reed','Smith','Tanaka','Underwood','Vasquez','Wang','Xu','Yates','Zhang'];
+  const ORGS = ['Adatum Corp','Contoso Holdings','Northwind Group','Tailspin Industries','Wingtip Partners','Lucerne Capital','Fabrikam Solutions','Litware Systems'];
+  const DOMAINS = ['example.com','example.org','example.net','sample.io','test.co','demo.dev'];
+  switch (entityType) {
+    case 'PERSON':
+    case 'NAME': {
+      const f = FIRST[n % FIRST.length];
+      const l = LAST[(n >> 8) % LAST.length];
+      return `${f} ${l}`;
+    }
+    case 'ORGANIZATION':
+    case 'ORG':
+    case 'COMPANY':
+      return ORGS[n % ORGS.length];
+    case 'EMAIL': {
+      const f = FIRST[n % FIRST.length].toLowerCase();
+      const l = LAST[(n >> 8) % LAST.length].toLowerCase();
+      const d = DOMAINS[(n >> 16) % DOMAINS.length];
+      return `${f}.${l}@${d}`;
+    }
+    case 'PHONE':
+    case 'PHONE_NUMBER': {
+      const area = (n % 800) + 200;
+      const prefix = ((n >> 10) % 800) + 200;
+      const line = (n >> 20) % 10000;
+      return `(${area}) ${prefix}-${String(line).padStart(4, '0')}`;
+    }
+    case 'SSN': {
+      // 900-999 area avoids real-SSN range (Tier 1 regex won't match these as real)
+      const area = 900 + (n % 100);
+      const group = ((n >> 10) % 99) + 1;
+      const serial = ((n >> 20) % 9999) + 1;
+      return `${area}-${String(group).padStart(2, '0')}-${String(serial).padStart(4, '0')}`;
+    }
+    default:
+      return null; // let the random generator handle it
+  }
+}
+
+function _isAiToolAllowed(adapterId: string | undefined): boolean {
+  if (!adapterId) return true;
+  const list = _enterprisePolicy.allowedAITools;
+  if (!list || list.length === 0) return true; // null or empty = all allowed
+  return list.includes(adapterId);
+}
+
+function _buildKillSwitchResponse(reason: string): Response {
+  const body = {
+    error: 'blocked_by_policy',
+    reason,
+    contact: _enterprisePolicy.supportContact,
+    firmId: _enterprisePolicy.firmId || undefined,
+  };
+  return new Response(JSON.stringify(body), {
+    status: 403,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 // registerPseudonymization() and wrapResponse() are defined after all their
 // dependencies (addReverseMapping, startPersistentDomDepseudo, scanTextNodes,
 // depseudonymizeResponse, activeAdapter) to satisfy TypeScript lexical ordering.
@@ -429,6 +535,87 @@ window.addEventListener('message', (event) => {
       }
     }
   }
+  // Enterprise managed policy state (killSwitch, allowedAITools, firm info).
+  // Validated by the content-script nonce check above.
+  if (event.data?.type === 'IRON_GATE_SET_ENTERPRISE_POLICY') {
+    const p = event.data.policy;
+    if (p && typeof p === 'object') {
+      if (p.deploymentMode === 'local-only' || p.deploymentMode === 'hybrid' || p.deploymentMode === 'server-only') {
+        _enterprisePolicy.deploymentMode = p.deploymentMode;
+      }
+      if (typeof p.killSwitch === 'boolean') {
+        _enterprisePolicy.killSwitch = p.killSwitch;
+      }
+      if (Array.isArray(p.allowedAITools)) {
+        _enterprisePolicy.allowedAITools = p.allowedAITools.filter((x: unknown) => typeof x === 'string');
+      } else if (p.allowedAITools === null) {
+        _enterprisePolicy.allowedAITools = null;
+      }
+      if (typeof p.supportContact === 'string' && p.supportContact.length > 0) {
+        _enterprisePolicy.supportContact = p.supportContact;
+      }
+      if (typeof p.firmId === 'string') {
+        _enterprisePolicy.firmId = p.firmId;
+      }
+      // B2: Per-firm pseudonymization key. 32 bytes expressed as 64 hex chars.
+      // When set, pseudonymization becomes deterministic per firm via HKDF.
+      if (typeof p.pseudonymKey === 'string' && /^[0-9a-fA-F]{64}$/.test(p.pseudonymKey)) {
+        const hex = p.pseudonymKey;
+        const bytes = new Uint8Array(32);
+        for (let i = 0; i < 32; i++) bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+        _firmKeyBytes = bytes;
+        _firmFakeCache.clear(); // Reset cache when key changes
+        igLog('Firm pseudonym key installed — pseudonyms are now deterministic per firm');
+      } else if (p.pseudonymKey === null || p.pseudonymKey === '') {
+        _firmKeyBytes = null;
+        _firmFakeCache.clear();
+      }
+      igLog(`Enterprise policy updated: mode=${_enterprisePolicy.deploymentMode} killSwitch=${_enterprisePolicy.killSwitch} allowed=${_enterprisePolicy.allowedAITools?.join(',') || 'all'} firmKey=${_firmKeyBytes ? 'set' : 'none'}`);
+    }
+  }
+  // B3: Signed policy bundle rules from the customer's policy server.
+  // The worker has already verified the Ed25519 signature and schema.
+  // Main-world applies the rules to its live detection state.
+  if (event.data?.type === 'IRON_GATE_APPLY_POLICY_BUNDLE' && event.data?.payload) {
+    const rules = event.data.payload;
+    try {
+      // Custom entity regexes — compiled once, added to the detection pool
+      if (Array.isArray(rules.customEntities)) {
+        _bundleCustomEntityRegexes = [];
+        for (const ce of rules.customEntities) {
+          if (typeof ce?.pattern !== 'string' || typeof ce?.type !== 'string') continue;
+          try {
+            const regex = new RegExp(ce.pattern, 'gi');
+            _bundleCustomEntityRegexes.push({
+              type: ce.type,
+              regex,
+              confidence: typeof ce.confidence === 'number' ? ce.confidence : 0.9,
+            });
+          } catch { /* bad regex — skip */ }
+        }
+      }
+      // Contextual keyword additions — merged into the scorer's keyword pool
+      if (Array.isArray(rules.contextualKeywords)) {
+        _bundleContextualKeywords = rules.contextualKeywords
+          .filter((k: any) => typeof k?.keyword === 'string' && typeof k?.weight === 'number')
+          .map((k: any) => ({ keyword: k.keyword, weight: k.weight, category: k.category || 'firm-custom' }));
+      }
+      // Scoring weight overrides — applied by the scorer when computing entity contributions
+      if (rules.scoringWeights && typeof rules.scoringWeights === 'object') {
+        _bundleScoringWeights = { ...rules.scoringWeights };
+      }
+      // Allowed AI tools — firm policy override
+      if (Array.isArray(rules.allowedAITools)) {
+        _enterprisePolicy.allowedAITools = rules.allowedAITools;
+      }
+      if (typeof rules.customBlockMessage === 'string') {
+        _bundleCustomBlockMessage = rules.customBlockMessage;
+      }
+      igLog(`Policy bundle applied: +${_bundleCustomEntityRegexes.length} entities, +${_bundleContextualKeywords.length} keywords, ${Object.keys(_bundleScoringWeights).length} weight overrides`);
+    } catch (err) {
+      igLog('Bundle rule application failed:', err);
+    }
+  }
   // Server timeout config from content script (H-14: validated by nonce check above)
   if (event.data?.type === 'IRON_GATE_SET_SERVER_TIMEOUT' && typeof event.data.timeoutMs === 'number') {
     _updateServerTimeout(event.data.timeoutMs);
@@ -608,6 +795,57 @@ function sanitizeMappingsForTransit(mappings: PseudonymMapping[]): Array<{ pseud
 
 // Global forward map: original → fake (persists across messages in a conversation)
 let currentForwardMap: Record<string, string> = {};
+
+// B2: Install the real firm pseudonym prefetch function now that currentForwardMap exists.
+// HKDF-SHA256: derive deterministic fakes per firm via the managed policy pseudonymKey.
+// Salt binds to entity type; info binds to firmId + original text.
+_prefetchFirmPseudonyms = async function firmPseudonymPrefetch(entities) {
+  if (!_firmKeyBytes || _firmKeyBytes.length !== 32) return;
+  let baseKey: CryptoKey;
+  try {
+    baseKey = await crypto.subtle.importKey(
+      'raw',
+      _firmKeyBytes.buffer.slice(
+        _firmKeyBytes.byteOffset,
+        _firmKeyBytes.byteOffset + _firmKeyBytes.byteLength,
+      ) as ArrayBuffer,
+      'HKDF',
+      false,
+      ['deriveBits'],
+    );
+  } catch { return; }
+  for (const e of entities) {
+    const normalized = e.text.trim();
+    if (normalized.length === 0) continue;
+    if (currentForwardMap[normalized]) continue;
+    const cacheKey = `${e.type}|${normalized.toLowerCase()}`;
+    const cached = _firmFakeCache.get(cacheKey);
+    if (cached) {
+      currentForwardMap[normalized] = cached;
+      continue;
+    }
+    try {
+      const salt = new TextEncoder().encode(`irongate/pseudonym/v1/${e.type}`);
+      const info = new TextEncoder().encode(`${_enterprisePolicy.firmId}:${normalized.toLowerCase()}`);
+      const derived = await crypto.subtle.deriveBits(
+        {
+          name: 'HKDF',
+          hash: 'SHA-256',
+          salt: salt.buffer.slice(salt.byteOffset, salt.byteOffset + salt.byteLength) as ArrayBuffer,
+          info: info.buffer.slice(info.byteOffset, info.byteOffset + info.byteLength) as ArrayBuffer,
+        },
+        baseKey,
+        256,
+      );
+      const bytes = new Uint8Array(derived);
+      const fake = _firmFakeFromBytes(e.type, bytes);
+      if (fake) {
+        _firmFakeCache.set(cacheKey, fake);
+        currentForwardMap[normalized] = fake;
+      }
+    } catch { /* HKDF failed — leave empty, random fallback handles it */ }
+  }
+};
 
 // Per-session cryptographic proxy nonce — prevents prompt injection bypass (C-2).
 // Old approach used a guessable string 'enterprise privacy tool' that attackers could
@@ -1767,6 +2005,39 @@ const turnCoordinator = (() => {
   function _emit(r: QueuedResult): void {
     igLog(`Turn coordinator: EMIT ${r.type} score=${r.score} entities=${r.allEntities.length}`);
     notifyContentScript(r.type, r.promptText, r.allEntities, r.maskedText, r.mappings, r.level, r.score, r.extra);
+
+    // B1: Record an audit entry for the configured sink. The audit entry
+    // contains ONLY counts and types — never the original prompt text or
+    // entity values. The audit buffer in the worker batches and delivers.
+    //
+    // The shape is enforced by the AuditEntry interface on the worker side;
+    // any field added here that could contain raw PII text would fail the
+    // architecture invariant test for PII-in-audit.
+    const entityTypes = Array.from(new Set(r.allEntities.map(e => e.type)));
+    const action: 'allowed' | 'pseudonymized' | 'blocked' | 'low-risk-passthrough' =
+      r.type === 'IRON_GATE_INTERCEPTED'
+        ? 'pseudonymized'
+        : r.score > 25
+          ? 'allowed'
+          : 'low-risk-passthrough';
+    const zone: 'green' | 'amber' | 'red' =
+      r.score > 60 ? 'red' : r.score > 25 ? 'amber' : 'green';
+
+    igPostMessage({
+      type: 'IRON_GATE_RECORD_AUDIT',
+      payload: {
+        aiTool: activeAdapter?.id || 'unknown',
+        zone,
+        score: r.score,
+        entityCount: r.allEntities.length,
+        entityTypes, // type strings only, NO values
+        action,
+        tier: 1, // updated to 2 in pipeline if Tier 2 was consulted
+        pseudonymsApplied: r.mappings?.length ?? 0,
+        modelUsed: (r.extra?.modelUsed as string) || undefined,
+        latencyMs: (r.extra?.latencyMs as number) || undefined,
+      },
+    });
   }
 
   return {
@@ -3433,6 +3704,26 @@ const patchedFetch = async function patchedFetch(
     igLog(`fetch #${_fetchCallCount}: ${method} ${url.substring(0, 100)}`);
   }
 
+  // ─── ENTERPRISE POLICY GATE (A4) ─────────────────────────────────────
+  // Before any other logic, check the two managed-config gates:
+  //   1. killSwitch — org has disabled ALL AI tools (e.g., incident response)
+  //   2. allowedAITools — firm restricts to a subset of tools
+  // Both gates ONLY apply to LLM endpoint requests, not generic fetches.
+  if (adapterIsLLMEndpoint(url, activeAdapter)) {
+    if (_isKillSwitchActive()) {
+      igLog('Enterprise kill switch active — blocking LLM request');
+      return _buildKillSwitchResponse(
+        'AI tools are currently disabled by your organization policy.',
+      );
+    }
+    if (!_isAiToolAllowed(activeAdapter?.id)) {
+      igLog(`AI tool "${activeAdapter?.id}" is not in the allowed list — blocking`);
+      return _buildKillSwitchResponse(
+        `The AI tool "${activeAdapter?.name || activeAdapter?.id}" is not approved by your organization. Contact ${_enterprisePolicy.supportContact}.`,
+      );
+    }
+  }
+
   // For GET/DELETE/etc: no body to pseudonymize, but response may contain
   // pseudonymized conversation data (e.g., Claude reloads conversation via GET).
   // We MUST de-pseudonymize these responses or React re-renders with fake names.
@@ -3872,6 +4163,8 @@ const patchedFetch = async function patchedFetch(
           // are allowed through. Credentials and HIGH_PII always pseudonymized.
           const entitiesToPseudonymize = filterEntitiesForPseudonymization(promptText, allEntities, fullScore);
           igLog(`Ownership filter: ${allEntities.length} entities → ${entitiesToPseudonymize.length} to pseudonymize`);
+          // B2: Deterministic per-firm pseudonyms via HKDF (no-op if firmKey not set)
+          await _prefetchFirmPseudonyms(entitiesToPseudonymize);
           const pseudoResult = pseudonymizeLocal(promptText, entitiesToPseudonymize);
 
           // If pseudonymization produced no actual changes (all entities were
@@ -4598,6 +4891,10 @@ XMLHttpRequest.prototype.send = function(body?: any) {
 
             // Selective pseudonymization based on entity ownership
             const xhrEntitiesToPseudo = filterEntitiesForPseudonymization(promptText, allEntities, fullScore);
+            // B2: Fire-and-forget firm pseudonym prefetch — warms the cache for
+            // subsequent turns. XHR is synchronous so we can't await here;
+            // first-turn determinism is handled by the fetch proxy path which IS async.
+            void _prefetchFirmPseudonyms(xhrEntitiesToPseudo);
             const pseudoResult = pseudonymizeLocal(promptText, xhrEntitiesToPseudo);
 
             // No actual pseudonymization (ownership filter or VALUE_TYPES) → passthrough
@@ -5549,6 +5846,8 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
 
     // Selective pseudonymization based on entity ownership
     const domEntitiesToPseudo = filterEntitiesForPseudonymization(text, allEntities, fullScore);
+    // B2: Deterministic per-firm pseudonyms (no-op if firmKey not set)
+    await _prefetchFirmPseudonyms(domEntitiesToPseudo);
     const pseudoResult = pseudonymizeLocal(text, domEntitiesToPseudo);
 
     // No actual pseudonymization (ownership filter or VALUE_TYPES) → passthrough

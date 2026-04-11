@@ -93,7 +93,13 @@ Log "IronGate Enterprise postinstall starting"
 $OllamaDir = "C:\Program Files\IronGate\ollama"
 $env:Path = "$OllamaDir;$env:Path"
 
-# Register Ollama as a Windows service via NSSM (or sc.exe)
+# Register Ollama as a Windows service.
+#
+# CRITICAL: Ollama's default bind address on Windows is 0.0.0.0:11434 —
+# any machine on the LAN can reach the local LLM. We MUST set OLLAMA_HOST
+# to 127.0.0.1 so the service binds to localhost only. sc.exe doesn't
+# accept env vars directly, so we install a wrapper .cmd that sets the
+# env var and then execs ollama serve.
 $ServiceName = "IronGateOllama"
 if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
   Stop-Service -Name $ServiceName -Force
@@ -101,10 +107,21 @@ if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
 }
 
 $OllamaExe = Join-Path $OllamaDir "ollama.exe"
-sc.exe create $ServiceName binPath= "`"$OllamaExe`" serve" start= auto DisplayName= "IronGate Ollama Service" | Out-Null
-sc.exe description $ServiceName "Local LLM service for IronGate Enterprise. Runs on 127.0.0.1:11434." | Out-Null
+$WrapperBat = "C:\Program Files\IronGate\ollama-serve-localhost.cmd"
+
+# Write wrapper that locks bind address to 127.0.0.1 and keeps model warm
+@"
+@echo off
+set OLLAMA_HOST=127.0.0.1:11434
+set OLLAMA_KEEP_ALIVE=30m
+set OLLAMA_MAX_LOADED_MODELS=1
+"$OllamaExe" serve
+"@ | Out-File -FilePath $WrapperBat -Encoding ASCII
+
+sc.exe create $ServiceName binPath= "cmd.exe /c `"$WrapperBat`"" start= auto DisplayName= "IronGate Ollama Service" | Out-Null
+sc.exe description $ServiceName "Local LLM service for IronGate Enterprise. BOUND TO 127.0.0.1:11434 ONLY (no LAN exposure)." | Out-Null
 Start-Service -Name $ServiceName
-Log "Ollama service started"
+Log "Ollama service started (bound to 127.0.0.1:11434 via wrapper)"
 
 # Wait for Ollama to respond
 for ($i = 1; $i -le 10; $i++) {

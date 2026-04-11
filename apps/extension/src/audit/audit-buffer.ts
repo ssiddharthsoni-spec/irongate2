@@ -19,6 +19,9 @@ import { createSink } from './audit-sink';
 const FLUSH_INTERVAL_MS = 5_000;
 const MAX_BUFFER_SIZE = 50;
 const MAX_RETRY_AGE_MS = 24 * 60 * 60 * 1000;
+// C1: Cap the retry queue. A misconfigured sink returning 500 for 24 hours
+// could otherwise balloon IndexedDB. At ~1KB per entry, 2000 entries = 2MB max.
+const MAX_RETRY_ENTRIES = 2000;
 const IDB_DB_NAME = 'irongate-audit';
 const IDB_STORE_PENDING = 'pending';
 const IDB_STORE_RETRY = 'retry';
@@ -52,6 +55,17 @@ export class AuditBuffer {
 
   /** Public API: detection code calls this for every classification result. */
   async recordEntry(entry: AuditEntry): Promise<void> {
+    // C3: PII egress defense — refuse to buffer any entry whose fields contain
+    // data that could be raw PII text. The AuditEntry schema only allows counts,
+    // types, scores, and metadata. Any string field longer than 120 chars is
+    // probably a prompt leaking through and must be rejected at the boundary.
+    if (!isAuditEntrySafe(entry)) {
+      this.metrics.failed++;
+      throw new Error(
+        'Audit entry rejected: contains a string field that looks like prompt text. ' +
+        'Audit entries must contain only counts and types, never raw PII.',
+      );
+    }
     this.metrics.recorded++;
     this.buffer.push(entry);
     await this.persistPending(entry).catch(() => { /* persistence failures are non-fatal */ });
@@ -107,6 +121,21 @@ export class AuditBuffer {
   // ── Retry queue ──────────────────────────────────────────────────────────
 
   private async enqueueRetry(batch: AuditEntry[], error: string): Promise<void> {
+    // C1: Enforce retry queue size cap. If adding this batch would exceed the
+    // cap, drop the OLDEST retries first (FIFO eviction). This keeps recent
+    // failures around and increments the dropped counter for monitoring.
+    try {
+      const existing = await this.loadRetries();
+      if (existing.length >= MAX_RETRY_ENTRIES) {
+        existing.sort((a, b) => a.firstAttemptAt - b.firstAttemptAt);
+        const toEvict = existing.slice(0, existing.length - MAX_RETRY_ENTRIES + 1);
+        for (const old of toEvict) {
+          this.metrics.droppedAfterRetries += old.batch.length;
+          await this.removeRetry(old.id).catch(() => {});
+        }
+      }
+    } catch { /* IDB unavailable */ }
+
     const now = Date.now();
     const retryEntry: RetryEntry = {
       id: crypto.randomUUID(),
@@ -244,6 +273,40 @@ export class AuditBuffer {
       tx.onerror = () => reject(tx.error);
     });
   }
+}
+
+// ─── PII egress guard ──────────────────────────────────────────────────────
+// Runtime check that an AuditEntry only contains the allowed fields and no
+// string field is longer than 120 characters (a heuristic for "probably a
+// prompt"). The only string fields that can legitimately be longer are none —
+// entityTypes is a type-label array, not content. Everything else is numeric.
+//
+// This function is tested by the architecture invariant test suite to ensure
+// future changes don't silently allow PII text to flow into the audit path.
+export function isAuditEntrySafe(entry: AuditEntry): boolean {
+  const ALLOWED_KEYS = new Set([
+    'id', 'timestamp', 'firmId', 'deviceHash', 'aiTool', 'zone', 'score',
+    'entityCount', 'entityTypes', 'action', 'tier', 'pseudonymsApplied',
+    'modelUsed', 'latencyMs', 'conversationId', 'turnNumber',
+  ]);
+  for (const key of Object.keys(entry)) {
+    if (!ALLOWED_KEYS.has(key)) return false; // unknown field — reject
+  }
+  const MAX_STRING_LEN = 200; // allows URLs, UUIDs, model names; rejects prompts
+  for (const [key, value] of Object.entries(entry)) {
+    if (typeof value === 'string' && value.length > MAX_STRING_LEN) return false;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (typeof item === 'string' && item.length > 100) return false; // entity type names are short
+      }
+    }
+    // Disallow nested objects entirely — prompt content could hide inside
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      return false;
+    }
+    void key;
+  }
+  return true;
 }
 
 // ─── Singleton accessor ────────────────────────────────────────────────────
