@@ -27,7 +27,16 @@ import { trackShadowAI, getShadowAIStats } from './shadow-ai-tracker';
 import { detectWithLocalLLM, resetLocalLLMHealth } from './local-llm-detector';
 import { createConfidenceRouter, scoreToZone, type RoutingDecision, type TierAdapter, type SignalGateInput } from '../detection/confidence-router';
 import { createMetadataClassifierAdapter } from '../detection/metadata-classifier';
-import { createTier2Adapter, type Tier2Config } from '../detection/tier2-adapter';
+import {
+  createTier2Adapter,
+  initLocalLlmDeployment,
+  warmupLocalLlm,
+  probeTier2Health,
+  getLockedDeploymentConfig,
+  LocalDeploymentError,
+  type Tier2Config,
+  type ManagedDeploymentConfig,
+} from '../detection/tier2-adapter';
 import { getSemanticClassifier } from '../detection/semantic-classifier';
 import { getWeightResolver } from '../detection/weight-resolver';
 import { createDictionaryMatcher, type DictionaryEntry } from '../detection/entity-dictionary';
@@ -148,6 +157,53 @@ chrome.runtime.onUpdateAvailable.addListener((details) => {
   igLog('Update available:', details.version);
   // Reload immediately to apply the update (no user interaction needed)
   chrome.runtime.reload();
+});
+
+// ─── Startup: lock deployment mode → restore auth → wire API client ────────
+//
+// CRITICAL ORDERING: initLocalLlmDeployment() MUST run before ANY classification
+// or auth call. The deployment mode (local-only / hybrid / server-only) determines
+// whether server-side endpoints are even reachable. If we initialize auth and API
+// client first, we'd accidentally make a server call from a local-only deployment.
+//
+// If initLocalLlmDeployment() throws (e.g., local-only mode but no localEndpoint
+// configured), we LOG the error and disable Tier 2 — but we don't block the
+// rest of the worker. The user will see a fatal error in the sidepanel and a
+// notification telling them to contact their IT administrator.
+
+let _deploymentMode: 'local-only' | 'hybrid' | 'server-only' = 'server-only';
+let _deploymentInitError: string | null = null;
+
+initLocalLlmDeployment().then((cfg) => {
+  _deploymentMode = cfg.deploymentMode;
+  igLog(`Deployment mode locked: ${cfg.deploymentMode}`);
+  if (cfg.deploymentMode !== 'server-only') {
+    igLog(`Local LLM endpoint: ${cfg.localEndpoint || '(chrome-builtin)'}, model: ${cfg.localModel || '(default)'}`);
+    // Warm up the local model so the first user prompt isn't slow.
+    // Non-blocking — failures are reported via probeTier2Health, not thrown.
+    warmupLocalLlm().then(() => {
+      igLog('Local LLM warm-up complete');
+    }).catch((err) => igLog('Local LLM warm-up failed:', err));
+  }
+}).catch((err: unknown) => {
+  // Hard fail-closed errors at startup are surfaced to the user via the sidepanel,
+  // not silently swallowed. The extension still loads but Tier 2 is disabled.
+  const msg = err instanceof LocalDeploymentError
+    ? `[${err.code}] ${err.message}`
+    : (err as Error)?.message || String(err);
+  _deploymentInitError = msg;
+  console.error('[Iron Gate] Local deployment init failed:', msg);
+  // Notify the user via desktop notification — this is a deployment failure
+  // that requires IT attention, and the user needs to know they're not protected.
+  try {
+    chrome.notifications.create('iron-gate-deployment-error', {
+      type: 'basic',
+      iconUrl: chrome.runtime.getURL('public/icons/icon128.png'),
+      title: 'IronGate deployment error',
+      message: 'Local LLM mode is misconfigured. Contact your IT administrator. Detection is degraded.',
+      priority: 2,
+    });
+  } catch { /* notifications API may not be available */ }
 });
 
 // ─── Startup: restore auth & wire API client ────────────────────────────────
@@ -892,6 +948,34 @@ async function handleMessage(
     // Content script asks for its tab ID (used for per-tab reverse map keying)
     case 'IRON_GATE_GET_TAB_ID': {
       return { tabId: sender.tab?.id ?? null };
+    }
+
+    case 'IRON_GATE_GET_DEPLOYMENT_STATUS': {
+      // Sidepanel asks the worker for the locked deployment mode + Tier 2 health.
+      // This is the source of truth that the user sees in the UI.
+      try {
+        let cfg: ManagedDeploymentConfig | null = null;
+        try { cfg = getLockedDeploymentConfig() as ManagedDeploymentConfig; } catch { /* not yet initialized */ }
+        const health = cfg && cfg.deploymentMode !== 'server-only'
+          ? await probeTier2Health()
+          : null;
+        return {
+          deploymentMode: _deploymentMode,
+          initError: _deploymentInitError,
+          config: cfg ? {
+            deploymentMode: cfg.deploymentMode,
+            localEndpoint: cfg.localEndpoint,
+            localModel: cfg.localModel,
+            localFormat: cfg.localFormat,
+            auditLogDestination: cfg.auditLogDestination,
+            firmId: cfg.firmId,
+            killSwitch: cfg.killSwitch,
+          } : null,
+          tier2Health: health,
+        };
+      } catch (err) {
+        return { error: (err as Error).message };
+      }
     }
 
     case 'PROMPT_DETECTED': {

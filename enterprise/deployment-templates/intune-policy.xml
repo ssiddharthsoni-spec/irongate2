@@ -1,0 +1,80 @@
+<!--
+  IronGate Enterprise — Microsoft Intune deployment template
+  ============================================================
+  Push this policy via: Endpoint Manager → Devices → Configuration profiles
+                        → Create profile → Windows 10/11 → Templates → Custom
+
+  How to use:
+    1. Replace every <<REPLACE_ME>> below with your firm's value
+    2. Generate a 64-character pseudonymKey: openssl rand -hex 32
+    3. Decide your audit log destination (default: none)
+    4. Upload this XML as a Custom Configuration Profile
+    5. Assign to your Windows fleet's user/device group
+
+  Validation:
+    After 1-2 hours of policy propagation, run on a pilot machine:
+      node scripts/irongate-healthcheck.mjs --json
+
+  Two policies are pushed:
+    1. ExtensionInstallForcelist — installs the IronGate extension automatically
+    2. 3rdparty/extensions/IRONGATE_EXTENSION_ID — managed config for the extension
+-->
+<MgmtTree>
+
+  <!-- Policy 1: Force-install the IronGate extension -->
+  <Replace>
+    <CmdID>1</CmdID>
+    <Item>
+      <Target>
+        <LocURI>./Device/Vendor/MSFT/Policy/Config/Chrome~Policy~googlechrome~Extensions/ExtensionInstallForcelist</LocURI>
+      </Target>
+      <Meta>
+        <Format xmlns="syncml:metinf">chr</Format>
+      </Meta>
+      <Data>
+        <enabled/>
+        <data id="ExtensionInstallForcelistDesc" value="1&#xF000;ironGateChromeExtensionId;https://clients2.google.com/service/update2/crx"/>
+      </Data>
+    </Item>
+  </Replace>
+
+  <!-- Policy 2: Push managed config to the IronGate extension -->
+  <!-- Replace IRONGATE_EXTENSION_ID with the actual extension ID after first install -->
+  <Replace>
+    <CmdID>2</CmdID>
+    <Item>
+      <Target>
+        <LocURI>./Device/Vendor/MSFT/Policy/Config/Chrome~Policy~googlechrome~Extensions/3rdparty</LocURI>
+      </Target>
+      <Meta>
+        <Format xmlns="syncml:metinf">chr</Format>
+      </Meta>
+      <Data>
+        <![CDATA[
+        {
+          "extensions": {
+            "IRONGATE_EXTENSION_ID": {
+              "deploymentMode": "local-only",
+              "localEndpoint": "http://localhost:11434/api/generate",
+              "localModel": "llama3.2:3b",
+              "localFormat": "ollama",
+              "timeoutMs": 30000,
+              "auditLogDestination": "<<REPLACE_ME: none|s3|syslog|webhook>>",
+              "auditLogConfig": {
+                "syslogHost": "<<REPLACE_ME: your-siem.firm.internal:514>>"
+              },
+              "policyBundleUrl": "<<REPLACE_ME: https://policy.firm.internal/irongate/bundle.json>>",
+              "pseudonymKey": "<<REPLACE_ME: 64-hex-char key from `openssl rand -hex 32`>>",
+              "killSwitch": false,
+              "firmId": "<<REPLACE_ME: your-firm-identifier>>",
+              "supportContact": "<<REPLACE_ME: helpdesk@firm.com>>",
+              "allowedAITools": ["chatgpt", "claude", "gemini"]
+            }
+          }
+        }
+        ]]>
+      </Data>
+    </Item>
+  </Replace>
+
+</MgmtTree>

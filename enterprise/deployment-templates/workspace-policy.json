@@ -1,0 +1,62 @@
+{
+  "_comment": "IronGate Enterprise — Google Workspace Admin deployment template",
+  "_instructions": [
+    "How to deploy:",
+    "1. Replace every '<<REPLACE_ME>>' below with your firm's value",
+    "2. Generate a 64-character pseudonymKey: openssl rand -hex 32",
+    "3. Open Google Workspace Admin → Devices → Chrome → Apps & extensions → Users & browsers",
+    "4. Click '+' → Add Chrome app → Search for IronGate → Select",
+    "5. In the policy panel for IronGate, paste the contents of `managedPolicy` below",
+    "6. Set 'Installation policy' to 'Force install'",
+    "7. Apply to your organizational unit",
+    "",
+    "Validation: run `node scripts/irongate-healthcheck.mjs --json` on a pilot machine after 1-2 hours of propagation"
+  ],
+
+  "extensionId": "<<REPLACE_ME: actual extension ID after first install>>",
+  "installationPolicy": "force_installed",
+
+  "managedPolicy": {
+    "deploymentMode": {
+      "Value": "local-only"
+    },
+    "localEndpoint": {
+      "Value": "http://localhost:11434/api/generate"
+    },
+    "localModel": {
+      "Value": "llama3.2:3b"
+    },
+    "localFormat": {
+      "Value": "ollama"
+    },
+    "timeoutMs": {
+      "Value": 30000
+    },
+    "auditLogDestination": {
+      "Value": "<<REPLACE_ME: none|s3|syslog|webhook>>"
+    },
+    "auditLogConfig": {
+      "Value": {
+        "syslogHost": "<<REPLACE_ME: your-siem.firm.internal:514>>"
+      }
+    },
+    "policyBundleUrl": {
+      "Value": "<<REPLACE_ME: https://policy.firm.internal/irongate/bundle.json>>"
+    },
+    "pseudonymKey": {
+      "Value": "<<REPLACE_ME: 64-hex-char key from `openssl rand -hex 32`>>"
+    },
+    "killSwitch": {
+      "Value": false
+    },
+    "firmId": {
+      "Value": "<<REPLACE_ME: your-firm-identifier>>"
+    },
+    "supportContact": {
+      "Value": "<<REPLACE_ME: helpdesk@firm.com>>"
+    },
+    "allowedAITools": {
+      "Value": ["chatgpt", "claude", "gemini"]
+    }
+  }
+}

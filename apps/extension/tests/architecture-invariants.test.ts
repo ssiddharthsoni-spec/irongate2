@@ -212,3 +212,153 @@ describe('Architecture Invariants — Security', () => {
     expect(fnMatch).toMatch(/result\[k\]\s*=\s*null/);
   });
 });
+
+describe('Architecture Invariants — Sovereign AI / Local-Only Mode Contract', () => {
+  // These invariants enforce the v1.0 product contract: when a customer is
+  // configured for local-only mode, NO code path may make a server-side
+  // classification call. This is the pillar of the "your prompts never leave
+  // your device" pitch and any regression here is a P0 incident.
+
+  const tier2Path = join(REPO_ROOT, 'apps/extension/src/detection/tier2-adapter.ts');
+  const workerPath = join(REPO_ROOT, 'apps/extension/src/worker/index.ts');
+  const manifestPath = join(REPO_ROOT, 'apps/extension/manifest.json');
+  const managedSchemaPath = join(REPO_ROOT, 'apps/extension/managed_schema.json');
+
+  it('tier2-adapter must export the locked-config primitives', () => {
+    const src = readFileSync(tier2Path, 'utf8');
+    expect(src).toMatch(/export\s+(async\s+)?function\s+initLocalLlmDeployment/);
+    expect(src).toMatch(/export\s+function\s+getLockedDeploymentConfig/);
+    expect(src).toMatch(/export\s+function\s+assertCloudCallsPermitted/);
+    expect(src).toMatch(/export\s+(async\s+)?function\s+probeTier2Health/);
+    expect(src).toMatch(/export\s+(async\s+)?function\s+warmupLocalLlm/);
+  });
+
+  it('local-only mode must reject non-localhost endpoints', () => {
+    const src = readFileSync(tier2Path, 'utf8');
+    // The validator must check for localhost / 127.0.0.1 when mode is local-only
+    expect(src).toMatch(/NON_LOCAL_ENDPOINT_IN_LOCAL_MODE/);
+    expect(src).toMatch(/isLocalhostUrl/);
+  });
+
+  it('local-only mode must throw a hard error when local LLM call fails', () => {
+    const src = readFileSync(tier2Path, 'utf8');
+    // The classify() function must throw LocalDeploymentError, not silently fall through
+    expect(src).toMatch(/local-only.*No cloud fallback is permitted/s);
+    expect(src).toMatch(/LOCAL_ENDPOINT_UNREACHABLE/);
+  });
+
+  it('locked deployment config must be frozen via Object.freeze', () => {
+    const src = readFileSync(tier2Path, 'utf8');
+    expect(src).toMatch(/Object\.freeze\(/);
+  });
+
+  it('manifest.json must reference managed_schema.json for IT-deployable policy', () => {
+    const src = readFileSync(manifestPath, 'utf8');
+    const manifest = JSON.parse(src);
+    expect(manifest.storage?.managed_schema).toBe('managed_schema.json');
+  });
+
+  it('managed_schema.json must define the deploymentMode enum with all three values', () => {
+    const src = readFileSync(managedSchemaPath, 'utf8');
+    const schema = JSON.parse(src);
+    const modeProperty = schema.properties?.deploymentMode;
+    expect(modeProperty).toBeDefined();
+    expect(modeProperty.enum).toEqual(['local-only', 'hybrid', 'server-only']);
+    expect(schema.required).toContain('deploymentMode');
+  });
+
+  it('managed_schema.json must define the audit log destination including "none"', () => {
+    const src = readFileSync(managedSchemaPath, 'utf8');
+    const schema = JSON.parse(src);
+    const dest = schema.properties?.auditLogDestination;
+    expect(dest).toBeDefined();
+    expect(dest.enum).toContain('none');
+    expect(dest.default).toBe('none'); // privacy-first default
+  });
+
+  it('worker must call initLocalLlmDeployment() at startup before any classification', () => {
+    const src = readFileSync(workerPath, 'utf8');
+    expect(src).toMatch(/initLocalLlmDeployment\(\)/);
+    // Must register a desktop notification on init failure so users see it
+    expect(src).toMatch(/iron-gate-deployment-error/);
+  });
+
+  it('worker must expose deployment status to the sidepanel via IRON_GATE_GET_DEPLOYMENT_STATUS', () => {
+    const src = readFileSync(workerPath, 'utf8');
+    expect(src).toMatch(/IRON_GATE_GET_DEPLOYMENT_STATUS/);
+    expect(src).toMatch(/probeTier2Health/);
+  });
+
+  it('Tier 2 system prompt must include the Patterson-case clarification (benchmark fix)', () => {
+    const src = readFileSync(tier2Path, 'utf8');
+    // From the benchmark, every model failed scenario #25 (litigation strategy) by
+    // over-flagging "Patterson case" as red. The system prompt must explicitly
+    // clarify that named legal cases alone are AMBER, not red.
+    expect(src).toMatch(/NAMED LEGAL CASE.*AMBER/i);
+  });
+
+  it('Tier 2 system prompt must include API-key-in-prose clarification (benchmark fix)', () => {
+    const src = readFileSync(tier2Path, 'utf8');
+    // From the benchmark, both top models missed scenario #14 (API key in debug
+    // request). The system prompt must explicitly call out that strings starting
+    // with sk-, pk-, ghp_, AKIA are CRITICAL even in technical prose.
+    expect(src).toMatch(/sk-|API key/);
+    expect(src).toMatch(/CRITICAL/);
+  });
+
+  it('the legacy regex JSON extractor must not be used (use brace-counting instead)', () => {
+    const src = readFileSync(tier2Path, 'utf8');
+    // The old regex /\{[^}]+\}/ failed on nested JSON. The new extractor counts braces.
+    expect(src).toMatch(/extractFirstJsonObject/);
+    expect(src).toMatch(/depth\+\+|depth--/);
+  });
+
+  it('deployment templates must exist for Intune, Jamf, and Workspace', () => {
+    const enterpriseDir = join(REPO_ROOT, 'enterprise/deployment-templates');
+    expect(() => readFileSync(join(enterpriseDir, 'intune-policy.xml'), 'utf8')).not.toThrow();
+    expect(() => readFileSync(join(enterpriseDir, 'jamf-policy.plist'), 'utf8')).not.toThrow();
+    expect(() => readFileSync(join(enterpriseDir, 'workspace-policy.json'), 'utf8')).not.toThrow();
+    expect(() => readFileSync(join(enterpriseDir, 'README.md'), 'utf8')).not.toThrow();
+  });
+
+  it('deployment templates must default to local-only mode', () => {
+    const enterpriseDir = join(REPO_ROOT, 'enterprise/deployment-templates');
+    const intune = readFileSync(join(enterpriseDir, 'intune-policy.xml'), 'utf8');
+    const jamf = readFileSync(join(enterpriseDir, 'jamf-policy.plist'), 'utf8');
+    const workspace = readFileSync(join(enterpriseDir, 'workspace-policy.json'), 'utf8');
+    expect(intune).toMatch(/"deploymentMode":\s*"local-only"/);
+    expect(jamf).toMatch(/<string>local-only<\/string>/);
+    expect(workspace).toMatch(/"deploymentMode".*?"local-only"/s);
+  });
+
+  it('deployment templates must use the recommended model (llama3.2:3b)', () => {
+    const enterpriseDir = join(REPO_ROOT, 'enterprise/deployment-templates');
+    const intune = readFileSync(join(enterpriseDir, 'intune-policy.xml'), 'utf8');
+    const jamf = readFileSync(join(enterpriseDir, 'jamf-policy.plist'), 'utf8');
+    const workspace = readFileSync(join(enterpriseDir, 'workspace-policy.json'), 'utf8');
+    expect(intune).toContain('llama3.2:3b');
+    expect(jamf).toContain('llama3.2:3b');
+    expect(workspace).toContain('llama3.2:3b');
+  });
+
+  it('IT health-check tool must exist and be standalone (no node_modules deps)', () => {
+    const healthCheckPath = join(REPO_ROOT, 'scripts/irongate-healthcheck.mjs');
+    const src = readFileSync(healthCheckPath, 'utf8');
+    // Must use only Node built-ins (node:* prefix or relative paths)
+    // Forbidden: bare-package imports like `import x from 'foo'`
+    const importLines = src.match(/^import\s+.*from\s+['"][^'"]+['"]/gm) ?? [];
+    for (const line of importLines) {
+      const match = line.match(/from\s+['"]([^'"]+)['"]/);
+      if (!match) continue;
+      const spec = match[1];
+      const isBuiltin = spec.startsWith('node:') || spec.startsWith('.') || spec.startsWith('/');
+      expect(isBuiltin, `health-check imports non-builtin module: ${spec}`).toBe(true);
+    }
+    // Must support --json mode for SIEM ingestion
+    expect(src).toMatch(/--json/);
+    // Must exit with non-zero codes for degraded/unhealthy (the script uses
+    // a ternary to choose between 0/1/2 — verify both non-zero codes appear)
+    expect(src).toMatch(/exit\(2\)/);
+    expect(src).toMatch(/\?\s*2\s*:.*\?\s*1\s*:\s*0|exit\(1\)/);
+  });
+});

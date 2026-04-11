@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  IronGate Enterprise — Jamf Pro deployment template
+  ===================================================
+  Push this profile via: Jamf Pro → Computers → Configuration Profiles → New
+                         → Application & Custom Settings → Upload
+
+  How to use:
+    1. Replace every <<REPLACE_ME>> below with your firm's value
+    2. Generate a 64-character pseudonymKey: openssl rand -hex 32
+    3. Save this as `irongate-managed-policy.plist`
+    4. Upload to Jamf Pro as a Custom Settings payload with preference domain
+       `com.google.Chrome` and the contents below
+    5. Scope to your Mac fleet
+
+  This profile installs the IronGate extension via Chrome Enterprise managed
+  policy and configures it for local-only mode pointing at the local Ollama service.
+
+  Validation:
+    After 1-2 hours of policy propagation, run on a pilot machine:
+      node scripts/irongate-healthcheck.mjs --json
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Force-install the IronGate extension -->
+  <key>ExtensionInstallForcelist</key>
+  <array>
+    <!-- Replace IRONGATE_EXTENSION_ID with the actual ID after first install -->
+    <string>IRONGATE_EXTENSION_ID;https://clients2.google.com/service/update2/crx</string>
+  </array>
+
+  <!-- Managed policy for the IronGate extension -->
+  <key>3rdparty</key>
+  <dict>
+    <key>extensions</key>
+    <dict>
+      <key>IRONGATE_EXTENSION_ID</key>
+      <dict>
+        <key>deploymentMode</key>
+        <string>local-only</string>
+
+        <key>localEndpoint</key>
+        <string>http://localhost:11434/api/generate</string>
+
+        <key>localModel</key>
+        <string>llama3.2:3b</string>
+
+        <key>localFormat</key>
+        <string>ollama</string>
+
+        <key>timeoutMs</key>
+        <integer>30000</integer>
+
+        <key>auditLogDestination</key>
+        <string><<REPLACE_ME: none|s3|syslog|webhook>></string>
+
+        <key>auditLogConfig</key>
+        <dict>
+          <key>syslogHost</key>
+          <string><<REPLACE_ME: your-siem.firm.internal:514>></string>
+        </dict>
+
+        <key>policyBundleUrl</key>
+        <string><<REPLACE_ME: https://policy.firm.internal/irongate/bundle.json>></string>
+
+        <key>pseudonymKey</key>
+        <string><<REPLACE_ME: 64-hex-char key from `openssl rand -hex 32`>></string>
+
+        <key>killSwitch</key>
+        <false/>
+
+        <key>firmId</key>
+        <string><<REPLACE_ME: your-firm-identifier>></string>
+
+        <key>supportContact</key>
+        <string><<REPLACE_ME: helpdesk@firm.com>></string>
+
+        <key>allowedAITools</key>
+        <array>
+          <string>chatgpt</string>
+          <string>claude</string>
+          <string>gemini</string>
+        </array>
+      </dict>
+    </dict>
+  </dict>
+</dict>
+</plist>

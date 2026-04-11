@@ -3,6 +3,7 @@ import type { SensitivityScore, DetectedEntity, AIToolId } from '@iron-gate/type
 import { loadApiKey, saveApiKey } from '../api-key-store';
 import { OnboardingOverlay } from './OnboardingOverlay';
 import { TrialBanner } from './TrialBanner';
+import { DeploymentBadge } from './DeploymentBadge';
 import { UpgradePrompt } from './UpgradePrompt';
 import { TrustPage } from './TrustPage';
 import { GhostDetection } from './GhostDetection';
@@ -1370,6 +1371,11 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
           </div>
         </div>
       )}
+
+      {/* Deployment mode badge — shows local-only / hybrid / server-only with live health */}
+      <div style={{ marginBottom: 12 }}>
+        <DeploymentBadge />
+      </div>
 
       {/* Trial Banner */}
       {!isManaged && <TrialBanner />}
