@@ -131,27 +131,42 @@ export async function initLocalLlmDeployment(): Promise<Readonly<ManagedDeployme
 
   _initPromise = (async () => {
     let raw: Partial<ManagedDeploymentConfig> = {};
+    let hasManagedPolicy = false;
     try {
       // chrome.storage.managed is the ONLY trusted source for deployment config.
       // It is set by enterprise admin tools and is read-only at runtime.
       const result = await chrome.storage.managed.get(null);
       raw = (result || {}) as Partial<ManagedDeploymentConfig>;
+      hasManagedPolicy = Object.keys(raw).length > 0;
     } catch {
-      // No managed policy installed — extension is running in dev or unmanaged mode.
-      // Default to 'server-only' (legacy) — local mode requires explicit opt-in via
-      // managed policy. This prevents an unmanaged user from accidentally enabling
-      // a half-configured local mode.
-      raw = { deploymentMode: 'server-only' };
+      // chrome.storage.managed unavailable — definitely unmanaged.
+      hasManagedPolicy = false;
+    }
+
+    // ── LOCAL-FIRST DEFAULT ──────────────────────────────────────────────
+    // When no managed policy is present, default to 'local-only' mode.
+    // This means NO cloud classification calls are made — everything stays
+    // on the device. Tier 2 (local Ollama LLM) is used when available;
+    // if it isn't, Tier 1 (regex) is the final verdict. Cloud Tier 3 is
+    // disabled at the confidence-router level (see DEFAULT_TIER_CONFIG).
+    if (!hasManagedPolicy) {
+      raw = { deploymentMode: 'local-only', ...raw };
+    } else if (!raw.deploymentMode) {
+      // Managed policy exists but didn't set deploymentMode — still default
+      // to local-only so accidental misconfiguration doesn't leak to cloud.
+      raw.deploymentMode = 'local-only';
     }
 
     const validated = validateManagedConfig(raw);
     _lockedConfig = Object.freeze(validated);
 
-    // ── HARD FAIL-CLOSED ENFORCEMENT ─────────────────────────────────────
-    // If managed policy says local-only but no local endpoint is configured,
-    // we throw at startup. The extension must NOT silently fall back to cloud,
-    // because that would violate the privacy contract the customer is paying for.
-    if (validated.deploymentMode === 'local-only') {
+    // ── STRICT LOCAL-ONLY ENFORCEMENT (managed policy only) ───────────────
+    // Enterprise customers who EXPLICITLY set local-only in managed policy
+    // expect their local endpoint to be present and usable — if it isn't,
+    // fail at startup so the customer can diagnose. For unmanaged users
+    // (our default), local-only is "soft": if Ollama isn't running, Tier 2
+    // is simply skipped and Tier 1 regex carries the verdict.
+    if (validated.deploymentMode === 'local-only' && hasManagedPolicy) {
       if (!validated.localEndpoint && validated.localFormat !== 'chrome-builtin') {
         throw new LocalDeploymentError(
           'IronGate is configured for local-only mode but no localEndpoint is set. ' +
@@ -429,21 +444,9 @@ export function createTier2Adapter(config?: Tier2Config): TierAdapter {
       } catch (err) {
         consecutiveFailures++;
 
-        // In local-only mode, classification failure is a hard error.
-        // The caller (confidence router) must NOT fall back to cloud.
-        try {
-          const cfg = getLockedDeploymentConfig();
-          if (cfg.deploymentMode === 'local-only') {
-            throw new LocalDeploymentError(
-              `Local LLM classification failed in local-only mode: ${(err as Error).message}. ` +
-              'No cloud fallback is permitted. Verify your local LLM service is running.',
-              'LOCAL_ENDPOINT_UNREACHABLE',
-            );
-          }
-        } catch (innerErr) {
-          if (innerErr instanceof LocalDeploymentError) throw innerErr;
-        }
-
+        // In local-only mode, the confidence router will not fall back to
+        // cloud (Tier 3 is disabled). Tier 1 regex verdict is preserved.
+        // We re-throw so the router logs the failure and degrades gracefully.
         throw err;
       }
     },

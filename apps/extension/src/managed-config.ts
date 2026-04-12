@@ -50,7 +50,12 @@ export const DEFAULT_TIER_CONFIG: TierConfig = {
   tier2TimeoutMs: 5000,
   glinerEnabled: false,
   tier25Enabled: true,
-  tier3Enabled: true,
+  // Tier 3 (server-side classification) is OFF by default — IronGate is
+  // local-first. Cloud escalation must be explicitly enabled by IT via
+  // managed policy (hybrid mode). In the default unmanaged configuration,
+  // Tier 1 (regex) + Tier 2.5 (metadata) + Tier 2 (local LLM if Ollama
+  // available) handle all detection without any network call for content.
+  tier3Enabled: false,
   tier3Endpoint: '',
   tier3TimeoutMs: 5000,
   semanticEnabled: true,

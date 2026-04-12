@@ -240,11 +240,31 @@ describe('Architecture Invariants — Sovereign AI / Local-Only Mode Contract', 
     expect(src).toMatch(/isLocalhostUrl/);
   });
 
-  it('local-only mode must throw a hard error when local LLM call fails', () => {
+  it('local-only mode must enforce no cloud fallback via assertCloudCallsPermitted', () => {
     const src = readFileSync(tier2Path, 'utf8');
-    // The classify() function must throw LocalDeploymentError, not silently fall through
-    expect(src).toMatch(/local-only.*No cloud fallback is permitted/s);
-    expect(src).toMatch(/LOCAL_ENDPOINT_UNREACHABLE/);
+    // The privacy contract is enforced at the Tier 3 call site via
+    // assertCloudCallsPermitted(), which throws with CLOUD_CALL_IN_LOCAL_MODE.
+    // Tier 2 failures fall through to Tier 1 verdict — never to cloud.
+    expect(src).toMatch(/assertCloudCallsPermitted/);
+    expect(src).toMatch(/CLOUD_CALL_IN_LOCAL_MODE/);
+    expect(src).toMatch(/local-only mode must never make outbound network calls during detection/);
+  });
+
+  it('default deployment mode must be local-only (no cloud escalation without explicit opt-in)', () => {
+    const src = readFileSync(tier2Path, 'utf8');
+    // When no managed policy is present, default to local-only.
+    // This prevents accidental cloud leakage for users who install the
+    // extension without an MDM-pushed policy.
+    expect(src).toMatch(/deploymentMode:\s*'local-only'/);
+    expect(src).toMatch(/LOCAL-FIRST DEFAULT|local-first default/i);
+  });
+
+  it('Tier 3 (server-side classification) must be disabled by default', () => {
+    const managedConfigPath = join(REPO_ROOT, 'apps/extension/src/managed-config.ts');
+    const src = readFileSync(managedConfigPath, 'utf8');
+    // DEFAULT_TIER_CONFIG must have tier3Enabled: false so cloud classification
+    // requires explicit opt-in via managed policy (hybrid mode).
+    expect(src).toMatch(/tier3Enabled:\s*false/);
   });
 
   it('locked deployment config must be frozen via Object.freeze', () => {
@@ -264,7 +284,10 @@ describe('Architecture Invariants — Sovereign AI / Local-Only Mode Contract', 
     const modeProperty = schema.properties?.deploymentMode;
     expect(modeProperty).toBeDefined();
     expect(modeProperty.enum).toEqual(['local-only', 'hybrid', 'server-only']);
-    expect(schema.required).toContain('deploymentMode');
+    // Default must be local-only for privacy-first out-of-the-box behavior.
+    // deploymentMode is no longer strictly required — the extension applies
+    // local-only as the default when the managed policy omits it.
+    expect(modeProperty.default).toBe('local-only');
   });
 
   it('managed_schema.json must define the audit log destination including "none"', () => {

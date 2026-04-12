@@ -7,9 +7,9 @@
     "deploymentMode": {
       "type": "string",
       "title": "Deployment mode",
-      "description": "How IronGate handles AMBER-zone classification. 'local-only' = use local LLM, fail closed if unreachable. 'hybrid' = prefer local, fall back to cloud. 'server-only' = legacy cloud-only mode. Sovereign AI customers must use 'local-only'.",
+      "description": "How IronGate handles AMBER-zone classification. 'local-only' (DEFAULT) = detection stays on the device; no cloud calls for classification. 'hybrid' = prefer local, fall back to cloud for ambiguous cases. 'server-only' = legacy cloud-only mode. Most customers should use 'local-only'.",
       "enum": ["local-only", "hybrid", "server-only"],
-      "default": "server-only"
+      "default": "local-only"
     },
     "localEndpoint": {
       "type": "string",
@@ -103,5 +103,5 @@
       }
     }
   },
-  "required": ["deploymentMode"]
+  "required": []
 }
