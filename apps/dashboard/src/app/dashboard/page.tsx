@@ -60,6 +60,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [timeRange, setTimeRange] = useState(30);
+  const [dismissedDemo, setDismissedDemo] = useState(false);
 
   useEffect(() => {
     fetchDashboardData();
@@ -205,6 +206,21 @@ export default function DashboardPage() {
           <span>{fetchError}</span>
           <button onClick={fetchDashboardData} className="ml-4 px-3 py-1 text-xs font-medium bg-red-100 dark:bg-red-900/30 rounded-lg hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors">
             Retry
+          </button>
+        </div>
+      )}
+
+      {/* Demo data banner */}
+      {!dismissedDemo && displayData.totalInteractions === 0 && (
+        <div className="mb-6 px-4 py-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-amber-600 dark:text-amber-400 text-lg">!</span>
+            <p className="text-sm text-amber-700 dark:text-amber-400">
+              You&apos;re viewing sample data. <a href="/install" className="underline font-medium">Install the extension</a> to see real activity.
+            </p>
+          </div>
+          <button onClick={() => setDismissedDemo(true)} className="text-amber-600 dark:text-amber-400 hover:text-amber-800 text-sm font-medium ml-4">
+            Dismiss
           </button>
         </div>
       )}

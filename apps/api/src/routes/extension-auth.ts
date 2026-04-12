@@ -2,8 +2,8 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import crypto from 'crypto';
 import { db } from '../db/client';
-import { firms, users, subscriptions, apiKeys, emailVerificationTokens } from '../db/schema';
-import { eq, and, isNull } from 'drizzle-orm';
+import { firms, users, subscriptions, apiKeys, emailVerificationTokens, enrollmentCodes } from '../db/schema';
+import { eq, and, isNull, sql } from 'drizzle-orm';
 import { logger } from '../lib/logger';
 
 export const extensionAuthRoutes = new Hono();
@@ -150,9 +150,17 @@ extensionAuthRoutes.post('/register-extension', async (c) => {
     return c.json({ error: 'Invalid JSON body' }, 400);
   }
 
+  // Managed mode: the extension sends "[managed]" as the email when auto-enrolling
+  // from chrome.storage.managed policy. These devices are IT-deployed and trusted.
+  const MANAGED_EMAIL_SENTINEL = '[managed]';
+
   const schema = z.object({
-    email: z.string().email().refine(
+    email: z.string().refine(
       (email) => {
+        // Allow the managed-mode sentinel without email validation
+        if (email === MANAGED_EMAIL_SENTINEL) return true;
+        // Standard email validation
+        if (!z.string().email().safeParse(email).success) return false;
         // Block disposable/temporary email domains commonly used for abuse
         const disposableDomains = new Set([
           'mailinator.com', 'guerrillamail.com', 'tempmail.com', 'throwaway.email',
@@ -175,52 +183,114 @@ extensionAuthRoutes.post('/register-extension', async (c) => {
   }
   const parsed = result.data;
 
+  const isManagedDevice = parsed.email === MANAGED_EMAIL_SENTINEL;
+
   try {
-    // Check if user already exists with this email
-    const [existing] = await db
-      .select({
-        id: users.id,
-        firmId: users.firmId,
-      })
-      .from(users)
-      .where(eq(users.email, parsed.email))
-      .limit(1);
+    // Managed devices: use deviceId-based lookup instead of email (many managed
+    // devices share the "[managed]" sentinel email). For managed mode, firmCode is
+    // required — it determines which firm the device joins.
+    if (isManagedDevice && !parsed.firmCode) {
+      return c.json({ error: 'Managed mode requires a firmCode (enrollment code).' }, 400);
+    }
 
-    if (existing) {
-      // BUG-09: Constant-time delay to prevent timing-based enumeration
-      const elapsed = Date.now() - handleStart;
-      const minDelay = 150 + Math.random() * 100; // 150-250ms
-      if (elapsed < minDelay) await new Promise(r => setTimeout(r, minDelay - elapsed));
+    // Check if user already exists
+    if (!isManagedDevice) {
+      const [existing] = await db
+        .select({
+          id: users.id,
+          firmId: users.firmId,
+        })
+        .from(users)
+        .where(eq(users.email, parsed.email))
+        .limit(1);
 
-      // User already exists — return a generic message that does NOT leak
-      // internal details (userId, firmId, firmName, tier, subscription).
-      // The user should sign in via the dashboard or use their existing API key.
-      return c.json({
-        error: 'An account with this email already exists. Please sign in through the Iron Gate dashboard or use your existing API key.',
-        status: 'existing',
-      }, 409);
+      if (existing) {
+        // BUG-09: Constant-time delay to prevent timing-based enumeration
+        const elapsed = Date.now() - handleStart;
+        const minDelay = 150 + Math.random() * 100; // 150-250ms
+        if (elapsed < minDelay) await new Promise(r => setTimeout(r, minDelay - elapsed));
+
+        // User already exists — return a generic message that does NOT leak
+        // internal details (userId, firmId, firmName, tier, subscription).
+        // The user should sign in via the dashboard or use their existing API key.
+        return c.json({
+          error: 'An account with this email already exists. Please sign in through the Iron Gate dashboard or use your existing API key.',
+          status: 'existing',
+        }, 409);
+      }
     }
 
     // New user registration — wrap in transaction to prevent orphaned data
     const registrationResult = await db.transaction(async (tx) => {
       // Determine which firm to join
-      let firmId: string;
-      let firmName: string;
+      let firmId = '';
+      let firmName = '';
 
       if (parsed.firmCode) {
-        // Look up firm by enrollment code
-        const [firm] = await tx
-          .select({ id: firms.id, name: firms.name })
-          .from(firms)
-          .where(eq(firms.enrollmentCode, parsed.firmCode))
+        // First check the enrollment_codes table for a valid code
+        const [enrollCode] = await tx
+          .select({
+            id: enrollmentCodes.id,
+            firmId: enrollmentCodes.firmId,
+            usedCount: enrollmentCodes.usedCount,
+            maxUses: enrollmentCodes.maxUses,
+          })
+          .from(enrollmentCodes)
+          .where(and(
+            eq(enrollmentCodes.code, parsed.firmCode),
+            eq(enrollmentCodes.revoked, false),
+          ))
           .limit(1);
 
-        if (!firm) {
-          throw new Error('INVALID_FIRM_CODE');
+        if (enrollCode) {
+          // Validate expiry and usage limits
+          const now = new Date();
+          const [codeRecord] = await tx
+            .select({ expiresAt: enrollmentCodes.expiresAt })
+            .from(enrollmentCodes)
+            .where(eq(enrollmentCodes.id, enrollCode.id))
+            .limit(1);
+
+          const expired = codeRecord?.expiresAt && codeRecord.expiresAt < now;
+          const exhausted = enrollCode.maxUses !== null && enrollCode.usedCount >= enrollCode.maxUses;
+
+          if (expired || exhausted) {
+            // Code exists but is expired/exhausted — fall through to legacy check
+          } else {
+            // Valid enrollment code — increment usage and use its firmId
+            await tx
+              .update(enrollmentCodes)
+              .set({ usedCount: sql`${enrollmentCodes.usedCount} + 1` })
+              .where(eq(enrollmentCodes.id, enrollCode.id));
+
+            const [ecFirm] = await tx
+              .select({ id: firms.id, name: firms.name })
+              .from(firms)
+              .where(eq(firms.id, enrollCode.firmId))
+              .limit(1);
+
+            if (ecFirm) {
+              firmId = ecFirm.id;
+              firmName = ecFirm.name;
+            }
+          }
         }
 
-        firmId = firm.id;
-        firmName = firm.name;
+        // Fall back to legacy firms.enrollmentCode if not resolved yet
+        if (!firmId) {
+          const [firm] = await tx
+            .select({ id: firms.id, name: firms.name })
+            .from(firms)
+            .where(eq(firms.enrollmentCode, parsed.firmCode))
+            .limit(1);
+
+          if (!firm) {
+            throw new Error('INVALID_FIRM_CODE');
+          }
+
+          firmId = firm.id;
+          firmName = firm.name;
+        }
       } else {
         // Create a personal firm
         const emailPrefix = parsed.email.split('@')[0];
@@ -241,14 +311,17 @@ extensionAuthRoutes.post('/register-extension', async (c) => {
       }
 
       // Create user
+      const managedEmail = isManagedDevice ? `managed-${parsed.deviceId}@device.local` : parsed.email;
       const [newUser] = await tx
         .insert(users)
         .values({
           clerkId: `ext_${parsed.deviceId}`,
           firmId,
-          email: parsed.email,
-          displayName: parsed.email.split('@')[0],
+          email: managedEmail,
+          displayName: isManagedDevice ? `Managed Device ${parsed.deviceId.slice(0, 8)}` : parsed.email.split('@')[0],
           role: parsed.firmCode ? 'user' : 'admin',
+          // Managed devices are IT-deployed and trusted — auto-verify
+          emailVerified: isManagedDevice ? true : false,
         })
         .returning({ id: users.id });
 
@@ -283,16 +356,15 @@ extensionAuthRoutes.post('/register-extension', async (c) => {
         trialEndsAt = sub?.currentPeriodEnd?.toISOString() || null;
       }
 
-      // Generate API key — new registrations get READ-ONLY scope by default.
-      // Write scope is granted after email verification or admin approval.
-      // This prevents privilege escalation from unverified sign-ups.
+      // Generate API key — managed devices get WRITE scope immediately (IT-trusted).
+      // Self-serve registrations get READ-ONLY scope, upgraded after email verification.
       const { key, hash, prefix } = generateApiKey();
       await tx.insert(apiKeys).values({
         firmId,
-        name: `Extension (${parsed.email})`,
+        name: isManagedDevice ? `Managed Device (${parsed.deviceId.slice(0, 8)})` : `Extension (${parsed.email})`,
         keyHash: hash,
         keyPrefix: prefix,
-        scope: 'read',
+        scope: isManagedDevice ? 'write' : 'read',
         createdBy: newUser.id,
       });
 
@@ -305,43 +377,46 @@ extensionAuthRoutes.post('/register-extension', async (c) => {
       tier: registrationResult.tier,
     });
 
-    // Send welcome + verification emails (fire-and-forget, outside transaction)
-    const dashboardUrl = process.env.DASHBOARD_URL || 'https://irongate-dashboard.vercel.app';
-    const { token: verifyTokenStr, hash: verifyHash, expiresAt: verifyExpiry } = createVerificationToken(
-      registrationResult.userId, parsed.email
-    );
+    // Send welcome + verification emails (skip for managed devices — no real email)
+    if (!isManagedDevice) {
+      const dashboardUrl = process.env.DASHBOARD_URL || 'https://irongate-dashboard.vercel.app';
+      const { token: verifyTokenStr, hash: verifyHash, expiresAt: verifyExpiry } = createVerificationToken(
+        registrationResult.userId, parsed.email
+      );
 
-    // Store token hash in DB (not the token itself — hash-only storage)
-    db.insert(emailVerificationTokens).values({
-      userId: registrationResult.userId,
-      firmId: registrationResult.firmId,
-      email: parsed.email,
-      tokenHash: verifyHash,
-      expiresAt: verifyExpiry,
-    }).catch((err) => {
-      logger.error('Failed to store verification token', { userId: registrationResult.userId, emailDomain: parsed.email.split('@')[1], error: err instanceof Error ? err.message : String(err) });
-    });
+      // Store token hash in DB (not the token itself — hash-only storage)
+      db.insert(emailVerificationTokens).values({
+        userId: registrationResult.userId,
+        firmId: registrationResult.firmId,
+        email: parsed.email,
+        tokenHash: verifyHash,
+        expiresAt: verifyExpiry,
+      }).catch((err) => {
+        logger.error('Failed to store verification token', { userId: registrationResult.userId, emailDomain: parsed.email.split('@')[1], error: err instanceof Error ? err.message : String(err) });
+      });
 
-    const verifyUrl = `${dashboardUrl}/verify-email?token=${verifyTokenStr}`;
-    import('../services/email').then(({ sendWelcomeEmail, sendVerificationEmail }) => {
-      sendWelcomeEmail(parsed.email, parsed.email.split('@')[0]).catch((err) => {
-        logger.error('Failed to send welcome email', { emailDomain: parsed.email.split('@')[1], error: err instanceof Error ? err.message : String(err) });
+      const verifyUrl = `${dashboardUrl}/verify-email?token=${verifyTokenStr}`;
+      import('../services/email').then(({ sendWelcomeEmail, sendVerificationEmail }) => {
+        sendWelcomeEmail(parsed.email, parsed.email.split('@')[0]).catch((err) => {
+          logger.error('Failed to send welcome email', { emailDomain: parsed.email.split('@')[1], error: err instanceof Error ? err.message : String(err) });
+        });
+        sendVerificationEmail(parsed.email, parsed.email.split('@')[0], verifyUrl).catch((err) => {
+          logger.error('Failed to send verification email', { emailDomain: parsed.email.split('@')[1], error: err instanceof Error ? err.message : String(err) });
+        });
+      }).catch((err) => {
+        logger.error('Failed to import email service', { error: err instanceof Error ? err.message : String(err) });
       });
-      sendVerificationEmail(parsed.email, parsed.email.split('@')[0], verifyUrl).catch((err) => {
-        logger.error('Failed to send verification email', { emailDomain: parsed.email.split('@')[1], error: err instanceof Error ? err.message : String(err) });
-      });
-    }).catch((err) => {
-      logger.error('Failed to import email service', { error: err instanceof Error ? err.message : String(err) });
-    });
+    }
 
     // Only return what the extension needs — never expose internal IDs
     return c.json({
       apiKey: registrationResult.apiKey,
+      firmId: registrationResult.firmId,
       firmName: registrationResult.firmName,
       tier: registrationResult.tier,
       trialEndsAt: registrationResult.trialEndsAt,
       status: 'created',
-      emailVerified: false,
+      emailVerified: isManagedDevice,
     }, 201);
   } catch (err) {
     // Handle known error codes with appropriate status
@@ -392,6 +467,41 @@ extensionAuthRoutes.post('/validate-firm-code', async (c) => {
   const parsed = result.data;
 
   try {
+    // First check the enrollment_codes table
+    const [enrollCode] = await db
+      .select({
+        id: enrollmentCodes.id,
+        firmId: enrollmentCodes.firmId,
+        maxUses: enrollmentCodes.maxUses,
+        usedCount: enrollmentCodes.usedCount,
+        expiresAt: enrollmentCodes.expiresAt,
+      })
+      .from(enrollmentCodes)
+      .where(and(
+        eq(enrollmentCodes.code, parsed.firmCode),
+        eq(enrollmentCodes.revoked, false),
+      ))
+      .limit(1);
+
+    if (enrollCode) {
+      const now = new Date();
+      const expired = enrollCode.expiresAt && enrollCode.expiresAt < now;
+      const exhausted = enrollCode.maxUses !== null && enrollCode.usedCount >= enrollCode.maxUses;
+
+      if (!expired && !exhausted) {
+        const [ecFirm] = await db
+          .select({ name: firms.name })
+          .from(firms)
+          .where(eq(firms.id, enrollCode.firmId))
+          .limit(1);
+
+        if (ecFirm) {
+          return c.json({ valid: true, firmName: ecFirm.name });
+        }
+      }
+    }
+
+    // Fall back to legacy firms.enrollmentCode column
     const [firm] = await db
       .select({ id: firms.id, name: firms.name })
       .from(firms)
@@ -449,16 +559,61 @@ extensionAuthRoutes.post('/enroll', async (c) => {
   const keyHash = crypto.createHash('sha256').update(apiKeyHeader).digest('hex');
 
   try {
-    // 1. Look up the enrollment code in the firms table
-    const [firm] = await db
+    // 1. Look up the enrollment code — first in enrollment_codes table, then legacy firms column
+    let firm: { id: string; name: string; mode: string } | undefined;
+
+    const [enrollCode] = await db
       .select({
-        id: firms.id,
-        name: firms.name,
-        mode: firms.mode,
+        id: enrollmentCodes.id,
+        firmId: enrollmentCodes.firmId,
+        maxUses: enrollmentCodes.maxUses,
+        usedCount: enrollmentCodes.usedCount,
+        expiresAt: enrollmentCodes.expiresAt,
       })
-      .from(firms)
-      .where(eq(firms.enrollmentCode, parsed.enrollmentCode))
+      .from(enrollmentCodes)
+      .where(and(
+        eq(enrollmentCodes.code, parsed.enrollmentCode),
+        eq(enrollmentCodes.revoked, false),
+      ))
       .limit(1);
+
+    if (enrollCode) {
+      const now = new Date();
+      const expired = enrollCode.expiresAt && enrollCode.expiresAt < now;
+      const exhausted = enrollCode.maxUses !== null && enrollCode.usedCount >= enrollCode.maxUses;
+
+      if (!expired && !exhausted) {
+        const [ecFirm] = await db
+          .select({ id: firms.id, name: firms.name, mode: firms.mode })
+          .from(firms)
+          .where(eq(firms.id, enrollCode.firmId))
+          .limit(1);
+
+        if (ecFirm) {
+          firm = ecFirm;
+          // Increment usage count
+          await db
+            .update(enrollmentCodes)
+            .set({ usedCount: sql`${enrollmentCodes.usedCount} + 1` })
+            .where(eq(enrollmentCodes.id, enrollCode.id));
+        }
+      }
+    }
+
+    // Fall back to legacy firms.enrollmentCode column
+    if (!firm) {
+      const [legacyFirm] = await db
+        .select({
+          id: firms.id,
+          name: firms.name,
+          mode: firms.mode,
+        })
+        .from(firms)
+        .where(eq(firms.enrollmentCode, parsed.enrollmentCode))
+        .limit(1);
+
+      firm = legacyFirm;
+    }
 
     if (!firm) {
       return c.json({ error: 'Invalid enrollment code' }, 404);

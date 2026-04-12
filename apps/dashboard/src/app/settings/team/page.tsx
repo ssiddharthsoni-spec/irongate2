@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useApiClient } from '../../../lib/api';
+import { useToast } from '@/components/toast';
 import { EmptyState } from '@/components/EmptyState';
 
 interface TeamMember {
@@ -21,6 +22,7 @@ const ROLES = [
 
 export default function TeamSettingsPage() {
   const { apiFetch } = useApiClient();
+  const { addToast } = useToast();
 
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,7 +62,13 @@ export default function TeamSettingsPage() {
         method: 'POST',
         body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole }),
       });
-      if (!response.ok) throw new Error(`Server responded with ${response.status}`);
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: 'Request failed' }));
+        const message = err.error || `Failed to invite user (${response.status})`;
+        setInviteMessage({ type: 'error', text: message });
+        addToast({ type: 'error', message });
+        return;
+      }
       const newMember: TeamMember = {
         id: Date.now().toString(),
         email: inviteEmail.trim(),
@@ -71,8 +79,11 @@ export default function TeamSettingsPage() {
       setMembers([...members, newMember]);
       setInviteEmail('');
       setInviteMessage({ type: 'success', text: `Invitation sent to ${inviteEmail.trim()}.` });
+      addToast({ type: 'success', message: 'Invitation sent' });
     } catch {
-      setInviteMessage({ type: 'error', text: 'Failed to send invitation. Please check your connection and try again.' });
+      const message = 'Network error. Please try again.';
+      setInviteMessage({ type: 'error', text: message });
+      addToast({ type: 'error', message });
     } finally {
       setInviting(false);
     }
@@ -137,6 +148,20 @@ export default function TeamSettingsPage() {
 
   return (
     <div className="space-y-6 max-w-2xl">
+      {/* Remove confirmation modal */}
+      {confirmRemoveId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setConfirmRemoveId(null)}>
+          <div className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 max-w-sm mx-4 shadow-xl" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-2">Remove Team Member</h3>
+            <p className="text-sm text-[#86868b] mb-6">Are you sure? This will revoke their access to the dashboard and extension.</p>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setConfirmRemoveId(null)} className="px-4 py-2 text-sm rounded-lg border border-[#d2d2d7] dark:border-[#38383a] text-[#424245] dark:text-[#a1a1a6]">Cancel</button>
+              <button onClick={() => { handleRemove(confirmRemoveId); }} className="px-4 py-2 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700">Remove</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {error && (
         <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4 flex items-center justify-between">
           <p className="text-sm text-red-700 dark:text-red-400">{error}</p>
@@ -263,40 +288,21 @@ export default function TeamSettingsPage() {
                 </select>
 
                 {/* Remove button */}
-                {confirmRemoveId === member.id ? (
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => handleRemove(member.id)}
-                      disabled={removingId === member.id}
-                      className="min-h-[36px] px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500"
-                    >
-                      {removingId === member.id ? (
-                        <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block" />
-                      ) : (
-                        'Confirm'
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmRemoveId(null)}
-                      className="min-h-[36px] px-3 py-1.5 bg-[#f5f5f7] dark:bg-[#2c2c2e] text-[#424245] dark:text-[#a1a1a6] text-xs font-medium rounded-lg hover:bg-[#d2d2d7]/40 dark:hover:bg-[#38383a] transition-colors focus:outline-none focus:ring-2 focus:ring-[#86868b]"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setConfirmRemoveId(member.id)}
-                    className="min-h-[36px] p-2 text-[#86868b] dark:text-[#636366] hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500"
-                    aria-label={`Remove ${member.name || member.email}`}
-                  >
+                <button
+                  type="button"
+                  onClick={() => setConfirmRemoveId(member.id)}
+                  disabled={removingId === member.id}
+                  className="min-h-[36px] p-2 text-[#86868b] dark:text-[#636366] hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50"
+                  aria-label={`Remove ${member.name || member.email}`}
+                >
+                  {removingId === member.id ? (
+                    <span className="w-4 h-4 border-2 border-red-300 border-t-red-600 rounded-full animate-spin inline-block" />
+                  ) : (
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
                     </svg>
-                  </button>
-                )}
+                  )}
+                </button>
               </div>
             ))
           )}

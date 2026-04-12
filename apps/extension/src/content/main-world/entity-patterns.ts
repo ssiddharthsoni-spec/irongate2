@@ -314,9 +314,12 @@ const SECRET_PATTERNS: SecretPattern[] = [
   {
     type: 'API_KEY',
     patterns: [
-      /\bsk-[a-zA-Z0-9]{20,}\b/g,
+      // OpenAI / generic sk- keys (sk-abc..., sk-proj-abc..., sk-ant-abc...).
+      // Allow hyphens and underscores inside the body so prefixed variants like
+      // sk-proj-XXX don't terminate at the hyphen after "proj".
+      /\bsk-[a-zA-Z0-9][a-zA-Z0-9_-]{19,}(?![a-zA-Z0-9_-])/g,
       /\bsk_live_[a-zA-Z0-9]{24,}\b/g,
-      /\bsk-ant-[a-zA-Z0-9\-]{20,}\b/g,
+      /\bsk-ant-[a-zA-Z0-9_-]{20,}(?![a-zA-Z0-9_-])/g,
       /\bghp_[a-zA-Z0-9]{36}\b/g,
       /\bgho_[a-zA-Z0-9]{36}\b/g,
       /\bghs_[a-zA-Z0-9]{36}\b/g,

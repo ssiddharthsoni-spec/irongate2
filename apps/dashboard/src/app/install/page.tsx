@@ -5,6 +5,8 @@ import { useSearchParams } from 'next/navigation';
 import { Suspense, useState } from 'react';
 
 const EXTENSION_ZIP_URL = '/api/download-extension';
+const CHROME_WEB_STORE_URL = 'https://chromewebstore.google.com/detail/iron-gate-ai-data-protect/PLACEHOLDER_EXTENSION_ID';
+const CHROME_WEB_STORE_LIVE = false; // Set to true once the extension is published
 
 const SUPPORTED_TOOLS = [
   'ChatGPT',
@@ -128,21 +130,45 @@ function InstallPageContent() {
           </p>
         </div>
 
-        {/* Download button */}
+        {/* Primary install CTA */}
         <div className="text-center mb-16">
-          <a
-            href={EXTENSION_ZIP_URL}
-            download="iron-gate-extension-v0.2.7.zip"
-            className="inline-flex items-center gap-3 px-8 py-4 bg-iron-600 hover:bg-iron-700 text-white font-bold rounded-xl text-lg transition-all shadow-xl shadow-iron-600/25 hover:shadow-2xl hover:shadow-iron-600/30"
-          >
-            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
-            </svg>
-            Download Extension (ZIP)
-          </a>
-          <p className="text-sm text-[#86868b] dark:text-[#636366] mt-3">
-            v0.2.7 &middot; Chrome, Edge, Brave &middot; Manifest V3
-          </p>
+          {CHROME_WEB_STORE_LIVE ? (
+            <>
+              <a
+                href={CHROME_WEB_STORE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-3 px-8 py-4 bg-iron-600 hover:bg-iron-700 text-white font-bold rounded-xl text-lg transition-all shadow-xl shadow-iron-600/25 hover:shadow-2xl hover:shadow-iron-600/30"
+              >
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418" />
+                </svg>
+                Install from Chrome Web Store
+              </a>
+              <p className="text-sm text-[#86868b] dark:text-[#636366] mt-3">
+                v0.2.7 &middot; Chrome, Edge, Brave &middot; Manifest V3
+              </p>
+            </>
+          ) : (
+            <>
+              <a
+                href={EXTENSION_ZIP_URL}
+                download="iron-gate-extension-v0.2.7.zip"
+                className="inline-flex items-center gap-3 px-8 py-4 bg-iron-600 hover:bg-iron-700 text-white font-bold rounded-xl text-lg transition-all shadow-xl shadow-iron-600/25 hover:shadow-2xl hover:shadow-iron-600/30"
+              >
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                </svg>
+                Download Extension (ZIP)
+              </a>
+              <p className="text-sm text-[#86868b] dark:text-[#636366] mt-3">
+                v0.2.7 &middot; Chrome, Edge, Brave &middot; Manifest V3
+              </p>
+              <p className="text-xs text-[#86868b] dark:text-[#636366] mt-1">
+                Chrome Web Store listing coming soon. Use the manual install below for now.
+              </p>
+            </>
+          )}
         </div>
 
         {/* API Key Card — shown when ?key= is present */}
@@ -255,16 +281,30 @@ function InstallPageContent() {
                 For organization-wide deployment, use Chrome/Edge Enterprise policies to force-install the
                 extension across all managed devices. This also works with Edge and Brave on managed Chromium profiles. Add the following to your policy JSON:
               </p>
+              <p className="text-sm text-iron-700 dark:text-iron-400 leading-relaxed mb-2">
+                <strong>Step 1:</strong> Generate an enrollment code from the <Link href="/admin/enrollment" className="underline text-iron-600 dark:text-iron-300">Admin &rarr; Enrollment Codes</Link> page.
+              </p>
+              <p className="text-sm text-iron-700 dark:text-iron-400 leading-relaxed mb-3">
+                <strong>Step 2:</strong> Add the extension + managed policy to your MDM console. For the full deployment JSON generator, visit <Link href="/admin/deployment" className="underline text-iron-600 dark:text-iron-300">Admin &rarr; Deployment</Link>.
+              </p>
               <pre className="text-xs bg-iron-100 dark:bg-iron-900/40 rounded-lg p-3 overflow-x-auto font-mono text-iron-800 dark:text-iron-200 leading-relaxed">
-{`{
+{`// Force-install policy (Google Admin Console / Intune)
+{
   "ExtensionInstallForcelist": [
-    "<your-extension-id>;${EXTENSION_ZIP_URL}"
+    "<extension-id>;https://clients2.google.com/service/update2/crx"
   ]
+}
+
+// Managed extension policy (chrome.storage.managed)
+{
+  "deploymentMode": "hybrid",
+  "enrollmentCode": "<your-enrollment-code>",
+  "allowedAITools": ["chatgpt", "claude", "gemini", "copilot"],
+  "killSwitch": false
 }`}
               </pre>
               <p className="text-xs text-iron-600 dark:text-iron-400 mt-2">
-                Replace <code className="font-mono">&lt;your-extension-id&gt;</code> with the ID from <code className="font-mono">chrome://extensions</code>.
-                This ensures all employees are protected automatically without individual installations.
+                The extension auto-enrolls users when an enrollment code is set via managed policy — no manual setup required.
               </p>
             </div>
           </div>

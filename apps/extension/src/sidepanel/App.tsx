@@ -90,13 +90,25 @@ interface PromptInspectorData {
   passthroughReason?: string;
 }
 
+// Timeout-wrapped chrome.storage.local.get to prevent infinite loading
+const storageGet = (keys: string[]) => new Promise<Record<string, any>>((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('Storage timeout')), 5000);
+  chrome.storage.local.get(keys, (items) => {
+    clearTimeout(timer);
+    if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+    else resolve(items);
+  });
+});
+
 export function App() {
   // Onboarding state — show new 5-screen overlay if not completed
   const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | null>(null);
+  const [initError, setInitError] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function check() {
-      const result = await chrome.storage.local.get([ONBOARDING_COMPLETED]);
+  const checkOnboarding = useCallback(async () => {
+    try {
+      setInitError(null);
+      const result = await storageGet([ONBOARDING_COMPLETED]);
       if (result[ONBOARDING_COMPLETED] === true) {
         setOnboardingCompleted(true);
         return;
@@ -109,9 +121,14 @@ export function App() {
         return;
       }
       setOnboardingCompleted(false);
+    } catch (err: any) {
+      setInitError(err?.message || 'Failed to initialize. Please try again.');
     }
-    check();
   }, []);
+
+  useEffect(() => {
+    checkOnboarding();
+  }, [checkOnboarding]);
 
   // Sign out: clear all user data and return to onboarding
   // NOTE: this hook MUST be above the early return to avoid Rules of Hooks violation
@@ -145,6 +162,27 @@ export function App() {
     setOnboardingCompleted(false);
   }, []);
 
+
+  // Show error state with retry if storage timed out
+  if (initError) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-6">
+        <div className="text-center max-w-xs">
+          <div className="w-10 h-10 mx-auto mb-3 rounded-full bg-red-100 flex items-center justify-center">
+            <span className="text-red-600 text-lg font-bold">!</span>
+          </div>
+          <p className="text-sm font-medium text-gray-900 mb-1">Failed to load</p>
+          <p className="text-xs text-gray-500 mb-4">{initError}</p>
+          <button
+            onClick={checkOnboarding}
+            className="px-4 py-2 bg-iron-600 hover:bg-iron-700 text-white text-sm font-medium rounded-lg transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Show loading while checking onboarding status
   if (onboardingCompleted === null) {

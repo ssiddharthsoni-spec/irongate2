@@ -1,6 +1,7 @@
 import { detectAITool } from './detectors';
 import { createCaptureEngine } from './capture';
 import { createSensitivityBadge } from './ui/sensitivity-badge';
+import { createEntityTooltips, type EntityTooltipHandle } from './ui/entity-tooltip';
 import { createCoachingToasts, getNextCoachingTip, type CoachingToastHandle } from './ui/coaching-toast';
 import { resolveMode, resolveConfig } from '../managed-config';
 
@@ -113,6 +114,7 @@ async function loadAndDecrypt(key: string): Promise<Record<string, string> | nul
 let detector: ReturnType<typeof detectAITool> = null;
 let engine: ReturnType<typeof createCaptureEngine> | null = null;
 let badge: ReturnType<typeof createSensitivityBadge> | null = null;
+let tooltips: EntityTooltipHandle | null = null;
 let toasts: CoachingToastHandle | null = null;
 
 // ── Per-Tab Reverse Map Keying ──────────────────────────────────────────────
@@ -633,6 +635,10 @@ function handleMainWorldMessages(event: MessageEvent) {
 
   // Clean submit — 0 entities detected, clear stale sidepanel results
   if (event.data?.type === 'IRON_GATE_CLEAN_SUBMIT') {
+    if (badge) {
+      badge.update(0, 'low');
+      badge.showStandby();
+    }
     chrome.runtime.sendMessage({
       type: 'PROMPT_CLEAN_SUBMIT',
       payload: {
@@ -800,6 +806,38 @@ function handleMainWorldMessages(event: MessageEvent) {
       }
     }
 
+    // Update floating sensitivity badge with current score/level
+    if (badge) {
+      badge.update(score, level);
+      badge.show();
+    }
+
+    // Apply green shimmer to the user's message bubble after interception
+    if (tooltips && isProxy && entityCount > 0 && detector) {
+      // Brief delay to let the platform render the user bubble in the DOM
+      setTimeout(() => {
+        try {
+          // Find the most recent user message bubble using common platform selectors
+          const bubbleSelectors = [
+            '[data-message-author-role="user"]:last-of-type',         // ChatGPT
+            '.human-turn:last-of-type .message-text',                 // Claude
+            '.query-text:last-of-type',                               // Gemini
+            '.user-message:last-of-type',                             // generic
+            '[data-testid="user-message"]:last-of-type',              // common pattern
+          ];
+          for (const sel of bubbleSelectors) {
+            const bubble = document.querySelector<HTMLElement>(sel);
+            if (bubble) {
+              tooltips?.applyShimmer(bubble);
+              break;
+            }
+          }
+        } catch {
+          // DOM query may fail — non-fatal
+        }
+      }, 300);
+    }
+
     showCoachingFeedback(isProxy ? 'proxy' : 'audit', entityCount, level, score);
   }
 }
@@ -822,7 +860,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ ok: true });
         break;
       case 'SENSITIVITY_SCORE':
-        // Badge disabled — score updates are no-ops
+        if (badge && message.payload) {
+          const s = clampNumber(message.payload.score, 0, 100, 0);
+          const l = VALID_LEVELS.has(message.payload.level) ? message.payload.level : 'low';
+          badge.update(s, l);
+          badge.show();
+        }
         sendResponse({ ok: true });
         break;
       case 'MODE_CHANGED':
@@ -1005,9 +1048,9 @@ function initialize() {
         }
       }, 1500);
 
-      // Badge disabled — the floating "Protected" chip is distracting on AI tool pages
-      // badge = createSensitivityBadge();
-      // badge.showStandby();
+      badge = createSensitivityBadge();
+      badge.showStandby();
+      tooltips = createEntityTooltips();
       toasts = createCoachingToasts();
 
       // Welcome toast on first load (only once per session)
@@ -1114,6 +1157,8 @@ window.addEventListener('iron-gate-cs-replaced', () => {
   igLog('Content script being replaced by new instance');
   contextAlive = false;
   engine?.stop();
+  badge?.destroy();
+  tooltips?.destroy();
   clearInterval(contextCheckInterval);
   // Clean up all message listeners to prevent orphaned handlers
   window.removeEventListener('message', handleHeartbeatMessages);

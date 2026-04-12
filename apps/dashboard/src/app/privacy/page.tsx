@@ -52,132 +52,131 @@ export default function PrivacyPolicyPage() {
 
           {/* Title */}
           <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4">Privacy Policy</h1>
-          <p className="text-sm text-[#86868b] dark:text-[#636366] mb-12">Last Updated: February 2026</p>
+          <p className="text-sm text-[#86868b] dark:text-[#636366] mb-12">Last Updated: April 2026</p>
 
 
-          {/* ── 1. Introduction ──────────────────────────────────────────────── */}
+          {/* ── 1. What Iron Gate Does ───────────────────────────────────────── */}
           <section className="mb-12">
-            <h2 className="text-2xl font-bold mb-4">Introduction</h2>
+            <h2 className="text-2xl font-bold mb-4">What Iron Gate Does</h2>
             <p className="text-[#6e6e73] dark:text-[#86868b] leading-relaxed">
-              Iron Gate is an enterprise AI governance platform that helps organizations protect
-              sensitive data when employees use AI tools such as ChatGPT, Claude, Gemini, and
-              Copilot. We are committed to transparency about how we collect, process, and store
-              data. This Privacy Policy explains what information we handle, how we handle it, and
-              what rights you have regarding your data.
+              Iron Gate is a Chrome extension and enterprise platform that detects and protects
+              sensitive data before it reaches AI tools such as ChatGPT, Claude, Gemini, Copilot,
+              Perplexity, DeepSeek, Poe, Groq, HuggingFace Chat, and You.com. The extension
+              intercepts prompts in the browser, identifies sensitive entities (names, SSNs, credit
+              card numbers, medical records, etc.), and either warns the user or replaces sensitive
+              values with realistic pseudonyms so employees can use AI productively without
+              exposing real data.
             </p>
           </section>
 
 
-          {/* ── 2. Data We Collect ────────────────────────────────────────────── */}
+          {/* ── 2. Data Collection ───────────────────────────────────────────── */}
           <section className="mb-12">
-            <h2 className="text-2xl font-bold mb-4">Data We Collect</h2>
+            <h2 className="text-2xl font-bold mb-4">Data Collection</h2>
+            <p className="text-[#6e6e73] dark:text-[#86868b] leading-relaxed mb-6">
+              Iron Gate follows a <strong className="text-[#1d1d1f] dark:text-[#f5f5f7]">zero-persistence architecture</strong>.
+              This means:
+            </p>
 
-            <div className="space-y-6">
-              <div>
-                <h3 className="text-lg font-semibold mb-2 text-[#1d1d1f] dark:text-[#d2d2d7]">Prompt Metadata</h3>
+            <div className="space-y-4">
+              <div className="flex gap-4 items-start">
+                <div className="mt-1 w-2 h-2 rounded-full bg-iron-500 shrink-0" />
                 <p className="text-[#6e6e73] dark:text-[#86868b] leading-relaxed">
-                  We collect sensitivity scores, entity type counts, AI tool identifiers, and
-                  timestamps associated with prompts. <strong className="text-[#1d1d1f] dark:text-[#f5f5f7]">We do NOT store raw prompt text on our
-                  servers.</strong>
+                  <strong className="text-[#1d1d1f] dark:text-[#f5f5f7]">Raw prompts are never stored, logged, or transmitted to Iron Gate servers.</strong>{' '}
+                  All entity detection runs locally in the browser within the Chrome extension.
                 </p>
               </div>
 
-              <div>
-                <h3 className="text-lg font-semibold mb-2 text-[#1d1d1f] dark:text-[#d2d2d7]">Document Metadata</h3>
+              <div className="flex gap-4 items-start">
+                <div className="mt-1 w-2 h-2 rounded-full bg-iron-500 shrink-0" />
                 <p className="text-[#6e6e73] dark:text-[#86868b] leading-relaxed">
-                  For uploaded documents, we collect file names, file types, file sizes, sensitivity
-                  scores, and entity counts. Original documents are not retained after processing.
+                  Only <strong className="text-[#1d1d1f] dark:text-[#f5f5f7]">anonymized event metadata</strong> is sent
+                  to the dashboard API. This includes: the types of entities detected (e.g. &ldquo;PERSON&rdquo;,
+                  &ldquo;SSN&rdquo;), the sensitivity score, the AI tool used, and a timestamp. No raw text,
+                  names, or PII values are included.
                 </p>
               </div>
 
-              <div>
-                <h3 className="text-lg font-semibold mb-2 text-[#1d1d1f] dark:text-[#d2d2d7]">Entity Detections</h3>
+              <div className="flex gap-4 items-start">
+                <div className="mt-1 w-2 h-2 rounded-full bg-iron-500 shrink-0" />
                 <p className="text-[#6e6e73] dark:text-[#86868b] leading-relaxed">
-                  We record entity types (e.g. &ldquo;PERSON&rdquo;, &ldquo;SSN&rdquo;), character
-                  positions, confidence scores, and detection source. Raw PII text is pseudonymized
-                  before storage &mdash; we never store the original sensitive values.
-                </p>
-              </div>
-
-              <div>
-                <h3 className="text-lg font-semibold mb-2 text-[#1d1d1f] dark:text-[#d2d2d7]">Account Information</h3>
-                <p className="text-[#6e6e73] dark:text-[#86868b] leading-relaxed">
-                  We collect your email address, display name, role, and firm association. Authentication
-                  is managed through Clerk; we do not store passwords directly.
-                </p>
-              </div>
-
-              <div>
-                <h3 className="text-lg font-semibold mb-2 text-[#1d1d1f] dark:text-[#d2d2d7]">Billing Data</h3>
-                <p className="text-[#6e6e73] dark:text-[#86868b] leading-relaxed">
-                  We store your subscription tier and payment history. All payment processing is
-                  handled by Stripe. <strong className="text-[#1d1d1f] dark:text-[#f5f5f7]">We do not store credit card numbers.</strong>
-                </p>
-              </div>
-
-              <div>
-                <h3 className="text-lg font-semibold mb-2 text-[#1d1d1f] dark:text-[#d2d2d7]">Usage Analytics</h3>
-                <p className="text-[#6e6e73] dark:text-[#86868b] leading-relaxed">
-                  We collect page views and feature usage data via PostHog to improve the product
-                  experience. This data is aggregated and does not include prompt content or
-                  sensitive entity values.
+                  There is no database column for raw prompt text. This is a structural guarantee,
+                  not a policy decision &mdash; the data physically cannot be stored because the
+                  schema does not accommodate it.
                 </p>
               </div>
             </div>
           </section>
 
 
-          {/* ── 3. How We Process Data ───────────────────────────────────────── */}
+          {/* ── 3. Chrome Extension Permissions ──────────────────────────────── */}
           <section className="mb-12">
-            <h2 className="text-2xl font-bold mb-4">How We Process Data</h2>
+            <h2 className="text-2xl font-bold mb-4">Chrome Extension Permissions</h2>
+            <p className="text-[#6e6e73] dark:text-[#86868b] leading-relaxed mb-6">
+              The Iron Gate extension requests the following Chrome permissions. Each is required
+              for a specific function:
+            </p>
 
-            <div className="space-y-6">
-              <div>
-                <h3 className="text-lg font-semibold mb-2 text-[#1d1d1f] dark:text-[#d2d2d7]">Browser-Side Detection</h3>
-                <p className="text-[#6e6e73] dark:text-[#86868b] leading-relaxed">
-                  The Iron Gate Chrome extension detects sensitive entities in prompts before they
-                  leave the browser using regex-based pattern matching. No raw prompt text is
-                  transmitted to our servers. Detection happens entirely within the user&rsquo;s
-                  browser; only metadata (entity types, counts, and scores) is sent to the
-                  platform.
-                </p>
-              </div>
-
-              <div>
-                <h3 className="text-lg font-semibold mb-2 text-[#1d1d1f] dark:text-[#d2d2d7]">Pseudonymization</h3>
-                <p className="text-[#6e6e73] dark:text-[#86868b] leading-relaxed">
-                  When proxy mode is active, sensitive entities are replaced with realistic
-                  pseudonyms before any text leaves the user&rsquo;s organization. For example,
-                  &ldquo;John Smith&rdquo; might become &ldquo;Robert Chen.&rdquo; This allows
-                  employees to use AI tools productively while ensuring real sensitive data never
-                  reaches third-party AI providers.
-                </p>
-              </div>
-
-              <div>
-                <h3 className="text-lg font-semibold mb-2 text-[#1d1d1f] dark:text-[#d2d2d7]">Server-Side Analysis</h3>
-                <p className="text-[#6e6e73] dark:text-[#86868b] leading-relaxed">
-                  When document scanning is used, documents are processed server-side for entity
-                  detection and sensitivity scoring. Extracted text is pseudonymized, and the
-                  original document is not retained after processing is complete.
-                </p>
-              </div>
-
-              <div>
-                <h3 className="text-lg font-semibold mb-2 text-[#1d1d1f] dark:text-[#d2d2d7]">Encryption</h3>
-                <p className="text-[#6e6e73] dark:text-[#86868b] leading-relaxed">
-                  All data at rest is encrypted using AES-256-GCM with per-firm encryption keys
-                  derived via PBKDF2. Data in transit is encrypted via TLS 1.2+. Each event is
-                  wrapped with a unique data key using envelope encryption, ensuring that even in
-                  the unlikely event of a breach, data cannot be read without the corresponding
-                  key material.
-                </p>
-              </div>
+            <div className="space-y-4">
+              {[
+                {
+                  permission: 'storage',
+                  reason: 'Stores user preferences, detection settings, and the pseudonym reverse map locally in the browser. No data leaves the device via this permission.',
+                },
+                {
+                  permission: 'sidePanel',
+                  reason: 'Displays the Iron Gate side panel UI where users can review detected entities, adjust settings, and see sensitivity scores for their prompts.',
+                },
+                {
+                  permission: 'activeTab',
+                  reason: 'Allows the extension to read the current tab\'s URL to determine which AI tool the user is interacting with and apply the correct adapter.',
+                },
+                {
+                  permission: 'scripting',
+                  reason: 'Injects the content script into supported AI tool pages to intercept prompts before they are sent to the AI provider.',
+                },
+                {
+                  permission: 'declarativeNetRequest',
+                  reason: 'Modifies HTTP request and response headers at the network level to enable pseudonymization of outbound prompts and de-pseudonymization of inbound AI responses.',
+                },
+                {
+                  permission: 'Host permissions (9 AI tool domains)',
+                  reason: 'Required to run content scripts on ChatGPT (chat.openai.com), Claude (claude.ai), Gemini (gemini.google.com), GitHub Copilot, Perplexity, DeepSeek, Poe, Groq, HuggingFace Chat, and You.com. The extension only activates on these specific domains.',
+                },
+              ].map((item) => (
+                <div
+                  key={item.permission}
+                  className="bg-[#f5f5f7] dark:bg-[#141414] rounded-xl p-5 border border-[#d2d2d7]/30 dark:border-[#38383a]/40"
+                >
+                  <p className="font-semibold text-[#1d1d1f] dark:text-[#d2d2d7] mb-1">
+                    <code className="px-1.5 py-0.5 bg-white dark:bg-[#2c2c2e] rounded text-sm font-mono text-iron-600 dark:text-iron-400">
+                      {item.permission}
+                    </code>
+                  </p>
+                  <p className="text-[#6e6e73] dark:text-[#86868b] text-sm leading-relaxed mt-2">
+                    {item.reason}
+                  </p>
+                </div>
+              ))}
             </div>
           </section>
 
 
-          {/* ── 4. Data Retention ────────────────────────────────────────────── */}
+          {/* ── 4. Enterprise Managed Mode ───────────────────────────────────── */}
+          <section className="mb-12">
+            <h2 className="text-2xl font-bold mb-4">Enterprise Managed Mode</h2>
+            <p className="text-[#6e6e73] dark:text-[#86868b] leading-relaxed">
+              When deployed by an IT administrator, the Iron Gate extension reads configuration
+              from <code className="px-1.5 py-0.5 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded text-xs font-mono text-iron-600 dark:text-iron-400">chrome.storage.managed</code>,
+              which is set via enterprise policy (e.g. Google Admin Console or Windows Group Policy).
+              This allows centralized control of detection thresholds, allowed AI tools, and
+              enforcement mode. No additional data is collected in managed mode beyond the same
+              anonymized event metadata described above.
+            </p>
+          </section>
+
+
+          {/* ── 5. Data Retention ────────────────────────────────────────────── */}
           <section className="mb-12">
             <h2 className="text-2xl font-bold mb-4">Data Retention</h2>
 
@@ -185,10 +184,11 @@ export default function PrivacyPolicyPage() {
               <div className="flex gap-4 items-start">
                 <div className="mt-1 w-2 h-2 rounded-full bg-iron-500 shrink-0" />
                 <div>
-                  <p className="font-semibold text-[#1d1d1f] dark:text-[#d2d2d7]">Event Data</p>
+                  <p className="font-semibold text-[#1d1d1f] dark:text-[#d2d2d7]">Event Metadata</p>
                   <p className="text-[#6e6e73] dark:text-[#86868b] leading-relaxed">
-                    Retained for the firm&rsquo;s configured retention period (default: 90 days),
-                    after which it is automatically and permanently deleted.
+                    Anonymized event metadata is retained for the customer&rsquo;s configured
+                    retention period (default: 90 days), after which it is automatically and
+                    permanently deleted.
                   </p>
                 </div>
               </div>
@@ -198,9 +198,8 @@ export default function PrivacyPolicyPage() {
                 <div>
                   <p className="font-semibold text-[#1d1d1f] dark:text-[#d2d2d7]">Pseudonym Maps</p>
                   <p className="text-[#6e6e73] dark:text-[#86868b] leading-relaxed">
-                    Pseudonym mappings expire after 24 hours and are automatically purged. This
-                    ensures that the link between real entities and their pseudonyms cannot be
-                    recovered after the short-lived session window.
+                    Pseudonym mappings are held in browser memory only and expire after 24 hours.
+                    They are never transmitted to Iron Gate servers.
                   </p>
                 </div>
               </div>
@@ -208,11 +207,11 @@ export default function PrivacyPolicyPage() {
               <div className="flex gap-4 items-start">
                 <div className="mt-1 w-2 h-2 rounded-full bg-iron-500 shrink-0" />
                 <div>
-                  <p className="font-semibold text-[#1d1d1f] dark:text-[#d2d2d7]">Audit Trail</p>
+                  <p className="font-semibold text-[#1d1d1f] dark:text-[#d2d2d7]">Data Deletion</p>
                   <p className="text-[#6e6e73] dark:text-[#86868b] leading-relaxed">
-                    Audit trail records are cryptographically chained and immutable. They are
-                    retained in accordance with the firm&rsquo;s configured retention policy
-                    to support compliance and regulatory requirements.
+                    Customers can request complete deletion of their organization&rsquo;s data at
+                    any time. Upon receiving a valid deletion request, all related records are
+                    permanently removed within 30 days.
                   </p>
                 </div>
               </div>
@@ -220,84 +219,37 @@ export default function PrivacyPolicyPage() {
           </section>
 
 
-          {/* ── 5. Your Rights (GDPR) ───────────────────────────────────────── */}
+          {/* ── 6. Third Parties ─────────────────────────────────────────────── */}
           <section className="mb-12">
-            <h2 className="text-2xl font-bold mb-4">Your Rights (GDPR)</h2>
+            <h2 className="text-2xl font-bold mb-4">Third Parties</h2>
             <p className="text-[#6e6e73] dark:text-[#86868b] leading-relaxed mb-6">
-              If you are located in the European Economic Area or a jurisdiction with similar data
-              protection laws, you have the following rights regarding your personal data:
+              <strong className="text-[#1d1d1f] dark:text-[#f5f5f7]">Iron Gate does not sell, share, or provide user data to third parties.</strong>
             </p>
-
-            <div className="space-y-5">
-              <div className="bg-[#f5f5f7] dark:bg-[#141414] rounded-xl p-5 border border-[#d2d2d7]/30 dark:border-[#38383a]/40">
-                <p className="font-semibold text-[#1d1d1f] dark:text-[#d2d2d7] mb-1">Right to Access</p>
-                <p className="text-[#6e6e73] dark:text-[#86868b] text-sm leading-relaxed">
-                  You can export your data at any time via our API using the{' '}
-                  <code className="px-1.5 py-0.5 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded text-xs font-mono text-iron-600 dark:text-iron-400">
-                    GET /v1/user/export
-                  </code>{' '}
-                  endpoint. This returns a complete copy of all data we hold about you.
-                </p>
-              </div>
-
-              <div className="bg-[#f5f5f7] dark:bg-[#141414] rounded-xl p-5 border border-[#d2d2d7]/30 dark:border-[#38383a]/40">
-                <p className="font-semibold text-[#1d1d1f] dark:text-[#d2d2d7] mb-1">Right to Erasure</p>
-                <p className="text-[#6e6e73] dark:text-[#86868b] text-sm leading-relaxed">
-                  You may request complete deletion of your firm&rsquo;s data. Upon receiving a
-                  valid erasure request, all related records &mdash; including event data, entity
-                  detections, pseudonym maps, and account information &mdash; are permanently
-                  deleted within 30 days.
-                </p>
-              </div>
-
-              <div className="bg-[#f5f5f7] dark:bg-[#141414] rounded-xl p-5 border border-[#d2d2d7]/30 dark:border-[#38383a]/40">
-                <p className="font-semibold text-[#1d1d1f] dark:text-[#d2d2d7] mb-1">Right to Rectification</p>
-                <p className="text-[#6e6e73] dark:text-[#86868b] text-sm leading-relaxed">
-                  You can update your account information &mdash; including your display name,
-                  email address, and role &mdash; at any time through the dashboard settings.
-                </p>
-              </div>
-
-              <div className="bg-[#f5f5f7] dark:bg-[#141414] rounded-xl p-5 border border-[#d2d2d7]/30 dark:border-[#38383a]/40">
-                <p className="font-semibold text-[#1d1d1f] dark:text-[#d2d2d7] mb-1">Right to Data Portability</p>
-                <p className="text-[#6e6e73] dark:text-[#86868b] text-sm leading-relaxed">
-                  You can download all of your data in a machine-readable JSON format at any time,
-                  making it easy to transfer your data to another service if you choose.
-                </p>
-              </div>
-            </div>
-          </section>
-
-
-          {/* ── 6. Third-Party Services ──────────────────────────────────────── */}
-          <section className="mb-12">
-            <h2 className="text-2xl font-bold mb-4">Third-Party Services</h2>
             <p className="text-[#6e6e73] dark:text-[#86868b] leading-relaxed mb-6">
-              We use the following third-party services to operate Iron Gate. Each service has its
-              own privacy policy and data handling practices:
+              We use the following services to operate the platform:
             </p>
 
             <div className="grid sm:grid-cols-2 gap-4">
               {[
                 {
                   name: 'Clerk',
-                  purpose: 'Authentication and user management',
-                },
-                {
-                  name: 'Stripe',
-                  purpose: 'Payment processing and subscription billing',
+                  url: 'clerk.com',
+                  purpose: 'Dashboard authentication and user management',
                 },
                 {
                   name: 'Supabase',
-                  purpose: 'Database hosting and infrastructure',
+                  url: 'supabase.com',
+                  purpose: 'Database hosting (anonymized metadata only)',
                 },
                 {
-                  name: 'Resend',
-                  purpose: 'Transactional email delivery',
+                  name: 'Render',
+                  url: 'render.com',
+                  purpose: 'API server hosting',
                 },
                 {
-                  name: 'PostHog',
-                  purpose: 'Product analytics and usage tracking',
+                  name: 'Vercel',
+                  url: 'vercel.com',
+                  purpose: 'Dashboard web hosting',
                 },
               ].map((service) => (
                 <div
@@ -316,27 +268,26 @@ export default function PrivacyPolicyPage() {
           <section className="mb-12">
             <h2 className="text-2xl font-bold mb-4">Security</h2>
             <p className="text-[#6e6e73] dark:text-[#86868b] leading-relaxed mb-6">
-              Security is foundational to Iron Gate. We implement multiple layers of protection to
-              ensure your data remains safe:
+              Security is foundational to Iron Gate. We implement multiple layers of protection:
             </p>
 
             <ul className="space-y-3">
               {[
                 {
-                  title: 'SOC 2 Type II Architecture',
-                  desc: 'Our platform is designed to meet the controls and requirements of SOC 2 Type II certification, covering security, availability, and confidentiality.',
+                  title: 'Zero-Persistence Architecture',
+                  desc: 'Raw prompt text is never stored, logged, or transmitted. There is no database column for it. This eliminates the most significant attack surface by design.',
                 },
                 {
                   title: 'Per-Firm Tenant Isolation',
-                  desc: 'PostgreSQL Row-Level Security (RLS) policies enforce strict data isolation at the database layer. No firm can access another firm\'s data, even in the event of an application-level vulnerability.',
+                  desc: 'PostgreSQL Row-Level Security (RLS) policies enforce strict data isolation at the database layer. No organization can access another organization\'s data.',
+                },
+                {
+                  title: 'Encryption',
+                  desc: 'All data at rest is encrypted using AES-256-GCM with per-firm encryption keys. Data in transit is encrypted via TLS 1.2+.',
                 },
                 {
                   title: 'Cryptographic Audit Trail',
-                  desc: 'Every event is hash-chained using SHA-256. If any record is tampered with, the hash chain breaks, providing immediate and verifiable tamper detection.',
-                },
-                {
-                  title: 'Rate Limiting and Security Monitoring',
-                  desc: 'All API endpoints are rate-limited to prevent abuse. We monitor for anomalous access patterns, bulk extraction attempts, and other breach signals in real time.',
+                  desc: 'Every event is hash-chained using SHA-256. If any record is tampered with, the hash chain breaks, providing immediate tamper detection.',
                 },
               ].map((item) => (
                 <li key={item.title} className="flex gap-3 items-start">
@@ -360,10 +311,10 @@ export default function PrivacyPolicyPage() {
               If you have any questions about this Privacy Policy, your data, or your rights,
               please contact us at{' '}
               <a
-                href="mailto:privacy@irongate.dev"
+                href="mailto:privacy@irongate.ai"
                 className="text-iron-600 dark:text-iron-400 hover:text-iron-700 dark:hover:text-iron-300 underline underline-offset-2 transition-colors"
               >
-                privacy@irongate.dev
+                privacy@irongate.ai
               </a>
               .
             </p>
@@ -392,7 +343,7 @@ export default function PrivacyPolicyPage() {
               <Link href="/privacy" className="text-[#6e6e73] dark:text-[#a1a1a6] font-medium">Privacy</Link>
             </div>
 
-            <p className="text-xs text-[#86868b] dark:text-[#636366]">v0.2.2</p>
+            <p className="text-xs text-[#86868b] dark:text-[#636366]">v0.2.7</p>
           </div>
         </div>
       </footer>

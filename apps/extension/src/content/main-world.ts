@@ -4003,10 +4003,14 @@ const patchedFetch = async function patchedFetch(
 
               // Build modified request with pseudonymized body
               const newInit = { ...init, body: modifiedBody };
-              // De-pseudonymize the user's message bubble (non-ChatGPT platforms)
-              if (!url.includes('/backend-api/conversation') && !url.includes('/backend-anon/')) {
-                depseudonymizeUserBubble(requestReverseMap);
-              }
+              // De-pseudonymize the user's message bubble on every platform.
+              // Previously ChatGPT was skipped under the assumption that React
+              // state retains the original text — but synthetic input events
+              // (and some programmatic paste paths) can cause the pseudonym to
+              // end up in the bubble. The call is a safe no-op when the bubble
+              // already contains the original because the reverse map won't
+              // find anything to replace.
+              depseudonymizeUserBubble(requestReverseMap);
               const response = await originalFetch.call(window, input, newInit);
               return depseudonymizeResponse(response, requestReverseMap);
             }
@@ -4107,9 +4111,9 @@ const patchedFetch = async function patchedFetch(
               startPersistentDomDepseudo();
 
               const newInit = { ...init, body: modifiedBody };
-              if (!url.includes('/backend-api/conversation') && !url.includes('/backend-anon/')) {
-                depseudonymizeUserBubble(requestReverseMap);
-              }
+              // Always run user-bubble de-pseudo (no ChatGPT skip) — see the
+              // comment on the Sovereign-Mode branch above for the rationale.
+              depseudonymizeUserBubble(requestReverseMap);
               const response = await originalFetch.call(window, input, newInit);
               return depseudonymizeResponse(response, requestReverseMap);
             }
@@ -4432,10 +4436,12 @@ const patchedFetch = async function patchedFetch(
             }
 
             // De-pseudonymize the user's own message bubble in the DOM.
-            // On ChatGPT, React state retains the original text so the user bubble is fine.
-            // On Claude, Gemini, and others, the UI renders from the API payload — so
-            // pseudonymized text would be visible. Fix it by replacing in the DOM.
-            if (!isChatGPT && Object.keys(requestReverseMap).length > 0) {
+            // Runs on EVERY platform including ChatGPT. Historically we skipped
+            // ChatGPT because React state was assumed to hold the original
+            // text, but synthetic-input code paths can land the pseudonym in
+            // the rendered bubble. The call is a no-op on platforms where the
+            // bubble already shows the original (nothing to replace).
+            if (Object.keys(requestReverseMap).length > 0) {
               depseudonymizeUserBubble(requestReverseMap);
             }
 

@@ -24,9 +24,11 @@ const SECRET_PATTERNS: SecretPattern[] = [
   {
     type: 'API_KEY',
     patterns: [
-      /\bsk-[a-zA-Z0-9]{20,}\b/g,                          // OpenAI-style
+      // OpenAI keys incl. sk-proj-*, sk-svc-*. Hyphen/underscore allowed inside
+      // the body so the pattern doesn't stop at the hyphen after a prefix segment.
+      /\bsk-[a-zA-Z0-9][a-zA-Z0-9_-]{19,}(?![a-zA-Z0-9_-])/g, // OpenAI-style (incl. sk-proj-*)
       /\bsk_live_[a-zA-Z0-9]{24,}\b/g,                      // Stripe-style
-      /\bsk-ant-[a-zA-Z0-9\-]{20,}\b/g,                     // Anthropic-style
+      /\bsk-ant-[a-zA-Z0-9_-]{20,}(?![a-zA-Z0-9_-])/g,      // Anthropic-style
       /\bghp_[a-zA-Z0-9]{36}\b/g,                           // GitHub PAT
       /\bgho_[a-zA-Z0-9]{36}\b/g,                           // GitHub OAuth
       /\bghs_[a-zA-Z0-9]{36}\b/g,                           // GitHub App

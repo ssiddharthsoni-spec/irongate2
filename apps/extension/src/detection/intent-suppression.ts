@@ -36,6 +36,15 @@ export interface IntentSuppressionResult {
    * overrides (contextualKeywordScore ≥ 15) force the multiplier back to 1.0.
    */
   isSelfReferential: boolean;
+  /**
+   * True when the prompt opens with unambiguous "novel scene / story where /
+   * for my novel" style fiction framing. When set, the scorer bypasses the
+   * always-critical entity floor: a fictional SSN in a clearly fictional
+   * scene should not force the prompt into the red zone.
+   * Individual entities are still surfaced to the user; only the score
+   * ceiling is relaxed.
+   */
+  isStrongFiction?: boolean;
 }
 
 export interface IntentSuppression {
@@ -190,7 +199,7 @@ const BENIGN_INTENT_PATTERNS: BenignIntentPattern[] = [
   // ── Creative Writing Tasks ──────────────────────────────────────────────
   {
     name: 'creative_writing',
-    pattern: /\b(?:write\s+(?:a\s+)?(?:story|poem|song|haiku|limerick|essay|article|blog\s*post|script|dialogue|monologue|speech)|(?:creative|fictional|fantasy|sci[\s-]?fi)\s+(?:writing|story|narrative)|make\s+(?:up|it)\s+(?:a\s+)?(?:story|poem))\b/i,
+    pattern: /\b(?:write\s+(?:a\s+)?(?:story|novel|poem|song|haiku|limerick|essay|article|blog\s*post|script|dialogue|monologue|speech|(?:novel|story)\s+(?:scene|chapter|excerpt))|(?:novel|story|fictional)\s+(?:scene|chapter|excerpt|passage)\s+(?:where|in\s+which|about)|(?:creative|fictional|fantasy|sci[\s-]?fi)\s+(?:writing|story|narrative|scene)|make\s+(?:up|it)\s+(?:a\s+)?(?:story|poem))\b/i,
     safeTypes: new Set(['PERSON', 'ORGANIZATION', 'LOCATION', 'DATE']),
   },
 
@@ -243,6 +252,19 @@ const BENIGN_INTENT_PATTERNS: BenignIntentPattern[] = [
     safeTypes: new Set(['PERSON', 'ORGANIZATION', 'LOCATION', 'DATE', 'MONETARY_AMOUNT']),
   },
 ];
+
+// ─── Strong Fiction Framing ───────────────────────────────────────────────
+// Matches unambiguous "this is creative writing, the numbers below are props"
+// framing at the very start of the prompt. When this hits, we still surface
+// detected entities in the side panel (user awareness) but we drop the overall
+// score so a fictional "123-45-6789" in a novel scene doesn't alarm the user.
+// Guard rails:
+//   1. MUST match within the first ~80 characters of the prompt.
+//   2. Prompt must be short-ish (≤ 500 chars). Long prompts with fiction
+//      wrappers can smuggle real data after the wrapper — we don't trust them.
+//   3. Only the score multiplier changes; individual entities are never removed
+//      from the activity log so the user still sees what was detected.
+const STRONG_FICTION_OPENING = /^[^.?!\n]{0,80}\b(?:write\s+(?:a\s+)?(?:novel|story|fictional)\s+(?:scene|chapter|excerpt|passage)|(?:novel|story|fictional)\s+(?:scene|chapter|excerpt|passage)\s+(?:where|in\s+which)|(?:write|craft|draft)\s+(?:me\s+)?(?:a\s+)?(?:short\s+)?(?:story|novel|fiction)\s+(?:where|about|in\s+which)|for\s+(?:my|a)\s+(?:novel|story|fiction\s+book|screenplay))\b/i;
 
 // ─── First-Person Possessive Patterns ────────────────────────────────────────
 // "My DOB is...", "I was born on...", "my email is..." — the user is
@@ -305,6 +327,13 @@ export function applyIntentSuppression(
     return { entities, scoreMultiplier: 1.0, suppressions: [], isSelfReferential: false };
   }
 
+  // Strong-fiction early gate: when the prompt unambiguously opens with
+  // "write a novel scene where…" style framing, we apply an aggressive
+  // score reduction regardless of NEVER_SUPPRESS_TYPES. Individual entities
+  // are still logged (we don't drop their confidence) so the user sees
+  // what IronGate detected, but the prompt won't be red-flagged.
+  const strongFictionActive = text.length <= 500 && STRONG_FICTION_OPENING.test(text);
+
   const suppressions: IntentSuppression[] = [];
   const matchedPatterns: BenignIntentPattern[] = [];
 
@@ -340,6 +369,17 @@ export function applyIntentSuppression(
   }
 
   if (matchedPatterns.length === 0 && !isFirstPerson) {
+    // Even without a soft-match, strong fiction framing at the opening
+    // justifies an aggressive score cut — apply it directly here.
+    if (strongFictionActive) {
+      return {
+        entities,
+        scoreMultiplier: 0.25,
+        suppressions: [],
+        isSelfReferential: true,
+        isStrongFiction: true,
+      };
+    }
     return { entities, scoreMultiplier: 1.0, suppressions: [], isSelfReferential: false };
   }
 
@@ -451,7 +491,20 @@ export function applyIntentSuppression(
     scoreMultiplier = isSelfReferentialTask ? 0.3 : 0.6;
   }
 
-  return { entities: adjusted, scoreMultiplier, suppressions, isSelfReferential: isSelfReferentialTask };
+  // Strong fiction framing overrides: even if a NEVER_SUPPRESS entity
+  // (SSN/CC) held the suppression count at 0, we still apply a firm
+  // score cut because the framing is unambiguous and short.
+  if (strongFictionActive) {
+    scoreMultiplier = Math.min(scoreMultiplier, 0.25);
+  }
+
+  return {
+    entities: adjusted,
+    scoreMultiplier,
+    suppressions,
+    isSelfReferential: isSelfReferentialTask,
+    isStrongFiction: strongFictionActive,
+  };
 }
 
 /**

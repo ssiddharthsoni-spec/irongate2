@@ -47,6 +47,40 @@ const DEMO_ENTITIES = [
 ];
 
 export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
+  // ── Managed mode skip ────────────────────────────────────────────────────
+  // Check if we're in managed mode with valid credentials — skip onboarding entirely
+  const [managedSkip, setManagedSkip] = useState(false);
+  const [managedFirmName, setManagedFirmName] = useState('');
+  const [managedContact, setManagedContact] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const managed = await new Promise<Record<string, any>>((resolve) => {
+          if (chrome?.storage?.managed) {
+            chrome.storage.managed.get(null, (items) => {
+              if (chrome.runtime.lastError) resolve({});
+              else resolve(items || {});
+            });
+          } else resolve({});
+        });
+
+        if (managed.deploymentMode || managed.enrollmentCode) {
+          // Check if we have valid credentials (API key + firm)
+          const local = await new Promise<Record<string, any>>((resolve) => {
+            chrome.storage.local.get(['ironGateApiKey_enc', 'firm_id', 'firm_name'], (items) => resolve(items || {}));
+          });
+          if (local.ironGateApiKey_enc && local.firm_id) {
+            setManagedFirmName(local.firm_name || managed.firmId || 'your organization');
+            setManagedContact(managed.supportContact || '');
+            setManagedSkip(true);
+          }
+        }
+      } catch { /* non-fatal — fall through to normal onboarding */ }
+    })();
+  }, []);
+
+  // ── Normal onboarding state ──────────────────────────────────────────────
   const [step, setStep] = useState(1);
   const [selectedIndustries, setSelectedIndustries] = useState<Industry[]>([]);
   const [selectedMode, setSelectedMode] = useState<'audit' | 'proxy'>('audit');
@@ -213,6 +247,44 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
       default: return true;
     }
   };
+
+  // ── Managed mode: show simplified confirmation instead of full wizard ────
+  if (managedSkip) {
+    return (
+      <div style={{ padding: '32px 24px', textAlign: 'center' }}>
+        <div style={{ fontSize: '48px', marginBottom: '16px' }}>🛡️</div>
+        <h2 style={{ fontSize: '20px', fontWeight: 600, marginBottom: '8px', color: '#1a1a2e' }}>
+          Protected by IronGate
+        </h2>
+        <p style={{ fontSize: '14px', color: '#666', marginBottom: '24px' }}>
+          Managed by {managedFirmName}
+        </p>
+        {managedContact && (
+          <p style={{ fontSize: '13px', color: '#888' }}>
+            IT Support: {managedContact}
+          </p>
+        )}
+        <button
+          onClick={async () => {
+            await chrome.storage.local.set({ [ONBOARDING_COMPLETED]: true });
+            onComplete();
+          }}
+          style={{
+            marginTop: '24px',
+            padding: '10px 24px',
+            background: '#4f46e5',
+            color: 'white',
+            border: 'none',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontSize: '14px',
+          }}
+        >
+          Get Started
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 p-4 flex flex-col">

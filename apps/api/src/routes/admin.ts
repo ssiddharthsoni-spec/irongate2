@@ -16,6 +16,7 @@ import { invalidateUserCache } from '../middleware/auth';
 import { sanitizeInput, sanitizeUrl } from '../lib/sanitize';
 import { requirePerm } from '../middleware/rbac';
 import { mdmRoutes } from './mdm';
+import { enrollmentRoutes } from './enrollment';
 import { logger } from '../lib/logger';
 import type { AppEnv } from '../types';
 import type { Context } from 'hono';
@@ -66,6 +67,9 @@ async function logAdminAction(
 
 // Mount MDM config export sub-routes under /mdm/*
 adminRoutes.route('/mdm', mdmRoutes);
+
+// Mount enrollment code management sub-routes
+adminRoutes.route('/enrollment-codes', enrollmentRoutes);
 
 // ---------------------------------------------------------------------------
 // Granular RBAC — write operations require specific permissions beyond

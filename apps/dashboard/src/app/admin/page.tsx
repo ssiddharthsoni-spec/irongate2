@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import Link from 'next/link';
 import { useApiClient } from '../../lib/api';
 
 export default function AdminPage() {
@@ -230,6 +231,51 @@ export default function AdminPage() {
             {saveMessage.text}
           </span>
         )}
+      </div>
+
+      {/* Admin Quick Links */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+        <Link
+          href="/admin/enrollment"
+          className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 hover:border-iron-300 dark:hover:border-iron-700 transition-colors group"
+        >
+          <div className="flex items-start gap-4">
+            <div className="w-10 h-10 rounded-lg bg-iron-50 dark:bg-iron-900/30 flex items-center justify-center shrink-0">
+              <svg className="w-5 h-5 text-iron-600 dark:text-iron-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z" />
+              </svg>
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] group-hover:text-iron-600 dark:group-hover:text-iron-400 transition-colors">
+                Enrollment Codes
+              </h3>
+              <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-0.5">
+                Create and manage enrollment codes for employee onboarding.
+              </p>
+            </div>
+          </div>
+        </Link>
+
+        <Link
+          href="/admin/departments"
+          className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 hover:border-iron-300 dark:hover:border-iron-700 transition-colors group"
+        >
+          <div className="flex items-start gap-4">
+            <div className="w-10 h-10 rounded-lg bg-iron-50 dark:bg-iron-900/30 flex items-center justify-center shrink-0">
+              <svg className="w-5 h-5 text-iron-600 dark:text-iron-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3.75 3h.008v.008h-.008v-.008Zm0 3h.008v.008h-.008v-.008Zm0 3h.008v.008h-.008v-.008Z" />
+              </svg>
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] group-hover:text-iron-600 dark:group-hover:text-iron-400 transition-colors">
+                Department Policies
+              </h3>
+              <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-0.5">
+                Configure per-team AI usage policies and restrictions.
+              </p>
+            </div>
+          </div>
+        </Link>
       </div>
 
       {/* Client/Matter Import */}

@@ -5,6 +5,9 @@
  */
 
 import { encrypt, decrypt, deriveKey } from '@iron-gate/crypto';
+import { resolveConfig } from '../managed-config';
+import { saveApiKey } from '../api-key-store';
+import { DEVICE_ID, FIRM_ID, FIRM_NAME, FIRM_CODE } from '../shared/storage-keys';
 
 // Debug logging — gated behind ironGateDebug storage flag
 let _authDebug = false;
@@ -368,5 +371,84 @@ async function persistAuth(): Promise<void> {
     });
   } catch (err) {
     authLog('Failed to persist auth state:', err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Managed Auto-Enrollment
+// ---------------------------------------------------------------------------
+
+const DEFAULT_API_URL = 'https://irongate-api.onrender.com/v1';
+
+/**
+ * Attempt automatic enrollment from managed policy (chrome.storage.managed).
+ * Called on service worker startup. If managed config has an enrollmentCode,
+ * registers the extension silently without user interaction.
+ * Returns true if enrollment succeeded, false if not applicable or failed.
+ */
+export async function attemptManagedAutoEnroll(): Promise<boolean> {
+  try {
+    const config = await resolveConfig();
+
+    // Only applies to managed deployments with an enrollment code
+    if (!config.isManaged || !config.enrollmentCode) return false;
+
+    // Already enrolled — check for existing API key and firmId
+    const existing = await new Promise<Record<string, any>>((resolve) => {
+      chrome.storage.local.get(['ironGateApiKey_enc', FIRM_ID], (items) => resolve(items || {}));
+    });
+    if (existing.ironGateApiKey_enc && existing[FIRM_ID]) {
+      authLog('Managed auto-enroll skipped — already enrolled');
+      return false;
+    }
+
+    // Get or generate a device ID
+    const stored = await new Promise<Record<string, any>>((resolve) => {
+      chrome.storage.local.get([DEVICE_ID], (items) => resolve(items || {}));
+    });
+    let deviceId = stored[DEVICE_ID];
+    if (!deviceId) {
+      deviceId = crypto.randomUUID();
+      await chrome.storage.local.set({ [DEVICE_ID]: deviceId });
+    }
+
+    const apiUrl = config.apiUrl || DEFAULT_API_URL;
+
+    // Call registration endpoint
+    const res = await fetch(`${apiUrl}/auth/register-extension`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: '[managed]',
+        deviceId,
+        firmCode: config.enrollmentCode,
+      }),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({ error: 'Unknown error' }));
+      authLog('Managed auto-enroll failed:', res.status, errBody);
+      return false;
+    }
+
+    const data = await res.json();
+
+    // Save API key via the encrypted store
+    await saveApiKey(data.apiKey);
+
+    // Save firm info to local storage (same pattern as OnboardingOverlay)
+    await chrome.storage.local.set({
+      [FIRM_ID]: data.firmId,
+      [FIRM_CODE]: config.enrollmentCode,
+      [FIRM_NAME]: data.firmName,
+      connectionState: { connected: true, firmId: data.firmId, firmName: data.firmName },
+      apiBaseUrl: apiUrl,
+    });
+
+    authLog('Managed auto-enroll succeeded:', data.firmName);
+    return true;
+  } catch (err) {
+    authLog('Managed auto-enroll error:', err);
+    return false;
   }
 }

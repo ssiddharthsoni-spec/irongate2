@@ -43,6 +43,27 @@ function isStopwordFalsePositive(text: string, matchStart: number, matchText: st
   return false;
 }
 
+/**
+ * ABA routing number checksum validation.
+ * ABA routing numbers are 9 digits. The checksum is:
+ *   (3*d1 + 7*d2 + d3 + 3*d4 + 7*d5 + d6 + 3*d7 + 7*d8 + d9) mod 10 === 0
+ * Also, the leading two digits must be in 00-12, 21-32, 61-72, or 80
+ * (valid Federal Reserve routing symbols).
+ */
+function isValidABARouting(digits: string): boolean {
+  if (!/^\d{9}$/.test(digits)) return false;
+  const n = digits.split('').map(d => parseInt(d, 10));
+  const checksum = (3 * n[0] + 7 * n[1] + n[2] + 3 * n[3] + 7 * n[4] + n[5] + 3 * n[6] + 7 * n[7] + n[8]) % 10;
+  if (checksum !== 0) return false;
+  const prefix = parseInt(digits.substring(0, 2), 10);
+  const validPrefix =
+    (prefix >= 0 && prefix <= 12) ||
+    (prefix >= 21 && prefix <= 32) ||
+    (prefix >= 61 && prefix <= 72) ||
+    prefix === 80;
+  return validPrefix;
+}
+
 // ── M-14: Port numbers and version strings that trigger PHONE_NUMBER false positives ──
 const COMMON_PORT_NUMBERS = new Set([
   '80', '443', '3000', '3001', '3306', '4200', '4443', '5000', '5432', '5500',
@@ -191,7 +212,7 @@ const REGEX_PATTERNS: RegexPattern[] = [
   // Multi-word capitalized names with common org suffixes
   {
     type: 'ORGANIZATION',
-    pattern: /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Inc|Corp|Corporation|LLC|Ltd|LLP|Associates|Partners|Group|Foundation|Hospital|Center|Centre|University|College|Bank|Insurance|Industries|Enterprises|Holdings|Capital|Trust|Fund|Technologies|Tech|Solutions|Services|Consulting|Management|Investments|Advisors|Advisory|Labs|Laboratories|Media|Energy|Resources|Dynamics|Systems|International|Global|Worldwide|Agency|Commission|Authority|Bureau|Institute|Council|Society|Government|Aerospace|Aviation|Defense|Pharma|Pharmaceuticals|Mining|Logistics|Motors|Financial|Securities|Exchange|Telecom|Communications|Networks|Electric|Petroleum|Oil|Gas)\b\.?/g,
+    pattern: /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Inc|Corp|Corporation|LLC|Ltd|LLP|Associates|Partners|Group|Foundation|Hospital|Health|Healthcare|Medical|Clinic|Physicians|Pharmacy|Center|Centre|University|College|Bank|Insurance|Industries|Enterprises|Holdings|Capital|Trust|Fund|Technologies|Tech|Solutions|Services|Consulting|Management|Investments|Advisors|Advisory|Labs|Laboratories|Media|Energy|Resources|Dynamics|Systems|International|Global|Worldwide|Agency|Commission|Authority|Bureau|Institute|Council|Society|Government|Aerospace|Aviation|Defense|Pharma|Pharmaceuticals|Mining|Logistics|Motors|Financial|Securities|Exchange|Telecom|Communications|Networks|Electric|Petroleum|Oil|Gas)\b\.?/g,
     confidence: 0.8,
   },
   // Law firms: "Name & Name" or "Name, Name & Name" patterns
@@ -228,6 +249,14 @@ const REGEX_PATTERNS: RegexPattern[] = [
     confidence: 0.7,
     contextual: true,
   },
+  // Institutional names: 3+ capitalized words after "at/to/from" (Memorial Sloan Kettering,
+  // Mount Sinai Medical Center, Johns Hopkins University Hospital). 3+ words makes
+  // PERSON collision unlikely. Uses lookbehind so match[0] is just the org name.
+  {
+    type: 'ORGANIZATION',
+    pattern: /(?<=\b(?:at|to|from|with|by)\s+)[A-Z][a-z]+(?:\s+[A-Z][a-z]+){2,4}\b/g,
+    confidence: 0.7,
+  },
   // Known financial entity patterns: "Name + Capital/Partners/Asset Management"
   // Also handles single-word names before role descriptors
   {
@@ -240,9 +269,12 @@ const REGEX_PATTERNS: RegexPattern[] = [
   // Catches "Fabrikam deal", "Acme merger", "Northwind acquisition".
   // Lookahead ensures match[0] is just the org name (not "deal"/"merger"/etc.)
   // so pseudonymization replaces only the entity, not the surrounding text.
+  // NOTE: deliberately NO /i flag — org names must start with an uppercase
+  // letter. Case-insensitive matching caused false positives like
+  // "evaluating an" being classified as ORGANIZATION.
   {
     type: 'ORGANIZATION',
-    pattern: /\b[A-Z][a-z]{3,}(?:\s+[A-Z][a-z]+)?(?=\s+(?:deal|acquisition|merger|contract|partnership|engagement|lawsuit|expansion|valuation|buyout|takeover|divestiture|spin[\s-]?off|restructuring|bankruptcy|IPO|bid|tender|settlement|litigation|arbitration)\b)/gi,
+    pattern: /\b[A-Z][a-z]{3,}(?:\s+[A-Z][a-z]+)?(?=\s+(?:deal|acquisition|merger|contract|partnership|engagement|lawsuit|expansion|valuation|buyout|takeover|divestiture|spin[\s-]?off|restructuring|bankruptcy|IPO|bid|tender|settlement|litigation|arbitration)\b)/g,
     confidence: 0.7,
   },
   // Stock tickers: (TSX: THI), (NYSE: AAPL), NASDAQ: TSLA
@@ -448,6 +480,20 @@ const REGEX_PATTERNS: RegexPattern[] = [
     pattern: /\b\d{2}-\d{7}\b/g,
     confidence: 0.6,
   },
+  // ── Vehicle Identification Number (VIN) ──────────────────────────────
+  // 17-character alphanumeric, excluding I, O, Q.
+  // Must contain both letters and digits to distinguish from random 17-char strings.
+  {
+    type: 'VIN',
+    pattern: /\b(?=[A-HJ-NPR-Z0-9]{17}\b)[A-HJ-NPR-Z0-9]*[A-HJ-NPR-Z][A-HJ-NPR-Z0-9]*\d[A-HJ-NPR-Z0-9]*\b/g,
+    confidence: 0.85,
+  },
+  // VIN after contextual keyword: "VIN: 1HGBH41JXMN109186", "vehicle ID 1HG..."
+  {
+    type: 'VIN',
+    pattern: /(?<=(?:VIN|vehicle\s+(?:identification\s+number|ID|id)|chassis\s+(?:number|no\.?))\s*[:#]?\s*)[A-HJ-NPR-Z0-9]{17}\b/gi,
+    confidence: 0.95,
+  },
   // ── Passport Numbers (US format) ──────────────────────────────────────
   {
     type: 'PASSPORT_NUMBER',
@@ -485,6 +531,13 @@ const REGEX_PATTERNS: RegexPattern[] = [
     type: 'ROUTING_NUMBER',
     pattern: /\brouting\s*[:#]?\s*(\d{9})\b/gi,
     confidence: 0.7,
+  },
+  // Standalone 9-digit number that passes the ABA checksum.
+  // Validated post-match via isValidABARouting(); false positives are filtered.
+  {
+    type: 'ROUTING_NUMBER',
+    pattern: /\b\d{9}\b/g,
+    confidence: 0.75,
   },
   // ── Account Numbers ───────────────────────────────────────────────────
   {
@@ -685,8 +738,16 @@ const REGEX_PATTERNS: RegexPattern[] = [
   // Anthropic API Keys (M-15)
   {
     type: 'API_KEY',
-    pattern: /\bsk-ant-[A-Za-z0-9_-]{20,}/g,
+    pattern: /\bsk-ant-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])/g,
     confidence: 0.95,
+  },
+  // Generic OpenAI-style sk- keys, including prefixed variants like sk-proj-*, sk-svc-*.
+  // Allows hyphens/underscores inside the body so the pattern doesn't terminate
+  // at the hyphen after the "proj"/"svc" prefix segment.
+  {
+    type: 'API_KEY',
+    pattern: /\bsk-[A-Za-z0-9][A-Za-z0-9_-]{19,}(?![A-Za-z0-9_-])/g,
+    confidence: 0.9,
   },
   // HuggingFace API Tokens (M-15)
   {
@@ -922,6 +983,14 @@ function runRegexPatterns(text: string): DetectedEntity[] {
       // M-14: Suppress PHONE_NUMBER matches that are port numbers, version strings, or code patterns
       if (type === 'PHONE_NUMBER' && isCodeLikeFalsePositive(text, matchStart, matchText)) {
         continue;
+      }
+
+      // Standalone ROUTING_NUMBER candidates (bare 9-digit) must pass ABA checksum.
+      // Routing matches that had a contextual prefix keep capture group 1 as the digits;
+      // standalone matches are all 9 digits in match[0].
+      if (type === 'ROUTING_NUMBER') {
+        const digits = (match[1] ?? match[0]).replace(/\D/g, '');
+        if (digits.length === 9 && !isValidABARouting(digits)) continue;
       }
 
       const key = `${matchStart}-${matchEnd}-${type}`;

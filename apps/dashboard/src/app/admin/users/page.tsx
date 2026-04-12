@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useApiClient } from '@/lib/api';
+import { useToast } from '@/components/toast';
 import { EmptyState } from '@/components/EmptyState';
 
 interface User {
@@ -15,6 +16,7 @@ interface User {
 
 export default function UsersPage() {
   const { apiFetch } = useApiClient();
+  const { addToast } = useToast();
 
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -75,18 +77,23 @@ export default function UsersPage() {
           role: inviteRole,
         }),
       });
-      if (!res.ok) throw new Error(`Server responded with ${res.status}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Request failed' }));
+        const message = err.error || `Failed to invite user (${res.status})`;
+        setInviteMessage({ type: 'error', text: message });
+        addToast({ type: 'error', message });
+        return;
+      }
 
       setInviteMessage({ type: 'success', text: `Invitation sent to ${inviteEmail.trim()}.` });
+      addToast({ type: 'success', message: `Invitation sent to ${inviteEmail.trim()}.` });
       setInviteEmail('');
       setInviteRole('user');
       await fetchUsers();
     } catch (err: any) {
-      // Show the actual error — never silently pretend it worked
-      const message = err?.message?.includes('Server responded')
-        ? 'Failed to send invitation. Please check your connection and try again.'
-        : 'Failed to send invitation. Please try again.';
+      const message = 'Network error. Please try again.';
       setInviteMessage({ type: 'error', text: message });
+      addToast({ type: 'error', message });
     } finally {
       setInviting(false);
     }
@@ -106,13 +113,18 @@ export default function UsersPage() {
         method: 'PUT',
         body: JSON.stringify({ role: newRole }),
       });
-      if (!res.ok) throw new Error(`Server responded with ${res.status}`);
-    } catch {
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Request failed' }));
+        throw new Error(err.error || `Failed to update role (${res.status})`);
+      }
+    } catch (err: any) {
       // REVERT optimistic update — never silently pretend it worked
       if (previousUser) {
         setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, role: previousUser.role } : u)));
       }
-      setError(`Failed to update role for ${previousUser?.name || 'user'}. Please try again.`);
+      const message = err?.message || `Failed to update role for ${previousUser?.name || 'user'}. Please try again.`;
+      setError(message);
+      addToast({ type: 'error', message });
       // Auto-clear error after 5 seconds
       setTimeout(() => setError(null), 5000);
     } finally {

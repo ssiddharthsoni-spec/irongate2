@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import { useApiClient } from '@/lib/api';
 
 /* ------------------------------------------------------------------ */
@@ -304,6 +305,52 @@ function DailyTrendChart({ trend }: { trend: DailyTrendEntry[] }) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  CSV export                                                         */
+/* ------------------------------------------------------------------ */
+
+function exportCsv(report: ExposureReport) {
+  const lines: string[] = [];
+  lines.push('Iron Gate Exposure Report');
+  lines.push(`Report Date,${report.reportDate}`);
+  lines.push(`Period,${report.periodDays} days`);
+  lines.push('');
+  lines.push('Executive Summary');
+  lines.push('Metric,Value');
+  lines.push(`Total Interactions,${report.executiveSummary.totalInteractions}`);
+  lines.push(`Unique Users,${report.executiveSummary.uniqueUsers}`);
+  lines.push(`Avg Sensitivity Score,${report.executiveSummary.avgSensitivityScore}`);
+  lines.push(`High-Risk Interactions,${report.executiveSummary.highRiskInteractions}`);
+  lines.push(`Critical Interactions,${report.executiveSummary.criticalInteractions}`);
+  lines.push(`Max Score,${report.executiveSummary.maxSensitivityScore}`);
+  lines.push('');
+  lines.push('Score Distribution');
+  lines.push(`Low,${report.scoreDistribution.low}`);
+  lines.push(`Medium,${report.scoreDistribution.medium}`);
+  lines.push(`High,${report.scoreDistribution.high}`);
+  lines.push(`Critical,${report.scoreDistribution.critical}`);
+  lines.push('');
+  lines.push('AI Tool Breakdown');
+  lines.push('Tool,Count,Avg Score,High Risk');
+  for (const t of report.toolBreakdown) {
+    lines.push(`${t.toolId},${t.count},${t.avgScore},${t.highRiskCount}`);
+  }
+  lines.push('');
+  lines.push('Daily Trend');
+  lines.push('Date,Count,Avg Score');
+  for (const d of report.dailyTrend) {
+    lines.push(`${d.date},${d.count},${d.avgScore}`);
+  }
+  const csv = lines.join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'irongate-exposure-report.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ------------------------------------------------------------------ */
 /*  Page Component                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -369,6 +416,15 @@ export default function ExposureReportPage() {
 
   return (
     <div className="max-w-5xl mx-auto">
+      {/* ---- Breadcrumb ---- */}
+      <nav aria-label="Breadcrumb" className="mb-4 text-sm">
+        <ol className="flex items-center gap-1.5 text-[#6e6e73] dark:text-[#86868b]">
+          <li><Link href="/reports" className="hover:text-[#424245] dark:hover:text-[#d2d2d7] transition-colors">Reports</Link></li>
+          <li><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg></li>
+          <li className="font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">Exposure Report</li>
+        </ol>
+      </nav>
+
       {/* ---- Header ---- */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <div>
@@ -406,12 +462,15 @@ export default function ExposureReportPage() {
             Refresh
           </button>
 
-          {/* Export PDF */}
+          {/* Export CSV */}
           <button
-            onClick={() => alert('PDF export will be available in a future release.')}
-            className="px-4 py-2 bg-iron-600 text-white rounded-lg text-sm hover:bg-iron-700 transition-colors"
+            onClick={() => report && exportCsv(report)}
+            className="px-4 py-2 bg-iron-600 text-white rounded-lg text-sm hover:bg-iron-700 transition-colors flex items-center gap-2"
           >
-            Export PDF
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+            </svg>
+            Export CSV
           </button>
         </div>
       </div>

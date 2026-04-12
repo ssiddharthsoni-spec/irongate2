@@ -296,6 +296,23 @@ export const invites = pgTable('invites', {
   index('invites_token_idx').on(table.token),
 ]);
 
+// --- Enrollment Codes (Enterprise Deployment) ---
+export const enrollmentCodes = pgTable('enrollment_codes', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  code: varchar('code', { length: 12 }).unique().notNull(),
+  label: varchar('label', { length: 100 }),
+  maxUses: integer('max_uses'),  // NULL = unlimited
+  usedCount: integer('used_count').notNull().default(0),
+  expiresAt: timestamp('expires_at'),
+  revoked: boolean('revoked').notNull().default(false),
+  createdBy: uuid('created_by').notNull().references(() => users.id),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  index('enrollment_codes_firm_idx').on(table.firmId),
+  index('enrollment_codes_code_idx').on(table.code),
+]);
+
 // ============================================================================
 // Kill Switch
 // ============================================================================

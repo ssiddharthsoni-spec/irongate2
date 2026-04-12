@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useApiClient } from '../../../lib/api';
+import { useToast } from '@/components/toast';
 
 interface Plan {
   id: string;
@@ -51,6 +52,7 @@ const PLANS: Plan[] = [
 
 export default function BillingPage() {
   const { apiFetch } = useApiClient();
+  const { addToast } = useToast();
 
   const [currentPlan, setCurrentPlan] = useState('free');
   const [subscriptionStatus, setSubscriptionStatus] = useState<string>('active');
@@ -98,11 +100,15 @@ export default function BillingPage() {
       });
       if (!response.ok) throw new Error(`Server responded with ${response.status}`);
       const data = await response.json();
-      if (data.url || data.checkoutUrl) {
-        window.location.href = data.url || data.checkoutUrl;
+      const checkoutUrl = data.url || data.checkoutUrl;
+      if (!checkoutUrl) {
+        addToast({ type: 'error', message: 'Failed to initialize checkout. Please try again.' });
+        return;
       }
+      window.location.href = checkoutUrl;
     } catch (err) {
       setErrorMessage('Failed to start checkout. Please try again.');
+      addToast({ type: 'error', message: 'Failed to start checkout. Please try again.' });
       setTimeout(() => setErrorMessage(null), 5000);
     } finally {
       setUpgrading(null);
@@ -117,11 +123,15 @@ export default function BillingPage() {
       });
       if (!response.ok) throw new Error(`Server responded with ${response.status}`);
       const data = await response.json();
-      if (data.url || data.portalUrl) {
-        window.location.href = data.url || data.portalUrl;
+      const portalUrl = data.url || data.portalUrl;
+      if (!portalUrl) {
+        addToast({ type: 'error', message: 'Failed to open billing portal. Please try again.' });
+        return;
       }
+      window.location.href = portalUrl;
     } catch {
       setErrorMessage('Failed to open billing portal. Please try again.');
+      addToast({ type: 'error', message: 'Failed to open billing portal. Please try again.' });
       setTimeout(() => setErrorMessage(null), 5000);
     } finally {
       setManagingBilling(false);

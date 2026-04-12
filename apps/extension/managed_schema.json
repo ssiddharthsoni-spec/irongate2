@@ -82,6 +82,11 @@
       "description": "Internal customer identifier for audit log correlation. Stored locally only — never transmitted to IronGate servers.",
       "maxLength": 200
     },
+    "enrollmentCode": {
+      "title": "Enrollment Code",
+      "description": "Organization enrollment code for automatic firm enrollment. Set by IT admin from the IronGate dashboard. When present, the extension auto-enrolls without user interaction.",
+      "type": "string"
+    },
     "supportContact": {
       "type": "string",
       "title": "Internal IT support contact",

@@ -84,6 +84,10 @@ export interface ResolvedConfig {
    * Default: 100 (all tabs use server mode).
    */
   serverModePercent?: number;
+  /** Enrollment code from managed policy — triggers auto-enrollment when present */
+  enrollmentCode?: string;
+  /** IT support contact info displayed in managed mode */
+  supportContact?: string;
 }
 
 import { loadApiKey } from './api-key-store';
@@ -101,6 +105,7 @@ async function getManagedValues(): Promise<Record<string, any> | null> {
       'tier2Enabled', 'tier2Endpoint', 'tier2Model', 'tier2Protocol', 'tier2TimeoutMs',
       'tier25Enabled', 'tier3Enabled', 'tier3Endpoint', 'tier3TimeoutMs',
       'semanticEnabled', 'semanticCentroidsUrl', 'amberMinScore', 'redMinScore',
+      'enrollmentCode', 'supportContact',
     ]);
     if (!managed || Object.keys(managed).length === 0) return null;
     return managed;
@@ -204,7 +209,7 @@ export async function resolveConfig(): Promise<ResolvedConfig> {
 
   // H-10 FIX: Check if managed storage has ANY config, not just apiKey.
   // Empty string apiKey was a bypass vector — admin could deploy apiKey: "" to silently disable.
-  const isManagedMode = managed && (managed.apiKey != null || managed.firmMode || managed.firmId);
+  const isManagedMode = managed && (managed.apiKey != null || managed.firmMode || managed.firmId || managed.enrollmentCode);
   if (isManagedMode) {
     return {
       apiKey: safeApiKey(managed.apiKey, ''),
@@ -219,6 +224,8 @@ export async function resolveConfig(): Promise<ResolvedConfig> {
         : managed.processingMode === 'shadow' ? 'shadow' : 'local',
       serverModePercent: typeof managed.serverModePercent === 'number'
         ? Math.max(0, Math.min(100, managed.serverModePercent)) : 100,
+      enrollmentCode: safeStr(managed.enrollmentCode, '', MAX_NAME_LENGTH) || undefined,
+      supportContact: safeStr(managed.supportContact, '', MAX_NAME_LENGTH) || undefined,
     };
   }
 
@@ -243,7 +250,7 @@ export async function resolveConfig(): Promise<ResolvedConfig> {
  */
 export async function isManagedMode(): Promise<boolean> {
   const managed = await getManagedValues();
-  return !!(managed?.apiKey);
+  return !!(managed?.apiKey || managed?.enrollmentCode);
 }
 
 /**

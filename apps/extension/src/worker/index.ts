@@ -6,7 +6,7 @@
 import { analyzePrompt, sendProxiedPrompt, handleProxyFlow, analyzeFile } from './proxy-handler';
 import { eventQueue } from './queue';
 import { apiRequest, configureApiClient, getConfiguredApiKey, getConfiguredBaseUrl } from './api-client';
-import { initAuth, getFirmId, getUserId, getToken } from './auth';
+import { initAuth, getFirmId, getUserId, getToken, attemptManagedAutoEnroll } from './auth';
 import { detectWithRegex } from '../detection/fallback-regex';
 import { computeScore, scoreToLevel } from '../detection/scorer';
 import { pseudonymizeLocal } from '../detection/pseudonymizer';
@@ -371,7 +371,14 @@ initLocalLlmDeployment().then(async (cfg) => {
 });
 
 // ─── Startup: restore auth & wire API client ────────────────────────────────
-initAuth().then(() => {
+initAuth().then(async () => {
+  // Attempt managed auto-enrollment before configuring API client
+  // so that freshly enrolled credentials are available immediately.
+  try {
+    const enrolled = await attemptManagedAutoEnroll();
+    if (enrolled) igLog('Auto-enrolled from managed policy');
+  } catch { /* Never block startup */ }
+
   configureApiClient({
     firmId: getFirmId() || '',
     getToken,

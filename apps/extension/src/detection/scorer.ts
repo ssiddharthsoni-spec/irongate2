@@ -418,25 +418,50 @@ export function computeScore(
   // Floor 2: Critical contextual categories with high confidence.
   // Whistleblower + SEC, clinical trial + undisclosed, classified briefing —
   // these are existential risk regardless of PII presence.
+  //
+  // IMPORTANT: Business-category markers (ma_deal, financial_intel) only
+  // trigger the RED floor when a specific named party is also present.
+  // "Confidential: acquiring a competitor for $2B" (no names) is confidential
+  // strategy but shouldn't jump to critical red — that's AMBER. Contrast with
+  // "Confidential: acquiring Meridian Health for $2B" which correctly hits
+  // the floor via the ORG entity. Always-critical floors (classified briefing,
+  // whistleblower) still apply regardless of entities.
   const CRITICAL_CATEGORIES = new Set([
     'ma_deal', 'legal_strategy', 'financial_intel',
     'healthcare_phi', 'government_classified',
   ]);
+  const BUSINESS_ONLY_CATEGORIES = new Set([
+    'ma_deal', 'financial_intel',
+  ]);
+  const hasNamedParty = contextualEntities.some(e =>
+    e.type === 'PERSON' || e.type === 'ORGANIZATION'
+  );
   const criticalMarkers = contextualMarkers.filter(
     m => CRITICAL_CATEGORIES.has(m.category) && m.confidence >= CRITICAL_MARKER_CONFIDENCE
   );
-  if (criticalMarkers.length >= 2) {
+  const floorEligibleMarkers = criticalMarkers.filter(m =>
+    // Business-only categories need a named party present to hit the red floor.
+    // Non-business critical categories (legal_strategy, healthcare_phi,
+    // government_classified) still apply regardless.
+    !BUSINESS_ONLY_CATEGORIES.has(m.category) || hasNamedParty
+  );
+  if (floorEligibleMarkers.length >= 2) {
     criticalFloor = Math.max(criticalFloor, MULTI_CRITICAL_ENTITY_FLOOR);
-  } else if (criticalMarkers.length === 1 && criticalMarkers[0].weight >= 25) {
+  } else if (floorEligibleMarkers.length === 1 && floorEligibleMarkers[0].weight >= 25) {
     criticalFloor = Math.max(criticalFloor, SINGLE_CRITICAL_ENTITY_FLOOR);
   }
 
   // Floor 3: Multi-signal amplification — when BOTH PII entities AND contextual
   // markers are present across different risk domains, the combination is more
   // dangerous than either alone. (Person + Deal Codename + Financial Terms)
+  // The "entities" that count here are PII — a bare MONETARY_AMOUNT ($2B) is
+  // not PII and shouldn't be enough to push a nameless M&A prompt to red.
   const hasEntities = contextualEntities.length > 0;
   const hasContextual = contextualMarkers.length > 0;
-  if (hasEntities && hasContextual && contextualKeywordScore >= CONTEXTUAL_KEYWORD_MEDIUM_FLOOR_THRESHOLD) {
+  const hasPiiEntity = contextualEntities.some(e =>
+    e.type !== 'MONETARY_AMOUNT' && e.type !== 'PERCENTAGE' && e.type !== 'DATE'
+  );
+  if (hasPiiEntity && hasContextual && contextualKeywordScore >= CONTEXTUAL_KEYWORD_MEDIUM_FLOOR_THRESHOLD) {
     criticalFloor = Math.max(criticalFloor, SINGLE_CRITICAL_ENTITY_FLOOR);
   }
 
@@ -465,13 +490,54 @@ export function computeScore(
     return (Number.isFinite(value) && value >= 0) ? value : fallback;
   }
 
+  // ── Named-Party Cap on Business-Only Markers ─────────────────────────
+  // M&A / financial intel language WITHOUT a named party (person, org, or
+  // deal codename) is confidential business strategy but isn't the smoking-
+  // gun insider-trading risk that warrants a critical red flag. Cap the
+  // contextual keyword contribution so these prompts land in AMBER, not red.
+  // Real deals with specific targets ("acquiring Meridian Health for $2.8B")
+  // still hit the red zone via the critical floor (floor-eligible markers).
+  //
+  // Heuristic for "no named party": neither an extracted PERSON/ORG entity
+  // nor raw proper-noun density. Some known org names (Microsoft, Activision,
+  // Goldman Sachs) aren't caught by the multi-word ORG regex, so we also
+  // count capitalized tokens that look like proper nouns and fall back to
+  // the critical floor when the text reads like a real news-style deal.
+  const bizOnlyMarkers = contextualMarkers.filter(m =>
+    m.category === 'ma_deal' || m.category === 'financial_intel'
+  );
+  const hasDealCodename = contextualMarkers.some(m => m.sensitivityType === 'DEAL_CODENAME');
+  // Count capitalized proper-noun-like tokens (2+ letters, not at sentence
+  // start). Two or more such tokens in a deal-context prompt strongly
+  // implies specific named parties that our regex simply missed.
+  const properNounMatches = text.match(/(?<!^|\. |\.\s)\b[A-Z][a-z]{2,}\b/g) || [];
+  const COMMON_SENTENCE_WORDS = new Set([
+    'The','This','That','These','Those','According','Our','My','Their',
+    'We','You','They','He','She','It','A','An','I','Confidential','Privileged',
+    'Draft','Please','Help','What','When','Where','Why','How','Q1','Q2','Q3','Q4',
+  ]);
+  const properNounCount = properNounMatches.filter(w => !COMMON_SENTENCE_WORDS.has(w)).length;
+  const looksLikeNamedDeal = properNounCount >= 3;
+  const noNamedTarget = !hasNamedParty && !hasDealCodename && !looksLikeNamedDeal;
+  const bizOnlyDominant = bizOnlyMarkers.length > 0 &&
+    bizOnlyMarkers.length === contextualMarkers.length;
+  let effectiveContextualKeywordScore = contextualKeywordScore;
+  let bizOnlyAmberCap = false;
+  if (noNamedTarget && bizOnlyDominant) {
+    // Cap the base contextual keyword contribution so amplifiers can't
+    // saturate the score, and record the flag so we can cap the final rawScore
+    // at the amber upper bound below.
+    effectiveContextualKeywordScore = Math.min(contextualKeywordScore, 45);
+    bizOnlyAmberCap = true;
+  }
+
   // ── Multiplicative Scoring with Diminishing Returns (v2.1 — M-17) ─────
   // Pure multiplication of many factors can saturate to 100 too quickly or
   // produce unexpected jumps. Apply diminishing returns: collect all
   // amplifying factors (> 1.0), sort descending, and apply each with
   // decreasing weight. Suppressive factors (< 1.0) are applied directly
   // since they reduce the score (no saturation risk).
-  const baseScore = entityScore + volumeScore + contextScore + legalBoost + contextualKeywordScore + relationshipBoost + coOccurrenceBoost;
+  const baseScore = entityScore + volumeScore + contextScore + legalBoost + effectiveContextualKeywordScore + relationshipBoost + coOccurrenceBoost;
 
   const allMultipliers = [
     safeMultiplier(intentWeight),
@@ -547,8 +613,28 @@ export function computeScore(
     rawScore = CONTEXTUAL_KEYWORD_HIGH_FLOOR;
   }
 
-  // Apply critical floor — never let arithmetic under-rate existential risks
-  rawScore = Math.max(rawScore, criticalFloor);
+  // Apply critical floor — never let arithmetic under-rate existential risks.
+  // Strong-fiction framing ("Write a novel scene where...") is the one narrow
+  // exception: a fictional SSN in a clearly fictional passage shouldn't be
+  // forced into the red zone by the always-critical floor. The entities are
+  // still surfaced to the user in the side panel; only the score is relaxed.
+  if (!intentResult.isStrongFiction) {
+    rawScore = Math.max(rawScore, criticalFloor);
+  } else {
+    // Under strong fiction framing, cap at the green upper bound so the
+    // prompt lands in green zone (≤25). Users still see the detected
+    // entities in the side panel; only the score is relaxed.
+    rawScore = Math.min(rawScore, 25);
+  }
+
+  // Apply the biz-only amber cap AFTER floors. Business-conf prompts without
+  // a named target should not exceed the amber upper bound (60) even when
+  // amplifying multipliers push them higher. This is the architectural
+  // counterpart of the bizOnlyDominant check above: together they keep
+  // "Confidential: acquiring a competitor for $2B" in AMBER instead of red.
+  if (bizOnlyAmberCap) {
+    rawScore = Math.min(rawScore, 60);
+  }
 
   // Guard against NaN from multiplier chain — ALWAYS fail safe (high), never fail open (low)
   if (!Number.isFinite(rawScore)) {
