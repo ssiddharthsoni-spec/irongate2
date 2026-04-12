@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Claude (Mock) — IronGate Test</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, sans-serif; background: #f5f0e8; color: #1a1a1a; height: 100vh; display: flex; flex-direction: column; }
+  .header { padding: 12px 24px; background: #fff; border-bottom: 1px solid #e0d9d0; display: flex; align-items: center; gap: 12px; }
+  .header .logo { font-weight: 600; font-size: 16px; color: #c5401a; }
+  .badge { background: #c5401a; color: white; font-size: 11px; padding: 2px 8px; border-radius: 10px; }
+  .messages { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 20px; max-width: 760px; width: 100%; margin: 0 auto; }
+  .message.user .bubble { background: #fff; border: 1px solid #e0d9d0; border-radius: 16px; padding: 12px 16px; }
+  .message.assistant .bubble { padding: 4px 0; }
+  .assistant-label { font-size: 12px; color: #888; margin-bottom: 6px; font-weight: 500; }
+  .font-claude-message { line-height: 1.6; }
+  .input-area { padding: 16px 24px 28px; background: #fff; border-top: 1px solid #e0d9d0; }
+  .input-wrapper { max-width: 760px; margin: 0 auto; }
+  .prosemirror-wrapper { border: 1.5px solid #d0c8be; border-radius: 12px; background: #fff; padding: 12px 16px; min-height: 52px; position: relative; }
+  [contenteditable="true"].ProseMirror { outline: none; font-size: 15px; line-height: 1.5; min-height: 28px; color: #1a1a1a; }
+  [contenteditable="true"].ProseMirror:empty::before { content: attr(data-placeholder); color: #aaa; pointer-events: none; }
+  .button-row { display: flex; justify-content: flex-end; margin-top: 8px; }
+  button[aria-label="Send Message"] { background: #c5401a; color: white; border: none; border-radius: 8px; padding: 8px 20px; font-size: 14px; cursor: pointer; font-weight: 500; }
+  button[aria-label="Send Message"]:disabled { background: #d0c8be; cursor: not-allowed; }
+  .status-bar { text-align: center; font-size: 12px; color: #888; padding: 6px; background: #faf8f4; }
+  .intercepted-info { display: none; background: #fef8f0; border: 1px solid #c5401a; border-radius: 8px; padding: 10px 14px; margin: 8px 0; font-size: 12px; color: #c5401a; }
+  .intercepted-info.show { display: block; }
+  [data-is-streaming] { border-left: 3px solid #c5401a; padding-left: 12px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">Claude</div>
+  <div class="badge">MOCK — IronGate Test</div>
+</div>
+
+<div class="messages" id="messages">
+  <div class="message assistant">
+    <div class="assistant-label">Claude</div>
+    <div class="bubble">
+      <div class="font-claude-message">
+        Hello! I'm a mock Claude interface for IronGate testing. Send a message with PII to verify detection, pseudonymization, and response de-pseudonymization.
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="input-area">
+  <div class="intercepted-info" id="intercepted-info"></div>
+  <div class="input-wrapper">
+    <div class="prosemirror-wrapper">
+      <div
+        contenteditable="true"
+        class="ProseMirror"
+        data-placeholder="Message Claude..."
+        role="textbox"
+        aria-multiline="true"
+      ></div>
+    </div>
+    <div class="button-row">
+      <button aria-label="Send Message" id="send-btn">Send Message</button>
+    </div>
+  </div>
+</div>
+
+<div class="status-bar" id="status">IronGate extension active</div>
+
+<script>
+  const editor = document.querySelector('.ProseMirror');
+  const sendBtn = document.getElementById('send-btn');
+  const messages = document.getElementById('messages');
+  const statusBar = document.getElementById('status');
+  const interceptedInfo = document.getElementById('intercepted-info');
+
+  window.__IRONGATE_LAST_INTERCEPTED = null;
+  window.__IRONGATE_ORIGINAL_TEXT = null;
+
+  // Fake org/conversation IDs matching Claude.ai URL patterns
+  const ORG_ID = 'org-test-irongate';
+  const CONV_ID = 'conv-' + Date.now();
+
+  editor.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
+
+  sendBtn.addEventListener('click', sendMessage);
+
+  async function sendMessage() {
+    const text = editor.textContent.trim();
+    if (!text) return;
+
+    window.__IRONGATE_ORIGINAL_TEXT = text;
+    editor.textContent = '';
+    addMessage('user', text);
+    statusBar.textContent = 'Scanning...';
+    sendBtn.disabled = true;
+
+    try {
+      // This is the exact endpoint pattern Claude adapter targets
+      const response = await fetch(`/api/organizations/${ORG_ID}/chat_conversations/${CONV_ID}/completion`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: '',
+          timezone: 'America/New_York',
+          personalized_styles: [],
+          attachments: [],
+          files: [],
+          // The key field Claude adapter looks for:
+          text: text,
+          model: { id: 'claude-opus-4' },
+        }),
+      });
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      const assistantEl = addStreamingMessage();
+      let fullText = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const parsed = JSON.parse(line.slice(6));
+            const delta = parsed?.delta?.text;
+            if (delta) {
+              fullText += delta;
+              assistantEl.textContent = fullText;
+            }
+          } catch {}
+        }
+      }
+
+      // Remove streaming attribute when done
+      assistantEl.closest('[data-is-streaming]')?.removeAttribute('data-is-streaming');
+      statusBar.textContent = 'Response complete ✓';
+
+      // Check interception
+      const log = await fetch('/api/intercepted').then(r => r.json());
+      const last = log.filter(e => e.platform === 'claude').slice(-1)[0];
+      if (last) {
+        const sentText = last.payload.body;
+        window.__IRONGATE_LAST_INTERCEPTED = sentText;
+        if (sentText !== text) {
+          showInterceptedBadge(text, sentText);
+          statusBar.textContent = '🛡️ IronGate: PII pseudonymized before sending to Claude';
+        }
+      }
+
+    } catch (err) {
+      addMessage('assistant', `Error: ${err.message}`);
+    } finally {
+      sendBtn.disabled = false;
+    }
+  }
+
+  function addMessage(role, text) {
+    const div = document.createElement('div');
+    div.className = `message ${role}`;
+    if (role === 'assistant') {
+      div.innerHTML = `
+        <div class="assistant-label">Claude</div>
+        <div class="bubble">
+          <div class="font-claude-message">${text}</div>
+        </div>`;
+    } else {
+      div.innerHTML = `<div class="bubble">${text}</div>`;
+    }
+    messages.appendChild(div);
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  function addStreamingMessage() {
+    const div = document.createElement('div');
+    div.className = 'message assistant';
+    div.innerHTML = `
+      <div class="assistant-label">Claude</div>
+      <div class="bubble" data-is-streaming>
+        <div class="font-claude-message"></div>
+      </div>`;
+    messages.appendChild(div);
+    messages.scrollTop = messages.scrollHeight;
+    return div.querySelector('.font-claude-message');
+  }
+
+  function showInterceptedBadge(original, pseudonymized) {
+    interceptedInfo.className = 'intercepted-info show';
+    interceptedInfo.innerHTML = `
+      <strong>🛡️ IronGate pseudonymized this prompt</strong><br>
+      Original: <code>${original.slice(0, 120)}</code><br>
+      Sent to Claude: <code>${pseudonymized.slice(0, 120)}</code>
+    `;
+  }
+</script>
+</body>
+</html>

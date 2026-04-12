@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Gemini (Mock) — IronGate Test</title>
+<!-- Quill editor for accurate Gemini DOM replication -->
+<link href="https://cdn.quilljs.com/1.3.7/quill.snow.css" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Google Sans', sans-serif; background: #1e1e2e; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
+  .header { padding: 14px 24px; background: #131320; border-bottom: 1px solid #2a2a3e; display: flex; align-items: center; gap: 12px; }
+  .header .logo { font-weight: 600; font-size: 18px; background: linear-gradient(135deg, #4285f4, #ea4335); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .badge { background: #4285f4; color: white; font-size: 11px; padding: 2px 8px; border-radius: 10px; -webkit-text-fill-color: white; }
+  .messages { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+  .message.user .bubble { background: #2a2a3e; border-radius: 18px; padding: 12px 18px; max-width: 75%; align-self: flex-end; }
+  .response-container { padding: 4px 0; line-height: 1.6; }
+  .model-response { margin-bottom: 4px; }
+  .input-area { padding: 16px 24px 28px; background: #131320; border-top: 1px solid #2a2a3e; }
+  .input-wrapper { max-width: 800px; margin: 0 auto; background: #2a2a3e; border-radius: 24px; padding: 8px 12px 8px 20px; display: flex; align-items: flex-end; gap: 8px; }
+
+  /* Shadow DOM host for Gemini's rich-textarea */
+  rich-textarea { display: block; flex: 1; }
+
+  /* Quill editor — matches Gemini's .ql-editor selector */
+  .ql-container { border: none !important; font-family: inherit; }
+  .ql-toolbar { display: none; } /* Hide Quill toolbar */
+  .ql-editor { background: transparent; color: #e0e0e0; font-size: 15px; min-height: 28px; max-height: 160px; overflow-y: auto; padding: 4px 0; }
+  .ql-editor.ql-blank::before { color: #666; font-style: normal; }
+
+  button[aria-label="Send message"] { background: #4285f4; border: none; border-radius: 50%; width: 40px; height: 40px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  button[aria-label="Send message"]:disabled { background: #3a3a4e; cursor: not-allowed; }
+  .status-bar { text-align: center; font-size: 12px; color: #666; padding: 6px; background: #131320; }
+  .intercepted-info { display: none; background: #1a2a1e; border: 1px solid #4285f4; border-radius: 8px; padding: 10px 14px; margin: 8px 0; font-size: 12px; color: #6fa8f4; }
+  .intercepted-info.show { display: block; }
+  .warning-box { background: #2a1a1a; border: 1px solid #ea4335; border-radius: 8px; padding: 10px 14px; margin: 8px 0; font-size: 12px; color: #f4a06f; display: none; }
+  .warning-box.show { display: block; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">Gemini</div>
+  <div class="badge">MOCK — IronGate Test</div>
+</div>
+
+<div class="messages" id="messages">
+  <div class="message assistant">
+    <div class="model-response">
+      <div class="response-container">
+        Hello! I'm a mock Gemini interface. IronGate uses <strong>DOM pre-submit</strong> strategy for Gemini — it writes pseudonymized text directly into this Quill editor before you press send. Watch the editor text change when PII is detected.
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="input-area">
+  <div class="intercepted-info" id="intercepted-info"></div>
+  <div class="warning-box" id="warning-box">
+    ⚠️ <strong>Gemini XHR Bug:</strong> In server mode, IronGate's XHR proxy is skipped. This mock tests DOM pre-submit strategy instead.
+  </div>
+  <div class="input-wrapper">
+    <!-- Gemini uses Shadow DOM with rich-textarea containing .ql-editor -->
+    <rich-textarea id="rich-textarea-host">
+      <!-- IronGate's deepQuery() pierces shadow DOMs to find .ql-editor -->
+    </rich-textarea>
+    <button aria-label="Send message" id="send-btn">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+      </svg>
+    </button>
+  </div>
+</div>
+
+<div class="status-bar" id="status">IronGate active — using DOM pre-submit strategy for Gemini</div>
+
+<!-- Quill JS -->
+<script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
+<script>
+  window.__IRONGATE_ORIGINAL_TEXT = null;
+  window.__IRONGATE_LAST_INTERCEPTED = null;
+
+  // ── Build Shadow DOM with Quill editor (matching Gemini's real structure) ─
+  const richTextareaHost = document.getElementById('rich-textarea-host');
+  const shadow = richTextareaHost.attachShadow({ mode: 'open' });
+
+  shadow.innerHTML = `
+    <link href="https://cdn.quilljs.com/1.3.7/quill.snow.css" rel="stylesheet">
+    <style>
+      .ql-container { border: none !important; }
+      .ql-toolbar { display: none; }
+      .ql-editor { background: transparent; color: #e0e0e0; font-size: 15px; min-height: 28px; padding: 4px 0; }
+      .ql-editor.ql-blank::before { color: #666; font-style: normal; }
+    </style>
+    <div id="quill-container"></div>
+  `;
+
+  // Initialize Quill inside shadow DOM
+  const quill = new Quill(shadow.querySelector('#quill-container'), {
+    theme: 'snow',
+    placeholder: 'Ask Gemini...',
+    modules: { toolbar: false },
+  });
+
+  // The .ql-editor element is what IronGate's GeminiAdapter targets via deepQuery()
+  const qlEditor = shadow.querySelector('.ql-editor');
+
+  const sendBtn = document.getElementById('send-btn');
+  const messages = document.getElementById('messages');
+  const statusBar = document.getElementById('status');
+  const interceptedInfo = document.getElementById('intercepted-info');
+  const warningBox = document.getElementById('warning-box');
+
+  // Show XHR warning for context
+  warningBox.classList.add('show');
+
+  // ── Keyboard handling ─────────────────────────────────────────────────────
+  qlEditor.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
+  sendBtn.addEventListener('click', sendMessage);
+
+  async function sendMessage() {
+    // Read text from Quill editor (IronGate may have already rewritten it)
+    const currentText = quill.getText().trim();
+    if (!currentText) return;
+
+    // Store both original intent and what actually got submitted
+    if (!window.__IRONGATE_ORIGINAL_TEXT) {
+      window.__IRONGATE_ORIGINAL_TEXT = currentText;
+    }
+    window.__IRONGATE_LAST_INTERCEPTED = currentText;
+
+    // Check if IronGate rewrote the content
+    const originalText = window.__IRONGATE_ORIGINAL_TEXT;
+    const wasRewritten = currentText !== originalText;
+
+    sendBtn.disabled = true;
+    quill.setText('');
+    window.__IRONGATE_ORIGINAL_TEXT = null;
+
+    addMessage('user', originalText); // Show original to user
+
+    statusBar.textContent = wasRewritten
+      ? '🛡️ IronGate rewrote prompt before send'
+      : '✓ No PII detected — sending original';
+
+    // POST to our mock Gemini endpoint
+    try {
+      const response = await fetch('/gemini-submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: currentText, original: originalText }),
+      });
+
+      const data = await response.json();
+
+      // Response contains the pseudonymized text — IronGate should de-pseudonymize it
+      const responseText = data.response || data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      addGeminiResponse(responseText);
+
+      if (wasRewritten) {
+        showInterceptedBadge(originalText, currentText);
+      }
+
+    } catch (err) {
+      addGeminiResponse(`Error: ${err.message}`);
+    } finally {
+      sendBtn.disabled = false;
+    }
+  }
+
+  // ── Capture input BEFORE IronGate rewrites it ─────────────────────────────
+  // IronGate's DOM pre-submit fires on keydown/submit — intercept the original first
+  qlEditor.addEventListener('input', () => {
+    const text = quill.getText().trim();
+    if (text && !window.__IRONGATE_ORIGINAL_TEXT) {
+      window.__IRONGATE_ORIGINAL_TEXT = text;
+    }
+  });
+
+  function addMessage(role, text) {
+    const div = document.createElement('div');
+    div.className = `message ${role}`;
+    div.innerHTML = `<div class="bubble">${text}</div>`;
+    messages.appendChild(div);
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  function addGeminiResponse(text) {
+    const div = document.createElement('div');
+    div.className = 'message assistant';
+    div.innerHTML = `
+      <div class="model-response">
+        <div class="response-container">${text}</div>
+      </div>`;
+    messages.appendChild(div);
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  function showInterceptedBadge(original, pseudonymized) {
+    interceptedInfo.className = 'intercepted-info show';
+    interceptedInfo.innerHTML = `
+      <strong>🛡️ IronGate DOM pre-submit rewrote prompt</strong><br>
+      Original in editor: <code>${original.slice(0, 120)}</code><br>
+      Submitted to Gemini: <code>${pseudonymized.slice(0, 120)}</code>
+    `;
+  }
+</script>
+</body>
+</html>

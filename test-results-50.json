@@ -1,0 +1,1624 @@
+[
+  {
+    "scenario": {
+      "id": 1,
+      "category": "TRUE_NEGATIVE",
+      "description": "Simple coding question",
+      "prompt": "How do I reverse a string in Python?",
+      "expectedVerdict": "ALLOW",
+      "expectedZone": "green"
+    },
+    "score": 0,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "passthrough",
+    "pass": true,
+    "explanation": "No sensitive information detected.",
+    "latencyMs": 31.340913999999998
+  },
+  {
+    "scenario": {
+      "id": 2,
+      "category": "TRUE_NEGATIVE",
+      "description": "Horoscope with DOB",
+      "prompt": "My birthday is March 15, 1990. What is my horoscope sign and what does this week look like for me?",
+      "expectedVerdict": "ALLOW",
+      "expectedZone": "green"
+    },
+    "score": 0,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [
+      {
+        "type": "DATE",
+        "text": "March 15, 1990",
+        "confidence": 0.65
+      }
+    ],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": true,
+    "executiveLens": "pseudonymize",
+    "pass": true,
+    "explanation": "Detected 1 date.",
+    "latencyMs": 11.532249000000007
+  },
+  {
+    "scenario": {
+      "id": 3,
+      "category": "TRUE_NEGATIVE",
+      "description": "Public company research",
+      "prompt": "Give me competitors for Salesforce in the CRM space. What are their market caps?",
+      "expectedVerdict": "ALLOW",
+      "expectedZone": "green"
+    },
+    "score": 0,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "passthrough",
+    "pass": true,
+    "explanation": "No sensitive information detected.",
+    "latencyMs": 0.2627909999999929
+  },
+  {
+    "scenario": {
+      "id": 4,
+      "category": "TRUE_NEGATIVE",
+      "description": "Generic writing help",
+      "prompt": "Help me write a professional email declining a meeting invitation politely.",
+      "expectedVerdict": "ALLOW",
+      "expectedZone": "green"
+    },
+    "score": 0,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "passthrough",
+    "pass": true,
+    "explanation": "No sensitive information detected.",
+    "latencyMs": 0.39983399999999847
+  },
+  {
+    "scenario": {
+      "id": 5,
+      "category": "TRUE_NEGATIVE",
+      "description": "Recipe question",
+      "prompt": "What is a good recipe for chocolate chip cookies that takes less than 30 minutes?",
+      "expectedVerdict": "ALLOW",
+      "expectedZone": "green"
+    },
+    "score": 0,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "passthrough",
+    "pass": true,
+    "explanation": "No sensitive information detected.",
+    "latencyMs": 0.2819159999999954
+  },
+  {
+    "scenario": {
+      "id": 6,
+      "category": "TRUE_NEGATIVE",
+      "description": "Travel planning",
+      "prompt": "I am planning a trip to Tokyo in April. What are the best neighborhoods to stay in and what should I see?",
+      "expectedVerdict": "ALLOW",
+      "expectedZone": "green"
+    },
+    "score": 0,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "passthrough",
+    "pass": true,
+    "explanation": "No sensitive information detected.",
+    "latencyMs": 0.24970799999999826
+  },
+  {
+    "scenario": {
+      "id": 7,
+      "category": "TRUE_NEGATIVE",
+      "description": "Generic code review",
+      "prompt": "Review this React component for performance issues:\n\nfunction UserList({ users }) {\n  return users.map(u => <div key={u.id}>{u.name}</div>);\n}",
+      "expectedVerdict": "ALLOW",
+      "expectedZone": "green"
+    },
+    "score": 2,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [
+      {
+        "type": "ORGANIZATION",
+        "text": "UserList",
+        "confidence": 0.6
+      }
+    ],
+    "documentType": "code_snippet",
+    "documentMultiplier": 0.8,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": true,
+    "explanation": "Detected 1 organization.",
+    "latencyMs": 0.7361669999999947
+  },
+  {
+    "scenario": {
+      "id": 8,
+      "category": "TRUE_NEGATIVE",
+      "description": "Public figure question",
+      "prompt": "Who is the CEO of Apple and what is their background?",
+      "expectedVerdict": "ALLOW",
+      "expectedZone": "green"
+    },
+    "score": 0,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [
+      {
+        "type": "PERSON",
+        "text": "Apple",
+        "confidence": 0.85
+      }
+    ],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": true,
+    "executiveLens": "pseudonymize",
+    "pass": true,
+    "explanation": "Detected 1 person.",
+    "latencyMs": 0.42429100000001085
+  },
+  {
+    "scenario": {
+      "id": 9,
+      "category": "TRUE_NEGATIVE",
+      "description": "Self-introduction draft",
+      "prompt": "Help me write a short bio for myself. I am a software engineer with 5 years of experience in React and Node.js.",
+      "expectedVerdict": "ALLOW",
+      "expectedZone": "green"
+    },
+    "score": 0,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [],
+    "documentType": "code_snippet",
+    "documentMultiplier": 0.8,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "passthrough",
+    "pass": true,
+    "explanation": "No sensitive information detected.",
+    "latencyMs": 0.35604199999997377
+  },
+  {
+    "scenario": {
+      "id": 10,
+      "category": "TRUE_NEGATIVE",
+      "description": "Generic summarization",
+      "prompt": "Summarize the key differences between REST APIs and GraphQL. When should I use each?",
+      "expectedVerdict": "ALLOW",
+      "expectedZone": "green"
+    },
+    "score": 0,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "passthrough",
+    "pass": true,
+    "explanation": "No sensitive information detected.",
+    "latencyMs": 0.18916600000000017
+  },
+  {
+    "scenario": {
+      "id": 11,
+      "category": "TRUE_NEGATIVE",
+      "description": "Weather question",
+      "prompt": "What is the weather forecast for New York City this weekend?",
+      "expectedVerdict": "ALLOW",
+      "expectedZone": "green"
+    },
+    "score": 0,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "passthrough",
+    "pass": true,
+    "explanation": "No sensitive information detected.",
+    "latencyMs": 0.15724999999997635
+  },
+  {
+    "scenario": {
+      "id": 12,
+      "category": "TRUE_NEGATIVE",
+      "description": "Definition query",
+      "prompt": "What is the difference between machine learning and deep learning?",
+      "expectedVerdict": "ALLOW",
+      "expectedZone": "green"
+    },
+    "score": 0,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "passthrough",
+    "pass": true,
+    "explanation": "No sensitive information detected.",
+    "latencyMs": 0.15816699999999173
+  },
+  {
+    "scenario": {
+      "id": 13,
+      "category": "TRUE_NEGATIVE",
+      "description": "Creative writing",
+      "prompt": "Write me a haiku about a sunset over the ocean.",
+      "expectedVerdict": "ALLOW",
+      "expectedZone": "green"
+    },
+    "score": 0,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "passthrough",
+    "pass": true,
+    "explanation": "No sensitive information detected.",
+    "latencyMs": 0.1311669999999765
+  },
+  {
+    "scenario": {
+      "id": 14,
+      "category": "TRUE_NEGATIVE",
+      "description": "How-to question",
+      "prompt": "How do I set up a CI/CD pipeline with GitHub Actions for a Node.js project?",
+      "expectedVerdict": "ALLOW",
+      "expectedZone": "green"
+    },
+    "score": 2,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [
+      {
+        "type": "PERSON",
+        "text": "Hub Actions",
+        "confidence": 0.65
+      }
+    ],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": true,
+    "explanation": "Detected 1 person.",
+    "latencyMs": 0.2562910000000045
+  },
+  {
+    "scenario": {
+      "id": 15,
+      "category": "TRUE_NEGATIVE",
+      "description": "Public financial data",
+      "prompt": "What was Apple's revenue last quarter? How does it compare to Microsoft?",
+      "expectedVerdict": "ALLOW",
+      "expectedZone": "green"
+    },
+    "score": 0,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": true,
+    "explanation": "No sensitive information detected.",
+    "latencyMs": 0.16029199999999832
+  },
+  {
+    "scenario": {
+      "id": 16,
+      "category": "TRUE_NEGATIVE",
+      "description": "Job posting / public content",
+      "prompt": "Help me write a job posting for a Senior Software Engineer position. Requirements: 5+ years experience, React, TypeScript, AWS.",
+      "expectedVerdict": "ALLOW",
+      "expectedZone": "green"
+    },
+    "score": 4,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [
+      {
+        "type": "ORGANIZATION",
+        "text": "TypeScript",
+        "confidence": 0.6
+      }
+    ],
+    "documentType": "code_snippet",
+    "documentMultiplier": 0.8,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": true,
+    "explanation": "Detected 1 organization.",
+    "latencyMs": 0.2545419999999865
+  },
+  {
+    "scenario": {
+      "id": 17,
+      "category": "TRUE_POSITIVE",
+      "description": "SSN in text",
+      "prompt": "Can you verify this SSN for me: 123-45-6789? I need to check if it is valid.",
+      "expectedVerdict": "BLOCK",
+      "expectedZone": "red"
+    },
+    "score": 61,
+    "level": "high",
+    "zone": "red",
+    "actualVerdict": "BLOCK",
+    "entities": [
+      {
+        "type": "SSN",
+        "text": "123-45-6789",
+        "confidence": 0.95
+      }
+    ],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": true,
+    "explanation": "Detected 1 ssn.",
+    "latencyMs": 0.26895800000002623
+  },
+  {
+    "scenario": {
+      "id": 18,
+      "category": "TRUE_POSITIVE",
+      "description": "Credit card number",
+      "prompt": "My credit card number is 4532-1234-5678-9012 and it expires 12/25. Can you help me format this for a form?",
+      "expectedVerdict": "BLOCK",
+      "expectedZone": "red"
+    },
+    "score": 61,
+    "level": "high",
+    "zone": "red",
+    "actualVerdict": "BLOCK",
+    "entities": [
+      {
+        "type": "CREDIT_CARD",
+        "text": "4532-1234-5678-9012",
+        "confidence": 0.85
+      }
+    ],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": true,
+    "explanation": "Detected 1 credit card.",
+    "latencyMs": 0.6014169999999979
+  },
+  {
+    "scenario": {
+      "id": 19,
+      "category": "TRUE_POSITIVE",
+      "description": "AWS credentials",
+      "prompt": "I am getting an error with my AWS config. Here are my credentials:\nAKIAIOSFODNN7EXAMPLE\nwJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\nCan you help debug?",
+      "expectedVerdict": "BLOCK",
+      "expectedZone": "red"
+    },
+    "score": 61,
+    "level": "high",
+    "zone": "red",
+    "actualVerdict": "BLOCK",
+    "entities": [
+      {
+        "type": "AWS_CREDENTIAL",
+        "text": "AKIAIOSFODNN7EXAMPLE",
+        "confidence": 0.95
+      }
+    ],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": true,
+    "explanation": "Detected 1 aws credential.",
+    "latencyMs": 0.27941699999999514
+  },
+  {
+    "scenario": {
+      "id": 20,
+      "category": "TRUE_POSITIVE",
+      "description": "M&A deal with financials",
+      "prompt": "STRICTLY CONFIDENTIAL: Sullivan & Cromwell is advising on Project Evergreen. Apex Capital is acquiring Meridian Technologies at $47/share, representing a 30% premium to Friday's close. Expected close Q3. Total deal value $2.8B. Do not share externally.",
+      "expectedVerdict": "BLOCK",
+      "expectedZone": "red"
+    },
+    "score": 100,
+    "level": "critical",
+    "zone": "red",
+    "actualVerdict": "BLOCK",
+    "entities": [
+      {
+        "type": "ORGANIZATION",
+        "text": "Sullivan & Cromwell",
+        "confidence": 0.75
+      },
+      {
+        "type": "ORGANIZATION",
+        "text": "Apex Capital",
+        "confidence": 0.8
+      },
+      {
+        "type": "ORGANIZATION",
+        "text": "Meridian Technologies",
+        "confidence": 0.8
+      },
+      {
+        "type": "MONETARY_AMOUNT",
+        "text": "$47",
+        "confidence": 0.85
+      },
+      {
+        "type": "PERCENTAGE",
+        "text": "30% premium",
+        "confidence": 0.75
+      },
+      {
+        "type": "MONETARY_AMOUNT",
+        "text": "$2",
+        "confidence": 0.85
+      }
+    ],
+    "documentType": "financial_data",
+    "documentMultiplier": 1.8,
+    "contextualKeywords": [
+      {
+        "category": "ma_deal",
+        "weight": 30
+      },
+      {
+        "category": "ma_deal",
+        "weight": 25
+      },
+      {
+        "category": "corporate_governance",
+        "weight": 20
+      }
+    ],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": true,
+    "explanation": "Detected 3 organizations, 2 monetary amounts, 1 percentage. Classified as financial data. Contains M&A/deal intelligence, corporate governance action.",
+    "latencyMs": 1.3174999999999955
+  },
+  {
+    "scenario": {
+      "id": 21,
+      "category": "TRUE_POSITIVE",
+      "description": "Patient medical record (HIPAA)",
+      "prompt": "Patient: John Smith, DOB 03/15/1985, MRN: 4827391. Diagnosis: Type 2 Diabetes with complications. Current medications: Metformin 1000mg, Lisinopril 20mg. A1C level 8.2%. Please summarize this for the care team.",
+      "expectedVerdict": "BLOCK",
+      "expectedZone": "red"
+    },
+    "score": 100,
+    "level": "critical",
+    "zone": "red",
+    "actualVerdict": "BLOCK",
+    "entities": [
+      {
+        "type": "PERSON",
+        "text": "John Smith",
+        "confidence": 0.85
+      },
+      {
+        "type": "DATE",
+        "text": "03/15/1985",
+        "confidence": 0.7
+      },
+      {
+        "type": "MEDICAL_RECORD",
+        "text": "MRN: 4827391",
+        "confidence": 0.85
+      }
+    ],
+    "documentType": "medical_record",
+    "documentMultiplier": 2,
+    "contextualKeywords": [
+      {
+        "category": "healthcare_phi",
+        "weight": 25
+      }
+    ],
+    "intentSuppressed": false,
+    "executiveLens": "private_llm",
+    "pass": true,
+    "explanation": "Detected 1 person, 1 date, 1 medical record. Classified as medical record (HIPAA). Contains protected health information context.",
+    "latencyMs": 0.7152499999999975
+  },
+  {
+    "scenario": {
+      "id": 22,
+      "category": "TRUE_POSITIVE",
+      "description": "Private key",
+      "prompt": "Can you check if this RSA key format is correct?\n-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0Z3VS5JJcds3xfn/yGEuMEmS1Hzz\nQgy5xGEuNmXQJCAr7XMW\n-----END RSA PRIVATE KEY-----",
+      "expectedVerdict": "BLOCK",
+      "expectedZone": "red"
+    },
+    "score": 61,
+    "level": "high",
+    "zone": "red",
+    "actualVerdict": "BLOCK",
+    "entities": [
+      {
+        "type": "GCP_CREDENTIAL",
+        "text": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIB",
+        "confidence": 0.95
+      }
+    ],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": true,
+    "explanation": "Detected 1 gcp credential.",
+    "latencyMs": 0.3101249999999993
+  },
+  {
+    "scenario": {
+      "id": 23,
+      "category": "TRUE_POSITIVE",
+      "description": "Attorney-client privileged communication",
+      "prompt": "ATTORNEY-CLIENT PRIVILEGED AND CONFIDENTIAL\n\nFrom: Sarah Chen, General Counsel\nTo: Board of Directors\n\nRe: Potential SEC Investigation\n\nThe SEC has issued a subpoena regarding our Q2 revenue recognition practices. Our outside counsel at Davis Polk recommends we preserve all documents related to the Meridian contract. James Rodriguez in sales may have made representations that conflict with our filed disclosures.",
+      "expectedVerdict": "BLOCK",
+      "expectedZone": "red"
+    },
+    "score": 100,
+    "level": "critical",
+    "zone": "red",
+    "actualVerdict": "BLOCK",
+    "entities": [
+      {
+        "type": "ORGANIZATION",
+        "text": "From",
+        "confidence": 0.75
+      },
+      {
+        "type": "PERSON",
+        "text": "Davis",
+        "confidence": 0.85
+      },
+      {
+        "type": "ORGANIZATION",
+        "text": "Meridian",
+        "confidence": 0.7
+      }
+    ],
+    "documentType": "financial_data",
+    "documentMultiplier": 1.8,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": true,
+    "explanation": "Detected 2 organizations, 1 person. Contains privilege markers. Classified as financial data.",
+    "latencyMs": 1.023416999999995
+  },
+  {
+    "scenario": {
+      "id": 24,
+      "category": "TRUE_POSITIVE",
+      "description": "Database connection string",
+      "prompt": "Our production database is down. Here is the connection string: postgresql://admin:S3cretP@ss!@prod-db.us-east-1.rds.amazonaws.com:5432/irongate_prod. Can you help me write a query to check the health?",
+      "expectedVerdict": "BLOCK",
+      "expectedZone": "red"
+    },
+    "score": 61,
+    "level": "high",
+    "zone": "red",
+    "actualVerdict": "BLOCK",
+    "entities": [
+      {
+        "type": "DATABASE_URI",
+        "text": "postgresql://admin:S3cretP@ss!@prod-db.u",
+        "confidence": 0.9
+      }
+    ],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [
+      {
+        "category": "tech_security",
+        "weight": 15
+      }
+    ],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": true,
+    "explanation": "Detected 1 database uri. Contains security/infrastructure details.",
+    "latencyMs": 0.40004099999998743
+  },
+  {
+    "scenario": {
+      "id": 25,
+      "category": "TRUE_POSITIVE",
+      "description": "Multiple SSNs (bulk PII)",
+      "prompt": "I need to format these employee records:\nJohn Smith - SSN: 123-45-6789\nJane Doe - SSN: 987-65-4321\nBob Wilson - SSN: 456-78-9012\nAlice Johnson - SSN: 321-54-9876",
+      "expectedVerdict": "BLOCK",
+      "expectedZone": "red"
+    },
+    "score": 86,
+    "level": "critical",
+    "zone": "red",
+    "actualVerdict": "BLOCK",
+    "entities": [
+      {
+        "type": "SSN",
+        "text": "123-45-6789",
+        "confidence": 0.95
+      },
+      {
+        "type": "SSN",
+        "text": "987-65-4321",
+        "confidence": 0.95
+      },
+      {
+        "type": "SSN",
+        "text": "456-78-9012",
+        "confidence": 0.95
+      },
+      {
+        "type": "SSN",
+        "text": "321-54-9876",
+        "confidence": 0.95
+      }
+    ],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": true,
+    "explanation": "Detected 4 ssns.",
+    "latencyMs": 0.3210420000000056
+  },
+  {
+    "scenario": {
+      "id": 26,
+      "category": "TRUE_POSITIVE",
+      "description": "IPO pricing (MNPI)",
+      "prompt": "NovaTech Inc IPO: Books are 8.2x oversubscribed at the midpoint of $28-$32. Fidelity wants 15% of the deal, BlackRock is in for 12%. We are recommending pricing at $34, above range. Greenshoe is 4.5M shares. Morgan Stanley and Goldman Sachs co-leading. Not yet public.",
+      "expectedVerdict": "BLOCK",
+      "expectedZone": "red"
+    },
+    "score": 100,
+    "level": "critical",
+    "zone": "red",
+    "actualVerdict": "BLOCK",
+    "entities": [
+      {
+        "type": "ORGANIZATION",
+        "text": "NovaTech",
+        "confidence": 0.6
+      },
+      {
+        "type": "MONETARY_AMOUNT",
+        "text": "$28",
+        "confidence": 0.85
+      },
+      {
+        "type": "MONETARY_AMOUNT",
+        "text": "$32",
+        "confidence": 0.85
+      },
+      {
+        "type": "ORGANIZATION",
+        "text": "BlackRock",
+        "confidence": 0.6
+      },
+      {
+        "type": "MONETARY_AMOUNT",
+        "text": "$34",
+        "confidence": 0.85
+      }
+    ],
+    "documentType": "code_snippet",
+    "documentMultiplier": 0.8,
+    "contextualKeywords": [
+      {
+        "category": "ma_deal",
+        "weight": 25
+      },
+      {
+        "category": "corporate_governance",
+        "weight": 20
+      }
+    ],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": true,
+    "explanation": "Detected 3 monetary amounts, 2 organizations. Contains M&A/deal intelligence, corporate governance action.",
+    "latencyMs": 0.4391250000000184
+  },
+  {
+    "scenario": {
+      "id": 27,
+      "category": "TRUE_POSITIVE",
+      "description": "Employee termination plan",
+      "prompt": "CONFIDENTIAL - DO NOT DISTRIBUTE: We are planning to lay off 2,200 employees (30% of workforce) across all divisions of Consolidated Pacific Industries. The restructuring charge will be approximately $180M. Announcement date is set for March 15. CEO Robert Chen and CFO Maria Santos have approved. Severance packages: VP+ gets 12 months, Director 9 months, Manager 6 months.",
+      "expectedVerdict": "BLOCK",
+      "expectedZone": "red"
+    },
+    "score": 97,
+    "level": "critical",
+    "zone": "red",
+    "actualVerdict": "BLOCK",
+    "entities": [
+      {
+        "type": "ORGANIZATION",
+        "text": "Consolidated Pacific Industries.",
+        "confidence": 0.8
+      },
+      {
+        "type": "MONETARY_AMOUNT",
+        "text": "$180M",
+        "confidence": 0.85
+      },
+      {
+        "type": "PERSON",
+        "text": "Robert Chen",
+        "confidence": 0.85
+      },
+      {
+        "type": "PERSON",
+        "text": "Maria Santos",
+        "confidence": 0.85
+      }
+    ],
+    "documentType": "financial_data",
+    "documentMultiplier": 1.8,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "private_llm",
+    "pass": true,
+    "explanation": "Detected 2 persons, 1 organization, 1 monetary amount. Classified as financial data.",
+    "latencyMs": 0.6322089999999889
+  },
+  {
+    "scenario": {
+      "id": 28,
+      "category": "TRUE_POSITIVE",
+      "description": "Insurance claims with reserves (IBNR)",
+      "prompt": "Q4 Claims Reserve Summary for the board: IBNR stands at $340M, up 15% from Q3. Hurricane exposure: gross $890M, net of reinsurance $210M. The catastrophe model shows a probable maximum loss of $1.2B for a 1-in-100 year event. Recommend increasing reserves by $45M before the rating agency meeting with AM Best next week.",
+      "expectedVerdict": "BLOCK",
+      "expectedZone": "red"
+    },
+    "score": 100,
+    "level": "critical",
+    "zone": "red",
+    "actualVerdict": "BLOCK",
+    "entities": [
+      {
+        "type": "MONETARY_AMOUNT",
+        "text": "$340M",
+        "confidence": 0.85
+      },
+      {
+        "type": "MONETARY_AMOUNT",
+        "text": "$890M",
+        "confidence": 0.85
+      },
+      {
+        "type": "MONETARY_AMOUNT",
+        "text": "$210M",
+        "confidence": 0.85
+      },
+      {
+        "type": "MONETARY_AMOUNT",
+        "text": "$1",
+        "confidence": 0.85
+      },
+      {
+        "type": "MONETARY_AMOUNT",
+        "text": "$45M",
+        "confidence": 0.85
+      },
+      {
+        "type": "ORGANIZATION",
+        "text": "Best",
+        "confidence": 0.7
+      }
+    ],
+    "documentType": "insurance_doc",
+    "documentMultiplier": 1.8,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "private_llm",
+    "pass": true,
+    "explanation": "Detected 5 monetary amounts, 1 organization. Classified as insurance/actuarial document.",
+    "latencyMs": 0.8385420000000181
+  },
+  {
+    "scenario": {
+      "id": 29,
+      "category": "TRUE_POSITIVE",
+      "description": "Government classified marking",
+      "prompt": "TOP SECRET//SCI//NOFORN\n\nIntelligence Assessment: Region 7 Operations\n\nAsset CARDINAL reports increased activity at the northern facility. Satellite imagery from NRO confirms construction of new infrastructure consistent with previous assessments.",
+      "expectedVerdict": "BLOCK",
+      "expectedZone": "red"
+    },
+    "score": 76,
+    "level": "high",
+    "zone": "red",
+    "actualVerdict": "BLOCK",
+    "entities": [
+      {
+        "type": "CLASSIFICATION_MARKING",
+        "text": "TOP SECRET//SCI//NOFORN",
+        "confidence": 0.95
+      }
+    ],
+    "documentType": "government_doc",
+    "documentMultiplier": 2,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": true,
+    "explanation": "Detected 1 classification marking. Classified as government/classified document.",
+    "latencyMs": 0.4162500000000193
+  },
+  {
+    "scenario": {
+      "id": 30,
+      "category": "TRUE_POSITIVE",
+      "description": "Passport number",
+      "prompt": "I need to fill out a visa application for our employee. Name: Michael Torres, Passport: US E12345678, DOB: 07/22/1988, Nationality: American. Can you format this for the embassy form?",
+      "expectedVerdict": "BLOCK",
+      "expectedZone": "red"
+    },
+    "score": 61,
+    "level": "high",
+    "zone": "red",
+    "actualVerdict": "BLOCK",
+    "entities": [
+      {
+        "type": "PASSPORT_NUMBER",
+        "text": "E12345678",
+        "confidence": 0.6
+      },
+      {
+        "type": "DATE",
+        "text": "07/22/1988",
+        "confidence": 0.7
+      }
+    ],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": true,
+    "explanation": "Detected 1 passport number, 1 date.",
+    "latencyMs": 0.278082999999981
+  },
+  {
+    "scenario": {
+      "id": 31,
+      "category": "TRUE_POSITIVE",
+      "description": "Board minutes with exec comp",
+      "prompt": "BOARD OF DIRECTORS MEETING MINUTES - CONFIDENTIAL\n\nAttendees: Robert Chen (CEO), Maria Santos (CFO), James Wilson (COO), Lisa Park (GC)\n\nResolution 2024-03: Approved CEO compensation package: Base $1.2M, bonus target 150%, equity grant 500,000 RSUs vesting over 4 years. CFO compensation: Base $850K, bonus target 125%.\n\nResolution 2024-04: Authorized share repurchase of up to $500M over 12 months. Not yet disclosed to market.",
+      "expectedVerdict": "BLOCK",
+      "expectedZone": "red"
+    },
+    "score": 100,
+    "level": "critical",
+    "zone": "red",
+    "actualVerdict": "BLOCK",
+    "entities": [
+      {
+        "type": "PERSON",
+        "text": "Robert Chen ",
+        "confidence": 0.8
+      },
+      {
+        "type": "PERSON",
+        "text": "Maria Santos ",
+        "confidence": 0.8
+      },
+      {
+        "type": "PERSON",
+        "text": "James Wilson ",
+        "confidence": 0.8
+      },
+      {
+        "type": "PERSON",
+        "text": "Lisa Park ",
+        "confidence": 0.8
+      },
+      {
+        "type": "MONETARY_AMOUNT",
+        "text": "$1",
+        "confidence": 0.85
+      },
+      {
+        "type": "PERCENTAGE",
+        "text": "target 150%",
+        "confidence": 0.75
+      },
+      {
+        "type": "MONETARY_AMOUNT",
+        "text": "$850K",
+        "confidence": 0.85
+      },
+      {
+        "type": "PERCENTAGE",
+        "text": "target 125%",
+        "confidence": 0.75
+      },
+      {
+        "type": "MONETARY_AMOUNT",
+        "text": "$500M",
+        "confidence": 0.85
+      }
+    ],
+    "documentType": "meeting_notes",
+    "documentMultiplier": 1.3,
+    "contextualKeywords": [
+      {
+        "category": "hr_workforce",
+        "weight": 22
+      },
+      {
+        "category": "corporate_governance",
+        "weight": 20
+      }
+    ],
+    "intentSuppressed": false,
+    "executiveLens": "private_llm",
+    "pass": true,
+    "explanation": "Detected 4 persons, 3 monetary amounts, 2 percentages. Classified as meeting notes. Contains workforce/HR sensitive data, corporate governance action.",
+    "latencyMs": 0.741500000000002
+  },
+  {
+    "scenario": {
+      "id": 32,
+      "category": "TRUE_POSITIVE",
+      "description": "LBO model details",
+      "prompt": "Project Atlas LBO: Pinnacle Software, entry at 12.5x LTM EBITDA ($180M). Debt package: 5.5x first lien at S+450, 1.5x second lien at S+800. Sponsor equity check $950M. Management rollover: CEO 5%, CTO 3%. Base case returns: 2.8x MOIC, 24% IRR over 5 years. Key risk: customer concentration (top 3 = 40% revenue). KKR competing bid expected at 13x.",
+      "expectedVerdict": "BLOCK",
+      "expectedZone": "red"
+    },
+    "score": 100,
+    "level": "critical",
+    "zone": "red",
+    "actualVerdict": "BLOCK",
+    "entities": [
+      {
+        "type": "MONETARY_AMOUNT",
+        "text": "$180M",
+        "confidence": 0.85
+      },
+      {
+        "type": "MONETARY_AMOUNT",
+        "text": "$950M",
+        "confidence": 0.85
+      }
+    ],
+    "documentType": "financial_data",
+    "documentMultiplier": 1.8,
+    "contextualKeywords": [
+      {
+        "category": "ma_deal",
+        "weight": 30
+      },
+      {
+        "category": "ma_deal",
+        "weight": 12
+      },
+      {
+        "category": "ma_deal",
+        "weight": 22
+      }
+    ],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": true,
+    "explanation": "Detected 2 monetary amounts. Classified as financial data. Contains M&A/deal intelligence.",
+    "latencyMs": 0.535334000000006
+  },
+  {
+    "scenario": {
+      "id": 33,
+      "category": "TRUE_POSITIVE",
+      "description": "API key in code",
+      "prompt": "My Stripe integration is failing. Here is my config:\n\nconst stripe = require(\"stripe\")(\"sk_live_4eC39HqLyjWDarjtT1zdp7dc\");\n\nconst paymentIntent = await stripe.paymentIntents.create({\n  amount: 2000,\n  currency: \"usd\",\n});\n\nWhat am I doing wrong?",
+      "expectedVerdict": "BLOCK",
+      "expectedZone": "red"
+    },
+    "score": 61,
+    "level": "high",
+    "zone": "red",
+    "actualVerdict": "BLOCK",
+    "entities": [
+      {
+        "type": "API_KEY",
+        "text": "sk_live_4eC39HqLyjWDarjtT1zdp7dc",
+        "confidence": 0.95
+      }
+    ],
+    "documentType": "code_snippet",
+    "documentMultiplier": 0.8,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": true,
+    "explanation": "Detected 1 api key.",
+    "latencyMs": 0.4842079999999953
+  },
+  {
+    "scenario": {
+      "id": 34,
+      "category": "TRUE_POSITIVE",
+      "description": "Student records (FERPA)",
+      "prompt": "Student: Emily Rodriguez, Student ID: 2024-78432. GPA: 3.85. Disciplinary record: Academic integrity violation in CHEM 201, Spring 2024. Placed on probation. Faculty advisor: Dr. James Patterson. Please draft a letter to the academic review board.",
+      "expectedVerdict": "BLOCK",
+      "expectedZone": "red"
+    },
+    "score": 55,
+    "level": "medium",
+    "zone": "amber",
+    "actualVerdict": "WARN",
+    "entities": [
+      {
+        "type": "EDUCATION_RECORD",
+        "text": "GPA: 3.85",
+        "confidence": 0.8
+      },
+      {
+        "type": "PERSON",
+        "text": "Dr. James Patterson",
+        "confidence": 0.9
+      }
+    ],
+    "documentType": "education_record",
+    "documentMultiplier": 1.8,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": false,
+    "explanation": "Detected 1 education record, 1 person. Classified as education record (FERPA).",
+    "latencyMs": 0.4077080000000137
+  },
+  {
+    "scenario": {
+      "id": 35,
+      "category": "AMBER_ZONE",
+      "description": "Email with one name, business context",
+      "prompt": "Draft an email to Sarah Chen thanking her for the meeting yesterday. Mention that we will follow up on the proposal by end of week.",
+      "expectedVerdict": "WARN",
+      "expectedZone": "amber"
+    },
+    "score": 4,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [
+      {
+        "type": "ORGANIZATION",
+        "text": "Sarah Chen",
+        "confidence": 0.7
+      }
+    ],
+    "documentType": "code_snippet",
+    "documentMultiplier": 0.8,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": false,
+    "explanation": "Detected 1 organization.",
+    "latencyMs": 0.2639169999999922
+  },
+  {
+    "scenario": {
+      "id": 36,
+      "category": "AMBER_ZONE",
+      "description": "Meeting notes with names but no sensitive data",
+      "prompt": "Meeting notes from today's standup:\n- John presented the Q3 roadmap\n- Lisa flagged the delayed timeline on the mobile app\n- Budget discussion postponed to Friday\n- Action item: Mike to send updated timeline by EOD",
+      "expectedVerdict": "WARN",
+      "expectedZone": "amber"
+    },
+    "score": 0,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [],
+    "documentType": "meeting_notes",
+    "documentMultiplier": 1.3,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "passthrough",
+    "pass": false,
+    "explanation": "No sensitive information detected.",
+    "latencyMs": 0.27895800000001714
+  },
+  {
+    "scenario": {
+      "id": 37,
+      "category": "AMBER_ZONE",
+      "description": "Vague M&A language without specifics",
+      "prompt": "We are thinking about acquiring a smaller company in the AI space. What are the typical steps in an M&A process? What should we look out for in due diligence?",
+      "expectedVerdict": "WARN",
+      "expectedZone": "amber"
+    },
+    "score": 0,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "passthrough",
+    "pass": false,
+    "explanation": "No sensitive information detected.",
+    "latencyMs": 0.22495799999998667
+  },
+  {
+    "scenario": {
+      "id": 38,
+      "category": "AMBER_ZONE",
+      "description": "Internal email with client name",
+      "prompt": "Can you help me write a follow-up email to our client Accenture about the consulting engagement? We discussed their digital transformation strategy and need to propose next steps for the cloud migration project.",
+      "expectedVerdict": "WARN",
+      "expectedZone": "amber"
+    },
+    "score": 7,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [
+      {
+        "type": "ORGANIZATION",
+        "text": "Accenture",
+        "confidence": 0.7
+      }
+    ],
+    "documentType": "meeting_notes",
+    "documentMultiplier": 1.3,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": false,
+    "explanation": "Detected 1 organization. Classified as meeting notes.",
+    "latencyMs": 0.3358750000000157
+  },
+  {
+    "scenario": {
+      "id": 39,
+      "category": "AMBER_ZONE",
+      "description": "Financial analysis without confidential markers",
+      "prompt": "Here is our Q3 revenue breakdown:\n- Product A: $12M (up 15% YoY)\n- Product B: $8M (flat)\n- Product C: $3M (new, launched Q2)\n\nTotal: $23M. Can you help me create a chart-ready summary?",
+      "expectedVerdict": "WARN",
+      "expectedZone": "amber"
+    },
+    "score": 77,
+    "level": "high",
+    "zone": "red",
+    "actualVerdict": "BLOCK",
+    "entities": [
+      {
+        "type": "MONETARY_AMOUNT",
+        "text": "$12M",
+        "confidence": 0.85
+      },
+      {
+        "type": "MONETARY_AMOUNT",
+        "text": "$8M",
+        "confidence": 0.85
+      },
+      {
+        "type": "MONETARY_AMOUNT",
+        "text": "$3M",
+        "confidence": 0.85
+      },
+      {
+        "type": "MONETARY_AMOUNT",
+        "text": "$23M",
+        "confidence": 0.85
+      }
+    ],
+    "documentType": "financial_data",
+    "documentMultiplier": 1.8,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": false,
+    "explanation": "Detected 4 monetary amounts. Classified as financial data.",
+    "latencyMs": 0.4980419999999981
+  },
+  {
+    "scenario": {
+      "id": 40,
+      "category": "AMBER_ZONE",
+      "description": "HR question with general context",
+      "prompt": "We need to restructure the engineering team. Currently 45 people across 3 pods. Thinking about moving to 5 smaller squads of 8-9 each. What are the best practices for communicating a reorg to the team?",
+      "expectedVerdict": "WARN",
+      "expectedZone": "amber"
+    },
+    "score": 0,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [],
+    "documentType": "email_draft",
+    "documentMultiplier": 1.2,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "passthrough",
+    "pass": false,
+    "explanation": "No sensitive information detected.",
+    "latencyMs": 0.480165999999997
+  },
+  {
+    "scenario": {
+      "id": 41,
+      "category": "AMBER_ZONE",
+      "description": "IP address in debugging context",
+      "prompt": "Our server at 10.0.1.45 is returning 503 errors. The load balancer at 10.0.1.10 shows healthy. Can you help me write a troubleshooting script?",
+      "expectedVerdict": "WARN",
+      "expectedZone": "amber"
+    },
+    "score": 8,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [
+      {
+        "type": "IP_ADDRESS",
+        "text": "10.0.1.45",
+        "confidence": 0.9
+      },
+      {
+        "type": "IP_ADDRESS",
+        "text": "10.0.1.10",
+        "confidence": 0.9
+      }
+    ],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": false,
+    "explanation": "Detected 2 ip addresss.",
+    "latencyMs": 0.40487499999997567
+  },
+  {
+    "scenario": {
+      "id": 42,
+      "category": "AMBER_ZONE",
+      "description": "Client memo without high PII",
+      "prompt": "Memo to the client engagement team:\n\nRe: Accenture Digital Transformation\n\nWe've completed Phase 1 assessment. Key findings:\n1. Legacy systems account for 60% of IT spend\n2. Cloud readiness score: 4/10\n3. Estimated migration cost: $2.5M over 18 months\n\nRecommend proceeding to Phase 2 detailed design.",
+      "expectedVerdict": "WARN",
+      "expectedZone": "amber"
+    },
+    "score": 18,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [
+      {
+        "type": "MONETARY_AMOUNT",
+        "text": "$2",
+        "confidence": 0.85
+      }
+    ],
+    "documentType": "financial_data",
+    "documentMultiplier": 1.8,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": false,
+    "explanation": "Detected 1 monetary amount. Classified as financial data.",
+    "latencyMs": 1.1969999999999743
+  },
+  {
+    "scenario": {
+      "id": 43,
+      "category": "AMBER_ZONE",
+      "description": "Competitive intelligence gathering",
+      "prompt": "I heard that our competitor DataShield just raised a Series B. Can you help me analyze their product positioning versus ours? Their CEO mentioned on LinkedIn that they are focusing on healthcare and financial services.",
+      "expectedVerdict": "WARN",
+      "expectedZone": "amber"
+    },
+    "score": 10,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [
+      {
+        "type": "ORGANIZATION",
+        "text": "DataShield",
+        "confidence": 0.6
+      },
+      {
+        "type": "ORGANIZATION",
+        "text": "LinkedIn",
+        "confidence": 0.6
+      }
+    ],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": false,
+    "explanation": "Detected 2 organizations.",
+    "latencyMs": 1.1865829999999846
+  },
+  {
+    "scenario": {
+      "id": 44,
+      "category": "AMBER_ZONE",
+      "description": "Contract review request (no privileged content)",
+      "prompt": "Review this clause from our standard vendor agreement:\n\n\"Vendor shall indemnify and hold harmless Client from any claims arising from Vendor's breach of this Agreement, including reasonable attorney's fees.\"\n\nIs this standard or should we negotiate changes?",
+      "expectedVerdict": "WARN",
+      "expectedZone": "amber"
+    },
+    "score": 12,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [
+      {
+        "type": "ORGANIZATION",
+        "text": "Vendor",
+        "confidence": 0.75
+      }
+    ],
+    "documentType": "contract_clause",
+    "documentMultiplier": 2,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": false,
+    "explanation": "Detected 1 organization. Classified as contract/legal clause.",
+    "latencyMs": 0.46750000000000114
+  },
+  {
+    "scenario": {
+      "id": 45,
+      "category": "EDGE_CASE",
+      "description": "Fake SSN in educational context",
+      "prompt": "For the training exercise, use this example SSN: 000-00-0000. Show me how to validate SSN format in JavaScript.",
+      "expectedVerdict": "ALLOW",
+      "expectedZone": "green"
+    },
+    "score": 61,
+    "level": "high",
+    "zone": "red",
+    "actualVerdict": "BLOCK",
+    "entities": [
+      {
+        "type": "SSN",
+        "text": "000-00-0000",
+        "confidence": 0.95
+      },
+      {
+        "type": "ORGANIZATION",
+        "text": "JavaScript",
+        "confidence": 0.6
+      }
+    ],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": false,
+    "explanation": "Detected 1 ssn, 1 organization.",
+    "latencyMs": 0.2680829999999901
+  },
+  {
+    "scenario": {
+      "id": 46,
+      "category": "EDGE_CASE",
+      "description": "Real company name in benign context",
+      "prompt": "What is Goldman Sachs' investment banking division known for? How do they compare to Morgan Stanley in terms of M&A advisory?",
+      "expectedVerdict": "ALLOW",
+      "expectedZone": "green"
+    },
+    "score": 0,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "passthrough",
+    "pass": true,
+    "explanation": "No sensitive information detected.",
+    "latencyMs": 0.21433300000001054
+  },
+  {
+    "scenario": {
+      "id": 47,
+      "category": "EDGE_CASE",
+      "description": "Medical terms without patient data",
+      "prompt": "What are the common side effects of Metformin for Type 2 Diabetes treatment? What is the typical dosing schedule?",
+      "expectedVerdict": "ALLOW",
+      "expectedZone": "green"
+    },
+    "score": 0,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "passthrough",
+    "pass": true,
+    "explanation": "No sensitive information detected.",
+    "latencyMs": 0.19916699999998855
+  },
+  {
+    "scenario": {
+      "id": 48,
+      "category": "EDGE_CASE",
+      "description": "Subtle sensitive context — no PII but implies confidentiality",
+      "prompt": "Tell the team we are going with the higher number. John approved it yesterday but don't share until the call with the board on Thursday.",
+      "expectedVerdict": "WARN",
+      "expectedZone": "amber"
+    },
+    "score": 12,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [],
+    "documentType": "casual_question",
+    "documentMultiplier": 0.5,
+    "contextualKeywords": [
+      {
+        "category": "corporate_governance",
+        "weight": 15
+      }
+    ],
+    "intentSuppressed": false,
+    "executiveLens": "passthrough",
+    "pass": false,
+    "explanation": "Contains corporate governance action.",
+    "latencyMs": 0.21337500000001342
+  },
+  {
+    "scenario": {
+      "id": 49,
+      "category": "EDGE_CASE",
+      "description": "Long benign text with an SSN buried inside",
+      "prompt": "I am writing a blog post about data privacy. Here is my draft:\n\nData breaches are on the rise. In 2023, over 3,000 incidents exposed billions of records. Companies must invest in better security practices. For example, never store sensitive data like social security numbers (e.g., 234-56-7890) in plain text. Always encrypt at rest and in transit. Use tokenization where possible.",
+      "expectedVerdict": "BLOCK",
+      "expectedZone": "red"
+    },
+    "score": 61,
+    "level": "high",
+    "zone": "red",
+    "actualVerdict": "BLOCK",
+    "entities": [
+      {
+        "type": "SSN",
+        "text": "234-56-7890",
+        "confidence": 0.95
+      }
+    ],
+    "documentType": "code_snippet",
+    "documentMultiplier": 0.8,
+    "contextualKeywords": [],
+    "intentSuppressed": false,
+    "executiveLens": "pseudonymize",
+    "pass": true,
+    "explanation": "Detected 1 ssn.",
+    "latencyMs": 0.4759990000000016
+  },
+  {
+    "scenario": {
+      "id": 50,
+      "category": "EDGE_CASE",
+      "description": "Resume / CV with personal details",
+      "prompt": "Help me update my resume. Here is my current version:\n\nJohn Smith\nemail: john.smith@gmail.com\nPhone: (555) 123-4567\n\nExperience:\n- Senior Engineer at Acme Corp (2020-present)\n- Engineer at StartupXYZ (2018-2020)\n\nSkills: Python, React, AWS",
+      "expectedVerdict": "ALLOW",
+      "expectedZone": "green"
+    },
+    "score": 11,
+    "level": "low",
+    "zone": "green",
+    "actualVerdict": "ALLOW",
+    "entities": [
+      {
+        "type": "EMAIL",
+        "text": "john.smith@gmail.com",
+        "confidence": 0.95
+      },
+      {
+        "type": "PHONE_NUMBER",
+        "text": "555) 123-4567",
+        "confidence": 0.8
+      },
+      {
+        "type": "PERSON",
+        "text": "Acme",
+        "confidence": 0.85
+      }
+    ],
+    "documentType": "code_snippet",
+    "documentMultiplier": 0.8,
+    "contextualKeywords": [],
+    "intentSuppressed": true,
+    "executiveLens": "pseudonymize",
+    "pass": true,
+    "explanation": "Detected 1 email, 1 phone number, 1 person.",
+    "latencyMs": 0.5139159999999947
+  }
+]
