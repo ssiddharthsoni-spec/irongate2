@@ -245,7 +245,7 @@ export type FirmMode = 'monitor' | 'protect' | 'enforce';
 export type CaptureMethod = 'dom' | 'fetch' | 'submit' | 'dom_observer' | 'fetch_intercept' | 'submit_handler';
 
 export interface LLMProviderConfig {
-  provider: 'openai' | 'anthropic' | 'ollama' | 'azure';
+  provider: 'gemini' | 'openai' | 'anthropic' | 'ollama' | 'azure';
   model: string;
   apiKey?: string;
   baseUrl?: string;

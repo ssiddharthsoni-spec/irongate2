@@ -4,9 +4,12 @@
  * Receives sanitized text (PII replaced with [TYPE] tokens) from the
  * extension's confidence router and returns a sensitivity classification.
  *
- * The classifier uses a hosted LLM (OpenAI-compatible API) to analyze
- * document context, legal risk, and business sensitivity from the
- * structural patterns alone — never seeing raw PII.
+ * Default LLM: Google Gemini 2.5 Flash via the OpenAI-compatible endpoint
+ * (https://generativelanguage.googleapis.com/v1beta/openai/chat/completions).
+ * Any OpenAI-compatible API can be substituted via CLASSIFIER_LLM_ENDPOINT.
+ *
+ * The classifier analyses document context, legal risk, and business
+ * sensitivity from the structural patterns alone — never seeing raw PII.
  *
  * Fallback: If no LLM is configured, uses a rule-based heuristic
  * that counts type tokens and contextual markers.
@@ -74,7 +77,7 @@ export async function classifyWithLLM(
   request: ClassificationRequest,
   llmEndpoint: string,
   llmApiKey: string,
-  model: string = 'gpt-4o-mini',
+  model: string = 'gemini-2.5-flash',
 ): Promise<ClassificationResult> {
   const start = Date.now();
 

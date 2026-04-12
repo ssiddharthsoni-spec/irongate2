@@ -443,7 +443,14 @@ export async function classifyIntentLlm(
   text: string,
   config: LlmClassifierConfig,
 ): Promise<IntentClassification | null> {
-  const { apiKey, baseUrl = 'https://api.openai.com/v1', model = 'gpt-4o-mini', timeoutMs = 1500 } = config;
+  // Default intent-classification LLM is Gemini 2.5 Flash via Google's
+  // OpenAI-compatible endpoint. Callers can override baseUrl/model in config.
+  const {
+    apiKey,
+    baseUrl = 'https://generativelanguage.googleapis.com/v1beta/openai',
+    model = 'gemini-2.5-flash',
+    timeoutMs = 1500,
+  } = config;
 
   // Truncate to avoid token limits (first 1500 chars is enough for classification)
   const truncated = text.length > 1500 ? text.substring(0, 1500) + '...' : text;

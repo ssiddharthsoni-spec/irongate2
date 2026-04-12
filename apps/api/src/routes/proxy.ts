@@ -85,7 +85,7 @@ const sendRequestSchema = z.object({
   maskedPrompt: z.string().min(1, 'maskedPrompt is required'),
   route: z.enum(['passthrough', 'cloud_masked', 'private_llm']),
   sessionId: z.string().uuid('sessionId must be a valid UUID'),
-  model: z.string().optional().default('gpt-4'),
+  model: z.string().optional().default('gemini-2.5-flash'),
   systemPrompt: z.string().optional(),
   maxTokens: z.number().int().positive().optional().default(4096),
   temperature: z.number().min(0).max(2).optional().default(0.7),
@@ -755,13 +755,24 @@ proxyRoutes.post('/process', async (c) => {
 
     // ── PARALLEL: Intent classification + Entity detection + Conversation state ──
     // These three operations are independent — run them concurrently to cut latency.
+    // Default to Gemini 2.5 Flash (via OpenAI-compatible endpoint). GEMINI_API_KEY
+    // is the primary env var; legacy OPENAI_API_KEY still works if configured.
     const withinBudget = checkLlmBudget(firmId);
+    const classifierApiKey = process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY;
+    const classifierBaseUrl =
+      process.env.GEMINI_BASE_URL ||
+      (process.env.GEMINI_API_KEY
+        ? 'https://generativelanguage.googleapis.com/v1beta/openai'
+        : process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1');
+    const classifierModel =
+      process.env.INTENT_CLASSIFIER_MODEL ||
+      (process.env.GEMINI_API_KEY ? 'gemini-2.5-flash' : 'gpt-4o-mini');
     const llmClassifierConfig: LlmClassifierConfig | undefined =
-      process.env.OPENAI_API_KEY && withinBudget
+      classifierApiKey && withinBudget
         ? {
-            apiKey: process.env.OPENAI_API_KEY,
-            baseUrl: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
-            model: process.env.INTENT_CLASSIFIER_MODEL || 'gpt-4o-mini',
+            apiKey: classifierApiKey,
+            baseUrl: classifierBaseUrl,
+            model: classifierModel,
             timeoutMs: 1500,
           }
         : undefined;

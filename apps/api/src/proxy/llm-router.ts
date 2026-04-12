@@ -7,6 +7,7 @@
 // configured providers.
 
 import type { LLMProviderConfig, LLMRoute } from '@iron-gate/types';
+import { GeminiProvider } from './providers/gemini';
 import { OpenAIProvider } from './providers/openai';
 import { AnthropicProvider } from './providers/anthropic';
 import { OllamaProvider } from './providers/ollama';
@@ -48,13 +49,14 @@ export interface LLMProvider {
 // ---------------------------------------------------------------------------
 
 export interface FirmLLMConfig {
+  gemini?: { apiKey?: string; model?: string; baseUrl?: string };
   openai?: { apiKey?: string; model?: string; baseUrl?: string };
   anthropic?: { apiKey?: string; model?: string; baseUrl?: string };
   azure?: { apiKey?: string; model?: string; baseUrl?: string };
   ollama?: { baseUrl?: string; model?: string };
   privateLlm?: { baseUrl?: string; model?: string };
-  // Which provider to use for cloud routes (default: openai)
-  defaultCloudProvider?: 'openai' | 'anthropic' | 'azure';
+  // Which provider to use for cloud routes (default: gemini)
+  defaultCloudProvider?: 'gemini' | 'openai' | 'anthropic' | 'azure';
   // Which provider to use for private_llm route (default: ollama)
   defaultPrivateProvider?: 'ollama';
 }
@@ -118,6 +120,7 @@ function validateBaseUrl(baseUrl: string | undefined): void {
 // ---------------------------------------------------------------------------
 
 const PROVIDERS: Record<string, LLMProvider> = {
+  gemini: new GeminiProvider(),
   openai: new OpenAIProvider(),
   anthropic: new AnthropicProvider(),
   azure: new AzureOpenAIProvider(),
@@ -126,6 +129,7 @@ const PROVIDERS: Record<string, LLMProvider> = {
 
 // Per-provider circuit breakers — fail fast when a provider is down
 const CIRCUIT_BREAKERS: Record<string, CircuitBreaker> = {
+  gemini: new CircuitBreaker('gemini', 5, 30_000),
   openai: new CircuitBreaker('openai', 5, 30_000),
   anthropic: new CircuitBreaker('anthropic', 5, 30_000),
   azure: new CircuitBreaker('azure', 5, 30_000),
@@ -219,22 +223,32 @@ export class LLMRouter {
   }
 
   private resolveCloudProvider(): { provider: LLMProvider; providerConfig: LLMProviderConfig } {
-    const preferred = this.config.defaultCloudProvider ?? 'openai';
+    // Default cloud provider is now Gemini — cheaper, faster, and the
+    // product's primary target. OpenAI/Anthropic/Azure remain as options.
+    const preferred = this.config.defaultCloudProvider ?? 'gemini';
 
     // Try the preferred provider first, then fall back to others
-    const tryOrder: Array<'openai' | 'anthropic' | 'azure'> = [
+    const tryOrder: Array<'gemini' | 'openai' | 'anthropic' | 'azure'> = [
       preferred,
-      ...(['openai', 'anthropic', 'azure'] as const).filter((p) => p !== preferred),
+      ...(['gemini', 'openai', 'anthropic', 'azure'] as const).filter((p) => p !== preferred),
     ];
 
     for (const providerName of tryOrder) {
       const cfg = this.config[providerName];
       if (cfg?.apiKey) {
+        const defaultModel =
+          providerName === 'gemini'
+            ? 'gemini-2.5-flash'
+            : providerName === 'openai'
+              ? 'gpt-4o'
+              : providerName === 'anthropic'
+                ? 'claude-sonnet-4-20250514'
+                : 'gpt-4o';
         return {
           provider: PROVIDERS[providerName],
           providerConfig: {
             provider: providerName,
-            model: cfg.model ?? (providerName === 'openai' ? 'gpt-4o' : providerName === 'anthropic' ? 'claude-sonnet-4-20250514' : 'gpt-4o'),
+            model: cfg.model ?? defaultModel,
             apiKey: cfg.apiKey,
             baseUrl: cfg.baseUrl,
           },
@@ -244,7 +258,7 @@ export class LLMRouter {
 
     // No cloud provider configured — throw a descriptive error
     throw new Error(
-      '[LLMRouter] No cloud LLM provider configured. Set an API key for openai, anthropic, or azure in the firm config.',
+      '[LLMRouter] No cloud LLM provider configured. Set an API key for gemini, openai, anthropic, or azure in the firm config.',
     );
   }
 
@@ -252,6 +266,21 @@ export class LLMRouter {
     model: string,
   ): { provider: LLMProvider; providerConfig: LLMProviderConfig } | null {
     const lower = model.toLowerCase();
+
+    if (lower.startsWith('gemini')) {
+      const cfg = this.config.gemini;
+      if (cfg?.apiKey) {
+        return {
+          provider: PROVIDERS.gemini,
+          providerConfig: {
+            provider: 'gemini',
+            model,
+            apiKey: cfg.apiKey,
+            baseUrl: cfg.baseUrl,
+          },
+        };
+      }
+    }
 
     if (lower.startsWith('gpt-') || lower.startsWith('o1') || lower.startsWith('o3')) {
       const cfg = this.config.openai;

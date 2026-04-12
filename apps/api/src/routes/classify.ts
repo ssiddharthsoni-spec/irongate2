@@ -79,9 +79,15 @@ classifyRoutes.post('/', async (c) => {
   }
 
   // ── Classification ─────────────────────────────────────────────────────────
-  const llmEndpoint = process.env.CLASSIFIER_LLM_ENDPOINT;
-  const llmApiKey = process.env.CLASSIFIER_LLM_API_KEY;
-  const llmModel = process.env.CLASSIFIER_LLM_MODEL || 'gpt-4o-mini';
+  // Default Tier 3 LLM is now Gemini 2.5 Flash via Google's OpenAI-compatible
+  // endpoint. CLASSIFIER_LLM_* env vars override, GEMINI_API_KEY is the
+  // natural default. Falls back to heuristic if no key is configured.
+  // NOTE: llmEndpoint must be the FULL URL including /chat/completions.
+  const llmEndpoint =
+    process.env.CLASSIFIER_LLM_ENDPOINT ||
+    'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+  const llmApiKey = process.env.CLASSIFIER_LLM_API_KEY || process.env.GEMINI_API_KEY;
+  const llmModel = process.env.CLASSIFIER_LLM_MODEL || 'gemini-2.5-flash';
 
   let result;
   if (llmEndpoint && llmApiKey) {

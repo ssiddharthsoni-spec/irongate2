@@ -39,12 +39,14 @@ agentRoutes.post('/complete', async (c) => {
   const { system, prompt, maxTokens, temperature } = parsed.data;
   const firmId = c.get('firmId');
 
-  // Use the same LLM provider as the classifier
+  // Use the same LLM provider as the classifier — Gemini 2.5 Flash by default.
   const llmEndpoint = process.env.AGENT_LLM_ENDPOINT
-    || process.env.CLASSIFIER_LLM_ENDPOINT;
+    || process.env.CLASSIFIER_LLM_ENDPOINT
+    || 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
   const llmApiKey = process.env.AGENT_LLM_API_KEY
-    || process.env.CLASSIFIER_LLM_API_KEY;
-  const llmModel = process.env.AGENT_LLM_MODEL || 'gpt-4o-mini';
+    || process.env.CLASSIFIER_LLM_API_KEY
+    || process.env.GEMINI_API_KEY;
+  const llmModel = process.env.AGENT_LLM_MODEL || 'gemini-2.5-flash';
 
   if (!llmEndpoint || !llmApiKey) {
     logger.warn('Agent complete: no LLM configured', { firmId });
