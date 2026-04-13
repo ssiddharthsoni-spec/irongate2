@@ -160,59 +160,52 @@ export default async function LandingPage() {
       {/* ════════════════ ARCHITECTURE ════════════════ */}
       <section id="architecture" className="max-w-7xl mx-auto px-6 md:px-12 pb-24 md:pb-32">
         <div className="text-center mb-12">
-          <h2 className="text-2xl md:text-3xl font-bold tracking-tight">Three layers of local detection</h2>
+          <h2 className="text-2xl md:text-3xl font-bold tracking-tight">Detection stays on the device</h2>
           <p className="mt-3 text-sm text-[#6e6e73] dark:text-[#86868b] max-w-xl mx-auto leading-relaxed">
-            Every prompt passes through the local pipeline before it ever reaches an AI tool.
-            No network calls for detection. No cloud LLM sees your content.
+            Every prompt is analyzed inside the employee&apos;s browser before it reaches any AI tool.
+            Nothing is uploaded for classification. Nothing is sent anywhere we don&apos;t control.
           </p>
         </div>
 
         <div className="grid md:grid-cols-3 gap-5 max-w-6xl mx-auto">
-          {/* Tier 1 */}
+          {/* Detect */}
           <div className="rounded-2xl border border-[#d2d2d7]/40 dark:border-[#38383a]/40 bg-white dark:bg-[#1c1c1e] p-6">
             <div className="flex items-center gap-2 mb-3">
-              <span className="px-2 py-0.5 rounded-md bg-iron-50 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 text-[10px] font-bold uppercase tracking-wider">Tier 1</span>
-              <span className="text-[11px] text-[#86868b] dark:text-[#636366]">~5ms</span>
+              <span className="px-2 py-0.5 rounded-md bg-iron-50 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 text-[10px] font-bold uppercase tracking-wider">Detect</span>
+              <span className="text-[11px] text-[#86868b] dark:text-[#636366]">real-time</span>
             </div>
-            <h3 className="text-base font-bold mb-1.5">Regex + context scorer</h3>
-            <p className="text-sm text-[#6e6e73] dark:text-[#86868b] leading-relaxed mb-3">
-              30+ entity types, 4 scoring layers (entities, context, document type, intent).
-              Runs as pure JavaScript in the browser — no network, no LLM.
-            </p>
-            <p className="text-[11px] text-[#86868b] dark:text-[#636366] font-mono">
-              SSN · Credit cards · Names · Orgs · Routing · VINs · API keys · ...
+            <h3 className="text-base font-bold mb-1.5">Sensitive data, caught in-browser</h3>
+            <p className="text-sm text-[#6e6e73] dark:text-[#86868b] leading-relaxed">
+              A multi-layered detection engine identifies PII, regulated data, credentials,
+              and business-sensitive context before the send button finishes its animation.
+              Purpose-built for enterprise content.
             </p>
           </div>
 
-          {/* Tier 2 */}
+          {/* Protect */}
           <div className="rounded-2xl border border-[#d2d2d7]/40 dark:border-[#38383a]/40 bg-white dark:bg-[#1c1c1e] p-6">
             <div className="flex items-center gap-2 mb-3">
-              <span className="px-2 py-0.5 rounded-md bg-iron-50 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 text-[10px] font-bold uppercase tracking-wider">Tier 2</span>
-              <span className="text-[11px] text-[#86868b] dark:text-[#636366]">~500ms</span>
+              <span className="px-2 py-0.5 rounded-md bg-iron-50 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 text-[10px] font-bold uppercase tracking-wider">Protect</span>
+              <span className="text-[11px] text-[#86868b] dark:text-[#636366]">invisible</span>
             </div>
-            <h3 className="text-base font-bold mb-1.5">Local LLM (optional)</h3>
-            <p className="text-sm text-[#6e6e73] dark:text-[#86868b] leading-relaxed mb-3">
-              Ollama + Llama 3.2 3B on the employee&apos;s machine resolves ambiguous cases.
-              Talks only to <span className="font-mono">localhost:11434</span>.
-            </p>
-            <p className="text-[11px] text-[#86868b] dark:text-[#636366]">
-              Skipped gracefully if Ollama isn&apos;t installed.
+            <h3 className="text-base font-bold mb-1.5">Sanitized before it leaves</h3>
+            <p className="text-sm text-[#6e6e73] dark:text-[#86868b] leading-relaxed">
+              Sensitive values are swapped for realistic stand-ins using deterministic, firm-specific
+              cryptography. The same input always produces the same safe output &mdash; consistent
+              across an employee&apos;s workflow, never guessable across firms.
             </p>
           </div>
 
-          {/* Pseudonymization */}
+          {/* Restore */}
           <div className="rounded-2xl border border-[#d2d2d7]/40 dark:border-[#38383a]/40 bg-white dark:bg-[#1c1c1e] p-6">
             <div className="flex items-center gap-2 mb-3">
-              <span className="px-2 py-0.5 rounded-md bg-iron-50 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 text-[10px] font-bold uppercase tracking-wider">Swap</span>
-              <span className="text-[11px] text-[#86868b] dark:text-[#636366]">~1ms</span>
+              <span className="px-2 py-0.5 rounded-md bg-iron-50 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300 text-[10px] font-bold uppercase tracking-wider">Restore</span>
+              <span className="text-[11px] text-[#86868b] dark:text-[#636366]">seamless</span>
             </div>
-            <h3 className="text-base font-bold mb-1.5">Pseudonymization</h3>
-            <p className="text-sm text-[#6e6e73] dark:text-[#86868b] leading-relaxed mb-3">
-              HKDF-SHA256 generates deterministic fake names via browser-native crypto.
-              Reverse map held in memory only — never written to disk, never synced.
-            </p>
-            <p className="text-[11px] text-[#86868b] dark:text-[#636366] font-mono">
-              Sarah Johnson → Emily Rogers
+            <h3 className="text-base font-bold mb-1.5">Real answers, delivered back</h3>
+            <p className="text-sm text-[#6e6e73] dark:text-[#86868b] leading-relaxed">
+              Responses are decrypted back to the real values on the fly so employees see accurate,
+              actionable answers. No broken context, no workflow changes, no training required.
             </p>
           </div>
         </div>
@@ -222,10 +215,12 @@ export default async function LandingPage() {
           <div className="rounded-xl border border-iron-200/60 dark:border-iron-800/40 bg-iron-50/60 dark:bg-iron-900/10 px-5 py-4 flex items-start gap-3">
             <ShieldCheckIcon className="w-5 h-5 text-iron-600 dark:text-iron-400 flex-shrink-0 mt-0.5" />
             <div>
-              <p className="text-sm font-semibold text-iron-800 dark:text-iron-200">Zero prompt text reaches Iron Gate</p>
+              <p className="text-sm font-semibold text-iron-800 dark:text-iron-200">Your prompts never reach Iron Gate</p>
               <p className="text-xs text-iron-700/80 dark:text-iron-300/70 leading-relaxed mt-1">
-                The audit log contains entity types, counts, and SHA-256 hashes &mdash; never raw text
-                or PII values. Our database has no column for prompt content. Structurally impossible to leak.
+                Detection runs entirely on the employee&apos;s device. Our infrastructure stores only
+                anonymized event metadata &mdash; entity categories and counts, never the original text
+                or values. The architecture makes prompt leakage structurally impossible, not just
+                policy-prohibited.
               </p>
             </div>
           </div>
@@ -246,7 +241,7 @@ export default async function LandingPage() {
             {[
               {
                 title: 'Local-First Detection',
-                desc: '30+ entity types caught in the browser in under 10ms. Optional local LLM (Ollama) for ambiguous cases. Zero cloud calls for detection.',
+                desc: 'Dozens of entity categories caught in the browser in real time. Optional on-device AI for ambiguous cases. Nothing leaves the device for classification.',
               },
               {
                 title: '10 AI Tools Protected',
@@ -266,7 +261,7 @@ export default async function LandingPage() {
               },
               {
                 title: 'Compliance-Ready Audit Log',
-                desc: 'Hash-chained, HMAC-signed event log built for HIPAA, PCI-DSS, GDPR, and SOC 2. Exportable as CSV for auditors.',
+                desc: 'Tamper-evident event log built for HIPAA, PCI-DSS, GDPR, and SOC 2. Exportable as CSV for auditors. Signed end-to-end.',
               },
             ].map((f) => (
               <div key={f.title} className="bg-[#fafafa] dark:bg-[#141414] rounded-2xl p-6 border border-[#d2d2d7]/30 dark:border-[#38383a]/30">
@@ -289,14 +284,14 @@ export default async function LandingPage() {
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6 max-w-4xl mx-auto text-center">
           {[
-            { title: 'Local-Only Default', desc: 'No cloud LLM calls unless IT opts in' },
-            { title: 'Zero Persistence', desc: 'No DB column for prompt text' },
-            { title: 'HKDF-SHA256', desc: 'Browser-native pseudonymization' },
-            { title: 'AES-256-GCM', desc: 'Per-firm derived encryption keys' },
-            { title: 'Ed25519 Policy Signing', desc: 'Tamper-proof policy bundles' },
-            { title: 'Hash-Chained Audit', desc: 'HMAC-signed event trail' },
-            { title: 'Row-Level Security', desc: 'Firm isolation at the DB layer' },
-            { title: 'Managed Policy Lock', desc: 'Config immutable once IT deploys' },
+            { title: 'Local-First Default', desc: 'No cloud processing unless IT opts in' },
+            { title: 'Zero Persistence', desc: 'Prompt content is never stored' },
+            { title: 'On-Device Crypto', desc: 'Browser-native, industry-standard' },
+            { title: 'Firm-Scoped Keys', desc: 'Each organization, uniquely keyed' },
+            { title: 'Signed Policies', desc: 'Tamper-evident configuration' },
+            { title: 'Immutable Audit', desc: 'Cryptographically chained events' },
+            { title: 'Tenant Isolation', desc: 'Enforced at the database layer' },
+            { title: 'Managed Lockdown', desc: 'Config frozen once IT deploys' },
           ].map((item) => (
             <div key={item.title}>
               <p className="text-sm font-bold mb-1">{item.title}</p>
@@ -307,10 +302,9 @@ export default async function LandingPage() {
 
         <div className="mt-12 max-w-2xl mx-auto text-center">
           <p className="text-xs text-[#86868b] dark:text-[#636366] leading-relaxed">
-            Defense in depth &mdash; three independent checks prevent any cloud call during detection:
-            {' '}the tier-3 adapter is disabled by default, the managed-config layer enforces local-only,
-            and every cloud call site asserts permission before making a request. Architecture invariants
-            are enforced by 2,000+ tests on every commit.
+            Defense in depth &mdash; multiple independent guarantees prevent any content leak during
+            detection. A comprehensive test suite enforces these architectural invariants on every
+            commit. Full technical documentation is available under NDA for enterprise evaluations.
           </p>
         </div>
       </section>
