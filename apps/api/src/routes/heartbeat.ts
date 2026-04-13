@@ -20,12 +20,22 @@ const heartbeatSchema = z.object({
   activePlatform: z.string().max(100).optional(),
   mode: z.enum(['audit', 'proxy']).optional(),
   queueDepth: z.number().int().min(0).optional(),
+  /** OS/browser identifier — e.g., "macOS / Chrome 136" */
+  devicePlatform: z.string().max(100).optional(),
   healthStatus: z
     .object({
       mainWorldLoaded: z.boolean().optional(),
       apiReachable: z.boolean().optional(),
       queueDraining: z.boolean().optional(),
       errorsLast5Min: z.number().int().min(0).max(10000).optional(),
+    })
+    .optional(),
+  /** Ollama runtime status — for deployment wizard visibility */
+  ollamaStatus: z
+    .object({
+      reachable: z.boolean().optional(),
+      model: z.string().max(100).optional(),
+      modelPulled: z.boolean().optional(),
     })
     .optional(),
 });
@@ -45,10 +55,27 @@ heartbeatRoutes.post('/', async (c) => {
     return c.json({ error: 'Invalid heartbeat data', details: parsed.error.flatten() }, 400);
   }
 
-  const { extensionVersion, activePlatform, mode, queueDepth, healthStatus } = parsed.data;
+  const { extensionVersion, activePlatform, mode, queueDepth, devicePlatform, healthStatus, ollamaStatus } = parsed.data;
 
   try {
     const now = new Date();
+    const heartbeatValues = {
+      userId,
+      firmId,
+      extensionVersion,
+      activePlatform: activePlatform ?? null,
+      mode: mode ?? null,
+      queueDepth: queueDepth ?? null,
+      mainWorldLoaded: healthStatus?.mainWorldLoaded ?? null,
+      apiReachable: healthStatus?.apiReachable ?? null,
+      queueDraining: healthStatus?.queueDraining ?? null,
+      errorsLast5Min: healthStatus?.errorsLast5Min ?? null,
+      devicePlatform: devicePlatform ?? null,
+      ollamaReachable: ollamaStatus?.reachable ?? null,
+      ollamaModel: ollamaStatus?.model ?? null,
+      ollamaModelPulled: ollamaStatus?.modelPulled ?? null,
+      receivedAt: now,
+    };
     // Run user update + heartbeat upsert in parallel
     await Promise.all([
       // Update user's last-seen timestamp
@@ -57,31 +84,9 @@ heartbeatRoutes.post('/', async (c) => {
         .where(and(eq(users.id, userId), eq(users.firmId, firmId))),
 
       // Upsert heartbeat — keep only the latest per user (prevents unbounded table growth)
-      db.insert(extensionHeartbeats).values({
-        userId,
-        firmId,
-        extensionVersion,
-        activePlatform: activePlatform ?? null,
-        mode: mode ?? null,
-        queueDepth: queueDepth ?? null,
-        mainWorldLoaded: healthStatus?.mainWorldLoaded ?? null,
-        apiReachable: healthStatus?.apiReachable ?? null,
-        queueDraining: healthStatus?.queueDraining ?? null,
-        errorsLast5Min: healthStatus?.errorsLast5Min ?? null,
-        receivedAt: now,
-      }).onConflictDoUpdate({
+      db.insert(extensionHeartbeats).values(heartbeatValues).onConflictDoUpdate({
         target: extensionHeartbeats.userId,
-        set: {
-          extensionVersion,
-          activePlatform: activePlatform ?? null,
-          mode: mode ?? null,
-          queueDepth: queueDepth ?? null,
-          mainWorldLoaded: healthStatus?.mainWorldLoaded ?? null,
-          apiReachable: healthStatus?.apiReachable ?? null,
-          queueDraining: healthStatus?.queueDraining ?? null,
-          errorsLast5Min: healthStatus?.errorsLast5Min ?? null,
-          receivedAt: now,
-        },
+        set: heartbeatValues,
       }),
     ]);
 

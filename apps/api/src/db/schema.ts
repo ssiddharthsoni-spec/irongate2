@@ -349,6 +349,14 @@ export const extensionHeartbeats = pgTable('extension_heartbeats', {
   apiReachable: boolean('api_reachable'),
   queueDraining: boolean('queue_draining'),
   errorsLast5Min: integer('errors_last_5_min'),
+  /** OS/browser string, e.g., "macOS / Chrome 136" — for device-level reporting */
+  devicePlatform: varchar('device_platform', { length: 100 }),
+  /** Whether Ollama's localhost API is reachable from the extension */
+  ollamaReachable: boolean('ollama_reachable'),
+  /** Model name Ollama is serving (e.g., "llama3.2:3b") */
+  ollamaModel: varchar('ollama_model', { length: 100 }),
+  /** Whether the configured model is actually pulled and available */
+  ollamaModelPulled: boolean('ollama_model_pulled'),
   receivedAt: timestamp('received_at').notNull().defaultNow(),
 }, (table) => [
   index('heartbeats_firm_idx').on(table.firmId),

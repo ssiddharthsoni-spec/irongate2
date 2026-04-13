@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import crypto from 'crypto';
 import { db } from '../db/client';
-import { firms, users, clientMatters, weightOverrides, firmPlugins, events, subscriptions, featureFlags, departments, departmentPolicies, incidents, entityDictionaries, auditLog, conversationState } from '../db/schema';
+import { firms, users, clientMatters, weightOverrides, firmPlugins, events, subscriptions, featureFlags, departments, departmentPolicies, incidents, entityDictionaries, auditLog, conversationState, extensionHeartbeats } from '../db/schema';
 import { eq, and, gte, lte, sql, desc } from 'drizzle-orm';
 import { invalidateDepartmentPolicyCache } from '../middleware/department-policy';
 import { analyzePatterns, getProposals, approveProposal, rejectProposal } from '../services/inference-engine';
@@ -1898,4 +1898,69 @@ adminRoutes.get('/audit-log', requirePerm('viewFirmAnalytics'), async (c) => {
     limit,
     offset,
   });
+});
+
+// ============================================================================
+// Ollama Deployment Status (for /admin/deployment/ollama wizard)
+// ============================================================================
+
+/**
+ * GET /admin/deployment/ollama-status
+ *
+ * Aggregates per-device Ollama status from the extension_heartbeats table.
+ * Powers the deployment wizard's device status table — shows which laptops
+ * have Ollama installed, running, and the model pulled.
+ *
+ * Only includes devices that have sent a heartbeat in the last 30 days (older
+ * heartbeats are considered stale / likely offboarded users).
+ */
+adminRoutes.get('/deployment/ollama-status', async (c) => {
+  const firmId = c.get('firmId');
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+  try {
+    const rows = await db
+      .select({
+        userId: extensionHeartbeats.userId,
+        devicePlatform: extensionHeartbeats.devicePlatform,
+        activePlatform: extensionHeartbeats.activePlatform,
+        ollamaReachable: extensionHeartbeats.ollamaReachable,
+        ollamaModel: extensionHeartbeats.ollamaModel,
+        ollamaModelPulled: extensionHeartbeats.ollamaModelPulled,
+        receivedAt: extensionHeartbeats.receivedAt,
+        userEmail: users.email,
+      })
+      .from(extensionHeartbeats)
+      .leftJoin(users, eq(users.id, extensionHeartbeats.userId))
+      .where(
+        and(
+          eq(extensionHeartbeats.firmId, firmId),
+          gte(extensionHeartbeats.receivedAt, thirtyDaysAgo),
+        ),
+      )
+      .orderBy(desc(extensionHeartbeats.receivedAt));
+
+    // Return the shape the deployment wizard expects
+    const devices = rows.map((r) => ({
+      userId: r.userId,
+      email: r.userEmail ?? undefined,
+      platform: r.devicePlatform ?? r.activePlatform ?? undefined,
+      // "installed" means we've seen any ollama status at all (reachable or not)
+      // "reachable" means the service was up and responding
+      // "modelPulled" requires the configured model to actually be present
+      ollamaInstalled: r.ollamaReachable !== null,
+      ollamaReachable: r.ollamaReachable === true,
+      modelPulled: r.ollamaModelPulled === true,
+      lastSeen: r.receivedAt ? new Date(r.receivedAt).toISOString() : null,
+    }));
+
+    return c.json({ devices });
+  } catch (err) {
+    logger.warn('Ollama status aggregation failed', {
+      firmId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    // Graceful fallback — the wizard degrades to "no devices reporting yet"
+    return c.json({ devices: [] });
+  }
 });

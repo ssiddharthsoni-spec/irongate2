@@ -2904,6 +2904,68 @@ async function isFeatureFlagEnabled(key: string): Promise<boolean> {
 }
 
 /**
+ * Probe the local Ollama service and return status.
+ * Non-blocking: short timeout so a missing Ollama doesn't delay heartbeats.
+ */
+async function probeOllamaStatus(): Promise<{
+  reachable: boolean;
+  model?: string;
+  modelPulled?: boolean;
+}> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2000);
+    const response = await fetch('http://localhost:11434/api/tags', {
+      method: 'GET',
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    if (!response.ok) return { reachable: false };
+
+    // Check if the configured model is actually pulled
+    const data = (await response.json()) as { models?: Array<{ name: string }> };
+    const models = data.models ?? [];
+    // The default model IronGate uses; upgrade path is to read from managed config
+    const targetModel = 'llama3.2:3b';
+    const modelPulled = models.some(
+      (m) => m.name === targetModel || m.name === `${targetModel}:latest`,
+    );
+    return {
+      reachable: true,
+      model: targetModel,
+      modelPulled,
+    };
+  } catch {
+    return { reachable: false };
+  }
+}
+
+/**
+ * Best-effort OS + browser detection for the heartbeat's devicePlatform field.
+ * This is metadata for the admin's deployment health table — not relied upon
+ * for any security decision.
+ */
+function detectDevicePlatform(): string {
+  try {
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+    let os = 'Unknown';
+    if (ua.includes('Macintosh') || ua.includes('Mac OS X')) os = 'macOS';
+    else if (ua.includes('Windows')) os = 'Windows';
+    else if (ua.includes('Linux')) os = 'Linux';
+    else if (ua.includes('CrOS')) os = 'ChromeOS';
+
+    // Extract Chrome/Edge/Brave version — service worker UA always has Chrome/X.Y
+    const match = ua.match(/Chrome\/(\d+)/);
+    const browser = ua.includes('Edg/') ? 'Edge' : ua.includes('OPR/') ? 'Opera' : 'Chrome';
+    const version = match ? match[1] : '';
+    return version ? `${os} / ${browser} ${version}` : os;
+  } catch {
+    return 'Unknown';
+  }
+}
+
+/**
  * Heartbeat — sends extension status to the API every 5 minutes.
  * Populates the deployment view in the admin dashboard.
  */
@@ -2913,6 +2975,10 @@ async function sendHeartbeat(): Promise<void> {
 
   try {
     const manifest = chrome.runtime.getManifest();
+    // Probe Ollama in parallel with building the heartbeat payload — avoids
+    // adding latency if Ollama isn't present.
+    const ollamaStatus = await probeOllamaStatus();
+
     await apiRequest({
       method: 'POST',
       path: '/heartbeat',
@@ -2920,13 +2986,15 @@ async function sendHeartbeat(): Promise<void> {
         extensionVersion: manifest.version,
         mode: firmMode,
         queueDepth: eventQueue.getSize(),
+        devicePlatform: detectDevicePlatform(),
         healthStatus: {
           apiReachable: true,
           errorsLast5Min: 0,
         },
+        ollamaStatus,
       },
     });
-    igLog('Heartbeat sent');
+    igLog('Heartbeat sent', { ollamaReachable: ollamaStatus.reachable });
   } catch {
     // Non-critical — don't log errors for missed heartbeats
   }
