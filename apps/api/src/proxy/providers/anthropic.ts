@@ -5,6 +5,7 @@
 import type { LLMProviderConfig } from '@iron-gate/types';
 import type { LLMProvider, LLMRequest, LLMResponse } from '../llm-router';
 import { logger } from '../../lib/logger';
+import { parseAnthropicSseChunks } from '../stream-utils';
 
 const DEFAULT_BASE_URL = 'https://api.anthropic.com';
 const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
@@ -108,6 +109,49 @@ export class AnthropicProvider implements LLMProvider {
       },
       latencyMs,
     };
+  }
+
+  /**
+   * Streaming variant. Anthropic uses its own SSE event format
+   * (content_block_delta + text_delta) — the shared parseAnthropicSseChunks
+   * helper extracts the text portions and yields them.
+   */
+  async *sendStream(request: LLMRequest, config: LLMProviderConfig): AsyncGenerator<string, void, unknown> {
+    if (!config.apiKey) {
+      throw new Error('[Anthropic] API key is required');
+    }
+
+    const baseUrl = config.baseUrl || DEFAULT_BASE_URL;
+    const model = request.model || config.model || DEFAULT_MODEL;
+    const url = `${baseUrl.replace(/\/$/, '')}/v1/messages`;
+
+    const messages: AnthropicMessage[] = [{ role: 'user', content: request.prompt }];
+    const body: AnthropicRequest & { stream: true } = {
+      model,
+      messages,
+      max_tokens: request.maxTokens ?? 4096,
+      stream: true,
+    };
+    if (request.systemPrompt) body.system = request.systemPrompt;
+    if (request.temperature !== undefined) body.temperature = request.temperature;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': config.apiKey,
+        'anthropic-version': ANTHROPIC_VERSION,
+        Accept: 'text/event-stream',
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`[Anthropic] Stream API error ${response.status}: ${errorBody}`);
+    }
+
+    yield* parseAnthropicSseChunks(response);
   }
 
   private async fetchWithRetry(

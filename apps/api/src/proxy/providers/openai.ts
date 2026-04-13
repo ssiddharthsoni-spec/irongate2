@@ -5,6 +5,7 @@
 import type { LLMProviderConfig } from '@iron-gate/types';
 import type { LLMProvider, LLMRequest, LLMResponse } from '../llm-router';
 import { logger } from '../../lib/logger';
+import { parseOpenAISseChunks } from '../stream-utils';
 
 const DEFAULT_BASE_URL = 'https://api.openai.com';
 const DEFAULT_MODEL = 'gpt-4o';
@@ -107,6 +108,49 @@ export class OpenAIProvider implements LLMProvider {
       },
       latencyMs,
     };
+  }
+
+  /**
+   * Streaming variant of send(). Returns an async iterator of incremental
+   * text chunks parsed from the OpenAI SSE stream.
+   */
+  async *sendStream(request: LLMRequest, config: LLMProviderConfig): AsyncGenerator<string, void, unknown> {
+    if (!config.apiKey) {
+      throw new Error('[OpenAI] API key is required');
+    }
+
+    const baseUrl = config.baseUrl || DEFAULT_BASE_URL;
+    const model = request.model || config.model || DEFAULT_MODEL;
+    const url = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
+
+    const messages: OpenAIChatMessage[] = [];
+    if (request.systemPrompt) messages.push({ role: 'system', content: request.systemPrompt });
+    messages.push({ role: 'user', content: request.prompt });
+
+    const body: OpenAIChatRequest = {
+      model,
+      messages,
+      stream: true,
+    };
+    if (request.maxTokens !== undefined) body.max_tokens = request.maxTokens;
+    if (request.temperature !== undefined) body.temperature = request.temperature;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.apiKey}`,
+        Accept: 'text/event-stream',
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`[OpenAI] Stream API error ${response.status}: ${errorBody}`);
+    }
+
+    yield* parseOpenAISseChunks(response);
   }
 
   private async fetchWithRetry(

@@ -34,12 +34,26 @@ import { eq } from 'drizzle-orm';
 import { Pseudonymizer } from '../proxy/pseudonymizer';
 import { LLMRouter } from '../proxy/llm-router';
 import type { FirmLLMConfig } from '../proxy/llm-router';
+import {
+  StreamDepseudoBuffer,
+  formatOpenAIStreamChunk,
+  OPENAI_STREAM_DONE,
+  formatAnthropicStreamChunk,
+} from '../proxy/stream-utils';
 import { enqueueAudit } from '../jobs/enqueue';
 import { logger } from '../lib/logger';
 import type { AppEnv } from '../types';
 import { detectFirmAware } from '../detection/detector';
 import { scoreFirmAware } from '../detection/scorer';
 import type { LLMRoute } from '@iron-gate/types';
+
+/**
+ * Max pseudonym length we'll ever generate. Used to size the streaming
+ * de-pseudonymization buffer — we hold the last N chars back so a
+ * pseudonym that spans chunks is guaranteed to be fully present when
+ * we run the replacement.
+ */
+const MAX_PSEUDONYM_LENGTH = 64;
 
 export const gatewayRoutes = new Hono<AppEnv>();
 
@@ -146,18 +160,6 @@ gatewayRoutes.post('/chat/completions', async (c) => {
 
   const { model, messages, temperature, max_tokens, stream } = parsed.data;
 
-  if (stream) {
-    return c.json(
-      {
-        error: {
-          message: 'Streaming responses are not yet supported. Set stream: false. Coming in v0.3.0.',
-          type: 'invalid_request_error',
-        },
-      },
-      400,
-    );
-  }
-
   try {
     // 1. Concat + detect entities across the full conversation
     const fullText = concatMessagesForDetection(messages);
@@ -177,26 +179,111 @@ gatewayRoutes.post('/chat/completions', async (c) => {
     const shouldMask = route !== 'passthrough' && entities.length > 0;
     const processedMessages = messages.map((m) => {
       if (!shouldMask) return m;
-      // Re-detect per message to get accurate offsets for this content
       const messageEntities = entities.filter((e) => m.content.includes(e.text));
       if (messageEntities.length === 0) return m;
       const result = pseudo.pseudonymize(m.content, messageEntities);
       return { role: m.role, content: result.maskedText };
     });
 
-    // 4. Route to upstream provider
     const router = new LLMRouter(llmConfig);
     const systemMessage = processedMessages.find((m) => m.role === 'system');
     const userMessages = processedMessages.filter((m) => m.role !== 'system');
     const lastUser = userMessages[userMessages.length - 1];
-    const llmResponse = await router.send({
+    const llmRequest = {
       prompt: lastUser?.content || '',
       route,
       model,
       systemPrompt: systemMessage?.content,
       maxTokens: max_tokens,
       temperature,
-    });
+    };
+
+    // ── STREAMING PATH ─────────────────────────────────────────────────────
+    // De-pseudonymization is done with a rolling buffer so pseudonyms that
+    // span chunk boundaries are still replaced correctly. Audit log fires
+    // once on successful stream completion (or error).
+    if (stream) {
+      const created = Math.floor(Date.now() / 1000);
+      const sseId = `chatcmpl-${requestId}`;
+      const encoder = new TextEncoder();
+
+      const sseStream = new ReadableStream({
+        async start(controller) {
+          try {
+            const buffer = new StreamDepseudoBuffer(
+              MAX_PSEUDONYM_LENGTH,
+              (text) => (shouldMask ? pseudo.depseudonymize(text) : text),
+            );
+
+            for await (const chunk of router.sendStream(llmRequest)) {
+              for (const out of buffer.push(chunk)) {
+                controller.enqueue(
+                  encoder.encode(formatOpenAIStreamChunk(out, { id: sseId, model, created })),
+                );
+              }
+            }
+            for (const out of buffer.flush()) {
+              controller.enqueue(
+                encoder.encode(formatOpenAIStreamChunk(out, { id: sseId, model, created })),
+              );
+            }
+            // Final frame with finish_reason + DONE terminator
+            controller.enqueue(
+              encoder.encode(
+                formatOpenAIStreamChunk('', { id: sseId, model, created, finishReason: 'stop' }),
+              ),
+            );
+            controller.enqueue(encoder.encode(OPENAI_STREAM_DONE));
+            controller.close();
+
+            // Audit on success
+            enqueueAudit({
+              firmId,
+              userId,
+              aiToolId: `gateway:${providerFromModel(model)}`,
+              sessionId,
+              promptHash: sha256Hex(fullText),
+              promptLength: fullText.length,
+              sensitivityScore: score.score,
+              sensitivityLevel,
+              action: route === 'passthrough' ? 'pass' : 'proxy',
+              captureMethod: 'gateway-stream',
+              metadata: {
+                gatewayEndpoint: 'chat/completions',
+                provider: providerFromModel(model),
+                model,
+                streamed: true,
+                entityCategories: Array.from(new Set(entities.map((e) => e.type))),
+                entityCount: entities.length,
+                latencyMs: Date.now() - startTime,
+              },
+            }).catch((err) => logger.warn('Gateway audit enqueue failed', { error: String(err) }));
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            logger.error('Gateway stream failed', { firmId, error: msg });
+            // Send an error SSE frame before closing
+            const errorPayload = {
+              error: { message: `IronGate gateway error: ${msg}`, type: 'api_error' },
+            };
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorPayload)}\n\n`));
+            controller.enqueue(encoder.encode(OPENAI_STREAM_DONE));
+            controller.close();
+          }
+        },
+      });
+
+      return new Response(sseStream, {
+        headers: {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          Connection: 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        },
+      });
+    }
+
+    // ── NON-STREAMING PATH (existing) ──────────────────────────────────────
+    const llmResponse = await router.send(llmRequest);
 
     // 5. De-pseudonymize the response
     const finalText = shouldMask ? pseudo.depseudonymize(llmResponse.text) : llmResponse.text;
@@ -301,19 +388,6 @@ gatewayRoutes.post('/messages', async (c) => {
 
   const { model, messages, system, max_tokens, temperature, stream } = parsed.data;
 
-  if (stream) {
-    return c.json(
-      {
-        type: 'error',
-        error: {
-          type: 'invalid_request_error',
-          message: 'Streaming responses are not yet supported. Set stream: false. Coming in v0.3.0.',
-        },
-      },
-      400,
-    );
-  }
-
   try {
     const fullText = (system ? `system: ${system}\n\n` : '') + concatMessagesForDetection(messages);
     const entities = await detectFirmAware(fullText, { firmId });
@@ -346,14 +420,134 @@ gatewayRoutes.post('/messages', async (c) => {
 
     const router = new LLMRouter(llmConfig);
     const lastUser = processedMessages[processedMessages.length - 1];
-    const llmResponse = await router.send({
+    const llmRequest = {
       prompt: lastUser?.content || '',
       route,
       model,
       systemPrompt: processedSystem,
       maxTokens: max_tokens,
       temperature,
-    });
+    };
+
+    // ── STREAMING PATH ─────────────────────────────────────────────────────
+    if (stream) {
+      const msgId = `msg_${requestId.replace(/-/g, '')}`;
+      const encoder = new TextEncoder();
+
+      const sseStream = new ReadableStream({
+        async start(controller) {
+          try {
+            // Anthropic stream starts with a message_start event, then a
+            // content_block_start, then deltas, then stops. We emit a minimal
+            // sequence that standard SDKs accept.
+            controller.enqueue(
+              encoder.encode(
+                `event: message_start\ndata: ${JSON.stringify({
+                  type: 'message_start',
+                  message: {
+                    id: msgId,
+                    type: 'message',
+                    role: 'assistant',
+                    content: [],
+                    model,
+                    stop_reason: null,
+                    stop_sequence: null,
+                    usage: { input_tokens: 0, output_tokens: 0 },
+                  },
+                })}\n\n`,
+              ),
+            );
+            controller.enqueue(
+              encoder.encode(
+                `event: content_block_start\ndata: ${JSON.stringify({
+                  type: 'content_block_start',
+                  index: 0,
+                  content_block: { type: 'text', text: '' },
+                })}\n\n`,
+              ),
+            );
+
+            const buffer = new StreamDepseudoBuffer(
+              MAX_PSEUDONYM_LENGTH,
+              (text) => (shouldMask ? pseudo.depseudonymize(text) : text),
+            );
+
+            for await (const chunk of router.sendStream(llmRequest)) {
+              for (const out of buffer.push(chunk)) {
+                controller.enqueue(encoder.encode(formatAnthropicStreamChunk(out)));
+              }
+            }
+            for (const out of buffer.flush()) {
+              controller.enqueue(encoder.encode(formatAnthropicStreamChunk(out)));
+            }
+
+            // Close sequence
+            controller.enqueue(
+              encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: 0 })}\n\n`),
+            );
+            controller.enqueue(
+              encoder.encode(
+                `event: message_delta\ndata: ${JSON.stringify({
+                  type: 'message_delta',
+                  delta: { stop_reason: 'end_turn', stop_sequence: null },
+                  usage: { output_tokens: 0 },
+                })}\n\n`,
+              ),
+            );
+            controller.enqueue(
+              encoder.encode(`event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`),
+            );
+            controller.close();
+
+            enqueueAudit({
+              firmId,
+              userId,
+              aiToolId: `gateway:${providerFromModel(model)}`,
+              sessionId,
+              promptHash: sha256Hex(fullText),
+              promptLength: fullText.length,
+              sensitivityScore: score.score,
+              sensitivityLevel,
+              action: route === 'passthrough' ? 'pass' : 'proxy',
+              captureMethod: 'gateway-stream',
+              metadata: {
+                gatewayEndpoint: 'messages',
+                provider: providerFromModel(model),
+                model,
+                streamed: true,
+                entityCategories: Array.from(new Set(entities.map((e) => e.type))),
+                entityCount: entities.length,
+                latencyMs: Date.now() - startTime,
+              },
+            }).catch((err) => logger.warn('Gateway audit enqueue failed', { error: String(err) }));
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            logger.error('Gateway /messages stream failed', { firmId, error: msg });
+            controller.enqueue(
+              encoder.encode(
+                `event: error\ndata: ${JSON.stringify({
+                  type: 'error',
+                  error: { type: 'api_error', message: `IronGate gateway error: ${msg}` },
+                })}\n\n`,
+              ),
+            );
+            controller.close();
+          }
+        },
+      });
+
+      return new Response(sseStream, {
+        headers: {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          Connection: 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        },
+      });
+    }
+
+    // ── NON-STREAMING PATH ─────────────────────────────────────────────────
+    const llmResponse = await router.send(llmRequest);
 
     const finalText = shouldMask ? pseudo.depseudonymize(llmResponse.text) : llmResponse.text;
 

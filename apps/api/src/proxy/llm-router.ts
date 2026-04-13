@@ -42,6 +42,12 @@ export interface LLMResponse {
 export interface LLMProvider {
   readonly name: string;
   send(request: LLMRequest, config: LLMProviderConfig): Promise<LLMResponse>;
+  /**
+   * Optional: streaming send. Returns an async iterator of incremental text
+   * chunks. Providers that don't implement this will throw — callers must
+   * check `supportsStreaming()` or fall back to `send()`.
+   */
+  sendStream?(request: LLMRequest, config: LLMProviderConfig): AsyncIterable<string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -180,6 +186,32 @@ export class LLMRouter {
       return breaker.execute(() => withTimeout(provider.send(request, providerConfig)));
     }
     return withTimeout(provider.send(request, providerConfig));
+  }
+
+  /**
+   * Streaming variant of send(). Returns an async iterator yielding
+   * incremental text chunks. Throws if the resolved provider does not
+   * implement sendStream().
+   */
+  async *sendStream(request: LLMRequest): AsyncGenerator<string, void, unknown> {
+    const { provider, providerConfig } = this.resolveProvider(request.route, request.model);
+    validateBaseUrl(providerConfig.baseUrl);
+
+    if (!provider.sendStream) {
+      throw new Error(`[LLMRouter] Provider '${provider.name}' does not support streaming yet`);
+    }
+
+    logger.info('Routing to provider (stream)', {
+      provider: provider.name,
+      model: request.model || providerConfig.model,
+      route: request.route,
+    });
+
+    // Note: circuit breakers are bypassed for streams — we open on errors
+    // emitted from the iterator rather than gating the initial call.
+    for await (const chunk of provider.sendStream(request, providerConfig)) {
+      yield chunk;
+    }
   }
 
   /**
