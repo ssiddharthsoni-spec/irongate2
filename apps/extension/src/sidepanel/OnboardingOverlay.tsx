@@ -99,6 +99,56 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
   // Demo animation
   const [demoHighlightIndex, setDemoHighlightIndex] = useState(-1);
 
+  // Tier 2 / Ollama state
+  type OllamaStatus = 'idle' | 'testing' | 'success' | 'error';
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus>('idle');
+  const [ollamaMessage, setOllamaMessage] = useState<string>('');
+  const [osHint, setOsHint] = useState<'mac' | 'windows' | 'linux'>('mac');
+  const [openOsPanel, setOpenOsPanel] = useState<'mac' | 'windows' | 'linux' | null>('mac');
+
+  useEffect(() => {
+    // Detect user's OS for install instructions
+    try {
+      const ua = (navigator.userAgent || '').toLowerCase();
+      const platform = (navigator.platform || '').toLowerCase();
+      let detected: 'mac' | 'windows' | 'linux' = 'mac';
+      if (/win/.test(platform) || /windows/.test(ua)) detected = 'windows';
+      else if (/linux/.test(platform) || /linux/.test(ua)) detected = 'linux';
+      else if (/mac/.test(platform) || /mac os/.test(ua)) detected = 'mac';
+      setOsHint(detected);
+      setOpenOsPanel(detected);
+    } catch { /* non-fatal */ }
+  }, []);
+
+  const handleTestOllama = useCallback(async () => {
+    setOllamaStatus('testing');
+    setOllamaMessage('');
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const res = await fetch('http://localhost:11434/api/tags', { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (!res.ok) {
+        setOllamaStatus('error');
+        setOllamaMessage('Ollama not reachable. Make sure it\u2019s running and try again.');
+        return;
+      }
+      // Persist tier2 config
+      try {
+        await chrome.storage.local.set({
+          tier2Enabled: true,
+          tier2Endpoint: 'http://localhost:11434/api/generate',
+          tier2Model: 'llama3.2:3b',
+        });
+      } catch { /* non-fatal */ }
+      setOllamaStatus('success');
+      setOllamaMessage('Ollama detected \u2014 enhanced detection active');
+    } catch {
+      setOllamaStatus('error');
+      setOllamaMessage('Ollama not reachable. Make sure it\u2019s running and try again.');
+    }
+  }, []);
+
   useEffect(() => {
     if (step !== 2) return;
     let i = 0;
@@ -301,7 +351,7 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
 
       {/* Progress dots */}
       <div className="flex items-center gap-1.5 mb-6">
-        {[1, 2, 3, 4, 5].map((s) => (
+        {[1, 2, 3, 4, 5, 6].map((s) => (
           <div
             key={s}
             className={`h-1.5 rounded-full transition-all duration-300 ${
@@ -537,8 +587,182 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
         </div>
       )}
 
-      {/* Step 5: Confirmation */}
+      {/* Step 5: Enhanced Detection (Optional Ollama setup) */}
       {step === 5 && (
+        <div className="flex-1 flex flex-col overflow-y-auto">
+          <h2 className="text-lg font-bold text-gray-900 mb-1">Enhanced Detection (Optional)</h2>
+          <p className="text-xs text-gray-500 mb-3">
+            Iron Gate works out of the box with pattern-based detection. For even better accuracy on ambiguous content,
+            install Ollama &mdash; a local AI service that runs entirely on your machine.
+          </p>
+
+          {/* Selling points */}
+          <div className="bg-white rounded-lg border p-3 mb-3">
+            <ul className="space-y-2">
+              {[
+                '100% local \u2014 nothing leaves your device',
+                'Free and open source',
+                'Adds ~10% accuracy on edge cases',
+                'Takes 2 minutes to set up',
+              ].map((text, i) => (
+                <li key={i} className="flex items-start gap-2">
+                  <svg className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                  </svg>
+                  <span className="text-xs text-gray-700">{text}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Step-by-step */}
+          <div className="bg-white rounded-lg border p-3 mb-3">
+            <h3 className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Setup steps</h3>
+            <ol className="space-y-3 text-xs text-gray-700">
+              <li className="flex items-start gap-2">
+                <span className="w-5 h-5 bg-iron-100 text-iron-700 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">1</span>
+                <div>
+                  Download Ollama from{' '}
+                  <a
+                    href="https://ollama.com/download"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-iron-600 hover:text-iron-700 underline"
+                  >
+                    ollama.com/download
+                  </a>
+                </div>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="w-5 h-5 bg-iron-100 text-iron-700 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">2</span>
+                <div className="flex-1">
+                  <div className="mb-1">Install it:</div>
+                  <div className="space-y-1">
+                    {(['mac', 'windows', 'linux'] as const).map((os) => {
+                      const label = os === 'mac' ? 'Mac' : os === 'windows' ? 'Windows' : 'Linux';
+                      const detail =
+                        os === 'mac'
+                          ? 'Drag Ollama.app to your Applications folder and launch it.'
+                          : os === 'windows'
+                            ? 'Run the downloaded installer (OllamaSetup.exe) and follow the prompts.'
+                            : 'Run: curl -fsSL https://ollama.com/install.sh | sh';
+                      const isYourOs = os === osHint;
+                      const isOpen = openOsPanel === os;
+                      return (
+                        <div key={os} className="border border-gray-100 rounded">
+                          <button
+                            type="button"
+                            onClick={() => setOpenOsPanel(isOpen ? null : os)}
+                            className="w-full flex items-center justify-between px-2 py-1.5 text-left hover:bg-gray-50"
+                          >
+                            <span className="text-xs font-medium text-gray-800">
+                              {label}
+                              {isYourOs && (
+                                <span className="ml-2 text-[9px] uppercase tracking-wider text-iron-600 font-semibold">
+                                  Your OS
+                                </span>
+                              )}
+                            </span>
+                            <svg
+                              className={`w-3 h-3 text-gray-400 transition-transform ${isOpen ? 'rotate-90' : ''}`}
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              strokeWidth={2}
+                              stroke="currentColor"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+                            </svg>
+                          </button>
+                          {isOpen && (
+                            <div className="px-2 pb-2 pt-0 text-[11px] text-gray-600 leading-relaxed">
+                              {os === 'linux' ? (
+                                <code className="block bg-gray-50 border border-gray-100 rounded px-2 py-1 font-mono text-[10px] whitespace-pre-wrap break-all">
+                                  curl -fsSL https://ollama.com/install.sh | sh
+                                </code>
+                              ) : (
+                                detail
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="w-5 h-5 bg-iron-100 text-iron-700 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">3</span>
+                <div className="flex-1">
+                  <div className="mb-1">Open Terminal (or Command Prompt) and run:</div>
+                  <code className="block bg-gray-50 border border-gray-100 rounded px-2 py-1 font-mono text-[10px]">
+                    ollama pull llama3.2:3b
+                  </code>
+                </div>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="w-5 h-5 bg-iron-100 text-iron-700 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">4</span>
+                <div>
+                  Keep Ollama running in the background (it&rsquo;s a menu bar icon on Mac, system tray on Windows).
+                </div>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="w-5 h-5 bg-iron-100 text-iron-700 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">5</span>
+                <div>Click &ldquo;Test Connection&rdquo; below.</div>
+              </li>
+            </ol>
+          </div>
+
+          {/* Test Connection */}
+          <button
+            type="button"
+            onClick={handleTestOllama}
+            disabled={ollamaStatus === 'testing'}
+            className="w-full py-2.5 px-4 text-sm font-medium border border-iron-600 text-iron-700 bg-white rounded-lg hover:bg-iron-50 disabled:opacity-60 transition-colors mb-3"
+          >
+            {ollamaStatus === 'testing' ? 'Testing...' : 'Test Connection'}
+          </button>
+
+          {ollamaStatus === 'success' && (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-2 mb-3 flex items-start gap-2">
+              <svg className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+              </svg>
+              <p className="text-xs text-green-800">{ollamaMessage}</p>
+            </div>
+          )}
+
+          {ollamaStatus === 'error' && (
+            <div role="alert" className="bg-yellow-50 border border-yellow-200 rounded-lg p-2 mb-3 flex items-start gap-2">
+              <svg className="w-4 h-4 text-yellow-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+              </svg>
+              <p className="text-xs text-yellow-800">{ollamaMessage}</p>
+            </div>
+          )}
+
+          {/* Footer buttons */}
+          <div className="flex gap-2 mt-auto pt-3">
+            <button
+              type="button"
+              onClick={() => setStep(6)}
+              className="flex-1 px-4 py-3 text-sm text-gray-600 hover:bg-gray-100 rounded-lg border border-gray-200"
+            >
+              Skip for now
+            </button>
+            <button
+              type="button"
+              onClick={() => setStep(6)}
+              disabled={ollamaStatus !== 'success'}
+              className="flex-1 py-3 px-4 text-sm font-semibold text-white bg-iron-600 rounded-lg hover:bg-iron-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 6: Confirmation */}
+      {step === 6 && (
         <div className="flex-1 flex flex-col">
           <div className="text-center mb-6">
             <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
