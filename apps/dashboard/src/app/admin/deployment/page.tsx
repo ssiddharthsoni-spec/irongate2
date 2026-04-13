@@ -371,6 +371,36 @@ export default function DeploymentHealthPage() {
         </div>
       </div>
 
+      {/* Ollama deployment wizard link */}
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 mb-8">
+        <div className="px-6 py-5 flex items-start gap-4">
+          <div className="w-10 h-10 rounded-lg bg-iron-50 dark:bg-iron-900/30 flex items-center justify-center shrink-0">
+            <svg className="w-5 h-5 text-iron-600 dark:text-iron-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 0 0-3.375-3.375h-1.5a1.125 1.125 0 0 1-1.125-1.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H9.75" />
+            </svg>
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-1">
+              <h2 className="text-[15px] font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">Org-wide Ollama deployment</h2>
+              <span className="px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded bg-iron-50 dark:bg-iron-900/30 text-iron-700 dark:text-iron-300">Optional</span>
+            </div>
+            <p className="text-[13px] text-[#86868b] dark:text-[#636366] mb-3 leading-relaxed">
+              Enable Tier 2 local-LLM detection on every managed device via your MDM in ~15 minutes.
+              Generate install scripts + policy in the wizard — no per-device setup.
+            </p>
+            <Link
+              href="/admin/deployment/ollama"
+              className="inline-flex items-center gap-1 text-[13px] font-medium text-iron-600 dark:text-iron-400 hover:text-iron-700 dark:hover:text-iron-300 transition-colors"
+            >
+              Open wizard
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+              </svg>
+            </Link>
+          </div>
+        </div>
+      </div>
+
       {/* Stale extensions table */}
       <div className="bg-white dark:bg-[#1c1c1e] rounded-xl shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60">
         <div className="px-6 py-4 border-b border-[#d2d2d7]/40 dark:border-[#38383a]/60">
