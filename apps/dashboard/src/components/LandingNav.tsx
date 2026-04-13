@@ -50,6 +50,7 @@ export default function LandingNav() {
           <span className="text-base font-bold tracking-tight">Iron Gate</span>
         </Link>
         <div className="flex items-center gap-6">
+          <a href="#architecture" className="hidden md:block text-sm text-[#6e6e73] dark:text-[#86868b] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7] transition-colors">How It Works</a>
           <a href="#features" className="hidden md:block text-sm text-[#6e6e73] dark:text-[#86868b] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7] transition-colors">Features</a>
           <a href="#security" className="hidden md:block text-sm text-[#6e6e73] dark:text-[#86868b] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7] transition-colors">Security</a>
           <a href="#pricing" className="hidden md:block text-sm text-[#6e6e73] dark:text-[#86868b] hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7] transition-colors">Pricing</a>
