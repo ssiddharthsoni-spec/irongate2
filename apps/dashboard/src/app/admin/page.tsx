@@ -276,6 +276,70 @@ export default function AdminPage() {
             </div>
           </div>
         </Link>
+
+        <Link
+          href="/admin/policies"
+          className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 hover:border-iron-300 dark:hover:border-iron-700 transition-colors group"
+        >
+          <div className="flex items-start gap-4">
+            <div className="w-10 h-10 rounded-lg bg-iron-50 dark:bg-iron-900/30 flex items-center justify-center shrink-0">
+              <svg className="w-5 h-5 text-iron-600 dark:text-iron-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
+              </svg>
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] group-hover:text-iron-600 dark:group-hover:text-iron-400 transition-colors">
+                Policy Rules
+              </h3>
+              <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-0.5">
+                Build IF/THEN rules for entity types, AI tools, and user roles.
+              </p>
+            </div>
+          </div>
+        </Link>
+
+        <Link
+          href="/admin/entity-dictionary"
+          className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 hover:border-iron-300 dark:hover:border-iron-700 transition-colors group"
+        >
+          <div className="flex items-start gap-4">
+            <div className="w-10 h-10 rounded-lg bg-iron-50 dark:bg-iron-900/30 flex items-center justify-center shrink-0">
+              <svg className="w-5 h-5 text-iron-600 dark:text-iron-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+              </svg>
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] group-hover:text-iron-600 dark:group-hover:text-iron-400 transition-colors">
+                Entity Dictionary
+              </h3>
+              <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-0.5">
+                Manage custom client names, matter codes, and project codenames.
+              </p>
+            </div>
+          </div>
+        </Link>
+
+        <Link
+          href="/admin/controls"
+          className="bg-white dark:bg-[#1c1c1e] rounded-xl p-6 shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 hover:border-iron-300 dark:hover:border-iron-700 transition-colors group"
+        >
+          <div className="flex items-start gap-4">
+            <div className="w-10 h-10 rounded-lg bg-iron-50 dark:bg-iron-900/30 flex items-center justify-center shrink-0">
+              <svg className="w-5 h-5 text-iron-600 dark:text-iron-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6a7.5 7.5 0 1 0 7.5 7.5h-7.5V6Z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5H21A7.5 7.5 0 0 0 13.5 3v7.5Z" />
+              </svg>
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] group-hover:text-iron-600 dark:group-hover:text-iron-400 transition-colors">
+                Sensitivity &amp; Kill Switch
+              </h3>
+              <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mt-0.5">
+                Tune detection sensitivity, manage auto-updates, and emergency controls.
+              </p>
+            </div>
+          </div>
+        </Link>
       </div>
 
       {/* Client/Matter Import */}
