@@ -7,34 +7,35 @@ import { useApiClient } from '@/lib/api';
 import { useToast } from '@/components/toast';
 
 /**
- * Google Workspace one-click deployment page.
+ * Jamf Pro one-click deployment page.
  *
- * Flow:
- *   1. Admin clicks "Connect Google Workspace" → OAuth consent → callback
- *      saves encrypted tokens → returns here with ?connected=1
- *   2. Page fetches OUs via Directory API
- *   3. Admin picks an OU, configures policy (enrollment code, Ollama,
- *      allowed AI tools)
- *   4. Admin clicks "Deploy IronGate" → Chrome Policy API pushes the
- *      force-install + managed config
- *   5. Within 1-10 minutes, every Chrome in the OU auto-installs the
- *      extension and self-enrolls
+ * Unlike Google Workspace, Jamf Pro does not use user-redirect OAuth.
+ * Instead, the customer admin provisions an API Role + API Client inside
+ * their Jamf instance and pastes three values here:
+ *
+ *   1. Jamf Pro URL (e.g., https://sterling.jamfcloud.com)
+ *   2. API Client ID
+ *   3. API Client Secret
+ *
+ * On submit, IronGate verifies the credentials by exchanging them for a
+ * short-lived bearer token and pinging a trivial endpoint, then encrypts
+ * and stores them. Subsequent operations (list groups, deploy) fetch a
+ * fresh access token on-demand via client_credentials — Jamf tokens
+ * expire after ~30 min and there's no refresh token.
  */
 
 interface ConnectionStatus {
   connected: boolean;
-  authorizedByEmail?: string;
-  domain?: string;
-  scopes?: string[];
+  jamfUrl?: string;
+  jamfHost?: string;
   lastVerifiedAt?: string | null;
   connectedAt?: string;
 }
 
-interface OrgUnit {
-  orgUnitId: string;
-  orgUnitPath: string;
+interface ComputerGroup {
+  id: number;
   name: string;
-  description?: string;
+  isSmart: boolean;
 }
 
 interface FirmInfo {
@@ -42,20 +43,26 @@ interface FirmInfo {
   enrollmentCode?: string;
 }
 
-function GoogleWorkspacePageContent() {
+function JamfProPageContent() {
   const { apiFetch } = useApiClient();
   const { addToast } = useToast();
   const searchParams = useSearchParams();
-  const connectedParam = searchParams.get('connected');
   const errorParam = searchParams.get('error');
 
   const [status, setStatus] = useState<ConnectionStatus>({ connected: false });
   const [statusLoading, setStatusLoading] = useState(true);
-  const [ous, setOus] = useState<OrgUnit[]>([]);
-  const [ousLoading, setOusLoading] = useState(false);
+  const [groups, setGroups] = useState<ComputerGroup[]>([]);
+  const [groupsLoading, setGroupsLoading] = useState(false);
   const [firmInfo, setFirmInfo] = useState<FirmInfo | null>(null);
 
-  const [selectedOu, setSelectedOu] = useState<string>('');
+  // Connect form
+  const [jamfUrl, setJamfUrl] = useState<string>('');
+  const [clientId, setClientId] = useState<string>('');
+  const [clientSecret, setClientSecret] = useState<string>('');
+  const [connecting, setConnecting] = useState<boolean>(false);
+
+  // Deploy form
+  const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
   const [extensionId, setExtensionId] = useState<string>('');
   const [enableOllama, setEnableOllama] = useState<boolean>(false);
   const [allowedTools, setAllowedTools] = useState<Set<string>>(
@@ -63,13 +70,17 @@ function GoogleWorkspacePageContent() {
   );
 
   const [deploying, setDeploying] = useState(false);
-  const [deployResult, setDeployResult] = useState<{ message: string; orgUnitPath: string } | null>(null);
+  const [deployResult, setDeployResult] = useState<{
+    message: string;
+    profileName: string;
+    profileId: number;
+  } | null>(null);
 
   // ── Initial load ────────────────────────────────────────────────────────
   const loadStatus = useCallback(async () => {
     setStatusLoading(true);
     try {
-      const res = await apiFetch('/admin/mdm-oauth/google/status');
+      const res = await apiFetch('/admin/mdm-oauth/jamf/status');
       if (res.ok) setStatus(await res.json());
     } catch {
       /* graceful — show not-connected */
@@ -90,21 +101,21 @@ function GoogleWorkspacePageContent() {
     }
   }, [apiFetch]);
 
-  const loadOus = useCallback(async () => {
-    setOusLoading(true);
+  const loadGroups = useCallback(async () => {
+    setGroupsLoading(true);
     try {
-      const res = await apiFetch('/admin/mdm-oauth/google/org-units');
+      const res = await apiFetch('/admin/mdm-oauth/jamf/computer-groups');
       if (res.ok) {
         const data = await res.json();
-        setOus(data.orgUnits ?? []);
+        setGroups(data.computerGroups ?? []);
       } else {
-        const err = await res.json().catch(() => ({ error: 'Failed to load OUs' }));
-        addToast({ type: 'error', message: err.error || 'Failed to load organizational units' });
+        const err = await res.json().catch(() => ({ error: 'Failed to load groups' }));
+        addToast({ type: 'error', message: err.error || 'Failed to load computer groups' });
       }
     } catch {
-      addToast({ type: 'error', message: 'Failed to load organizational units' });
+      addToast({ type: 'error', message: 'Failed to load computer groups' });
     } finally {
-      setOusLoading(false);
+      setGroupsLoading(false);
     }
   }, [apiFetch, addToast]);
 
@@ -114,67 +125,73 @@ function GoogleWorkspacePageContent() {
   }, [loadStatus, loadFirmInfo]);
 
   useEffect(() => {
-    if (status.connected) loadOus();
-  }, [status.connected, loadOus]);
+    if (status.connected) loadGroups();
+  }, [status.connected, loadGroups]);
 
-  // ── Toast on connect success/failure from OAuth callback ────────────────
   useEffect(() => {
-    if (connectedParam === '1') {
-      addToast({ type: 'success', message: 'Google Workspace connected successfully' });
-    } else if (errorParam) {
+    if (errorParam) {
       addToast({ type: 'error', message: `Connection failed: ${errorParam}` });
     }
-  }, [connectedParam, errorParam, addToast]);
+  }, [errorParam, addToast]);
 
   // ── Actions ──────────────────────────────────────────────────────────────
-  async function handleConnect() {
-    try {
-      const res = await apiFetch('/admin/mdm-oauth/google/initiate', { method: 'POST' });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Failed to start OAuth flow' }));
-        addToast({ type: 'error', message: err.error || 'Failed to start OAuth flow' });
-        return;
-      }
-      const { startUrl } = await res.json();
-      window.location.href = startUrl;
-    } catch {
-      addToast({ type: 'error', message: 'Network error. Please try again.' });
+  async function handleConnect(e: React.FormEvent) {
+    e.preventDefault();
+    if (!jamfUrl.trim() || !clientId.trim() || !clientSecret) {
+      addToast({ type: 'error', message: 'All three fields are required.' });
+      return;
     }
-  }
+    if (!/^https:\/\//i.test(jamfUrl.trim())) {
+      addToast({ type: 'error', message: 'Jamf URL must start with https://' });
+      return;
+    }
 
-  async function handleTestConnection() {
-    addToast({ type: 'success', message: 'Testing connection...' });
+    setConnecting(true);
     try {
-      const res = await apiFetch('/admin/mdm-oauth/google/org-units');
+      const res = await apiFetch('/admin/mdm-oauth/jamf/connect', {
+        method: 'POST',
+        body: JSON.stringify({
+          jamfUrl: jamfUrl.trim(),
+          clientId: clientId.trim(),
+          clientSecret,
+        }),
+      });
+      const data = await res.json();
       if (res.ok) {
-        const data = await res.json();
-        const ouCount = data.orgUnits?.length ?? 0;
         addToast({
           type: 'success',
-          message: `Connection healthy — ${ouCount} organizational unit${ouCount === 1 ? '' : 's'} accessible.`,
+          message: `Jamf Pro connected${data.jamfVersion ? ` (v${data.jamfVersion})` : ''}`,
         });
-        // Refresh the cached list + status timestamp
-        setOus(data.orgUnits ?? []);
-        loadStatus();
+        // Clear the secret out of memory once we've successfully stored it.
+        setClientSecret('');
+        await loadStatus();
       } else {
-        const err = await res.json().catch(() => ({ error: 'Connection test failed' }));
-        addToast({ type: 'error', message: `Connection failed: ${err.error || res.status}` });
+        addToast({ type: 'error', message: data.error || 'Failed to connect' });
       }
     } catch {
-      addToast({ type: 'error', message: 'Network error during connection test' });
+      addToast({ type: 'error', message: 'Network error. Please try again.' });
+    } finally {
+      setConnecting(false);
     }
   }
 
   async function handleDisconnect() {
-    if (!confirm('Disconnect Google Workspace? Existing deployments stay in place — this only removes IronGate\'s ability to push further policy updates.')) {
+    if (
+      !confirm(
+        "Disconnect Jamf Pro? Existing configuration profiles in Jamf stay in place — this only removes IronGate's ability to push further policy updates.",
+      )
+    ) {
       return;
     }
     try {
-      const res = await apiFetch('/admin/mdm-oauth/google/disconnect', { method: 'POST' });
+      const res = await apiFetch('/admin/mdm-oauth/jamf/disconnect', { method: 'POST' });
       if (res.ok) {
         setStatus({ connected: false });
-        setOus([]);
-        addToast({ type: 'success', message: 'Google Workspace disconnected' });
+        setGroups([]);
+        setJamfUrl('');
+        setClientId('');
+        setClientSecret('');
+        addToast({ type: 'success', message: 'Jamf Pro disconnected' });
       } else {
         addToast({ type: 'error', message: 'Failed to disconnect' });
       }
@@ -184,17 +201,17 @@ function GoogleWorkspacePageContent() {
   }
 
   async function handleDeploy() {
-    if (!selectedOu || !extensionId || !firmInfo?.enrollmentCode) {
+    if (!selectedGroupId || !extensionId || !firmInfo?.enrollmentCode) {
       addToast({ type: 'error', message: 'Please fill all required fields' });
       return;
     }
     setDeploying(true);
     setDeployResult(null);
     try {
-      const res = await apiFetch('/admin/mdm-oauth/google/deploy', {
+      const res = await apiFetch('/admin/mdm-oauth/jamf/deploy', {
         method: 'POST',
         body: JSON.stringify({
-          orgUnitPath: selectedOu,
+          groupId: selectedGroupId,
           extensionId,
           enrollmentCode: firmInfo.enrollmentCode,
           allowedAITools: Array.from(allowedTools),
@@ -204,8 +221,12 @@ function GoogleWorkspacePageContent() {
       });
       const data = await res.json();
       if (res.ok) {
-        setDeployResult({ message: data.message, orgUnitPath: data.orgUnitPath });
-        addToast({ type: 'success', message: `Deployed to ${data.orgUnitPath}` });
+        setDeployResult({
+          message: data.message,
+          profileName: data.profileName,
+          profileId: data.profileId,
+        });
+        addToast({ type: 'success', message: `Deployed to group ${selectedGroupId}` });
       } else {
         addToast({ type: 'error', message: data.error || 'Deployment failed' });
       }
@@ -231,15 +252,16 @@ function GoogleWorkspacePageContent() {
         <span>/</span>
         <Link href="/admin/deployment" className="hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7] transition-colors">Deployment</Link>
         <span>/</span>
-        <span className="text-[#1d1d1f] dark:text-[#f5f5f7] font-medium">Google Workspace</span>
+        <span className="text-[#1d1d1f] dark:text-[#f5f5f7] font-medium">Jamf Pro</span>
       </nav>
 
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7] mb-2">Google Workspace — One-Click Deploy</h1>
+        <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7] mb-2">Jamf Pro — One-Click Deploy</h1>
         <p className="text-[#6e6e73] dark:text-[#86868b] text-sm leading-relaxed max-w-2xl">
-          Connect your Google Workspace once. IronGate pushes the Chrome extension
-          force-install policy and firm configuration directly to your managed
-          Chromes — no JSON copy-paste, no MDM menus.
+          Connect your Jamf Pro instance once. IronGate creates a scoped
+          configuration profile that force-installs the Chrome extension
+          and pushes firm policy to every Mac in the target computer group —
+          no XML copy-paste, no Jamf menus.
         </p>
       </div>
 
@@ -256,8 +278,7 @@ function GoogleWorkspacePageContent() {
                   <h3 className="text-sm font-semibold text-green-800 dark:text-green-200">Connected</h3>
                 </div>
                 <p className="text-[13px] text-green-700/80 dark:text-green-300/70">
-                  Authorized by <strong>{status.authorizedByEmail}</strong>
-                  {status.domain && ` (${status.domain})`}
+                  <strong>{status.jamfHost || status.jamfUrl}</strong>
                 </p>
                 {status.connectedAt && (
                   <p className="text-[11px] text-green-700/60 dark:text-green-300/50 mt-1">
@@ -265,47 +286,93 @@ function GoogleWorkspacePageContent() {
                   </p>
                 )}
               </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <button
-                  type="button"
-                  onClick={handleTestConnection}
-                  className="px-3 py-1.5 text-xs font-medium rounded-lg border border-green-600/30 dark:border-green-400/30 text-green-700 dark:text-green-300 hover:bg-green-100 dark:hover:bg-green-900/20 transition-colors"
-                >
-                  Test connection
-                </button>
-                <button
-                  type="button"
-                  onClick={handleDisconnect}
-                  className="px-3 py-1.5 text-xs font-medium rounded-lg border border-[#d2d2d7] dark:border-[#38383a] text-[#424245] dark:text-[#a1a1a6] hover:bg-white dark:hover:bg-[#2c2c2e] transition-colors"
-                >
-                  Disconnect
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={handleDisconnect}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg border border-[#d2d2d7] dark:border-[#38383a] text-[#424245] dark:text-[#a1a1a6] hover:bg-white dark:hover:bg-[#2c2c2e] transition-colors"
+              >
+                Disconnect
+              </button>
             </div>
           </div>
         ) : (
-          <div className="rounded-xl border border-[#d2d2d7]/60 dark:border-[#38383a]/60 bg-white dark:bg-[#1c1c1e] p-8 text-center">
-            <h3 className="text-base font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-1">Not connected</h3>
-            <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mb-5 max-w-md mx-auto">
-              Connect your Google Workspace to push IronGate to managed Chromes without
-              touching the Admin Console.
-            </p>
-            <button
-              type="button"
-              onClick={handleConnect}
-              className="inline-flex items-center gap-2 px-5 py-2.5 bg-iron-600 hover:bg-iron-700 text-white text-sm font-semibold rounded-xl transition-colors shadow-sm"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09 0-.73.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-              </svg>
-              Connect Google Workspace
-            </button>
-            <p className="text-[11px] text-[#86868b] mt-4">
-              You&apos;ll be redirected to Google for consent. Requires a Google Workspace admin account.
-            </p>
+          <div className="rounded-xl border border-[#d2d2d7]/60 dark:border-[#38383a]/60 bg-white dark:bg-[#1c1c1e] p-8">
+            <div className="max-w-lg mx-auto">
+              <h3 className="text-base font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-1 text-center">Connect Jamf Pro</h3>
+              <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mb-6 text-center">
+                In Jamf, create an API Role named &ldquo;IronGate&rdquo; with permissions to read
+                computer groups and manage OS X configuration profiles, then create an
+                API Client bound to that role. Paste the three values below.{' '}
+                <a
+                  href="https://github.com/ssiddharthsoni-spec/irongate2/blob/main/docs/deployment/JAMF_ONECLICK.md"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-iron-600 dark:text-iron-400 underline"
+                >
+                  Step-by-step guide
+                </a>
+              </p>
+
+              <form onSubmit={handleConnect} className="space-y-4">
+                <div>
+                  <label className="block text-[12px] font-medium text-[#424245] dark:text-[#a1a1a6] mb-1">
+                    Jamf Pro URL
+                  </label>
+                  <input
+                    type="url"
+                    required
+                    value={jamfUrl}
+                    onChange={(e) => setJamfUrl(e.target.value)}
+                    placeholder="https://yourcompany.jamfcloud.com"
+                    className="w-full px-3 py-2 rounded-lg border border-[#d2d2d7] dark:border-[#38383a] bg-white dark:bg-[#1c1c1e] text-sm text-[#1d1d1f] dark:text-[#f5f5f7] font-mono"
+                  />
+                  <p className="text-[11px] text-[#86868b] mt-1">
+                    Must start with https://. Trailing slash is optional.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-[12px] font-medium text-[#424245] dark:text-[#a1a1a6] mb-1">
+                    API Client ID
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={clientId}
+                    onChange={(e) => setClientId(e.target.value)}
+                    placeholder="e.g., 3c5b1a6f-..."
+                    autoComplete="off"
+                    className="w-full px-3 py-2 rounded-lg border border-[#d2d2d7] dark:border-[#38383a] bg-white dark:bg-[#1c1c1e] text-sm text-[#1d1d1f] dark:text-[#f5f5f7] font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[12px] font-medium text-[#424245] dark:text-[#a1a1a6] mb-1">
+                    API Client Secret
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={clientSecret}
+                    onChange={(e) => setClientSecret(e.target.value)}
+                    placeholder="Paste the secret shown when you generated the client"
+                    autoComplete="new-password"
+                    className="w-full px-3 py-2 rounded-lg border border-[#d2d2d7] dark:border-[#38383a] bg-white dark:bg-[#1c1c1e] text-sm text-[#1d1d1f] dark:text-[#f5f5f7] font-mono"
+                  />
+                  <p className="text-[11px] text-[#86868b] mt-1">
+                    Encrypted at rest. Never displayed back in the UI. If you lose it, regenerate the client secret in Jamf.
+                  </p>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={connecting}
+                  className="w-full inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-iron-600 hover:bg-iron-700 disabled:bg-[#d2d2d7] dark:disabled:bg-[#38383a] disabled:cursor-not-allowed text-white text-sm font-semibold rounded-xl transition-colors shadow-sm"
+                >
+                  {connecting ? 'Verifying...' : 'Connect Jamf Pro'}
+                </button>
+              </form>
+            </div>
           </div>
         )}
       </section>
@@ -313,44 +380,45 @@ function GoogleWorkspacePageContent() {
       {/* ── Deploy flow (only when connected) ────────────────────────────── */}
       {status.connected && !deployResult && (
         <section className="space-y-8">
-          {/* Step 1: Pick OU */}
+          {/* Step 1: Pick computer group */}
           <div>
-            <h2 className="text-[15px] font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-1">Step 1 — Pick an organizational unit</h2>
+            <h2 className="text-[15px] font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-1">Step 1 — Pick a computer group</h2>
             <p className="text-[13px] text-[#86868b] mb-4">
-              Start with a pilot OU (e.g., &ldquo;Litigation Team&rdquo;). You can re-deploy to
-              larger OUs once the pilot is validated.
+              Start with a pilot group (e.g., &ldquo;IronGate Pilot&rdquo;). Smart groups that
+              auto-populate by criteria work too. You can re-deploy to larger groups
+              once the pilot is validated.
             </p>
-            {ousLoading ? (
+            {groupsLoading ? (
               <div className="h-24 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded-xl animate-pulse" />
-            ) : ous.length === 0 ? (
+            ) : groups.length === 0 ? (
               <div className="text-sm text-[#86868b] p-4 rounded-xl border border-[#d2d2d7]/60 dark:border-[#38383a]/60 text-center">
-                No organizational units found. Create at least one OU in Google Admin Console first.
+                No computer groups found. Create at least one computer group in Jamf Pro first,
+                or check that the API Role has the &ldquo;Read Computer Groups&rdquo; permission.
               </div>
             ) : (
               <div className="space-y-2 max-h-64 overflow-y-auto rounded-xl border border-[#d2d2d7]/60 dark:border-[#38383a]/60 p-2">
-                {ous.map((ou) => (
+                {groups.map((g) => (
                   <label
-                    key={ou.orgUnitId}
+                    key={g.id}
                     className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors ${
-                      selectedOu === ou.orgUnitPath
+                      selectedGroupId === g.id
                         ? 'bg-iron-50 dark:bg-iron-900/20'
                         : 'hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e]'
                     }`}
                   >
                     <input
                       type="radio"
-                      name="ou"
-                      value={ou.orgUnitPath}
-                      checked={selectedOu === ou.orgUnitPath}
-                      onChange={() => setSelectedOu(ou.orgUnitPath)}
+                      name="group"
+                      value={g.id}
+                      checked={selectedGroupId === g.id}
+                      onChange={() => setSelectedGroupId(g.id)}
                       className="mt-1"
                     />
                     <div className="flex-1">
-                      <div className="text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">{ou.name}</div>
-                      <div className="text-[11px] text-[#86868b] font-mono">{ou.orgUnitPath}</div>
-                      {ou.description && (
-                        <div className="text-[12px] text-[#86868b] mt-0.5">{ou.description}</div>
-                      )}
+                      <div className="text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">{g.name}</div>
+                      <div className="text-[11px] text-[#86868b] font-mono">
+                        id: {g.id} · {g.isSmart ? 'smart group' : 'static group'}
+                      </div>
                     </div>
                   </label>
                 ))}
@@ -362,8 +430,8 @@ function GoogleWorkspacePageContent() {
           <div>
             <h2 className="text-[15px] font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-1">Step 2 — Configure the policy</h2>
             <p className="text-[13px] text-[#86868b] mb-4">
-              These settings will be pushed to every Chrome in the selected OU as
-              part of the IronGate managed policy.
+              These settings will be embedded in the Jamf configuration profile as the
+              Chrome managed-policy payload.
             </p>
 
             <div className="space-y-4">
@@ -442,13 +510,19 @@ function GoogleWorkspacePageContent() {
             <button
               type="button"
               onClick={handleDeploy}
-              disabled={!selectedOu || !extensionId || !firmInfo?.enrollmentCode || deploying}
+              disabled={!selectedGroupId || !extensionId || !firmInfo?.enrollmentCode || deploying}
               className="w-full py-3 bg-iron-600 hover:bg-iron-700 disabled:bg-[#d2d2d7] dark:disabled:bg-[#38383a] disabled:cursor-not-allowed text-white text-sm font-semibold rounded-xl transition-colors"
             >
-              {deploying ? 'Deploying...' : `Deploy IronGate to ${selectedOu || '(select an OU)'}`}
+              {deploying
+                ? 'Deploying...'
+                : `Deploy IronGate to ${
+                    selectedGroupId
+                      ? groups.find((g) => g.id === selectedGroupId)?.name ?? `group ${selectedGroupId}`
+                      : '(select a group)'
+                  }`}
             </button>
             <p className="text-[11px] text-[#86868b] text-center mt-3">
-              Extensions will install on each device within 1-10 minutes as Chrome refreshes its policy.
+              Macs in the selected group will receive the profile on their next Jamf check-in (typically within 15 minutes).
             </p>
           </div>
         </section>
@@ -463,7 +537,12 @@ function GoogleWorkspacePageContent() {
             </svg>
             <div>
               <h3 className="text-base font-semibold text-green-800 dark:text-green-200 mb-1">
-                Deployed to {deployResult.orgUnitPath}
+                Profile created: {deployResult.profileName}
+                {deployResult.profileId > 0 && (
+                  <span className="text-[12px] font-normal text-green-700/70 dark:text-green-300/60 ml-2 font-mono">
+                    (id: {deployResult.profileId})
+                  </span>
+                )}
               </h3>
               <p className="text-[13px] text-green-700/80 dark:text-green-300/70 leading-relaxed">{deployResult.message}</p>
               <div className="mt-4 flex gap-3">
@@ -471,11 +550,11 @@ function GoogleWorkspacePageContent() {
                   type="button"
                   onClick={() => {
                     setDeployResult(null);
-                    setSelectedOu('');
+                    setSelectedGroupId(null);
                   }}
                   className="px-4 py-2 text-xs font-medium rounded-lg border border-green-600/40 dark:border-green-400/40 text-green-700 dark:text-green-300 hover:bg-green-100 dark:hover:bg-green-900/20 transition-colors"
                 >
-                  Deploy to another OU
+                  Deploy to another group
                 </button>
                 <Link
                   href="/admin/deployment"
@@ -494,12 +573,12 @@ function GoogleWorkspacePageContent() {
         <p className="text-[12px] text-[#86868b]">
           Setting this up for the first time? See the{' '}
           <a
-            href="https://github.com/ssiddharthsoni-spec/irongate2/blob/main/docs/deployment/GOOGLE_WORKSPACE_ONECLICK.md"
+            href="https://github.com/ssiddharthsoni-spec/irongate2/blob/main/docs/deployment/JAMF_ONECLICK.md"
             target="_blank"
             rel="noopener noreferrer"
             className="text-iron-600 dark:text-iron-400 underline"
           >
-            Google Workspace One-Click Deploy runbook
+            Jamf Pro One-Click Deploy runbook
           </a>
           . Support: <a href="mailto:support@irongate.ai" className="text-iron-600 dark:text-iron-400 underline">support@irongate.ai</a>
         </p>
@@ -508,10 +587,10 @@ function GoogleWorkspacePageContent() {
   );
 }
 
-export default function GoogleWorkspacePage() {
+export default function JamfProPage() {
   return (
     <Suspense fallback={<div className="max-w-5xl mx-auto px-6 py-10"><div className="h-8 w-48 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded animate-pulse" /></div>}>
-      <GoogleWorkspacePageContent />
+      <JamfProPageContent />
     </Suspense>
   );
 }

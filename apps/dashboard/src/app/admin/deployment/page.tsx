@@ -289,12 +289,94 @@ export default function DeploymentHealthPage() {
         </div>
       )}
 
-      {/* MDM Deployment Profiles */}
+      {/* One-Click MDM Deploy */}
       <div className="bg-white dark:bg-[#1c1c1e] rounded-xl shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 mb-8">
         <div className="px-6 py-4 border-b border-[#d2d2d7]/40 dark:border-[#38383a]/60">
-          <h2 className="text-[15px] font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">MDM Deployment Profiles</h2>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-[15px] font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">One-Click MDM Deploy</h2>
+              <p className="text-[12px] text-[#86868b] mt-0.5">
+                Connect your MDM once, deploy to any device group with a single click. No policy JSON, no menu navigation.
+              </p>
+            </div>
+            <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300 whitespace-nowrap">Recommended</span>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-6">
+          {([
+            {
+              name: 'Google Workspace',
+              href: '/admin/deployment/google-workspace',
+              description: 'OAuth-based push. Works with managed Chrome on any OS.',
+              color: 'bg-blue-50 dark:bg-blue-900/20',
+              iconColor: 'text-blue-600 dark:text-blue-400',
+              icon: (
+                <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                  <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                  <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09 0-.73.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+                  <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+                </svg>
+              ),
+            },
+            {
+              name: 'Microsoft Intune',
+              href: '/admin/deployment/microsoft-intune',
+              description: 'OAuth-based push. Uses Microsoft Graph API for Windows + macOS fleets.',
+              color: 'bg-sky-50 dark:bg-sky-900/20',
+              iconColor: 'text-sky-600 dark:text-sky-400',
+              icon: (
+                <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="2" y="2" width="9" height="9" rx="0.5" />
+                  <rect x="13" y="2" width="9" height="9" rx="0.5" opacity="0.8" />
+                  <rect x="2" y="13" width="9" height="9" rx="0.5" opacity="0.8" />
+                  <rect x="13" y="13" width="9" height="9" rx="0.5" opacity="0.6" />
+                </svg>
+              ),
+            },
+            {
+              name: 'Jamf Pro',
+              href: '/admin/deployment/jamf-pro',
+              description: 'API-based push with your Jamf client credentials. macOS fleets.',
+              color: 'bg-purple-50 dark:bg-purple-900/20',
+              iconColor: 'text-purple-600 dark:text-purple-400',
+              icon: (
+                <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" strokeWidth="1.8" stroke="currentColor">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M8 12l3 3 5-5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              ),
+            },
+          ] as const).map((provider) => (
+            <Link
+              key={provider.name}
+              href={provider.href}
+              className="flex flex-col p-5 rounded-xl border border-[#d2d2d7]/40 dark:border-[#38383a]/60 hover:border-iron-300 dark:hover:border-iron-700 transition-colors group bg-white dark:bg-[#1c1c1e]"
+            >
+              <div className={`w-12 h-12 rounded-xl ${provider.color} flex items-center justify-center mb-3 ${provider.iconColor}`}>
+                {provider.icon}
+              </div>
+              <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-1 group-hover:text-iron-600 dark:group-hover:text-iron-400 transition-colors">
+                {provider.name}
+              </h3>
+              <p className="text-[11px] text-[#86868b] leading-relaxed mb-3">{provider.description}</p>
+              <div className="mt-auto flex items-center gap-1 text-[11px] font-medium text-iron-600 dark:text-iron-400">
+                Open wizard
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+                </svg>
+              </div>
+            </Link>
+          ))}
+        </div>
+      </div>
+
+      {/* MDM Deployment Profiles (legacy — manual download + paste) */}
+      <div className="bg-white dark:bg-[#1c1c1e] rounded-xl shadow-sm border border-[#d2d2d7]/40 dark:border-[#38383a]/60 mb-8">
+        <div className="px-6 py-4 border-b border-[#d2d2d7]/40 dark:border-[#38383a]/60">
+          <h2 className="text-[15px] font-semibold text-[#1d1d1f] dark:text-[#f5f5f7]">Manual MDM Deployment Profiles</h2>
           <p className="text-[12px] text-[#86868b] mt-0.5">
-            Download pre-configured profiles to push Iron Gate to managed devices via your MDM solution.
+            Prefer to paste policy JSON manually? Download pre-configured profiles for each MDM.
           </p>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-6">

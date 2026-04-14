@@ -7,34 +7,36 @@ import { useApiClient } from '@/lib/api';
 import { useToast } from '@/components/toast';
 
 /**
- * Google Workspace one-click deployment page.
+ * Microsoft Intune one-click deployment page.
  *
  * Flow:
- *   1. Admin clicks "Connect Google Workspace" → OAuth consent → callback
- *      saves encrypted tokens → returns here with ?connected=1
- *   2. Page fetches OUs via Directory API
- *   3. Admin picks an OU, configures policy (enrollment code, Ollama,
+ *   1. Admin clicks "Connect Microsoft Intune" → Microsoft OAuth consent →
+ *      callback saves encrypted tokens → returns here with ?connected=1
+ *   2. Page fetches Azure AD security groups via Graph API
+ *   3. Admin picks a group, configures policy (enrollment code, Ollama,
  *      allowed AI tools)
- *   4. Admin clicks "Deploy IronGate" → Chrome Policy API pushes the
- *      force-install + managed config
- *   5. Within 1-10 minutes, every Chrome in the OU auto-installs the
- *      extension and self-enrolls
+ *   4. Admin clicks "Deploy IronGate" → Graph API creates a Settings Catalog
+ *      configuration policy and assigns it to the group
+ *   5. Within 15-60 minutes, every managed Chrome in the group auto-installs
+ *      the extension and self-enrolls
  */
 
 interface ConnectionStatus {
   connected: boolean;
   authorizedByEmail?: string;
   domain?: string;
+  tenantId?: string;
   scopes?: string[];
   lastVerifiedAt?: string | null;
   connectedAt?: string;
 }
 
-interface OrgUnit {
-  orgUnitId: string;
-  orgUnitPath: string;
-  name: string;
+interface AzureAdGroup {
+  id: string;
+  displayName: string;
   description?: string;
+  mailNickname?: string;
+  securityEnabled?: boolean;
 }
 
 interface FirmInfo {
@@ -42,7 +44,7 @@ interface FirmInfo {
   enrollmentCode?: string;
 }
 
-function GoogleWorkspacePageContent() {
+function MicrosoftIntunePageContent() {
   const { apiFetch } = useApiClient();
   const { addToast } = useToast();
   const searchParams = useSearchParams();
@@ -51,11 +53,11 @@ function GoogleWorkspacePageContent() {
 
   const [status, setStatus] = useState<ConnectionStatus>({ connected: false });
   const [statusLoading, setStatusLoading] = useState(true);
-  const [ous, setOus] = useState<OrgUnit[]>([]);
-  const [ousLoading, setOusLoading] = useState(false);
+  const [groups, setGroups] = useState<AzureAdGroup[]>([]);
+  const [groupsLoading, setGroupsLoading] = useState(false);
   const [firmInfo, setFirmInfo] = useState<FirmInfo | null>(null);
 
-  const [selectedOu, setSelectedOu] = useState<string>('');
+  const [selectedGroupId, setSelectedGroupId] = useState<string>('');
   const [extensionId, setExtensionId] = useState<string>('');
   const [enableOllama, setEnableOllama] = useState<boolean>(false);
   const [allowedTools, setAllowedTools] = useState<Set<string>>(
@@ -63,13 +65,17 @@ function GoogleWorkspacePageContent() {
   );
 
   const [deploying, setDeploying] = useState(false);
-  const [deployResult, setDeployResult] = useState<{ message: string; orgUnitPath: string } | null>(null);
+  const [deployResult, setDeployResult] = useState<{
+    message: string;
+    groupName?: string;
+    groupId: string;
+  } | null>(null);
 
   // ── Initial load ────────────────────────────────────────────────────────
   const loadStatus = useCallback(async () => {
     setStatusLoading(true);
     try {
-      const res = await apiFetch('/admin/mdm-oauth/google/status');
+      const res = await apiFetch('/admin/mdm-oauth/intune/status');
       if (res.ok) setStatus(await res.json());
     } catch {
       /* graceful — show not-connected */
@@ -90,21 +96,21 @@ function GoogleWorkspacePageContent() {
     }
   }, [apiFetch]);
 
-  const loadOus = useCallback(async () => {
-    setOusLoading(true);
+  const loadGroups = useCallback(async () => {
+    setGroupsLoading(true);
     try {
-      const res = await apiFetch('/admin/mdm-oauth/google/org-units');
+      const res = await apiFetch('/admin/mdm-oauth/intune/groups');
       if (res.ok) {
         const data = await res.json();
-        setOus(data.orgUnits ?? []);
+        setGroups(data.groups ?? []);
       } else {
-        const err = await res.json().catch(() => ({ error: 'Failed to load OUs' }));
-        addToast({ type: 'error', message: err.error || 'Failed to load organizational units' });
+        const err = await res.json().catch(() => ({ error: 'Failed to load groups' }));
+        addToast({ type: 'error', message: err.error || 'Failed to load Azure AD groups' });
       }
     } catch {
-      addToast({ type: 'error', message: 'Failed to load organizational units' });
+      addToast({ type: 'error', message: 'Failed to load Azure AD groups' });
     } finally {
-      setOusLoading(false);
+      setGroupsLoading(false);
     }
   }, [apiFetch, addToast]);
 
@@ -114,13 +120,13 @@ function GoogleWorkspacePageContent() {
   }, [loadStatus, loadFirmInfo]);
 
   useEffect(() => {
-    if (status.connected) loadOus();
-  }, [status.connected, loadOus]);
+    if (status.connected) loadGroups();
+  }, [status.connected, loadGroups]);
 
   // ── Toast on connect success/failure from OAuth callback ────────────────
   useEffect(() => {
     if (connectedParam === '1') {
-      addToast({ type: 'success', message: 'Google Workspace connected successfully' });
+      addToast({ type: 'success', message: 'Microsoft Intune connected successfully' });
     } else if (errorParam) {
       addToast({ type: 'error', message: `Connection failed: ${errorParam}` });
     }
@@ -129,7 +135,7 @@ function GoogleWorkspacePageContent() {
   // ── Actions ──────────────────────────────────────────────────────────────
   async function handleConnect() {
     try {
-      const res = await apiFetch('/admin/mdm-oauth/google/initiate', { method: 'POST' });
+      const res = await apiFetch('/admin/mdm-oauth/intune/initiate', { method: 'POST' });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: 'Failed to start OAuth flow' }));
         addToast({ type: 'error', message: err.error || 'Failed to start OAuth flow' });
@@ -142,39 +148,20 @@ function GoogleWorkspacePageContent() {
     }
   }
 
-  async function handleTestConnection() {
-    addToast({ type: 'success', message: 'Testing connection...' });
-    try {
-      const res = await apiFetch('/admin/mdm-oauth/google/org-units');
-      if (res.ok) {
-        const data = await res.json();
-        const ouCount = data.orgUnits?.length ?? 0;
-        addToast({
-          type: 'success',
-          message: `Connection healthy — ${ouCount} organizational unit${ouCount === 1 ? '' : 's'} accessible.`,
-        });
-        // Refresh the cached list + status timestamp
-        setOus(data.orgUnits ?? []);
-        loadStatus();
-      } else {
-        const err = await res.json().catch(() => ({ error: 'Connection test failed' }));
-        addToast({ type: 'error', message: `Connection failed: ${err.error || res.status}` });
-      }
-    } catch {
-      addToast({ type: 'error', message: 'Network error during connection test' });
-    }
-  }
-
   async function handleDisconnect() {
-    if (!confirm('Disconnect Google Workspace? Existing deployments stay in place — this only removes IronGate\'s ability to push further policy updates.')) {
+    if (
+      !confirm(
+        "Disconnect Microsoft Intune? Existing deployments stay in place — this only removes IronGate's ability to push further policy updates.",
+      )
+    ) {
       return;
     }
     try {
-      const res = await apiFetch('/admin/mdm-oauth/google/disconnect', { method: 'POST' });
+      const res = await apiFetch('/admin/mdm-oauth/intune/disconnect', { method: 'POST' });
       if (res.ok) {
         setStatus({ connected: false });
-        setOus([]);
-        addToast({ type: 'success', message: 'Google Workspace disconnected' });
+        setGroups([]);
+        addToast({ type: 'success', message: 'Microsoft Intune disconnected' });
       } else {
         addToast({ type: 'error', message: 'Failed to disconnect' });
       }
@@ -184,17 +171,19 @@ function GoogleWorkspacePageContent() {
   }
 
   async function handleDeploy() {
-    if (!selectedOu || !extensionId || !firmInfo?.enrollmentCode) {
+    const selected = groups.find((g) => g.id === selectedGroupId);
+    if (!selectedGroupId || !extensionId || !firmInfo?.enrollmentCode) {
       addToast({ type: 'error', message: 'Please fill all required fields' });
       return;
     }
     setDeploying(true);
     setDeployResult(null);
     try {
-      const res = await apiFetch('/admin/mdm-oauth/google/deploy', {
+      const res = await apiFetch('/admin/mdm-oauth/intune/deploy', {
         method: 'POST',
         body: JSON.stringify({
-          orgUnitPath: selectedOu,
+          groupId: selectedGroupId,
+          groupName: selected?.displayName,
           extensionId,
           enrollmentCode: firmInfo.enrollmentCode,
           allowedAITools: Array.from(allowedTools),
@@ -204,8 +193,15 @@ function GoogleWorkspacePageContent() {
       });
       const data = await res.json();
       if (res.ok) {
-        setDeployResult({ message: data.message, orgUnitPath: data.orgUnitPath });
-        addToast({ type: 'success', message: `Deployed to ${data.orgUnitPath}` });
+        setDeployResult({
+          message: data.message,
+          groupName: data.groupName ?? selected?.displayName,
+          groupId: data.groupId,
+        });
+        addToast({
+          type: 'success',
+          message: `Deployed to ${data.groupName ?? selected?.displayName ?? data.groupId}`,
+        });
       } else {
         addToast({ type: 'error', message: data.error || 'Deployment failed' });
       }
@@ -223,23 +219,31 @@ function GoogleWorkspacePageContent() {
     setAllowedTools(next);
   }
 
+  const selectedGroup = groups.find((g) => g.id === selectedGroupId);
+
   // ── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="max-w-5xl mx-auto px-6 py-10">
       <nav className="flex items-center gap-1.5 text-[13px] text-[#86868b] mb-6">
-        <Link href="/admin" className="hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7] transition-colors">Admin</Link>
+        <Link href="/admin" className="hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7] transition-colors">
+          Admin
+        </Link>
         <span>/</span>
-        <Link href="/admin/deployment" className="hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7] transition-colors">Deployment</Link>
+        <Link href="/admin/deployment" className="hover:text-[#1d1d1f] dark:hover:text-[#f5f5f7] transition-colors">
+          Deployment
+        </Link>
         <span>/</span>
-        <span className="text-[#1d1d1f] dark:text-[#f5f5f7] font-medium">Google Workspace</span>
+        <span className="text-[#1d1d1f] dark:text-[#f5f5f7] font-medium">Microsoft Intune</span>
       </nav>
 
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7] mb-2">Google Workspace — One-Click Deploy</h1>
+        <h1 className="text-2xl font-bold text-[#1d1d1f] dark:text-[#f5f5f7] mb-2">
+          Microsoft Intune — One-Click Deploy
+        </h1>
         <p className="text-[#6e6e73] dark:text-[#86868b] text-sm leading-relaxed max-w-2xl">
-          Connect your Google Workspace once. IronGate pushes the Chrome extension
-          force-install policy and firm configuration directly to your managed
-          Chromes — no JSON copy-paste, no MDM menus.
+          Connect your Microsoft Intune (Endpoint Manager) once. IronGate pushes the
+          Chrome extension force-install policy and firm configuration directly to
+          your managed Chromes — no JSON copy-paste, no Intune menus.
         </p>
       </div>
 
@@ -259,52 +263,54 @@ function GoogleWorkspacePageContent() {
                   Authorized by <strong>{status.authorizedByEmail}</strong>
                   {status.domain && ` (${status.domain})`}
                 </p>
+                {status.tenantId && (
+                  <p className="text-[11px] text-green-700/60 dark:text-green-300/50 mt-0.5 font-mono">
+                    Tenant {status.tenantId}
+                  </p>
+                )}
                 {status.connectedAt && (
                   <p className="text-[11px] text-green-700/60 dark:text-green-300/50 mt-1">
-                    Connected {new Date(status.connectedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    Connected{' '}
+                    {new Date(status.connectedAt).toLocaleDateString('en-US', {
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric',
+                    })}
                   </p>
                 )}
               </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <button
-                  type="button"
-                  onClick={handleTestConnection}
-                  className="px-3 py-1.5 text-xs font-medium rounded-lg border border-green-600/30 dark:border-green-400/30 text-green-700 dark:text-green-300 hover:bg-green-100 dark:hover:bg-green-900/20 transition-colors"
-                >
-                  Test connection
-                </button>
-                <button
-                  type="button"
-                  onClick={handleDisconnect}
-                  className="px-3 py-1.5 text-xs font-medium rounded-lg border border-[#d2d2d7] dark:border-[#38383a] text-[#424245] dark:text-[#a1a1a6] hover:bg-white dark:hover:bg-[#2c2c2e] transition-colors"
-                >
-                  Disconnect
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={handleDisconnect}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg border border-[#d2d2d7] dark:border-[#38383a] text-[#424245] dark:text-[#a1a1a6] hover:bg-white dark:hover:bg-[#2c2c2e] transition-colors"
+              >
+                Disconnect
+              </button>
             </div>
           </div>
         ) : (
           <div className="rounded-xl border border-[#d2d2d7]/60 dark:border-[#38383a]/60 bg-white dark:bg-[#1c1c1e] p-8 text-center">
             <h3 className="text-base font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-1">Not connected</h3>
             <p className="text-sm text-[#6e6e73] dark:text-[#86868b] mb-5 max-w-md mx-auto">
-              Connect your Google Workspace to push IronGate to managed Chromes without
-              touching the Admin Console.
+              Connect your Microsoft Intune tenant to push IronGate to managed Chromes
+              without touching the Endpoint Manager console.
             </p>
             <button
               type="button"
               onClick={handleConnect}
               className="inline-flex items-center gap-2 px-5 py-2.5 bg-iron-600 hover:bg-iron-700 text-white text-sm font-semibold rounded-xl transition-colors shadow-sm"
             >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09 0-.73.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+              <svg className="w-4 h-4" viewBox="0 0 23 23" fill="currentColor" aria-hidden="true">
+                <path d="M1 1h10v10H1z" fill="#f35325" />
+                <path d="M12 1h10v10H12z" fill="#81bc06" />
+                <path d="M1 12h10v10H1z" fill="#05a6f0" />
+                <path d="M12 12h10v10H12z" fill="#ffba08" />
               </svg>
-              Connect Google Workspace
+              Connect Microsoft Intune
             </button>
             <p className="text-[11px] text-[#86868b] mt-4">
-              You&apos;ll be redirected to Google for consent. Requires a Google Workspace admin account.
+              You&apos;ll be redirected to Microsoft for admin consent. Requires an Intune / Global
+              Administrator account.
             </p>
           </div>
         )}
@@ -313,43 +319,47 @@ function GoogleWorkspacePageContent() {
       {/* ── Deploy flow (only when connected) ────────────────────────────── */}
       {status.connected && !deployResult && (
         <section className="space-y-8">
-          {/* Step 1: Pick OU */}
+          {/* Step 1: Pick group */}
           <div>
-            <h2 className="text-[15px] font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-1">Step 1 — Pick an organizational unit</h2>
+            <h2 className="text-[15px] font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-1">
+              Step 1 — Pick an Azure AD security group
+            </h2>
             <p className="text-[13px] text-[#86868b] mb-4">
-              Start with a pilot OU (e.g., &ldquo;Litigation Team&rdquo;). You can re-deploy to
-              larger OUs once the pilot is validated.
+              Start with a pilot group (e.g., &ldquo;Litigation Team&rdquo;). You can re-deploy
+              to larger groups once the pilot is validated.
             </p>
-            {ousLoading ? (
+            {groupsLoading ? (
               <div className="h-24 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded-xl animate-pulse" />
-            ) : ous.length === 0 ? (
+            ) : groups.length === 0 ? (
               <div className="text-sm text-[#86868b] p-4 rounded-xl border border-[#d2d2d7]/60 dark:border-[#38383a]/60 text-center">
-                No organizational units found. Create at least one OU in Google Admin Console first.
+                No Azure AD security groups found. Create at least one security group in Azure AD first.
               </div>
             ) : (
               <div className="space-y-2 max-h-64 overflow-y-auto rounded-xl border border-[#d2d2d7]/60 dark:border-[#38383a]/60 p-2">
-                {ous.map((ou) => (
+                {groups.map((g) => (
                   <label
-                    key={ou.orgUnitId}
+                    key={g.id}
                     className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors ${
-                      selectedOu === ou.orgUnitPath
+                      selectedGroupId === g.id
                         ? 'bg-iron-50 dark:bg-iron-900/20'
                         : 'hover:bg-[#f5f5f7] dark:hover:bg-[#2c2c2e]'
                     }`}
                   >
                     <input
                       type="radio"
-                      name="ou"
-                      value={ou.orgUnitPath}
-                      checked={selectedOu === ou.orgUnitPath}
-                      onChange={() => setSelectedOu(ou.orgUnitPath)}
+                      name="aad-group"
+                      value={g.id}
+                      checked={selectedGroupId === g.id}
+                      onChange={() => setSelectedGroupId(g.id)}
                       className="mt-1"
                     />
                     <div className="flex-1">
-                      <div className="text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">{ou.name}</div>
-                      <div className="text-[11px] text-[#86868b] font-mono">{ou.orgUnitPath}</div>
-                      {ou.description && (
-                        <div className="text-[12px] text-[#86868b] mt-0.5">{ou.description}</div>
+                      <div className="text-sm font-medium text-[#1d1d1f] dark:text-[#f5f5f7]">
+                        {g.displayName}
+                      </div>
+                      <div className="text-[11px] text-[#86868b] font-mono">{g.id}</div>
+                      {g.description && (
+                        <div className="text-[12px] text-[#86868b] mt-0.5">{g.description}</div>
                       )}
                     </div>
                   </label>
@@ -360,10 +370,12 @@ function GoogleWorkspacePageContent() {
 
           {/* Step 2: Policy config */}
           <div>
-            <h2 className="text-[15px] font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-1">Step 2 — Configure the policy</h2>
+            <h2 className="text-[15px] font-semibold text-[#1d1d1f] dark:text-[#f5f5f7] mb-1">
+              Step 2 — Configure the policy
+            </h2>
             <p className="text-[13px] text-[#86868b] mb-4">
-              These settings will be pushed to every Chrome in the selected OU as
-              part of the IronGate managed policy.
+              These settings will be pushed to every managed Chrome in the selected group
+              as part of the IronGate managed policy.
             </p>
 
             <div className="space-y-4">
@@ -388,27 +400,35 @@ function GoogleWorkspacePageContent() {
                   Enrollment code
                 </label>
                 <div className="px-3 py-2 rounded-lg border border-[#d2d2d7] dark:border-[#38383a] bg-[#f5f5f7] dark:bg-[#2c2c2e] text-sm text-[#1d1d1f] dark:text-[#f5f5f7] font-mono">
-                  {firmInfo?.enrollmentCode || <span className="text-[#86868b]">No code yet — create one in Admin → Enrollment Codes</span>}
+                  {firmInfo?.enrollmentCode || (
+                    <span className="text-[#86868b]">
+                      No code yet — create one in Admin → Enrollment Codes
+                    </span>
+                  )}
                 </div>
               </div>
 
               <div>
-                <label className="block text-[12px] font-medium text-[#424245] dark:text-[#a1a1a6] mb-2">Allowed AI tools</label>
+                <label className="block text-[12px] font-medium text-[#424245] dark:text-[#a1a1a6] mb-2">
+                  Allowed AI tools
+                </label>
                 <div className="flex flex-wrap gap-2">
-                  {['chatgpt', 'claude', 'gemini', 'copilot', 'perplexity', 'deepseek', 'poe', 'groq', 'huggingface', 'you'].map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => toggleTool(t)}
-                      className={`px-3 py-1 text-xs font-medium rounded-full transition-colors ${
-                        allowedTools.has(t)
-                          ? 'bg-iron-600 text-white'
-                          : 'bg-[#f5f5f7] dark:bg-[#2c2c2e] text-[#424245] dark:text-[#a1a1a6]'
-                      }`}
-                    >
-                      {t}
-                    </button>
-                  ))}
+                  {['chatgpt', 'claude', 'gemini', 'copilot', 'perplexity', 'deepseek', 'poe', 'groq', 'huggingface', 'you'].map(
+                    (t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => toggleTool(t)}
+                        className={`px-3 py-1 text-xs font-medium rounded-full transition-colors ${
+                          allowedTools.has(t)
+                            ? 'bg-iron-600 text-white'
+                            : 'bg-[#f5f5f7] dark:bg-[#2c2c2e] text-[#424245] dark:text-[#a1a1a6]'
+                        }`}
+                      >
+                        {t}
+                      </button>
+                    ),
+                  )}
                 </div>
               </div>
 
@@ -426,7 +446,10 @@ function GoogleWorkspacePageContent() {
                     </div>
                     <div className="text-[11px] text-[#86868b] mt-0.5">
                       Requires deploying Ollama separately — see{' '}
-                      <Link href="/admin/deployment/ollama" className="text-iron-600 dark:text-iron-400 underline">
+                      <Link
+                        href="/admin/deployment/ollama"
+                        className="text-iron-600 dark:text-iron-400 underline"
+                      >
                         Ollama Setup
                       </Link>
                       . If you haven&apos;t set up Ollama yet, leave this off for now.
@@ -442,13 +465,15 @@ function GoogleWorkspacePageContent() {
             <button
               type="button"
               onClick={handleDeploy}
-              disabled={!selectedOu || !extensionId || !firmInfo?.enrollmentCode || deploying}
+              disabled={!selectedGroupId || !extensionId || !firmInfo?.enrollmentCode || deploying}
               className="w-full py-3 bg-iron-600 hover:bg-iron-700 disabled:bg-[#d2d2d7] dark:disabled:bg-[#38383a] disabled:cursor-not-allowed text-white text-sm font-semibold rounded-xl transition-colors"
             >
-              {deploying ? 'Deploying...' : `Deploy IronGate to ${selectedOu || '(select an OU)'}`}
+              {deploying
+                ? 'Deploying...'
+                : `Deploy IronGate to ${selectedGroup?.displayName || '(select a group)'}`}
             </button>
             <p className="text-[11px] text-[#86868b] text-center mt-3">
-              Extensions will install on each device within 1-10 minutes as Chrome refreshes its policy.
+              Extensions will install on each device within 15-60 minutes as Intune and Chrome refresh their policies.
             </p>
           </div>
         </section>
@@ -458,24 +483,36 @@ function GoogleWorkspacePageContent() {
       {deployResult && (
         <div className="rounded-xl border border-green-200/60 dark:border-green-900/40 bg-green-50/60 dark:bg-green-900/10 p-6">
           <div className="flex items-start gap-3">
-            <svg className="w-6 h-6 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
+            <svg
+              className="w-6 h-6 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={2}
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z"
+              />
             </svg>
             <div>
               <h3 className="text-base font-semibold text-green-800 dark:text-green-200 mb-1">
-                Deployed to {deployResult.orgUnitPath}
+                Deployed to {deployResult.groupName ?? deployResult.groupId}
               </h3>
-              <p className="text-[13px] text-green-700/80 dark:text-green-300/70 leading-relaxed">{deployResult.message}</p>
+              <p className="text-[13px] text-green-700/80 dark:text-green-300/70 leading-relaxed">
+                {deployResult.message}
+              </p>
               <div className="mt-4 flex gap-3">
                 <button
                   type="button"
                   onClick={() => {
                     setDeployResult(null);
-                    setSelectedOu('');
+                    setSelectedGroupId('');
                   }}
                   className="px-4 py-2 text-xs font-medium rounded-lg border border-green-600/40 dark:border-green-400/40 text-green-700 dark:text-green-300 hover:bg-green-100 dark:hover:bg-green-900/20 transition-colors"
                 >
-                  Deploy to another OU
+                  Deploy to another group
                 </button>
                 <Link
                   href="/admin/deployment"
@@ -494,24 +531,33 @@ function GoogleWorkspacePageContent() {
         <p className="text-[12px] text-[#86868b]">
           Setting this up for the first time? See the{' '}
           <a
-            href="https://github.com/ssiddharthsoni-spec/irongate2/blob/main/docs/deployment/GOOGLE_WORKSPACE_ONECLICK.md"
+            href="https://github.com/ssiddharthsoni-spec/irongate2/blob/main/docs/deployment/INTUNE_ONECLICK.md"
             target="_blank"
             rel="noopener noreferrer"
             className="text-iron-600 dark:text-iron-400 underline"
           >
-            Google Workspace One-Click Deploy runbook
+            Microsoft Intune One-Click Deploy runbook
           </a>
-          . Support: <a href="mailto:support@irongate.ai" className="text-iron-600 dark:text-iron-400 underline">support@irongate.ai</a>
+          . Support:{' '}
+          <a href="mailto:support@irongate.ai" className="text-iron-600 dark:text-iron-400 underline">
+            support@irongate.ai
+          </a>
         </p>
       </div>
     </div>
   );
 }
 
-export default function GoogleWorkspacePage() {
+export default function MicrosoftIntunePage() {
   return (
-    <Suspense fallback={<div className="max-w-5xl mx-auto px-6 py-10"><div className="h-8 w-48 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded animate-pulse" /></div>}>
-      <GoogleWorkspacePageContent />
+    <Suspense
+      fallback={
+        <div className="max-w-5xl mx-auto px-6 py-10">
+          <div className="h-8 w-48 bg-[#f5f5f7] dark:bg-[#2c2c2e] rounded animate-pulse" />
+        </div>
+      }
+    >
+      <MicrosoftIntunePageContent />
     </Suspense>
   );
 }
