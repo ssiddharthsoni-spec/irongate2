@@ -37,6 +37,11 @@ import {
   type Tier2Config,
   type ManagedDeploymentConfig,
 } from '../detection/tier2-adapter';
+import {
+  classifyIntentAndContext,
+  fallbackResult as intentContextFallback,
+  type ClassifierConfig as IntentContextClassifierConfig,
+} from '../detection/intent-context-classifier';
 import { initAuditBuffer, getAuditBuffer } from '../audit/audit-buffer';
 import type { AuditEntry } from '../audit/audit-sink';
 import { startPolicyBundlePoller, type PolicyBundle } from '../policy/signed-bundle';
@@ -1138,6 +1143,35 @@ async function handleMessage(
     case 'IRON_GATE_GET_AUDIT_METRICS': {
       const buffer = getAuditBuffer();
       return buffer ? buffer.getMetrics() : { error: 'no audit buffer' };
+    }
+
+    case 'CLASSIFY_INTENT_CONTEXT': {
+      // Local LLM intent/context classifier. Callable from content scripts and
+      // the sidepanel. Reads endpoint/model from the locked managed config so
+      // enterprise policy is honored. Returns the classifier's conservative
+      // fallback (zone=amber, fellBack=true) if local LLM is unreachable.
+      const text = message.payload?.text;
+      if (typeof text !== 'string' || text.length === 0) {
+        return { error: 'Missing or empty text' };
+      }
+      let cfg: ManagedDeploymentConfig | null = null;
+      try { cfg = getLockedDeploymentConfig() as ManagedDeploymentConfig; } catch { /* dev mode */ }
+      // Server-only deployments don't run a local classifier — return the
+      // fallback so the pattern path still does its job on the content side.
+      if (cfg?.deploymentMode === 'server-only') {
+        return intentContextFallback(Date.now());
+      }
+      const classifierCfg: IntentContextClassifierConfig = {
+        endpoint: cfg?.localEndpoint ?? 'http://localhost:11434/api/generate',
+        model: cfg?.localModel ?? 'gemma4:e2b',
+        format: (cfg?.localFormat === 'openai-compatible' ? 'openai-compatible' : 'ollama'),
+        timeoutMs: cfg?.timeoutMs ?? 12_000,
+      };
+      try {
+        return await classifyIntentAndContext(text, classifierCfg);
+      } catch (err) {
+        return { ...intentContextFallback(Date.now()), error: (err as Error).message };
+      }
     }
 
     case 'IRON_GATE_FIRM_PSEUDONYMIZE': {

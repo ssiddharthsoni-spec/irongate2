@@ -108,6 +108,26 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
     }
   }
 
+  // RPC to worker for the local LLM intent/context classifier.
+  // The classifier lives in the service worker because (a) content scripts
+  // can't reach localhost:11434 due to page CSP, and (b) the managed
+  // deployment config (endpoint/model) is read once in the worker at
+  // startup. Returns null when the worker can't classify in time — the
+  // caller then proceeds with the conservative pattern-only path.
+  async function classifyViaWorker(text: string): Promise<any | null> {
+    try {
+      if (!chrome.runtime?.id) return null;
+      const response = await chrome.runtime.sendMessage({
+        type: 'CLASSIFY_INTENT_CONTEXT',
+        payload: { text },
+      });
+      if (!response || response.error) return null;
+      return response;
+    } catch {
+      return null;
+    }
+  }
+
   // Handler: real-time typing detection
   function onPromptChange(text: string) {
     // Prompt text changed — send to worker for analysis
@@ -315,15 +335,23 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
 
   // Body transformer for proxy mode — pseudonymizes prompt text in LLM API requests
   function createBodyTransformer(): BodyTransformer {
-    return (url: string, body: any): { transformed: string; originalPrompt: string; maskedPrompt: string } | null => {
+    return async (url: string, body: any) => {
       if (config.mode !== 'proxy') return null;
 
       const promptText = extractPromptFromPayload(body);
       if (!promptText || promptText.length < 10) return null;
 
-      // Run local detection
-      const regexEntities = detectWithRegex(promptText);
-      const secrets = scanForSecrets(promptText);
+      // Run local regex + secret detection in parallel with the LLM classifier.
+      // The classifier is the PRIMARY judge of intent/context; regex supplies
+      // the entity list used for pseudonymization and for the safety override
+      // inside the scorer (HIGH_PII forces red even when the classifier says
+      // green).
+      const [intentContext, regexEntities, secrets] = await Promise.all([
+        classifyViaWorker(promptText),
+        Promise.resolve(detectWithRegex(promptText)),
+        Promise.resolve(scanForSecrets(promptText)),
+      ]);
+
       const allEntities = [
         ...regexEntities,
         ...secrets.map((s) => ({
@@ -336,10 +364,16 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
         })),
       ];
 
-      if (allEntities.length === 0) return null;
+      // Classifier-first decision: if the classifier says GREEN with confidence
+      // AND no regex entities were found, nothing to do. If entities exist we
+      // still let the scorer see the classifier result (the safety override
+      // will handle HIGH_PII edge cases).
+      if (allEntities.length === 0) {
+        if (intentContext && !intentContext.fellBack && intentContext.zone === 'green') return null;
+        return null;
+      }
 
-      // Score
-      const scoreResult = computeScore(promptText, allEntities);
+      const scoreResult = computeScore(promptText, allEntities, undefined, intentContext ?? undefined);
 
       // Only pseudonymize for medium+ sensitivity
       if (scoreResult.level === 'low') return null;

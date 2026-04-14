@@ -185,7 +185,7 @@ function resolveLocalLLMConfig(source: Record<string, any>): LocalLLMConfig | nu
   if (!endpoint) return null;
   return {
     endpoint,
-    model: safeStr(source.localLLMModel || source.localLLM_model || 'llama3.2:3b', 'llama3.2:3b', MAX_NAME_LENGTH),
+    model: safeStr(source.localLLMModel || source.localLLM_model || 'gemma4:e2b', 'gemma4:e2b', MAX_NAME_LENGTH),
     enableDetection: source.localLLMEnabled !== false,
     timeoutMs: safeNum(source.localLLMTimeout || source.localLLM_timeout || 5000, 5000, 1000, 30000),
   };

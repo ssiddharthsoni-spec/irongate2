@@ -93,7 +93,11 @@ const FILE_SCAN_TIMEOUT_MS = 15_000;
  * Optional callback to transform the request body before sending.
  * Return null to send the original body, or return a new body string to replace it.
  */
-export type BodyTransformer = (url: string, body: any) => { transformed: string; originalPrompt: string; maskedPrompt: string } | null;
+export type BodyTransformResult = { transformed: string; originalPrompt: string; maskedPrompt: string };
+export type BodyTransformer = (
+  url: string,
+  body: any,
+) => BodyTransformResult | null | Promise<BodyTransformResult | null>;
 
 export function installFetchInterceptor(
   onRequest: (request: InterceptedRequest) => void,
@@ -176,7 +180,7 @@ export function installFetchInterceptor(
     // In proxy mode, transform the body before sending
     if (isLLMEndpoint(url) && bodyTransformer && init?.body && typeof init.body === 'string') {
       try {
-        const result = bodyTransformer(url, init.body);
+        const result = await bodyTransformer(url, init.body);
         if (result) {
           // Fetch interceptor: pseudonymized prompt before sending to LLM
           return originalFetch.apply(this, [input, { ...init, body: result.transformed }]);

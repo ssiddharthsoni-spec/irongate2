@@ -33,6 +33,7 @@ import { applyContextAwareDetection } from '../shared/context-analyzer';
 import { detectContextualSensitivity, computeContextualScore, explainContextualMarkers } from './contextual-keywords';
 import { applyIntentSuppression } from './intent-suppression';
 import { classifyIntent, getIntentWeight } from './intent-classifier';
+import type { IntentContextResult } from './intent-context-classifier';
 import { detectStructure } from './structure-detector';
 import { contextualizeEntities, getContextRiskMultiplier } from './entity-contextualizer';
 export type SensitivityLevel = 'low' | 'medium' | 'high' | 'critical';
@@ -226,12 +227,25 @@ const ENTITY_CONTEXT_WINDOW = 200;
 
 /**
  * Compute the sensitivity score for a given text and detected entities.
+ *
+ * PRIMARY path (when `intentContext` is provided by a confident LLM classifier):
+ *   the classifier's zone dictates the outcome. HIGH_PII entities still escalate
+ *   for safety. Pattern arithmetic is skipped — the LLM understood intent.
+ *
+ * FALLBACK path (classifier unavailable, or it fell back to its conservative
+ * default): the original pattern-based arithmetic runs. This keeps offline and
+ * degraded modes working without silently under-protecting users.
  */
 export function computeScore(
   text: string,
   entities: DetectedEntity[],
   customWeights?: Partial<Record<string, number>>,
+  intentContext?: IntentContextResult,
 ): SensitivityScore {
+  if (intentContext && !intentContext.fellBack) {
+    return composeFromClassifier(text, entities, intentContext);
+  }
+
   const weights: Record<string, number> = { ...ENTITY_WEIGHTS, ...(customWeights || {}) } as Record<string, number>;
 
   // ── Layer 1: Intent Classification (v2) ────────────────────────────────
@@ -683,6 +697,88 @@ export function computeScore(
 
   // Freeze to prevent accidental mutation (e.g., result.score = X).
   // Callers that need a modified copy must use spread: { ...result, score: X }
+  return Object.freeze(result);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PRIMARY path: classifier is authoritative
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// When the local LLM has judged intent + context with confidence, its zone is
+// the final answer. We still surface detected entities (so the side panel shows
+// what WOULD be pseudonymized) but the score/level comes from the classifier.
+//
+// Safety escalation: HIGH_PII entities (SSN, credit card, credentials) cannot
+// be soft-landed into green. If the classifier says green but a real-looking
+// SSN is present, we escalate to RED — this is the bright-line safety net that
+// no pattern heuristic can be relied upon to deliver.
+
+const CLASSIFIER_INTENT_TO_CONTEXT: Record<string, string> = {
+  research: 'research',
+  creative: 'creative_writing',
+  meta_discussion: 'policy_discussion',
+  work_sharing: 'work_data_sharing',
+  code: 'code_review',
+  personal: 'self_referential',
+  educational: 'educational',
+  ambiguous: 'general',
+};
+
+function composeFromClassifier(
+  text: string,
+  entities: DetectedEntity[],
+  ctx: IntentContextResult,
+): SensitivityScore {
+  // Let pattern-side entity contextualization still run for UI annotations
+  // (credential / self_reference tags used by the side panel), but we do NOT
+  // let it steer scoring — the classifier already decided.
+  const contextAware = applyContextAwareDetection(text, entities);
+  const contextualEntities = contextualizeEntities(text, contextAware.entities);
+
+  const hasHighPII = contextualEntities.some((e) => HIGH_PII_TYPES.has(e.type));
+
+  let score = ctx.score;
+  let zone = ctx.zone;
+
+  // SAFETY ESCALATION: HIGH_PII in a "green" verdict is a hard override.
+  // The classifier may have read a real SSN as "user's own data" — but it
+  // still leaves the device. Force RED floor.
+  if (hasHighPII && zone === 'green') {
+    zone = 'red';
+    score = Math.max(score, SINGLE_CRITICAL_ENTITY_FLOOR);
+  }
+
+  const level = scoreToLevel(score);
+
+  const reasoning = ctx.reasoning || `${ctx.intent} (${ctx.sensitivity})`;
+  const explanation = hasHighPII && ctx.zone === 'green'
+    ? `SAFETY OVERRIDE: classifier saw benign intent but HIGH_PII detected — escalating. (${reasoning})`
+    : `[classifier] ${reasoning}`;
+
+  const contextCategory = CLASSIFIER_INTENT_TO_CONTEXT[ctx.intent] ?? 'general';
+
+  const result: SensitivityScore = {
+    score,
+    level,
+    explanation,
+    breakdown: Object.freeze({
+      entityScore: 0,
+      volumeScore: 0,
+      contextScore: 0,
+      legalBoost: 0,
+      contextualKeywordScore: 0,
+      documentTypeMultiplier: 1.0,
+      intentWeight: 1.0,
+      structureMultiplier: 1.0,
+    }),
+    entities: contextualEntities,
+    // isSelfReferential preserved for UI/telemetry consumers (sidepanel, main-world).
+    // A "personal" classifier intent is the direct analog of the old pattern flag.
+    isSelfReferential: ctx.intent === 'personal',
+    documentType: contextCategory,
+    contextCategory,
+  };
+
   return Object.freeze(result);
 }
 

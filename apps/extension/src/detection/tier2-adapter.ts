@@ -44,8 +44,9 @@
  *   - JSON schema compliance: 30/30 with Ollama format=json mode
  *
  * MODELS VALIDATED FOR PRODUCTION USE (in order of recommendation):
- *   - llama3.2:3b   (Meta, 2.0GB, 93.3% accuracy) — DEFAULT
- *   - gemma4:e2b    (Google, 7.2GB, 93.3% accuracy) — alternative
+ *   - gemma4:e2b    (Google, 7.2GB, 95.8% accuracy on 166-scenario intent
+ *                    battery, p50 1.5s, 0 false positives) — DEFAULT
+ *   - llama3.2:3b   (Meta, 2.0GB, lighter fallback for constrained devices)
  *   - chrome-builtin (Gemini Nano via window.LanguageModel) — zero-install path
  *
  * MODELS EXPLICITLY REJECTED FOR PRODUCTION:
