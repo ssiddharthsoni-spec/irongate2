@@ -175,6 +175,28 @@ function JamfProPageContent() {
     }
   }
 
+  async function handleTestConnection() {
+    addToast({ type: 'success', message: 'Testing connection...' });
+    try {
+      const res = await apiFetch('/admin/mdm-oauth/jamf/computer-groups');
+      if (res.ok) {
+        const data = await res.json();
+        const groupCount = data.groups?.length ?? data.computerGroups?.length ?? 0;
+        addToast({
+          type: 'success',
+          message: `Connection healthy — ${groupCount} computer group${groupCount === 1 ? '' : 's'} accessible.`,
+        });
+        await loadGroups();
+        await loadStatus();
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Connection test failed' }));
+        addToast({ type: 'error', message: `Connection failed: ${err.error || res.status}` });
+      }
+    } catch {
+      addToast({ type: 'error', message: 'Network error during connection test' });
+    }
+  }
+
   async function handleDisconnect() {
     if (
       !confirm(
@@ -286,13 +308,22 @@ function JamfProPageContent() {
                   </p>
                 )}
               </div>
-              <button
-                type="button"
-                onClick={handleDisconnect}
-                className="px-3 py-1.5 text-xs font-medium rounded-lg border border-[#d2d2d7] dark:border-[#38383a] text-[#424245] dark:text-[#a1a1a6] hover:bg-white dark:hover:bg-[#2c2c2e] transition-colors"
-              >
-                Disconnect
-              </button>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={handleTestConnection}
+                  className="px-3 py-1.5 text-xs font-medium rounded-lg border border-green-600/30 dark:border-green-400/30 text-green-700 dark:text-green-300 hover:bg-green-100 dark:hover:bg-green-900/20 transition-colors"
+                >
+                  Test connection
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDisconnect}
+                  className="px-3 py-1.5 text-xs font-medium rounded-lg border border-[#d2d2d7] dark:border-[#38383a] text-[#424245] dark:text-[#a1a1a6] hover:bg-white dark:hover:bg-[#2c2c2e] transition-colors"
+                >
+                  Disconnect
+                </button>
+              </div>
             </div>
           </div>
         ) : (

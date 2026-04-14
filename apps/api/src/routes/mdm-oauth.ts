@@ -394,6 +394,113 @@ mdmOAuthAdminRoutes.post('/google/deploy', async (c) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /v1/admin/mdm-oauth/google/bulk-deploy — deploy to multiple OUs in one call
+//
+// Convenience endpoint for rolling out from pilot to firm-wide. Accepts an
+// array of orgUnitPaths plus the shared policy config; runs deployments in
+// parallel (bounded concurrency) and returns per-OU success/failure results.
+// Partial failures are expected and reported — the whole call returns 200
+// with a results array, rather than failing on first error.
+// ---------------------------------------------------------------------------
+mdmOAuthAdminRoutes.post('/google/bulk-deploy', async (c) => {
+  const firmId = c.get('firmId');
+
+  const bodySchema = z.object({
+    orgUnitPaths: z.array(z.string().min(1)).min(1).max(50),
+    extensionId: z.string().min(10),
+    enrollmentCode: z.string().min(1),
+    supportContact: z.string().optional(),
+    allowedAITools: z.array(z.string()).optional(),
+    deploymentMode: z.enum(['local-only', 'hybrid', 'server-only']).optional(),
+    enableOllama: z.boolean().optional(),
+  });
+
+  const body = await c.req.json().catch(() => ({}));
+  const parsed = bodySchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: 'Invalid payload', issues: parsed.error.issues }, 400);
+
+  const accessToken = await getValidAccessToken(firmId);
+  if (!accessToken) return c.json({ error: 'Not connected. Connect Google Workspace first.' }, 400);
+
+  const [conn] = await db
+    .select({ providerAccountId: mdmConnections.providerAccountId })
+    .from(mdmConnections)
+    .where(and(eq(mdmConnections.firmId, firmId), eq(mdmConnections.provider, 'google_workspace')))
+    .limit(1);
+  const customerId = conn?.providerAccountId;
+  if (!customerId) return c.json({ error: 'Customer ID not available. Reconnect Google Workspace.' }, 400);
+
+  // Capture non-null refs into locals so closures narrow correctly
+  const resolvedAccessToken: string = accessToken;
+  const resolvedCustomerId: string = customerId;
+  const payload = parsed.data;
+
+  // Run up to 5 deployments in parallel — Google's Chrome Policy API has
+  // per-project quotas; 5 parallel is a comfortable default.
+  const CONCURRENCY = 5;
+  const queue = [...payload.orgUnitPaths];
+  const results: Array<{ orgUnitPath: string; ok: boolean; policiesApplied?: number; error?: string }> = [];
+
+  async function worker() {
+    while (queue.length > 0) {
+      const ou = queue.shift();
+      if (!ou) break;
+      try {
+        const res = await deployIronGateToOrgUnit({
+          accessToken: resolvedAccessToken,
+          customerId: resolvedCustomerId,
+          orgUnitPath: ou,
+          extensionId: payload.extensionId,
+          enrollmentCode: payload.enrollmentCode,
+          firmId,
+          supportContact: payload.supportContact,
+          allowedAITools: payload.allowedAITools,
+          deploymentMode: payload.deploymentMode ?? 'local-only',
+          enableOllama: payload.enableOllama ?? false,
+        });
+        results.push({ orgUnitPath: ou, ok: true, policiesApplied: res.policiesApplied });
+      } catch (err) {
+        results.push({
+          orgUnitPath: ou,
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, payload.orgUnitPaths.length) }, () => worker()));
+
+  // Touch lastVerifiedAt once (the deploy calls prove the connection works)
+  await db
+    .update(mdmConnections)
+    .set({ lastVerifiedAt: new Date(), updatedAt: new Date() })
+    .where(and(eq(mdmConnections.firmId, firmId), eq(mdmConnections.provider, 'google_workspace')));
+
+  const successCount = results.filter((r) => r.ok).length;
+  const failureCount = results.length - successCount;
+
+  logger.info('Google Workspace bulk deploy complete', {
+    firmId,
+    total: results.length,
+    success: successCount,
+    failure: failureCount,
+  });
+
+  return c.json({
+    ok: failureCount === 0,
+    total: results.length,
+    successCount,
+    failureCount,
+    results,
+    message:
+      failureCount === 0
+        ? `Deployed successfully to all ${successCount} organizational units.`
+        : `Deployed to ${successCount} of ${results.length} OUs. ${failureCount} failed — see results for details.`,
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Internal helper — load tokens, refresh if expired, return valid access token
 // ---------------------------------------------------------------------------
 
