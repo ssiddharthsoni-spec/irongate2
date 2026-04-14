@@ -48,6 +48,7 @@ import { reportsRoutes } from './routes/reports';
 import { feedbackRoutes } from './routes/feedback';
 import { proxyRoutes } from './routes/proxy';
 import { gatewayRoutes } from './routes/gateway';
+import { mdmOAuthPublicRoutes } from './routes/mdm-oauth';
 import { documentRoutes } from './routes/documents';
 import { auditRoutes } from './routes/audit';
 import { heartbeatRoutes } from './routes/heartbeat';
@@ -390,6 +391,7 @@ app.use('/v1/auth/*', createMiddleware(async (c, next) => {
 
 app.route('/v1/auth', authRoutes);
 app.route('/v1/auth', extensionAuthRoutes);
+app.route('/v1/auth/mdm', mdmOAuthPublicRoutes);
 
 // Stripe webhook (no auth — verified via webhook signature)
 app.route('/v1/webhooks/stripe', stripeWebhookRoutes);

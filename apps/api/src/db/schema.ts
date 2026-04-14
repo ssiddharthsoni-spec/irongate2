@@ -364,6 +364,49 @@ export const extensionHeartbeats = pgTable('extension_heartbeats', {
 ]);
 
 // ============================================================================
+// MDM Connections (OAuth integrations with Google Workspace / Intune / Jamf)
+// ============================================================================
+
+/**
+ * Stores OAuth credentials per-firm for direct MDM API integration. Enables
+ * one-click deployment flows (e.g., "Connect Google Workspace" → IronGate
+ * pushes extension force-install policy automatically, without the admin
+ * needing to paste JSON into Admin Console).
+ *
+ * Tokens are encrypted at rest — see apps/api/src/lib/encryption.ts.
+ */
+export const mdmConnectionProviderEnum = pgEnum('mdm_connection_provider', ['google_workspace', 'microsoft_intune', 'jamf_pro']);
+
+export const mdmConnections = pgTable('mdm_connections', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmId: uuid('firm_id').notNull().references(() => firms.id),
+  provider: mdmConnectionProviderEnum('provider').notNull(),
+  /** AES-256-GCM encrypted JSON blob containing { accessToken, refreshToken, idToken? } */
+  encryptedTokens: text('encrypted_tokens').notNull(),
+  /** Initialization vector for the encryption (hex) */
+  encryptionIv: varchar('encryption_iv', { length: 64 }).notNull(),
+  /** Authentication tag from AES-GCM (hex) */
+  encryptionAuthTag: varchar('encryption_auth_tag', { length: 64 }).notNull(),
+  /** Admin email that authorized this connection */
+  authorizedByEmail: varchar('authorized_by_email', { length: 255 }).notNull(),
+  /** OAuth scopes granted, stored as array so we can detect and prompt for re-auth */
+  scopes: jsonb('scopes').notNull().default([]),
+  /** Access token expires at (refresh token is long-lived) */
+  accessTokenExpiresAt: timestamp('access_token_expires_at'),
+  /** Customer's Google Workspace customer ID, Intune tenant ID, or Jamf server URL */
+  providerAccountId: varchar('provider_account_id', { length: 255 }),
+  /** Customer's domain (e.g., "sterling-law.com") — shown in UI */
+  providerDomain: varchar('provider_domain', { length: 255 }),
+  /** Last time the deployment UI verified the connection is still working */
+  lastVerifiedAt: timestamp('last_verified_at'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => [
+  index('mdm_connections_firm_idx').on(table.firmId),
+  unique('mdm_connections_firm_provider_uniq').on(table.firmId, table.provider),
+]);
+
+// ============================================================================
 // Stripe Billing Tables
 // ============================================================================
 

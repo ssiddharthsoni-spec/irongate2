@@ -16,6 +16,7 @@ import { invalidateUserCache } from '../middleware/auth';
 import { sanitizeInput, sanitizeUrl } from '../lib/sanitize';
 import { requirePerm } from '../middleware/rbac';
 import { mdmRoutes } from './mdm';
+import { mdmOAuthAdminRoutes } from './mdm-oauth';
 import { enrollmentRoutes } from './enrollment';
 import { logger } from '../lib/logger';
 import type { AppEnv } from '../types';
@@ -70,6 +71,9 @@ adminRoutes.route('/mdm', mdmRoutes);
 
 // Mount enrollment code management sub-routes
 adminRoutes.route('/enrollment-codes', enrollmentRoutes);
+
+// Mount MDM OAuth admin sub-routes (Google Workspace / Intune / Jamf connections)
+adminRoutes.route('/mdm-oauth', mdmOAuthAdminRoutes);
 
 // ---------------------------------------------------------------------------
 // Granular RBAC — write operations require specific permissions beyond
