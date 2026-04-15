@@ -68,6 +68,12 @@ onManagedConfigChanged((resolved) => {
   if (resolved.firmId) config.firmId = resolved.firmId;
 });
 
+// buildAuthHeaders + ApiError live in ./api-auth.ts so they can be unit-
+// tested without dragging in the chrome.storage side effects at the top
+// of this file. Re-exported here for call-site ergonomics.
+import { buildAuthHeaders, ApiError } from './api-auth';
+export { buildAuthHeaders, ApiError };
+
 export function getConfiguredApiKey(): string | undefined {
   return config.apiKey || undefined;
 }
@@ -103,25 +109,19 @@ export async function apiRequest<T>(options: RequestOptions): Promise<T> {
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      // Build auth headers: prefer API key, fall back to JWT
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'X-Extension-Version': chrome.runtime?.getManifest?.()?.version || '0.0.0',
-      };
-      if (config.firmId) {
-        headers['X-Firm-ID'] = config.firmId;
-      }
-      if (config.apiKey) {
-        headers['X-API-Key'] = config.apiKey;
-      } else {
-        const token = await config.getToken();
-        if (token) {
-          headers['Authorization'] = `Bearer ${token}`;
-        } else if (attempt === 0) {
-          // No API key and no JWT — fail fast with a helpful message
-          throw new ApiError(401, 'No API key configured. Open the Iron Gate side panel and enter your API key in Settings.');
-        }
-      }
+      // Build auth headers on EVERY attempt. Previously, if both apiKey and
+      // token were missing, the loop threw on attempt=0 but the catch
+      // swallowed it and retried — resulting in attempts 1..3 hitting the
+      // server with no auth header at all. That's the exact audit finding
+      // (Item 3): different backend error responses on authenticated vs
+      // unauthenticated retries could leak information.
+      //
+      // Fix: buildAuthHeaders() is a pure function that throws ApiError(401)
+      // on any call when no auth material is available. Thrown errors here
+      // are now re-thrown (not retried) because the 401 error.status < 500
+      // check at the catch site bypasses retry. Unauthenticated retry is
+      // structurally impossible.
+      const headers = await buildAuthHeaders(config);
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30_000);
@@ -210,19 +210,12 @@ export async function apiUploadFile<T>(
   const formData = new FormData();
   formData.append('file', blob, fileName);
 
-  // Build auth headers: prefer API key, fall back to JWT
-  const headers: Record<string, string> = {};
-  if (config.firmId) headers['X-Firm-ID'] = config.firmId;
-  if (config.apiKey) {
-    headers['X-API-Key'] = config.apiKey;
-  } else {
-    const token = await config.getToken();
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    } else {
-      throw new ApiError(401, 'No API key configured. Open the Iron Gate side panel and enter your API key in Settings.');
-    }
-  }
+  // Build auth headers via the shared helper — identical contract to the
+  // JSON request path, so upload auth can't drift. Uploads don't need
+  // Content-Type (FormData sets multipart boundary automatically), so
+  // strip it from the headers the helper returns.
+  const headers = await buildAuthHeaders(config);
+  delete headers['Content-Type'];
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 60_000); // 60s for uploads
@@ -250,17 +243,6 @@ export async function apiUploadFile<T>(
   }
 
   return (await response.json()) as T;
-}
-
-export class ApiError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-    public body?: any
-  ) {
-    super(message);
-    this.name = 'ApiError';
-  }
 }
 
 function getBackoffDelay(attempt: number): number {

@@ -16,10 +16,22 @@
 const API_KEY_STORAGE_KEY = 'ironGateApiKey_enc';
 const API_KEY_SALT_KEY = 'ironGateApiKey_salt';
 const API_KEY_SECRET_KEY = 'ironGateApiKey_secret';
+const API_KEY_ERROR_FLAG = 'ironGateApiKey_decrypt_error';
+const API_KEY_SCHEME_VERSION = 'ironGateApiKey_scheme';
 const LEGACY_KEY = 'ironGateApiKey';
+
+// Current scheme: random secret + random salt + PBKDF2(600k, SHA-256) +
+// AES-GCM(256). Anything re-encrypted with saveApiKey() today stamps this
+// version — future loads skip the legacy probes entirely, which closes
+// the hardcoded-salt surface referenced in Sr. Engineer Audit Item 1.
+// Any key NOT stamped with the current version is either legitimately
+// legacy (pre-v0.2.7) OR suspect — both paths converge into a single
+// re-encrypt-and-stamp action on first successful load.
+const SCHEME_CURRENT = 3;
 
 let _cachedKey: CryptoKey | null = null;
 let _cachedSecretVersion: 'random' | 'deterministic' | null = null;
+let _lastApiKeyError: string | null = null;
 
 /**
  * Get or generate a per-installation random salt.
@@ -107,6 +119,10 @@ export async function saveApiKey(apiKey: string): Promise<void> {
     return;
   }
 
+  // Clear any prior decrypt-error flag — the user is re-setting their key.
+  _lastApiKeyError = null;
+  try { await chrome.storage.local.remove(API_KEY_ERROR_FLAG); } catch { /* non-fatal */ }
+
   const key = await getEncryptionKey();
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const encoded = new TextEncoder().encode(apiKey);
@@ -123,8 +139,11 @@ export async function saveApiKey(apiKey: string): Promise<void> {
 
   const b64 = btoa(String.fromCharCode(...combined));
 
-  // Write encrypted, remove plaintext legacy key
-  await chrome.storage.local.set({ [API_KEY_STORAGE_KEY]: b64 });
+  // Write encrypted, stamp scheme version, remove plaintext legacy key
+  await chrome.storage.local.set({
+    [API_KEY_STORAGE_KEY]: b64,
+    [API_KEY_SCHEME_VERSION]: SCHEME_CURRENT,
+  });
   await chrome.storage.local.remove(LEGACY_KEY);
 }
 
@@ -133,7 +152,15 @@ export async function saveApiKey(apiKey: string): Promise<void> {
  * Auto-migrates any legacy plaintext key to encrypted storage immediately.
  */
 export async function loadApiKey(): Promise<string> {
-  const result = await chrome.storage.local.get([API_KEY_STORAGE_KEY, LEGACY_KEY]);
+  const result = await chrome.storage.local.get([
+    API_KEY_STORAGE_KEY,
+    LEGACY_KEY,
+    API_KEY_SCHEME_VERSION,
+  ]);
+
+  const schemeStamp: number | undefined = typeof result[API_KEY_SCHEME_VERSION] === 'number'
+    ? result[API_KEY_SCHEME_VERSION]
+    : undefined;
 
   // Always force-migrate legacy plaintext key first (don't leave it sitting around)
   if (result[LEGACY_KEY]) {
@@ -152,6 +179,8 @@ export async function loadApiKey(): Promise<string> {
     const iv = combined.slice(0, 12);
     const ciphertext = combined.slice(12);
 
+    const failures: string[] = [];
+
     // 1. Try current random-secret key
     try {
       const key = await getEncryptionKey();
@@ -161,7 +190,26 @@ export async function loadApiKey(): Promise<string> {
         ciphertext,
       );
       return new TextDecoder().decode(plaintext);
-    } catch { /* not encrypted with current key — try legacy */ }
+    } catch (err) {
+      failures.push(`current-random-secret: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    // Scheme stamp says we're on the current scheme but decryption failed.
+    // That means the ciphertext/secret/salt became inconsistent (e.g., user
+    // wiped chrome.storage but the encrypted blob survived in a synced
+    // profile). Do NOT fall through to legacy probes — attempting the
+    // hardcoded-salt path against a current-scheme payload is wasted work
+    // AND leaves the old derivation code as an attack surface. Report and
+    // bail.
+    if (schemeStamp === SCHEME_CURRENT) {
+      const summary = failures.join(' | ');
+      console.error('[Iron Gate] API key decryption failed with current scheme (stamped):', summary);
+      _lastApiKeyError = summary;
+      try {
+        await chrome.storage.local.set({ [API_KEY_ERROR_FLAG]: summary });
+      } catch { /* non-fatal */ }
+      return '';
+    }
 
     // 2. Try old deterministic key + current random salt (migration case)
     try {
@@ -176,7 +224,9 @@ export async function loadApiKey(): Promise<string> {
       _cachedSecretVersion = null;
       await saveApiKey(apiKeyStr);
       return apiKeyStr;
-    } catch { /* not this scheme either */ }
+    } catch (err) {
+      failures.push(`legacy-det+random-salt: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     // 3. Try old deterministic key + hardcoded static salt (oldest scheme)
     try {
@@ -191,10 +241,58 @@ export async function loadApiKey(): Promise<string> {
       _cachedSecretVersion = null;
       await saveApiKey(apiKeyStr);
       return apiKeyStr;
-    } catch {
-      return '';
+    } catch (err) {
+      failures.push(`legacy-det+static-salt: ${err instanceof Error ? err.message : String(err)}`);
     }
+
+    // All three schemes failed. Sr. Engineer Audit · Item 8: DO NOT silently
+    // return ''. Previously the extension would boot with no auth and the
+    // user had no idea their API key was unreadable. Now:
+    //   1. Log to console so it shows up in service-worker DevTools
+    //   2. Record the detail into _lastApiKeyError so the sidepanel can
+    //      show a visible "re-enter your API key" banner
+    //   3. Persist a flag to chrome.storage.local so the banner survives
+    //      worker restarts / sidepanel re-mounts
+    // We still return '' (to preserve caller contract) — but the error
+    // is no longer invisible.
+    const summary = failures.join(' | ');
+    console.error('[Iron Gate] API key decryption failed against all known schemes:', summary);
+    _lastApiKeyError = summary;
+    try {
+      await chrome.storage.local.set({ [API_KEY_ERROR_FLAG]: summary });
+    } catch { /* storage itself failed — error state is still in memory */ }
+    return '';
   }
 
   return '';
+}
+
+/**
+ * Read the last API-key decryption failure.
+ * Returns null if loadApiKey() has never failed this session.
+ *
+ * Callers (sidepanel, settings UI) should render a banner when this
+ * returns a non-null value — the user's ciphertext is unrecoverable and
+ * they need to re-enter their API key. Otherwise the extension silently
+ * operates without auth.
+ */
+export async function getLastApiKeyError(): Promise<string | null> {
+  if (_lastApiKeyError) return _lastApiKeyError;
+  try {
+    const r = await chrome.storage.local.get(API_KEY_ERROR_FLAG);
+    const persisted = r?.[API_KEY_ERROR_FLAG];
+    if (typeof persisted === 'string' && persisted.length > 0) {
+      _lastApiKeyError = persisted;
+      return persisted;
+    }
+  } catch { /* non-fatal */ }
+  return null;
+}
+
+/** Call after the user successfully re-enters their API key. */
+export async function clearApiKeyError(): Promise<void> {
+  _lastApiKeyError = null;
+  try {
+    await chrome.storage.local.remove(API_KEY_ERROR_FLAG);
+  } catch { /* non-fatal */ }
 }
