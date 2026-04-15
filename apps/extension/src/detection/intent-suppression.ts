@@ -324,7 +324,7 @@ export function applyIntentSuppression(
   nliBenign: boolean = false,
 ): IntentSuppressionResult {
   if (entities.length === 0) {
-    return { entities, scoreMultiplier: 1.0, suppressions: [], isSelfReferential: false };
+    return { entities, scoreMultiplier: 1.0, suppressions: [], isSelfReferential: false, isStrongFiction: false };
   }
 
   // Strong-fiction early gate: when the prompt unambiguously opens with
@@ -380,7 +380,7 @@ export function applyIntentSuppression(
         isStrongFiction: true,
       };
     }
-    return { entities, scoreMultiplier: 1.0, suppressions: [], isSelfReferential: false };
+    return { entities, scoreMultiplier: 1.0, suppressions: [], isSelfReferential: false, isStrongFiction: false };
   }
 
   // ── CONTEXT-AWARE GUARDS ───────────────────────────────────────────────
@@ -407,12 +407,12 @@ export function applyIntentSuppression(
 
   const lengthLimit = isSelfReferentialTask ? 2000 : nliBenign ? 800 : 500;
   if (text.length > lengthLimit) {
-    return { entities, scoreMultiplier: 1.0, suppressions: [], isSelfReferential: false };
+    return { entities, scoreMultiplier: 1.0, suppressions: [], isSelfReferential: false, isStrongFiction: false };
   }
 
   const entityLimit = isSelfReferentialTask ? 15 : nliBenign ? 6 : 4;
   if (entities.length >= entityLimit) {
-    return { entities, scoreMultiplier: 1.0, suppressions: [], isSelfReferential: false };
+    return { entities, scoreMultiplier: 1.0, suppressions: [], isSelfReferential: false, isStrongFiction: false };
   }
 
   // Build the set of safe entity types from all matched patterns

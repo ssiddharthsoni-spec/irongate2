@@ -254,8 +254,19 @@ const REGEX_PATTERNS: RegexPattern[] = [
   // PERSON collision unlikely. Uses lookbehind so match[0] is just the org name.
   {
     type: 'ORGANIZATION',
-    pattern: /(?<=\b(?:at|to|from|with|by)\s+)[A-Z][a-z]+(?:\s+[A-Z][a-z]+){2,4}\b/g,
+    pattern: /(?<=\b(?:at|to|from|with|by|referred\s+to|transferred\s+to|admitted\s+to|visited|consulted|scheduled\s+at|evaluated\s+at)\s+)[A-Z][a-z]+(?:\s+[A-Z][a-z]+){2,4}\b/g,
     confidence: 0.7,
+  },
+  // Institutional-prefix safety net: common hospital / university / research
+  // institution name openings that appear anywhere in the text, regardless
+  // of preceding verb. Catches "Memorial Sloan Kettering" mid-sentence when
+  // the lookbehind variants miss, and "Mount Sinai", "Johns Hopkins", "Saint
+  // Jude", etc. Requires at least 1 additional capitalized word after the
+  // known prefix so we don't false-match on a person's first name alone.
+  {
+    type: 'ORGANIZATION',
+    pattern: /\b(?:Memorial|Mount|Saint|St\.?|Johns|Children's|Presbyterian|Cleveland|Mayo|Stanford|Harvard|Yale|Princeton|Columbia|Duke|MIT|NYU|UCLA|UCSF|Northwestern|Vanderbilt|Emory)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}\b/g,
+    confidence: 0.75,
   },
   // Known financial entity patterns: "Name + Capital/Partners/Asset Management"
   // Also handles single-word names before role descriptors
@@ -1039,11 +1050,26 @@ function runRegexPatterns(text: string): DetectedEntity[] {
   // ── Post-detection: reclassify PERSON → ORGANIZATION ──────────────────
   // If a PERSON entity's last word is a known business suffix, it's an org.
   // This catches all patterns systematically instead of patching each regex.
+  //
+  // Also check the FIRST word — institutional names like "Memorial Sloan",
+  // "Mount Sinai", "Johns Hopkins" routinely get caught by broad PERSON
+  // regexes ("to Memorial Sloan"). Reclassifying on known institutional
+  // prefixes prevents those false-person-positives without weakening the
+  // broad PERSON patterns that catch real names.
+  const ORG_PREFIX_SET: ReadonlySet<string> = new Set([
+    'memorial', 'mount', 'saint', 'st', 'st.', 'johns', "children's",
+    'presbyterian', 'cleveland', 'mayo', 'stanford', 'harvard', 'yale',
+    'princeton', 'columbia', 'duke', 'mit', 'nyu', 'ucla', 'ucsf',
+    'northwestern', 'vanderbilt', 'emory', 'massachusetts', 'general',
+  ]);
   for (const entity of entities) {
     if (entity.type !== 'PERSON') continue;
     const words = entity.text.trim().split(/\s+/);
     const lastWord = words[words.length - 1];
+    const firstWord = words[0];
     if (lastWord && ORG_SUFFIX_SET.has(lastWord.toLowerCase())) {
+      entity.type = 'ORGANIZATION';
+    } else if (firstWord && ORG_PREFIX_SET.has(firstWord.toLowerCase())) {
       entity.type = 'ORGANIZATION';
     }
   }

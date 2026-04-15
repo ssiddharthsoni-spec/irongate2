@@ -1,0 +1,138 @@
+name: Context-QA Battery (166 scenarios)
+
+# The 166-scenario intent classifier battery is IronGate's release gate. Every
+# change that could move the classifier — the prompt, the model, the parser,
+# the zone mapping, or the pattern-fallback scorer — must not drop accuracy
+# below 95% on this battery or the release is blocked.
+#
+# Running Gemma 4 e2b inside GitHub Actions needs a few GB of RAM and ~8 GB
+# of disk for the model weights. We use a larger runner and pull the model
+# once per run. Expect ~6-8 minutes end to end.
+#
+# Triggers:
+#   - Manual dispatch (for ad-hoc release gating)
+#   - Push to main that touches the classifier, scorer, or battery itself
+#   - Nightly (catches model drift when Ollama publishes a new Gemma 4 e2b tag)
+
+on:
+  workflow_dispatch:
+    inputs:
+      accuracy_floor:
+        description: 'Minimum accuracy % to pass (default 95)'
+        required: false
+        default: '95'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/extension/src/detection/intent-context-classifier.ts'
+      - 'apps/extension/src/detection/scorer.ts'
+      - 'apps/extension/src/detection/fallback-regex.ts'
+      - 'apps/extension/src/detection/intent-suppression.ts'
+      - 'scripts/context-qa-scenarios.ts'
+      - 'scripts/run-context-qa.ts'
+      - '.github/workflows/context-qa-battery.yml'
+  schedule:
+    # 07:00 UTC daily
+    - cron: '0 7 * * *'
+
+concurrency:
+  group: context-qa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  battery:
+    name: Run 166-scenario battery against Gemma 4 e2b
+    runs-on: ubuntu-latest-4-cores
+    timeout-minutes: 30
+    env:
+      # Accuracy threshold — the run fails if the battery produces a lower
+      # pass rate. The default matches our committed floor; overridable per
+      # workflow_dispatch for experiments on a feature branch.
+      ACCURACY_FLOOR: ${{ github.event.inputs.accuracy_floor || '95' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama --version
+
+      - name: Start Ollama service
+        run: |
+          nohup ollama serve > /tmp/ollama.log 2>&1 &
+          # Wait up to 30s for Ollama to bind 127.0.0.1:11434
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:11434/api/tags > /dev/null 2>&1; then
+              echo "Ollama ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Ollama failed to start in 30s"
+          cat /tmp/ollama.log
+          exit 1
+
+      - name: Pull gemma4:e2b model
+        run: |
+          ollama pull gemma4:e2b
+          ollama list
+
+      - name: Run the 166-scenario battery
+        id: battery
+        run: |
+          set -o pipefail
+          npx tsx scripts/run-context-qa.ts \
+            --model=gemma4:e2b \
+            --timeout=30000 \
+            | tee battery-output.txt
+
+          # Parse the Passed: line to get the integer percentage
+          PCT=$(grep -oE 'Passed: [0-9]+ \([0-9.]+%\)' battery-output.txt \
+                  | grep -oE '[0-9.]+%' \
+                  | tr -d '%')
+          echo "accuracy=${PCT}" >> "$GITHUB_OUTPUT"
+
+          # Compare against the floor (integer compare to one decimal place)
+          if [ -z "$PCT" ]; then
+            echo "::error::Could not parse accuracy from battery output"
+            exit 1
+          fi
+          awk -v pct="$PCT" -v floor="$ACCURACY_FLOOR" 'BEGIN {
+            if (pct + 0 < floor + 0) {
+              print "::error::Battery accuracy " pct "% < floor " floor "%"
+              exit 1
+            }
+            print "Battery passed: " pct "% >= " floor "%"
+          }'
+
+      - name: Upload battery output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: context-qa-battery-${{ github.run_id }}
+          path: battery-output.txt
+          retention-days: 30
+
+      - name: Report accuracy to commit status
+        if: always()
+        run: |
+          echo "### Context-QA Battery" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Model**: gemma4:e2b" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Accuracy**: ${{ steps.battery.outputs.accuracy }}%" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Floor**: ${{ env.ACCURACY_FLOOR }}%" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          tail -40 battery-output.txt >> "$GITHUB_STEP_SUMMARY"
