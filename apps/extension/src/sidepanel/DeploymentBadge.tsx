@@ -95,27 +95,41 @@ export function DeploymentBadge() {
   const health = status.tier2Health;
   const cfg = status.config;
 
-  // Local-only: green if healthy, red if local LLM unreachable
+  // Local-only: three states
+  //   - Healthy              → green "Sovereign mode active"
+  //   - Local LLM unreachable → amber "Protection active (pattern-based)"
+  //   - (Ollama fails completely) → still amber, Tier 1 pattern detection runs
+  //
+  // We do NOT go red when the local LLM is offline because the extension is
+  // still protecting — pattern-based detection catches the critical cases
+  // (SSN, credit card, credentials) via regex even with no LLM. Red was
+  // overdramatic and made users think protection had failed entirely.
   if (mode === 'local-only') {
     const healthy = health?.reachable && health?.modelLoaded;
-    const color = healthy ? 'green' : 'red';
+    const color = healthy ? 'green' : 'amber';
     return (
       <div style={badgeStyle(color)} onClick={() => setExpanded(!expanded)}>
         <span style={dotStyle(color)} />
         <div style={{ flex: 1 }}>
           <div style={{ fontWeight: 600 }}>
-            {healthy ? '🛡 Sovereign mode active' : '⚠ Local LLM unreachable'}
+            {healthy ? '🛡 Sovereign mode active' : '🛡 Protection active (pattern-based)'}
           </div>
           {expanded && (
             <div style={detailStyle}>
               <Row label="Mode" value="Local-only (no cloud calls)" />
               <Row label="Model" value={cfg?.localModel || '(default)'} />
               <Row label="Endpoint" value={health?.endpoint || cfg?.localEndpoint || '—'} />
-              <Row label="Status" value={healthy ? 'Reachable + model loaded' : (health?.error || 'Probe failed')} />
+              <Row label="Status" value={healthy ? 'Reachable + model loaded' : (health?.error || 'Local LLM offline — regex detection still active')} />
               {health?.latencyMs !== null && (
                 <Row label="Latency" value={`${health?.latencyMs}ms`} />
               )}
               <Row label="Audit log" value={cfg?.auditLogDestination || 'none'} />
+              {!healthy && (
+                <div style={{ marginTop: 8, fontSize: 11, opacity: 0.85 }}>
+                  To enable context-aware classification: install Ollama + run
+                  <code style={{ display: 'block', marginTop: 4, padding: 2, background: 'rgba(0,0,0,0.25)', borderRadius: 3 }}>ollama pull gemma4:e2b</code>
+                </div>
+              )}
               <div style={{ marginTop: 8, fontSize: 11, opacity: 0.7 }}>
                 Your prompts never leave this device. By design and by architecture.
               </div>

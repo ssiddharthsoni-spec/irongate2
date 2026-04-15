@@ -420,6 +420,37 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
           // This prevents the setup wizard from reappearing on every extension reload
           setConnection(prev => prev.connected ? prev : { connected: true, firmId: prev.firmId, firmName: prev.firmName });
           chrome.storage.local.set({ connectionState: { connected: true, firmId: null, firmName: null } });
+
+          // Refresh subscription tier from the server every time the
+          // sidepanel opens. Picks up:
+          //   - Super-admin upgrades applied server-side after signup
+          //   - Trial → active conversions from Stripe webhooks
+          //   - Trial expirations that happened while the user was offline
+          // The TrialBanner + UpgradePrompt listen on chrome.storage.onChanged
+          // so updating SUBSCRIPTION_TIER triggers them to re-render. A stale
+          // "Trial ended" / "Upgrade to Pro" UI self-corrects on first open.
+          chrome.storage.local.get(['apiBaseUrl']).then(async ({ apiBaseUrl }) => {
+            const base = apiBaseUrl || 'https://irongate-api.onrender.com/v1';
+            try {
+              const res = await fetch(`${base}/auth/refresh-subscription`, {
+                method: 'GET',
+                headers: { 'X-API-Key': key },
+                signal: AbortSignal.timeout(10_000),
+              });
+              if (!res.ok) return;
+              const data = await res.json();
+              // Normalize 'business' → 'team' for the sidepanel UI
+              const uiTier = data.tier === 'business' ? 'team' : data.tier;
+              await chrome.storage.local.set({
+                [SUBSCRIPTION_TIER]: uiTier || 'basic',
+                [SUBSCRIPTION_CACHED_AT]: Date.now(),
+                [TRIAL_ENDS_AT]: data.trialEndsAt ?? null,
+              });
+            } catch {
+              // Network failure on open is non-fatal — the UI falls back to
+              // whatever tier is cached in chrome.storage.local.
+            }
+          }).catch(() => {});
         }
       }).catch(() => {});
       chrome.storage.local.get(['apiBaseUrl', 'connectionState', 'firmMode', 'recentActivity', 'lastScore'], (result) => {

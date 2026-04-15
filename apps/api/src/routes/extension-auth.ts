@@ -550,6 +550,79 @@ extensionAuthRoutes.post('/validate-firm-code', async (c) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /refresh-subscription — Extension calls this on sidepanel open to
+// pick up server-side changes (super-admin upgrade, Stripe webhook, etc.)
+// without requiring a re-registration.
+//
+// Authenticated via X-API-Key header.
+// Runs super-admin self-heal: if the user's email is on the allowlist,
+// ensures they have a firm + permanent business-tier subscription before
+// returning the tier.
+// ---------------------------------------------------------------------------
+extensionAuthRoutes.get('/refresh-subscription', async (c) => {
+  const apiKeyHeader = c.req.header('X-API-Key');
+  if (!apiKeyHeader) return c.json({ error: 'Missing X-API-Key header' }, 401);
+  const keyHash = crypto.createHash('sha256').update(apiKeyHeader).digest('hex');
+
+  const [keyRow] = await db
+    .select({
+      firmId: apiKeys.firmId,
+      createdBy: apiKeys.createdBy,
+      revokedAt: apiKeys.revokedAt,
+    })
+    .from(apiKeys)
+    .where(eq(apiKeys.keyHash, keyHash))
+    .limit(1);
+
+  if (!keyRow || keyRow.revokedAt) {
+    return c.json({ error: 'Invalid or revoked API key' }, 401);
+  }
+
+  const [u] = await db
+    .select({ id: users.id, email: users.email, firmId: users.firmId })
+    .from(users)
+    .where(eq(users.id, keyRow.createdBy))
+    .limit(1);
+
+  // Super-admin self-heal: same policy as GET /billing on the dashboard side.
+  // If the registered email is on the allowlist, ensure the subscription is
+  // permanent business tier. Idempotent.
+  let firmIdForQuery = keyRow.firmId;
+  if (u && isSuperAdminEmail(u.email)) {
+    try {
+      await applySuperAdminRole(u.id);
+      if (u.firmId) {
+        await applySuperAdminSubscription(u.firmId);
+        firmIdForQuery = u.firmId;
+      }
+    } catch (err) {
+      logger.error('Super-admin self-heal on refresh-subscription failed', {
+        email: u.email,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  const [sub] = await db
+    .select({
+      tier: subscriptions.tier,
+      status: subscriptions.status,
+      currentPeriodEnd: subscriptions.currentPeriodEnd,
+    })
+    .from(subscriptions)
+    .where(eq(subscriptions.firmId, firmIdForQuery))
+    .orderBy(sql`${subscriptions.createdAt} desc`)
+    .limit(1);
+
+  return c.json({
+    tier: sub?.tier || 'free',
+    status: sub?.status || 'active',
+    trialEndsAt: sub?.status === 'trialing' ? sub.currentPeriodEnd?.toISOString() : null,
+    currentPeriodEnd: sub?.currentPeriodEnd?.toISOString() || null,
+  });
+});
+
+// ---------------------------------------------------------------------------
 // POST /enroll — Auto-join a firm using an enrollment code
 // Authenticated via X-API-Key header (existing extension user) or email+deviceId
 // for users who registered but need to switch firms.
