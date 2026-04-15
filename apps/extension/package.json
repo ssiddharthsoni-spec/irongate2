@@ -11,6 +11,7 @@
     "test:contracts": "vitest run tests/payload-contract.test.ts",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
+    "test:wire": "playwright test --config=playwright.wire.config.ts",
     "test:selector-health": "playwright test tests/e2e/selector-health.spec.ts --headed"
   },
   "dependencies": {
@@ -23,6 +24,7 @@
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.0.0-beta.28",
     "@playwright/test": "^1.58.2",
+    "ws": "^8.18.0",
     "@types/chrome": "^0.0.300",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

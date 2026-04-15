@@ -1,0 +1,95 @@
+name: Wire Verification (extension-level byte assertion)
+
+# Automated replacement for the mitmproxy runbook. Loads the IronGate
+# extension into a real Chromium via Playwright, drives mocked ChatGPT /
+# Claude / Gemini pages at localhost:9000, and asserts that the outbound
+# request body contains NONE of the original PII strings — proving the
+# zero-persistence promise on the actual bytes, not just in architecture.
+#
+# When this fails: some new code path let raw PII reach the wire. The
+# release is blocked until the offending adapter or interceptor is fixed.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/extension/src/detection/**'
+      - 'apps/extension/src/content/**'
+      - 'apps/extension/src/worker/index.ts'
+      - 'apps/extension/tests/e2e/wire-verification.spec.ts'
+      - 'apps/extension/tests/mocked-platforms/**'
+      - 'apps/extension/playwright.wire.config.ts'
+      - '.github/workflows/wire-verification.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/extension/src/detection/**'
+      - 'apps/extension/src/content/**'
+
+concurrency:
+  group: wire-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Assert no PII on the wire
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        run: pnpm turbo build --filter=@iron-gate/types --filter=@iron-gate/config --filter=@iron-gate/crypto
+
+      - name: Build the extension
+        run: pnpm --filter @iron-gate/extension build
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter @iron-gate/extension exec playwright install --with-deps chromium
+
+      - name: Start virtual display (for headed Chrome)
+        # Chrome extensions cannot run in pure headless mode. xvfb gives us a
+        # virtual X server so "headless: false" works in CI.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          Xvfb :99 -screen 0 1280x800x24 &
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+
+      - name: Run wire-verification tests
+        working-directory: apps/extension
+        run: pnpm test:wire
+
+      - name: Upload failed test artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wire-verification-failures-${{ github.run_id }}
+          path: |
+            apps/extension/test-results/
+            apps/extension/playwright-report/
+          retention-days: 30
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Wire Verification" >> "$GITHUB_STEP_SUMMARY"
+          echo "This run asserts no raw PII appears in outbound fetch/WS" >> "$GITHUB_STEP_SUMMARY"
+          echo "bodies for ChatGPT, Claude, and Gemini flows — the same" >> "$GITHUB_STEP_SUMMARY"
+          echo "bytes-in-bytes-out check a security team would run with" >> "$GITHUB_STEP_SUMMARY"
+          echo "mitmproxy against production." >> "$GITHUB_STEP_SUMMARY"

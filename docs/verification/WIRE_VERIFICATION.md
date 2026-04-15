@@ -1,13 +1,31 @@
 # Wire-Level Verification — "Did the pseudonym actually make it to the wire?"
 
+## TL;DR — two levels of evidence
+
+| Level | Who runs it | What it proves | Where |
+|---|---|---|---|
+| **Automated** (primary) | CI + anyone locally | The extension's fetch interceptor + body transformer strip PII before the request leaves the browser | `pnpm --filter @iron-gate/extension test:wire` — runs in CI via `.github/workflows/wire-verification.yml` |
+| **Live** (corroborating) | Pilot security team, release QA | The same assertion against *production* chatgpt.com / claude.ai / gemini.google.com | This document's mitmproxy procedure, below |
+
+The automated path is the gate. It loads the real extension into a real
+Chromium, drives mocked ChatGPT / Claude / Gemini pages whose backend logs
+every received body, and fails the build if any original PII string leaks
+into an outbound request. Every PR that touches detection or content code
+runs it.
+
+The live mitmproxy path exists because an enterprise security team will,
+rightly, want to *watch the bytes on the wire against production endpoints*
+before they deploy to 200 lawyers. The assertion is identical; the target
+is a real account instead of a mock.
+
 ## Why this document exists
 
 IronGate's central claim to an enterprise customer is: **the raw prompt does
 not leave the device**. We assert this architecturally — via CSP, via the
-network guard, via the pseudonymization path — but an enterprise security
-team will, rightly, want to *watch the bytes* before they deploy to 200
-lawyers. This runbook is the procedure that lets a customer's security team
-(or our own release QA) confirm the claim on the wire.
+network guard, via the pseudonymization path — and we now also assert it by
+bytes-in-bytes-out in CI. This runbook lets a customer's security team
+reproduce the live variant on their own infrastructure if they want
+corroborating evidence.
 
 It runs against the three most consequential platforms:
 
