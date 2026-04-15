@@ -1234,6 +1234,7 @@ async function handleMessage(
         model: cfg?.localModel ?? 'gemma4:e2b',
         format: (cfg?.localFormat === 'openai-compatible' ? 'openai-compatible' : 'ollama'),
         timeoutMs: cfg?.timeoutMs ?? 12_000,
+        apiKey: cfg?.localApiKey,
       };
       try {
         return await classifyIntentAndContext(text, classifierCfg);

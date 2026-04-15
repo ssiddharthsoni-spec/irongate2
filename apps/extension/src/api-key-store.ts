@@ -20,14 +20,27 @@ const API_KEY_ERROR_FLAG = 'ironGateApiKey_decrypt_error';
 const API_KEY_SCHEME_VERSION = 'ironGateApiKey_scheme';
 const LEGACY_KEY = 'ironGateApiKey';
 
-// Current scheme: random secret + random salt + PBKDF2(600k, SHA-256) +
-// AES-GCM(256). Anything re-encrypted with saveApiKey() today stamps this
-// version — future loads skip the legacy probes entirely, which closes
-// the hardcoded-salt surface referenced in Sr. Engineer Audit Item 1.
-// Any key NOT stamped with the current version is either legitimately
-// legacy (pre-v0.2.7) OR suspect — both paths converge into a single
-// re-encrypt-and-stamp action on first successful load.
-const SCHEME_CURRENT = 3;
+// Scheme versions for the encrypted API-key payload.
+//
+// Any saveApiKey() today writes at SCHEME_CURRENT; loadApiKey() uses the
+// stamp to route decryption to the right derivation path and skip legacy
+// probes that don't apply.
+//
+//   SCHEME_4  (current) — random secret + random salt + PBKDF2(2.1M, SHA-256)
+//   SCHEME_3            — random secret + random salt + PBKDF2(600k, SHA-256)
+//   unstamped           — pre-v0.2.7 legacy (deterministic secret variants)
+//
+// Bumping iteration count to 2.1M matches NIST SP 800-132 (2023) guidance
+// for PBKDF2 over SHA-256. Our 32-byte random secret already puts brute
+// force out of reach; the iteration bump is defense in depth for any
+// future reduction in secret entropy (e.g., managed-policy-derived keys).
+//
+// Sr. Engineer Audit · Item 4.
+const SCHEME_4 = 4;
+const SCHEME_3 = 3;
+const SCHEME_CURRENT = SCHEME_4;
+const PBKDF2_ITERATIONS_CURRENT = 2_100_000;
+const PBKDF2_ITERATIONS_V3 = 600_000;
 
 let _cachedKey: CryptoKey | null = null;
 let _cachedSecretVersion: 'random' | 'deterministic' | null = null;
@@ -69,8 +82,12 @@ async function getOrCreateSecret(): Promise<string> {
   return secret;
 }
 
-async function getEncryptionKey(): Promise<CryptoKey> {
-  if (_cachedKey && _cachedSecretVersion === 'random') return _cachedKey;
+async function getEncryptionKey(iterations: number = PBKDF2_ITERATIONS_CURRENT): Promise<CryptoKey> {
+  // Cache keyed on iteration count — a v3 decrypt (600k) during migration
+  // must not hit the 2.1M-derived cached key.
+  if (iterations === PBKDF2_ITERATIONS_CURRENT && _cachedKey && _cachedSecretVersion === 'random') {
+    return _cachedKey;
+  }
 
   const secret = await getOrCreateSecret();
   const salt = await getOrCreateSalt();
@@ -83,19 +100,31 @@ async function getEncryptionKey(): Promise<CryptoKey> {
     ['deriveKey'],
   );
 
-  _cachedKey = await crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt: salt as BufferSource, iterations: 600_000, hash: 'SHA-256' },
+  const derived = await crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: salt as BufferSource, iterations, hash: 'SHA-256' },
     keyMaterial,
     { name: 'AES-GCM', length: 256 },
     false,
     ['encrypt', 'decrypt'],
   );
-  _cachedSecretVersion = 'random';
 
-  return _cachedKey;
+  if (iterations === PBKDF2_ITERATIONS_CURRENT) {
+    _cachedKey = derived;
+    _cachedSecretVersion = 'random';
+  }
+  return derived;
 }
 
-/** Derive a key using the old deterministic secret (for migration only). */
+/**
+ * Derive a key using the old deterministic secret — for MIGRATION ONLY.
+ *
+ * Historically used 600k iterations. We keep that constant here so we can
+ * decrypt old blobs; successful decryption immediately triggers re-encrypt
+ * at the current scheme (2.1M iterations, random secret, stamped version).
+ *
+ * Do not call this function for NEW writes. It exists purely to unblock
+ * users upgrading from pre-v0.2.7 installs.
+ */
 async function getLegacyDeterministicKey(salt: BufferSource): Promise<CryptoKey> {
   const extId = chrome.runtime.id || 'iron-gate-local';
   const secret = `iron-gate-api-key-${extId}`;
@@ -103,7 +132,7 @@ async function getLegacyDeterministicKey(salt: BufferSource): Promise<CryptoKey>
     'raw', new TextEncoder().encode(secret), 'PBKDF2', false, ['deriveKey'],
   );
   return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt, iterations: 600_000, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS_V3, hash: 'SHA-256' },
     km, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'],
   );
 }
@@ -209,6 +238,30 @@ export async function loadApiKey(): Promise<string> {
         await chrome.storage.local.set({ [API_KEY_ERROR_FLAG]: summary });
       } catch { /* non-fatal */ }
       return '';
+    }
+
+    // 1b. SCHEME_3 migration: stamped v3 blob — try the random-secret
+    //     key at the OLD 600k iteration count, then re-encrypt at 2.1M.
+    if (schemeStamp === SCHEME_3) {
+      try {
+        const v3Key = await getEncryptionKey(PBKDF2_ITERATIONS_V3);
+        const pt = await crypto.subtle.decrypt(
+          { name: 'AES-GCM', iv, tagLength: 128 }, v3Key, ciphertext,
+        );
+        const apiKeyStr = new TextDecoder().decode(pt);
+        // Re-encrypt at current (2.1M) iterations + bump stamp to SCHEME_4
+        _cachedKey = null;
+        _cachedSecretVersion = null;
+        await saveApiKey(apiKeyStr);
+        return apiKeyStr;
+      } catch (err) {
+        failures.push(`scheme-3-migration: ${err instanceof Error ? err.message : String(err)}`);
+        const summary = failures.join(' | ');
+        console.error('[Iron Gate] API key decryption failed with scheme 3 (stamped):', summary);
+        _lastApiKeyError = summary;
+        try { await chrome.storage.local.set({ [API_KEY_ERROR_FLAG]: summary }); } catch { /* non-fatal */ }
+        return '';
+      }
     }
 
     // 2. Try old deterministic key + current random salt (migration case)

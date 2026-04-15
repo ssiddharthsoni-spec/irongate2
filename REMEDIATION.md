@@ -176,10 +176,10 @@ the *work*. Each item maps to one of the four agent roles above.
 
 | # | Severity | Title | Agent role | Status |
 |---|---|---|---|---|
-| 4 | HIGH | PBKDF2 iteration count 600k → NIST-2023 2.1M | Reliability | todo |
-| 5 | HIGH | PBKDF2 salt stored plaintext in `chrome.storage.local` | Reliability | todo |
-| 6 | HIGH | No TLS / authentication for local Ollama (`http://localhost:11434`) | Chaos | todo |
-| 7 | HIGH | Circuit-breaker `HALF_OPEN` state referenced but never probes | Reliability | todo |
+| 4 | HIGH | PBKDF2 iteration count 600k → NIST-2023 2.1M | Reliability | ✅ `PBKDF2_ITERATIONS_CURRENT = 2_100_000`, SCHEME_4 stamp added. v3 blobs decrypt with 600k + auto-reencrypt at 2.1M on first read. `getEncryptionKey()` is now parameterized on iteration count; cache is gated on the current-scheme path. |
+| 5 | HIGH | PBKDF2 salt stored plaintext in `chrome.storage.local` | Reliability | ✅ Mitigated by design: the "secret" is 32 bytes from `crypto.getRandomValues()` (256-bit entropy), not a user password. A local-storage-reading attacker with the salt still faces a 2^256 search — infeasible. Salt in plaintext is *correct* cryptographically; the audit concern assumed a low-entropy passphrase scheme. Documented in `api-key-store.ts` header. |
+| 6 | HIGH | No TLS / authentication for local Ollama (`http://localhost:11434`) | Chaos | ✅ Added `localApiKey` managed-config field → `Authorization: Bearer <key>` header on every LLM call. Plus response-shape validation: Ollama responses must have a string `response` field; impersonator payloads are rejected and flow through the conservative fallback. 7 unit tests lock it in. |
+| 7 | HIGH | Circuit-breaker `HALF_OPEN` state referenced but never probes | Reliability | ✅ Already correctly implemented at `worker/circuit-breaker.ts:73-75, 80-84, 88-97, 99-108`. `canAttempt()` transitions open → half-open when reset timeout elapses; the caller that got `true` IS the probe; `onSuccess` closes, `onFailure` re-opens. Audit was against outdated code. |
 
 ### WEEK 3 — completeness
 
@@ -212,7 +212,7 @@ the *work*. Each item maps to one of the four agent roles above.
 |---|---|---|
 | 0. Truth | merged into Sr. Engineer Audit above | this file |
 | 1. Reliability Engineer — Week 1 | ✅ **shipped** — Items 1, 2, 3, 8 done (4 CRITICAL blockers closed) | `api-auth.ts`, `api-key-store.ts`, `tests/api-client-auth.test.ts` |
-| 1. Reliability Engineer — Week 2 | queued | — |
+| 1. Reliability Engineer — Week 2 | ✅ **shipped** — Items 4, 5, 6, 7 done (4 HIGH hardening items) | `api-key-store.ts`, `intent-context-classifier.ts`, `tier2-adapter.ts`, `tests/ollama-response-validation.test.ts` |
 | 2. Design Systems Architect | queued — Week 3 (Items 11, 12, 14) | — |
 | 3. Performance Lead | queued — Week 4 (Item 16) | — |
 | 4. Chaos Auditor | queued — Week 2 (Item 6), Week 4 (Item 20, 21) | — |

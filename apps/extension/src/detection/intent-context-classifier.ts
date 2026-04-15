@@ -237,6 +237,17 @@ export interface ClassifierConfig {
   model: string; // e.g., "gemma4:e2b"
   format: 'ollama' | 'openai-compatible';
   timeoutMs?: number;
+  /**
+   * Optional API key for the LLM endpoint. If set, it's sent as
+   *   Authorization: Bearer <apiKey>
+   * Use cases:
+   *   - Ollama running behind a reverse proxy (Caddy, nginx) that enforces
+   *     a shared-secret header — mitigates the audit concern that any
+   *     local process can impersonate localhost:11434.
+   *   - OpenAI-compatible endpoints (vLLM, TGI, etc.) that require auth.
+   * When unset, no Authorization header is attached. Sr. Engineer Audit · Item 6.
+   */
+  apiKey?: string;
 }
 
 /**
@@ -293,11 +304,14 @@ async function callLlm(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`;
+
   try {
     if (config.format === 'ollama') {
       const response = await fetch(config.endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           model: config.model,
           prompt: `${systemPrompt}\n\n${userMessage}\n\nJSON:`,
@@ -308,14 +322,33 @@ async function callLlm(
         signal: controller.signal,
       });
       if (!response.ok) throw new Error(`Ollama ${response.status}`);
-      const data = (await response.json()) as { response?: string };
-      return data.response ?? '';
+      // Shape validation — mitigates a rogue process binding to :11434 and
+      // returning something that looks like a Chrome 200 but isn't actually
+      // an Ollama reply. We require the documented Ollama generate-API
+      // fields OR at minimum a `response` string. Anything else is rejected
+      // and flows through the conservative fallback. Item 6.
+      const data = (await response.json()) as {
+        response?: unknown;
+        model?: unknown;
+        done?: unknown;
+      };
+      if (typeof data?.response !== 'string') {
+        throw new Error('Ollama response missing the "response" field — endpoint may not be Ollama');
+      }
+      // Optional sanity: if model/done are present, they should match the
+      // documented shape. We don't fail on their absence (older Ollama
+      // versions omit `done` for non-stream responses) but we do fail on
+      // wrong types.
+      if (data.model !== undefined && typeof data.model !== 'string') {
+        throw new Error('Ollama response "model" field has wrong type');
+      }
+      return data.response;
     }
 
     // openai-compatible
     const response = await fetch(config.endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         model: config.model,
         messages: [

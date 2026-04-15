@@ -83,6 +83,15 @@ export interface ManagedDeploymentConfig {
   /** Local API format */
   localFormat?: 'ollama' | 'openai-compatible' | 'chrome-builtin';
 
+  /**
+   * Optional shared secret sent as `Authorization: Bearer <key>` on every
+   * local-LLM call. When a customer runs Ollama behind a reverse proxy
+   * (Caddy / nginx) that enforces a header, this closes the "any local
+   * process can impersonate :11434" surface — Sr. Engineer Audit · Item 6.
+   * Leave unset for vanilla localhost Ollama deployments.
+   */
+  localApiKey?: string;
+
   /** Per-prompt timeout in ms */
   timeoutMs?: number;
 
