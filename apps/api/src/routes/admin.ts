@@ -167,6 +167,15 @@ adminRoutes.get('/firm', async (c) => {
   return c.json({ ...firm, config: safeConfig, isDefaultFirm });
 });
 
+// Natural idempotency guard for POST /admin/firm. A user whose onboarding
+// request slow-fails (Render cold start, client retry) was previously able
+// to create DUPLICATE firms by retrying — each POST created a new firm
+// because userId wasn't unique per-firm. Now we check: if the caller
+// ALREADY belongs to a firm that isn't the default placeholder, return
+// the existing firm as 200. Their retry is idempotent by user identity.
+//
+// Chaos Auditor · HIGH.
+
 // POST /v1/admin/firm — Create firm during onboarding
 adminRoutes.post('/firm', async (c) => {
   const userId = c.get('userId');
@@ -176,8 +185,8 @@ adminRoutes.post('/firm', async (c) => {
 
   const createSchema = z.object({
     firmName: z.string().min(1).max(255),
-    industry: z.string().optional(),
-    firmSize: z.string().optional(),
+    industry: z.string().max(255).optional(),
+    firmSize: z.string().max(50).optional(),
     protectionMode: z.enum(['audit', 'proxy']).optional().default('proxy'),
     thresholds: z.object({
       warn: z.number().min(0).max(100).optional().default(30),
@@ -187,10 +196,26 @@ adminRoutes.post('/firm', async (c) => {
     teamMembers: z.array(z.object({
       email: z.string().email(),
       role: z.enum(['admin', 'user']).optional().default('user'),
-    })).optional().default([]),
+    })).max(100).optional().default([]),
   });
 
   const parsed = createSchema.parse(body);
+
+  // Idempotency check: if this user is already attached to a non-default
+  // firm, return it. The super-admin self-heal in /billing already uses
+  // this pattern; we apply it here too so retries don't accumulate firms.
+  // "Default" means the environment-level placeholder (DEFAULT_FIRM_ID).
+  const defaultFirmId = process.env.DEFAULT_FIRM_ID;
+  const [existing] = await db
+    .select({ id: firms.id, name: firms.name })
+    .from(users)
+    .innerJoin(firms, eq(firms.id, users.firmId))
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (existing && existing.id !== defaultFirmId) {
+    logger.info('POST /admin/firm idempotent — user already has a firm', { userId, firmId: existing.id });
+    return c.json({ id: existing.id, name: existing.name }, 200);
+  }
 
   // Create the new firm
   const encryptionSalt = crypto.randomBytes(16).toString('hex');
@@ -251,8 +276,11 @@ adminRoutes.put('/firm', async (c) => {
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
 
+  // Chaos Auditor · HIGH: input caps. Without .max() an attacker (or a
+  // careless admin) can submit multi-megabyte firm names that bloat the
+  // DB row, break UI rendering, and drown logs.
   const updateSchema = z.object({
-    name: z.string().optional(),
+    name: z.string().min(1).max(255).optional(),
     mode: z.enum(['audit', 'proxy']).optional(),
     config: z.record(z.unknown()).optional(),
   });

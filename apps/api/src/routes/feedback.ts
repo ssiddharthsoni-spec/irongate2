@@ -15,13 +15,16 @@ feedbackRoutes.post('/', async (c) => {
   const firmId = c.get('firmId');
   const userId = c.get('userId');
 
+  // Chaos Auditor · HIGH: cap free-form text fields. Without limits an
+  // attacker sends a 10 KB entityText that hashes fine but bloats the
+  // audit log / feedback queue.
   const feedbackSchema = z.object({
     eventId: z.string().uuid().optional(),
-    entityType: z.string(),
-    entityHash: z.string().optional(),
-    entityText: z.string().optional(),
+    entityType: z.string().min(1).max(100),
+    entityHash: z.string().max(256).optional(),
+    entityText: z.string().max(10_000).optional(),
     isCorrect: z.boolean(),
-    correctedType: z.string().optional(),
+    correctedType: z.string().max(100).optional(),
     feedbackType: z.enum(['correct', 'not_pii', 'wrong_type', 'partial_match']).optional(),
   });
 

@@ -513,15 +513,26 @@ async function getValidAccessToken(firmId: string): Promise<string | null> {
 
   if (!row) return null;
 
-  const decrypted = decryptForFirm(
-    { ciphertext: row.encryptedTokens, iv: row.encryptionIv, authTag: row.encryptionAuthTag },
-    firmId,
-  );
-  const tokens = JSON.parse(decrypted) as {
-    accessToken: string;
-    refreshToken?: string;
-    idToken?: string;
-  };
+  // Chaos Auditor · HIGH: guard JSON.parse of decrypted payload. If the
+  // DB row was written by an older code version (different field shape)
+  // or got partially corrupted, JSON.parse throws and crashes the
+  // caller unhandled. Return null — the outer call path already treats
+  // "no valid token" as "user needs to re-auth".
+  let tokens: { accessToken: string; refreshToken?: string; idToken?: string };
+  try {
+    const decrypted = decryptForFirm(
+      { ciphertext: row.encryptedTokens, iv: row.encryptionIv, authTag: row.encryptionAuthTag },
+      firmId,
+    );
+    tokens = JSON.parse(decrypted);
+    if (!tokens?.accessToken) return null;
+  } catch (err) {
+    logger.error('Failed to decrypt/parse Google Workspace tokens', {
+      firmId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
 
   // If access token still valid (with 5-min buffer), use it
   if (row.accessTokenExpiresAt && row.accessTokenExpiresAt.getTime() - 5 * 60 * 1000 > Date.now()) {
@@ -884,15 +895,22 @@ async function getValidIntuneAccessToken(firmId: string): Promise<string | null>
 
   if (!row) return null;
 
-  const decrypted = decryptForFirm(
-    { ciphertext: row.encryptedTokens, iv: row.encryptionIv, authTag: row.encryptionAuthTag },
-    firmId,
-  );
-  const tokens = JSON.parse(decrypted) as {
-    accessToken: string;
-    refreshToken?: string;
-    idToken?: string;
-  };
+  // Chaos Auditor · HIGH: same guard as the Google Workspace helper above.
+  let tokens: { accessToken: string; refreshToken?: string; idToken?: string };
+  try {
+    const decrypted = decryptForFirm(
+      { ciphertext: row.encryptedTokens, iv: row.encryptionIv, authTag: row.encryptionAuthTag },
+      firmId,
+    );
+    tokens = JSON.parse(decrypted);
+    if (!tokens?.accessToken) return null;
+  } catch (err) {
+    logger.error('Failed to decrypt/parse Intune tokens', {
+      firmId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
 
   if (row.accessTokenExpiresAt && row.accessTokenExpiresAt.getTime() - 5 * 60 * 1000 > Date.now()) {
     return tokens.accessToken;
