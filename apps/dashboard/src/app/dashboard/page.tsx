@@ -67,6 +67,11 @@ export default function DashboardPage() {
 
   async function fetchDashboardData() {
     try {
+      // Always reset to a loading-with-no-error state before a fetch.
+      // Retry clicks previously preserved stale error + skipped the
+      // loading skeleton; now every fetch transitions through the
+      // same single-source-of-truth state machine.
+      setLoading(true);
       setFetchError(null);
 
       // Check if user has a firm — if not, redirect to onboarding

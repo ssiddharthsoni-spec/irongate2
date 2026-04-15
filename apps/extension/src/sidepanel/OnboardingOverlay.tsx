@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { saveApiKey } from '../api-key-store';
 import {
   ONBOARDING_COMPLETED,
@@ -120,7 +120,18 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
     } catch { /* non-fatal */ }
   }, []);
 
+  // Ref tracks whether this component is still mounted. If the user
+  // navigates to another step (or the sidepanel closes) while the Ollama
+  // probe is in flight, we must NOT call setState — React warns, and on
+  // subsequent navigations the stale callback can overwrite fresh UI.
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
+
   const handleTestOllama = useCallback(async () => {
+    if (!isMountedRef.current) return;
     setOllamaStatus('testing');
     setOllamaMessage('');
     try {
@@ -128,6 +139,7 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
       const timeoutId = setTimeout(() => controller.abort(), 4000);
       const res = await fetch('http://localhost:11434/api/tags', { signal: controller.signal });
       clearTimeout(timeoutId);
+      if (!isMountedRef.current) return;
       if (!res.ok) {
         setOllamaStatus('error');
         setOllamaMessage('Ollama not reachable. Make sure it\u2019s running and try again.');
@@ -141,9 +153,11 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
           tier2Model: 'gemma4:e2b',
         });
       } catch { /* non-fatal */ }
+      if (!isMountedRef.current) return;
       setOllamaStatus('success');
       setOllamaMessage('Ollama detected \u2014 enhanced detection active');
     } catch {
+      if (!isMountedRef.current) return;
       setOllamaStatus('error');
       setOllamaMessage('Ollama not reachable. Make sure it\u2019s running and try again.');
     }
@@ -210,12 +224,20 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
 
   const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 
+  // Synchronous in-flight guard — React's state batching means
+  // `setRegistering(true)` doesn't prevent a second click landing in the
+  // same tick. A ref reads/writes synchronously inside the handler, so
+  // the second call sees `inFlight=true` immediately and bails.
+  const registerInFlight = useRef(false);
+
   // Register
   const handleRegister = useCallback(async () => {
+    if (registerInFlight.current) return;
     if (!isValidEmail(email)) {
       setRegisterError('Please enter a valid email address.');
       return;
     }
+    registerInFlight.current = true;
     setRegistering(true);
     setRegisterError(null);
 
@@ -229,6 +251,9 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
           industry: selectedIndustries[0] || undefined,
           firmCode: firmCode.trim() || undefined,
         }),
+        // Surface slow network as a timeout error instead of hanging the
+        // button forever. 30s covers Render cold starts.
+        signal: AbortSignal.timeout(30_000),
       });
 
       if (!res.ok) {
@@ -280,6 +305,7 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
       setRegisterError(err instanceof Error ? err.message : 'Registration failed. Please try again.');
     } finally {
       setRegistering(false);
+      registerInFlight.current = false;
     }
   }, [email, deviceId, firmCode, selectedIndustries, selectedMode]);
 

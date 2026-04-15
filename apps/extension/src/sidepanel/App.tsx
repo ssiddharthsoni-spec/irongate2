@@ -106,29 +106,51 @@ const storageGet = (keys: string[]) => new Promise<Record<string, any>>((resolve
   });
 });
 
+// Init state machine — eliminates "impossible states" where the UI could
+// render Loading and Error simultaneously. Single discriminated union
+// replaces the old pair of (onboardingCompleted | null) + (initError | null)
+// which had 4 representable states; 3 of them were legal and the 4th
+// (null + error) could flash during the error-then-retry path.
+//
+// Design Systems Audit · Issue #2.
+type InitState =
+  | { status: 'initializing' }
+  | { status: 'error'; message: string }
+  | { status: 'needs-onboarding' }
+  | { status: 'onboarded' };
+
 export function App() {
-  // Onboarding state — show new 5-screen overlay if not completed
-  const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | null>(null);
-  const [initError, setInitError] = useState<string | null>(null);
+  const [init, setInit] = useState<InitState>({ status: 'initializing' });
+  // Keep a legacy mirror so the rest of the component (built around these
+  // names) keeps compiling. The machine above is the source of truth.
+  const onboardingCompleted =
+    init.status === 'onboarded' ? true :
+    init.status === 'needs-onboarding' ? false :
+    null;
+  const setOnboardingCompleted = (v: boolean) =>
+    setInit({ status: v ? 'onboarded' : 'needs-onboarding' });
 
   const checkOnboarding = useCallback(async () => {
+    setInit({ status: 'initializing' });
     try {
-      setInitError(null);
       const result = await storageGet([ONBOARDING_COMPLETED]);
       if (result[ONBOARDING_COMPLETED] === true) {
-        setOnboardingCompleted(true);
+        setInit({ status: 'onboarded' });
         return;
       }
       // Legacy users who already have an API key — skip onboarding
       const key = await loadApiKey();
       if (key) {
         await chrome.storage.local.set({ [ONBOARDING_COMPLETED]: true });
-        setOnboardingCompleted(true);
+        setInit({ status: 'onboarded' });
         return;
       }
-      setOnboardingCompleted(false);
+      setInit({ status: 'needs-onboarding' });
     } catch (err: any) {
-      setInitError(err?.message || 'Failed to initialize. Please try again.');
+      setInit({
+        status: 'error',
+        message: err?.message || 'Failed to initialize. Please try again.',
+      });
     }
   }, []);
 
@@ -169,8 +191,9 @@ export function App() {
   }, []);
 
 
-  // Show error state with retry if storage timed out
-  if (initError) {
+  // The state machine has three terminal rendering states plus
+  // "initializing". Each is handled exactly once — no ambiguous interleave.
+  if (init.status === 'error') {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center px-6">
         <div className="text-center max-w-xs">
@@ -178,7 +201,7 @@ export function App() {
             <span className="text-red-600 text-lg font-bold">!</span>
           </div>
           <p className="text-sm font-medium text-gray-900 mb-1">Failed to load</p>
-          <p className="text-xs text-gray-500 mb-4">{initError}</p>
+          <p className="text-xs text-gray-500 mb-4">{init.message}</p>
           <button
             onClick={checkOnboarding}
             className="px-4 py-2 bg-iron-600 hover:bg-iron-700 text-white text-sm font-medium rounded-lg transition-colors"
@@ -191,7 +214,7 @@ export function App() {
   }
 
   // Show loading while checking onboarding status
-  if (onboardingCompleted === null) {
+  if (init.status === 'initializing') {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="w-8 h-8 bg-iron-600 rounded-lg flex items-center justify-center animate-pulse">
