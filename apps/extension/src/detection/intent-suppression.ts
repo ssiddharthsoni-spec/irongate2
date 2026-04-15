@@ -264,7 +264,7 @@ const BENIGN_INTENT_PATTERNS: BenignIntentPattern[] = [
 //      wrappers can smuggle real data after the wrapper — we don't trust them.
 //   3. Only the score multiplier changes; individual entities are never removed
 //      from the activity log so the user still sees what was detected.
-const STRONG_FICTION_OPENING = /^[^.?!\n]{0,80}\b(?:write\s+(?:a\s+)?(?:novel|story|fictional)\s+(?:scene|chapter|excerpt|passage)|(?:novel|story|fictional)\s+(?:scene|chapter|excerpt|passage)\s+(?:where|in\s+which)|(?:write|craft|draft)\s+(?:me\s+)?(?:a\s+)?(?:short\s+)?(?:story|novel|fiction)\s+(?:where|about|in\s+which)|for\s+(?:my|a)\s+(?:novel|story|fiction\s+book|screenplay))\b/i;
+const STRONG_FICTION_OPENING = /^[^.?!\n]{0,120}\b(?:write\s+(?:a\s+)?(?:novel|story|fictional|short)\s+(?:scene|chapter|excerpt|passage|story)|(?:novel|story|fictional)\s+(?:scene|chapter|excerpt|passage)\s+(?:where|in\s+which)|(?:write|craft|draft)\s+(?:me\s+)?(?:a\s+)?(?:short\s+)?(?:story|novel|fiction|screenplay|scene)\s+(?:where|about|in\s+which|involving)|for\s+(?:my|a)\s+(?:novel|story|fiction\s+book|screenplay|RPG|game)|(?:detective|protagonist|character|villain|hero|narrator|npc|shopkeeper)\s+[A-Z][a-z]+\s+(?:says|said|reads|reading|sees|hears|thinks|finds|discovers|walks)|roleplay\s+as|in\s+the\s+style\s+of)\b/i;
 
 // ─── First-Person Possessive Patterns ────────────────────────────────────────
 // "My DOB is...", "I was born on...", "my email is..." — the user is

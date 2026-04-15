@@ -35,6 +35,12 @@ interface ActivityItem {
   fileName?: string;
   ghostLabel?: 'SENSITIVE' | 'CRITICAL';
   ghostConfidence?: number;
+  /** One-sentence reasoning from the local LLM classifier (if it ran). */
+  reasoning?: string;
+  /** Classifier intent bucket: research, creative, work_sharing, etc. */
+  intent?: string;
+  /** True if the classifier could not reach Ollama and we fell back. */
+  fellBack?: boolean;
 }
 
 interface EntityFeedback {
@@ -803,6 +809,17 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
 
       // Only add to recent activity for proxy (pseudonymized) results.
       if (isProxy) {
+        // Extract classifier metadata from the score payload — the explanation
+        // string is prefixed with `[classifier] ...` when the LLM judged it.
+        // We parse that back into a structured intent/reasoning pair so the
+        // user can see WHY IronGate acted, not just what score it assigned.
+        const rawExplanation: string = newScore.explanation || '';
+        const classifierMatch = rawExplanation.match(/^\[classifier\]\s+(.+)$/);
+        const safetyMatch = rawExplanation.match(/^SAFETY OVERRIDE:\s+(.+)$/);
+        const reasoning = classifierMatch?.[1] ?? safetyMatch?.[1] ?? undefined;
+        const intent: string | undefined = newScore.contextCategory && newScore.contextCategory !== 'general'
+          ? newScore.contextCategory
+          : undefined;
         const newItem = {
           id: crypto.randomUUID(),
           aiTool: newScore.aiToolId || 'generic',
@@ -810,6 +827,9 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
           level: newScore.level,
           entityCount: newScore.entities?.length || newScore.pseudonymMappings?.length || 0,
           timestamp: new Date().toISOString(),
+          reasoning,
+          intent,
+          fellBack: Boolean(newScore.classifierFellBack),
         };
 
         setRecentActivity((prev) => {
@@ -2317,6 +2337,23 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
                     </span>
                   </div>
                 </div>
+                {(item.intent || item.reasoning) && (
+                  <div className="mt-1 pl-2 border-l-2 border-gray-100">
+                    {item.intent && (
+                      <div className="text-[10px] uppercase tracking-wide text-gray-500 font-medium">
+                        {item.intent.replace('_', ' ')}
+                        {item.fellBack && (
+                          <span className="ml-1 text-amber-600 normal-case">
+                            (offline — conservative default)
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {item.reasoning && (
+                      <div className="text-xs text-gray-600 mt-0.5">{item.reasoning}</div>
+                    )}
+                  </div>
+                )}
                 {item.ghostLabel && (
                   <GhostDetection
                     entityType={`${item.ghostLabel} content`}

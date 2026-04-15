@@ -482,10 +482,13 @@ const REGEX_PATTERNS: RegexPattern[] = [
   },
   // ── Vehicle Identification Number (VIN) ──────────────────────────────
   // 17-character alphanumeric, excluding I, O, Q.
-  // Must contain both letters and digits to distinguish from random 17-char strings.
+  // Match any 17-char alphanumeric run (no I/O/Q) and filter post-match for
+  // the has-letter + has-digit property. The old nested lookahead + greedy
+  // alternation pattern was brittle and missed valid VINs like "1HGBH41JXMN109186";
+  // the simpler form relies on the validator in isValidVIN() below.
   {
     type: 'VIN',
-    pattern: /\b(?=[A-HJ-NPR-Z0-9]{17}\b)[A-HJ-NPR-Z0-9]*[A-HJ-NPR-Z][A-HJ-NPR-Z0-9]*\d[A-HJ-NPR-Z0-9]*\b/g,
+    pattern: /\b[A-HJ-NPR-Z0-9]{17}\b/g,
     confidence: 0.85,
   },
   // VIN after contextual keyword: "VIN: 1HGBH41JXMN109186", "vehicle ID 1HG..."
@@ -991,6 +994,17 @@ function runRegexPatterns(text: string): DetectedEntity[] {
       if (type === 'ROUTING_NUMBER') {
         const digits = (match[1] ?? match[0]).replace(/\D/g, '');
         if (digits.length === 9 && !isValidABARouting(digits)) continue;
+      }
+
+      // VIN post-match validation: a real VIN has BOTH at least one letter
+      // and at least one digit — that filters out 17-char accession numbers,
+      // hex-like strings, or all-digit identifiers that happen to match the
+      // character class. Also must not be purely alphabetic (e.g., a long
+      // word like "ABCDEFGHIJKLMNOPQ") — those are not vehicle IDs.
+      if (type === 'VIN') {
+        const hasLetter = /[A-HJ-NPR-Z]/.test(matchText);
+        const hasDigit = /\d/.test(matchText);
+        if (!hasLetter || !hasDigit) continue;
       }
 
       const key = `${matchStart}-${matchEnd}-${type}`;

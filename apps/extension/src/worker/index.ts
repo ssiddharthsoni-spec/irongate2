@@ -1070,6 +1070,16 @@ setInterval(() => {
 const NONCE_REQUIRED: ReadonlySet<string> = new Set([
   'PROMPT_DETECTED', 'PROXY_ANALYZE', 'PROXY_SEND',
   'FILE_UPLOAD_DETECTED', 'CLIPBOARD_DETECTED', 'SET_API_KEY',
+  // The intent classifier reads the raw prompt text; treat it as sensitive
+  // and reject replayed/forged calls the same way we do PROMPT_DETECTED.
+  'CLASSIFY_INTENT_CONTEXT',
+]);
+
+// Messages that may ONLY originate from a content script (has sender.tab).
+// The intent classifier is a content-side decision pipeline; blocking it
+// from sidepanel/external origins closes the spoofing vector.
+const CONTENT_SCRIPT_ONLY: ReadonlySet<string> = new Set([
+  'CLASSIFY_INTENT_CONTEXT',
 ]);
 
 async function handleMessage(
@@ -1104,6 +1114,9 @@ async function handleMessage(
   const KILL_SWITCH_BLOCKED_TYPES = new Set([
     'PROMPT_DETECTED', 'PROMPT_SUBMITTED', 'PROXY_ANALYZE', 'PROXY_SEND',
     'FILE_UPLOAD_DETECTED', 'CLIPBOARD_DETECTED',
+    // Classifier reads raw prompt text; under kill-switch every prompt
+    // processing pathway must stop, not just the downstream proxy step.
+    'CLASSIFY_INTENT_CONTEXT',
   ]);
   if (killSwitchActive && KILL_SWITCH_BLOCKED_TYPES.has(message.type)) {
     igLog('KILL SWITCH — blocked message:', message.type);
@@ -1117,6 +1130,10 @@ async function handleMessage(
   // ── Sender validation: reject spoofed messages ──
   if (SIDEPANEL_ONLY.has(message.type) && !isSidepanelSender(sender)) {
     igLog('BLOCKED — sidepanel-only message from non-sidepanel sender:', message.type);
+    return { ok: false, error: 'Unauthorized sender' };
+  }
+  if (CONTENT_SCRIPT_ONLY.has(message.type) && !isContentScriptSender(sender)) {
+    igLog('BLOCKED — content-script-only message from non-content sender:', message.type);
     return { ok: false, error: 'Unauthorized sender' };
   }
 

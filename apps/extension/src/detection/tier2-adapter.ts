@@ -776,7 +776,13 @@ export async function probeTier2Health(): Promise<Tier2HealthReport> {
 /**
  * Send a tiny warm-up classification to load the model into memory.
  * Should be called once at extension startup so the first user prompt
- * doesn't pay the cold-start latency (5-15 seconds for Llama 3.2 3B).
+ * doesn't pay the cold-start latency (5-15s on first request to any model).
+ *
+ * We warm BOTH the legacy Tier 2 sensitivity scorer and the new intent
+ * classifier. Ollama caches the model in RAM across prompts, so loading
+ * it once covers every subsequent request path — but if we're running
+ * with Chrome built-in or a hypothetical future adapter, each pathway
+ * needs its own warm call.
  */
 export async function warmupLocalLlm(): Promise<void> {
   try {
@@ -787,6 +793,20 @@ export async function warmupLocalLlm(): Promise<void> {
     await adapter.classify('warmup probe', {
       tier: 1, score: 0, level: 'low', zone: 'green', latencyMs: 0, source: 'warmup',
     });
+
+    // Warm the intent/context classifier with a single benign prompt.
+    // This pulls the Gemma 4 weights into RAM and primes the prompt
+    // cache on Ollama so the first real user prompt sees the ~1.3s p50,
+    // not the ~10s cold start.
+    try {
+      const { classifyIntentAndContext } = await import('./intent-context-classifier');
+      await classifyIntentAndContext('warmup probe', {
+        endpoint: cfg.localEndpoint || 'http://localhost:11434/api/generate',
+        model: cfg.localModel || 'gemma4:e2b',
+        format: cfg.localFormat === 'openai-compatible' ? 'openai-compatible' : 'ollama',
+        timeoutMs: 15_000,
+      });
+    } catch { /* non-fatal */ }
   } catch {
     // Warm-up failures are non-fatal — they'll be reported via probeTier2Health
   }

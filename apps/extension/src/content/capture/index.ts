@@ -99,10 +99,13 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
   let fileUploadMonitor: FileUploadMonitorHandle | null = null;
   let config: CaptureEngineConfig = { mode: 'audit' };
 
-  // Send message to service worker
+  // Send message to service worker. Every call gets a fresh per-message
+  // nonce; the worker rejects sensitive message types that arrive without
+  // one (NONCE_REQUIRED set in worker/index.ts). randomUUID is unguessable
+  // and unique, so a page script can't replay or forge.
   function sendToWorker(type: string, payload: any) {
     try {
-      chrome.runtime.sendMessage({ type, payload }).catch(() => {});
+      chrome.runtime.sendMessage({ type, payload, nonce: crypto.randomUUID() }).catch(() => {});
     } catch {
       // Extension context may be invalidated on update
     }
@@ -120,6 +123,7 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
       const response = await chrome.runtime.sendMessage({
         type: 'CLASSIFY_INTENT_CONTEXT',
         payload: { text },
+        nonce: crypto.randomUUID(),
       });
       if (!response || response.error) return null;
       return response;

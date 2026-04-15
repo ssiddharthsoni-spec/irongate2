@@ -60,7 +60,6 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [timeRange, setTimeRange] = useState(30);
-  const [dismissedDemo, setDismissedDemo] = useState(false);
 
   useEffect(() => {
     fetchDashboardData();
@@ -210,18 +209,21 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Demo data banner */}
-      {!dismissedDemo && displayData.totalInteractions === 0 && (
-        <div className="mb-6 px-4 py-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-amber-600 dark:text-amber-400 text-lg">!</span>
-            <p className="text-sm text-amber-700 dark:text-amber-400">
-              You&apos;re viewing sample data. <a href="/install" className="underline font-medium">Install the extension</a> to see real activity.
+      {/* Demo data banner — persistent (not dismissible) while there is no
+          real activity. Dismissible banners were causing pilot customers to
+          mistake sample data for live activity and file phantom bug reports. */}
+      {displayData.totalInteractions === 0 && (
+        <div className="mb-6 px-4 py-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 flex items-start gap-2">
+          <span className="text-amber-600 dark:text-amber-400 text-lg mt-0.5">!</span>
+          <div className="flex-1">
+            <p className="text-sm font-medium text-amber-900 dark:text-amber-300">
+              Sample data mode
+            </p>
+            <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+              Every chart on this page is fake. Activity, scores, tool breakdowns — all illustrative, not your firm&apos;s traffic.
+              <a href="/install" className="underline font-medium ml-1">Install the extension</a> to replace this with real data from your team.
             </p>
           </div>
-          <button onClick={() => setDismissedDemo(true)} className="text-amber-600 dark:text-amber-400 hover:text-amber-800 text-sm font-medium ml-4">
-            Dismiss
-          </button>
         </div>
       )}
 

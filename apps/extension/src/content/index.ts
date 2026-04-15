@@ -1030,6 +1030,7 @@ function initialize() {
                   aiToolId: _fbDetector.id,
                   captureMethod: 'dom-fallback',
                 },
+                nonce: crypto.randomUUID(),
               }).catch(() => {});
             } catch {
               // Extension context invalidated

@@ -22,6 +22,12 @@ export const ALLOWED_HOSTS: readonly string[] = [
   'api.irongate.ai',
   'irongate-api.onrender.com',
   'irongate-api-staging.onrender.com',
+  // Local LLM (Ollama) — sovereign mode runs inference on-device. These two
+  // forms both resolve to the loopback interface; neither can reach the
+  // network. Listing them explicitly lets `createGuardedFetch` gate every
+  // extension-side fetch the same way — no localhost backdoor.
+  'localhost',
+  '127.0.0.1',
 ] as const;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
