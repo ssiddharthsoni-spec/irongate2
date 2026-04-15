@@ -12,6 +12,10 @@ export function TrialBanner() {
   const [tier, setTier] = useState<string>('basic');
   const [entitiesDetected, setEntitiesDetected] = useState(0);
   const [dismissed, setDismissed] = useState(false);
+  // We can't say "trial ended" unless a trial actually started. Without this
+  // flag, a fresh install with a stale/default TRIAL_ENDS_AT in the past
+  // flashes the scary red "Trial ended" banner on a user who never had one.
+  const [trialStarted, setTrialStarted] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -38,6 +42,7 @@ export function TrialBanner() {
         if (!Number.isNaN(startMs)) {
           const elapsed = Math.floor((Date.now() - startMs) / (1000 * 60 * 60 * 24)) + 1;
           setDayNumber(Math.max(1, Math.min(15, elapsed)));
+          setTrialStarted(true);
         }
       }
     }
@@ -62,8 +67,9 @@ export function TrialBanner() {
   // Don't show banner for paid users (team, enterprise)
   if (tier === 'team' || tier === 'enterprise') return null;
 
-  // Trial expired
-  if (daysRemaining !== null && daysRemaining <= 0) {
+  // Trial expired — but ONLY if a trial actually started. A fresh install
+  // that never enrolled must not see this scary red banner.
+  if (trialStarted && daysRemaining !== null && daysRemaining <= 0) {
     return (
       <div className="mx-4 mb-3 bg-red-50 border border-red-200 rounded-lg p-3">
         <div className="flex items-center justify-between mb-1">

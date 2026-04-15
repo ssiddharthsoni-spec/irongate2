@@ -180,7 +180,14 @@ chrome.runtime.onUpdateAvailable.addListener((details) => {
 // rest of the worker. The user will see a fatal error in the sidepanel and a
 // notification telling them to contact their IT administrator.
 
-let _deploymentMode: 'local-only' | 'hybrid' | 'server-only' = 'server-only';
+// Default before managed-config init completes: MATCHES the actual runtime
+// default from initLocalLlmDeployment() ('local-only' when no managed policy
+// is present — see tier2-adapter.ts). Defaulting to 'server-only' here caused
+// the sidepanel DeploymentBadge to flash "Cloud classification" during the
+// startup race window before the async init resolved. 'local-only' is the
+// correct first-paint answer because it matches what the extension actually
+// does when Ollama is reachable and no IT policy says otherwise.
+let _deploymentMode: 'local-only' | 'hybrid' | 'server-only' = 'local-only';
 let _deploymentInitError: string | null = null;
 let _firmPseudonymizer: FirmPseudonymizer | null = null;
 let _stopPolicyPoller: (() => void) | null = null;

@@ -151,15 +151,51 @@ export default function OnboardingPage() {
       });
 
       if (!response.ok) {
-        throw new Error(`Server responded with ${response.status}`);
+        // Surface the ACTUAL problem instead of a generic "check your connection".
+        // Users spent real time typing an org name; telling them "network" when
+        // it's actually "your session expired" sends them to the wrong fix.
+        let serverMsg = '';
+        try {
+          const body = await response.json();
+          serverMsg = body?.error || body?.message || '';
+        } catch { /* non-JSON body */ }
+
+        if (response.status === 401 || response.status === 403) {
+          throw new Error('auth');
+        }
+        if (response.status >= 500) {
+          throw new Error(`server:${response.status}`);
+        }
+        throw new Error(`http:${response.status}:${serverMsg}`);
       }
 
       setFirmCreated(true);
       setCurrentStep(2);
     } catch (err: any) {
-      setSubmitError(
-        'Could not create your organization. Please check your connection and try again.'
-      );
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg === 'auth' || msg.includes('Session expired') || msg.includes('Authentication failed')) {
+        setSubmitError(
+          'Your sign-in session expired. Sign out and sign back in, then retry.'
+        );
+      } else if (msg.startsWith('server:')) {
+        setSubmitError(
+          'The IronGate API is currently unreachable (server error). If this persists for more than a minute, check status or contact support.'
+        );
+      } else if (msg.startsWith('http:')) {
+        const status = msg.split(':')[1];
+        const detail = msg.split(':').slice(2).join(':').trim();
+        setSubmitError(
+          `Server rejected the request (${status})${detail ? `: ${detail}` : ''}. Retry in a moment.`
+        );
+      } else if (msg.includes('aborted') || msg.includes('timeout') || msg.includes('Failed to fetch')) {
+        setSubmitError(
+          'Could not reach the IronGate API. This usually means the server is waking up from idle (can take ~30s) or your network is blocking it. Retry in 30 seconds.'
+        );
+      } else {
+        setSubmitError(
+          `Could not create your organization: ${msg}. Please retry.`
+        );
+      }
       setFirmCreated(false);
       // Stay on step 1 so user can retry — advancing without a firm causes
       // downstream failures (invite calls, missing firm context, etc.)
