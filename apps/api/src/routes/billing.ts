@@ -102,11 +102,14 @@ billingRoutes.get('/', async (c) => {
 billingRoutes.post('/checkout', async (c) => {
   const stripe = getStripe();
   if (!stripe) {
+    // Return 503 with a structured error the client can surface directly.
+    // NEVER return a fake checkoutUrl — the browser followed the old mock URL
+    // into an AWS S3 AccessDenied XML page, which looked like a security
+    // incident. A 503 lets the dashboard show the actual reason.
     return c.json({
-      message: 'Stripe is not configured. Set STRIPE_SECRET_KEY to enable billing.',
-      mock: true,
-      checkoutUrl: 'https://checkout.stripe.com/mock-session',
-    }, 200);
+      error: 'billing_not_configured',
+      message: 'Billing is not configured on this server. Contact your IronGate administrator or hello@irongate.ai.',
+    }, 503);
   }
 
   const firmId = c.get('firmId');
@@ -201,11 +204,11 @@ billingRoutes.post('/checkout', async (c) => {
 billingRoutes.post('/portal', async (c) => {
   const stripe = getStripe();
   if (!stripe) {
+    // Same fix as /checkout — no fake URLs, just a surfaceable error.
     return c.json({
-      message: 'Stripe is not configured. Set STRIPE_SECRET_KEY to enable billing.',
-      mock: true,
-      portalUrl: 'https://billing.stripe.com/mock-portal',
-    }, 200);
+      error: 'billing_not_configured',
+      message: 'Billing portal is not configured on this server. Contact your IronGate administrator or hello@irongate.ai.',
+    }, 503);
   }
 
   const firmId = c.get('firmId');

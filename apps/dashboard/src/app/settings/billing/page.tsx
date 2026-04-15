@@ -98,11 +98,35 @@ export default function BillingPage() {
         method: 'POST',
         body: JSON.stringify({ tier: planId, cycle: billingCycle }),
       });
+
+      // 503 billing_not_configured → show a clear actionable message instead
+      // of dropping the user on a fake Stripe URL (which then bottomed out on
+      // an S3 AccessDenied XML page — see API billing.ts for the matching fix).
+      if (response.status === 503) {
+        const body = await response.json().catch(() => ({}));
+        const msg = body?.message || 'Billing is not yet available on this server. Contact hello@irongate.ai to activate your subscription.';
+        setErrorMessage(msg);
+        addToast({ type: 'error', message: msg });
+        setTimeout(() => setErrorMessage(null), 10_000);
+        return;
+      }
+
       if (!response.ok) throw new Error(`Server responded with ${response.status}`);
       const data = await response.json();
       const checkoutUrl = data.url || data.checkoutUrl;
       if (!checkoutUrl) {
         addToast({ type: 'error', message: 'Failed to initialize checkout. Please try again.' });
+        return;
+      }
+      // Sanity-check: reject any URL that clearly isn't a real Stripe session.
+      // Prevents a partial-config regression from redirecting users to broken
+      // pages (the "mock-session" URL was landing on an AWS S3 AccessDenied).
+      if (!/^https:\/\/(checkout|billing)\.stripe\.com\//.test(checkoutUrl) ||
+          /mock-session|mock-portal/.test(checkoutUrl)) {
+        const msg = 'Checkout URL returned by the server is invalid. Billing may not be configured yet — contact hello@irongate.ai.';
+        setErrorMessage(msg);
+        addToast({ type: 'error', message: msg });
+        setTimeout(() => setErrorMessage(null), 10_000);
         return;
       }
       window.location.href = checkoutUrl;
@@ -121,11 +145,30 @@ export default function BillingPage() {
       const response = await apiFetch('/billing/portal', {
         method: 'POST',
       });
+
+      if (response.status === 503) {
+        const body = await response.json().catch(() => ({}));
+        const msg = body?.message || 'Billing portal is not yet available. Contact hello@irongate.ai.';
+        setErrorMessage(msg);
+        addToast({ type: 'error', message: msg });
+        setTimeout(() => setErrorMessage(null), 10_000);
+        return;
+      }
+
       if (!response.ok) throw new Error(`Server responded with ${response.status}`);
       const data = await response.json();
       const portalUrl = data.url || data.portalUrl;
       if (!portalUrl) {
         addToast({ type: 'error', message: 'Failed to open billing portal. Please try again.' });
+        return;
+      }
+      // Same sanity-check as /checkout: no mock URLs.
+      if (!/^https:\/\/(checkout|billing)\.stripe\.com\//.test(portalUrl) ||
+          /mock-session|mock-portal/.test(portalUrl)) {
+        const msg = 'Portal URL returned by the server is invalid. Billing may not be configured yet.';
+        setErrorMessage(msg);
+        addToast({ type: 'error', message: msg });
+        setTimeout(() => setErrorMessage(null), 10_000);
         return;
       }
       window.location.href = portalUrl;
