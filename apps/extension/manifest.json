@@ -20,7 +20,8 @@
     "https://chat.openai.com/*",
     "https://claude.ai/*",
     "https://gemini.google.com/*",
-    "https://irongate-api.onrender.com/*"
+    "https://irongate-api.onrender.com/*",
+    "http://localhost:9000/*"
   ],
   "optional_host_permissions": [
     "https://copilot.microsoft.com/*",
@@ -52,7 +53,8 @@
         "https://*.perplexity.ai/*",
         "https://you.com/*",
         "https://huggingface.co/chat/*",
-        "https://groq.com/*"
+        "https://groq.com/*",
+        "http://localhost:9000/*"
       ],
       "js": ["src/content/main-world.ts"],
       "run_at": "document_start",
@@ -72,7 +74,8 @@
         "https://*.perplexity.ai/*",
         "https://you.com/*",
         "https://huggingface.co/chat/*",
-        "https://groq.com/*"
+        "https://groq.com/*",
+        "http://localhost:9000/*"
       ],
       "js": ["src/content/index.ts"],
       "run_at": "document_idle"
