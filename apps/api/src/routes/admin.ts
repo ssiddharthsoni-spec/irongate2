@@ -19,6 +19,7 @@ import { mdmRoutes } from './mdm';
 import { mdmOAuthAdminRoutes } from './mdm-oauth';
 import { enrollmentRoutes } from './enrollment';
 import { logger } from '../lib/logger';
+import { applySuperAdminRole, applySuperAdminSubscription, getSuperAdminTier, isSuperAdminEmail } from '../lib/super-admin';
 import type { AppEnv } from '../types';
 import type { Context } from 'hono';
 
@@ -216,18 +217,29 @@ adminRoutes.post('/firm', async (c) => {
   // Invalidate cached user so next request picks up the new firmId
   invalidateUserCache(clerkId);
 
-  // Auto-start 15-day Pro trial (no credit card required)
-  const trialEnd = new Date();
-  trialEnd.setDate(trialEnd.getDate() + 15);
+  // Super-admin short-circuit: lookup the caller's email and if it's in the
+  // allowlist, provision a permanent business-tier subscription instead of
+  // a trial. Covers dashboard-side onboarding the same way extension-auth
+  // covers extension signup.
+  const [callerUser] = await db.select({ email: users.email }).from(users).where(eq(users.id, userId)).limit(1);
+  if (callerUser?.email && isSuperAdminEmail(callerUser.email)) {
+    await applySuperAdminRole(userId);
+    await applySuperAdminSubscription(newFirm.id);
+    logger.info('Super-admin firm provisioned', { firmId: newFirm.id, email: callerUser.email, tier: getSuperAdminTier() });
+  } else {
+    // Auto-start 15-day Pro trial (no credit card required)
+    const trialEnd = new Date();
+    trialEnd.setDate(trialEnd.getDate() + 15);
 
-  await db.insert(subscriptions).values({
-    firmId: newFirm.id,
-    stripeCustomerId: `trial_${newFirm.id}`,
-    tier: 'pro',
-    status: 'trialing',
-    currentPeriodStart: new Date(),
-    currentPeriodEnd: trialEnd,
-  });
+    await db.insert(subscriptions).values({
+      firmId: newFirm.id,
+      stripeCustomerId: `trial_${newFirm.id}`,
+      tier: 'pro',
+      status: 'trialing',
+      currentPeriodStart: new Date(),
+      currentPeriodEnd: trialEnd,
+    });
+  }
 
   logAdminAction(c, 'firm.create', 'firm', { resourceId: newFirm.id, newValue: { name: parsed.firmName, mode: parsed.protectionMode } });
   return c.json(newFirm, 201);

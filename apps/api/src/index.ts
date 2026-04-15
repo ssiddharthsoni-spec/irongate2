@@ -613,6 +613,11 @@ import('@hono/node-server').then(({ serve }) => {
       // Auto-migrate: ensure new columns/tables exist
       const { runAutoMigrations } = await import('./db/auto-migrate');
       await runAutoMigrations();
+
+      // Super-admin sweep — upgrade allowlisted accounts on every boot.
+      // Non-fatal, logged from inside.
+      const { ensureSuperAdminsOnStartup } = await import('./lib/super-admin');
+      await ensureSuperAdminsOnStartup();
     } catch (err) {
       logger.error('Database connection failed on startup — routes requiring DB will fail', { error: err instanceof Error ? err.message : String(err) });
     }

@@ -5,6 +5,7 @@ import { db } from '../db/client';
 import { firms, users, subscriptions, apiKeys, emailVerificationTokens, enrollmentCodes } from '../db/schema';
 import { eq, and, isNull, sql } from 'drizzle-orm';
 import { logger } from '../lib/logger';
+import { applySuperAdminRole, applySuperAdminSubscription, getSuperAdminTier, isSuperAdminEmail } from '../lib/super-admin';
 
 export const extensionAuthRoutes = new Hono();
 
@@ -210,6 +211,21 @@ extensionAuthRoutes.post('/register-extension', async (c) => {
         const minDelay = 150 + Math.random() * 100; // 150-250ms
         if (elapsed < minDelay) await new Promise(r => setTimeout(r, minDelay - elapsed));
 
+        // Super-admin self-heal: if the caller is an allowlisted email and
+        // lands on the already-exists path, their subscription/role should
+        // still be elevated. Idempotent.
+        if (isSuperAdminEmail(parsed.email) && existing.firmId) {
+          try {
+            await applySuperAdminRole(existing.id);
+            await applySuperAdminSubscription(existing.firmId);
+          } catch (err) {
+            logger.error('Super-admin self-heal on re-register failed', {
+              email: parsed.email,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+
         // User already exists — return a generic message that does NOT leak
         // internal details (userId, firmId, firmName, tier, subscription).
         // The user should sign in via the dashboard or use their existing API key.
@@ -329,7 +345,19 @@ extensionAuthRoutes.post('/register-extension', async (c) => {
       let tier = 'free';
       let trialEndsAt: string | null = null;
 
-      if (!parsed.firmCode) {
+      // Super-admin short-circuit: allowlisted emails get a permanent
+      // premium subscription instead of a 15-day trial. Role is promoted
+      // to admin too. Both writes are inside the same transaction so
+      // either the whole super-admin state applies or none of it does.
+      if (!parsed.firmCode && isSuperAdminEmail(parsed.email)) {
+        await applySuperAdminRole(newUser.id, tx);
+        await applySuperAdminSubscription(firmId, tx);
+        tier = getSuperAdminTier();
+        // currentPeriodEnd is 10 years out — returning it as trialEndsAt
+        // would mis-label it in the UI. Leave null; the dashboard reads
+        // the real period end from /billing.
+        trialEndsAt = null;
+      } else if (!parsed.firmCode) {
         const trialEnd = new Date();
         trialEnd.setDate(trialEnd.getDate() + 15);
 
