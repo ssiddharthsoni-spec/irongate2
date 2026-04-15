@@ -234,7 +234,7 @@ export function fallbackResult(startTime: number): IntentContextResult {
 
 export interface ClassifierConfig {
   endpoint: string; // e.g., "http://localhost:11434/api/generate"
-  model: string; // e.g., "llama3.2:3b"
+  model: string; // e.g., "gemma4:e2b"
   format: 'ollama' | 'openai-compatible';
   timeoutMs?: number;
 }

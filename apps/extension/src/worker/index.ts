@@ -2961,7 +2961,7 @@ async function probeOllamaStatus(): Promise<{
     const data = (await response.json()) as { models?: Array<{ name: string }> };
     const models = data.models ?? [];
     // The default model IronGate uses; upgrade path is to read from managed config
-    const targetModel = 'llama3.2:3b';
+    const targetModel = 'gemma4:e2b';
     const modelPulled = models.some(
       (m) => m.name === targetModel || m.name === `${targetModel}:latest`,
     );

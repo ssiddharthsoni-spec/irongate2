@@ -19,7 +19,7 @@
 | 1 | You (admin) | Open the IronGate dashboard's Ollama deployment wizard |
 | 2 | You (admin) | Pick platforms + MDM; copy the install-script wrapper to your MDM |
 | 3 | You (admin) | Update the IronGate managed policy with `localEndpoint` + `localModel` |
-| 4 | MDM | Silently installs Ollama + pulls `llama3.2:3b` on every target device |
+| 4 | MDM | Silently installs Ollama + pulls `gemma4:e2b` on every target device |
 | 5 | IronGate extension | Auto-detects Ollama, enables Tier 2, reports status home |
 | 6 | You (admin) | Watch devices turn green in the deployment status table |
 
@@ -151,7 +151,7 @@ The two new fields are:
 ```json
 {
   "localEndpoint": { "Value": "http://localhost:11434/api/generate" },
-  "localModel": { "Value": "llama3.2:3b" }
+  "localModel": { "Value": "gemma4:e2b" }
 }
 ```
 

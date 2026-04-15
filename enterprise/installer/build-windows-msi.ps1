@@ -71,7 +71,7 @@ Copy-Item (Join-Path $RootDir "scripts\irongate-healthcheck.mjs") (Join-Path $Pa
 @"
 IronGate Enterprise Model Manifest
 schema: v1
-model: llama3.2:3b
+model: gemma4:e2b
 recommended_action: pulled-by-postinstall
 build_date: $(Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
 "@ | Out-File -FilePath (Join-Path $PayloadDir "MODEL_MANIFEST.txt") -Encoding utf8
@@ -135,8 +135,8 @@ for ($i = 1; $i -le 10; $i++) {
 }
 
 # Pull the model
-Log "Pulling llama3.2:3b model"
-& $OllamaExe pull llama3.2:3b 2>&1 | Add-Content -Path $LogPath
+Log "Pulling gemma4:e2b model"
+& $OllamaExe pull gemma4:e2b 2>&1 | Add-Content -Path $LogPath
 
 # Run health check
 Log "Running health check"

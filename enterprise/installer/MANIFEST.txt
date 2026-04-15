@@ -26,32 +26,38 @@ Windows SHA-256: <computed at build time, written to dist/IronGate-Enterprise-1.
 
 
 ────────────────────────────────────────────────────────────────────────────
-COMPONENT 2: Llama 3.2 3B (sensitivity classification model)
+COMPONENT 2: Gemma 4 e2b (intent + context classification model)
 ────────────────────────────────────────────────────────────────────────────
-Name:        Llama 3.2 3B Instruct
-Version:     3.2 (3B variant)
-Source:      https://ollama.com/library/llama3.2:3b
-License:     Llama 3.2 Community License Agreement
-             https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/LICENSE
-Purpose:     Classifies AMBER-zone prompts (business confidentiality without
-             direct PII) that the regex stack cannot handle.
+Name:        Gemma 4 e2b
+Version:     4 (e2b variant, efficient 2B-class, ~7.2 GB quantized)
+Source:      https://ollama.com/library/gemma4:e2b
+License:     Gemma Terms of Use
+             https://ai.google.dev/gemma/terms
+Purpose:     Classifies prompt intent + context (research, creative writing,
+             meta-discussion, work data sharing, code, personal, educational,
+             ambiguous) and authoritatively sets the zone (green / amber /
+             red) that drives pseudonymization and blocking.
 
-             IronGate selected this model after benchmarking 9 candidates:
-             - 28/30 accuracy on the IronGate scenario suite (93.3%)
-             - 5/6 accuracy on AMBER_ZONE (vs 1/6 for regex alone)
-             - 2.0 GB on disk
-             - 1309ms P50 latency on M1 Pro / 16GB RAM
+             IronGate selected this model after a 166-scenario ground-truth
+             benchmark against every plausible local alternative:
+             - 162/166 accuracy (97.6%) on the IronGate context battery
+             - 0 false positives on benign research/meta/creative/code
+             - 1 false negative (news-style M&A paraphrase edge case)
+             - 7.2 GB on disk (quantized)
+             - 1.3s P50 / 1.6s P95 latency on M1 Pro / 16GB RAM
              - JSON schema compliance: 100% with Ollama format=json mode
 
-Validated alternatives (also acceptable):
-  - gemma4:e2b   (Google, 7.2GB, 93.3% accuracy)
-  - chrome-builtin (Chrome 138+ Gemini Nano, zero install)
+Accepted fallback (unsupported, may be set explicitly via managed policy):
+  - llama3.2:3b  (Meta, 2.0GB) — smaller footprint; accuracy against the
+                  current classifier prompt is NOT validated
+  - chrome-builtin (Chrome 138+ Gemini Nano, zero install) — available only
+                  where Chrome's Prompt API is enabled
 
 Models explicitly REJECTED for production:
-  - gemma3:4b   (over-flags business confidentiality, 20/30 — worse than regex alone)
-  - phi3:mini   (ties regex baseline with no AMBER improvement, 22/30)
-  - qwen2.5:3b  (false-alarm machine, 12/30)
-  - all 1B models (insufficient nuance for classification)
+  - gemma3:4b   (slow + inaccurate on this prompt shape)
+  - phi3:mini   (no AMBER discrimination)
+  - qwen2.5:3b  (false-alarm machine on the context battery)
+  - all 1B models (insufficient nuance)
 
 
 ────────────────────────────────────────────────────────────────────────────

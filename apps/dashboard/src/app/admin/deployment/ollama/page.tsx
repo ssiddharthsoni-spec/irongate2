@@ -75,7 +75,7 @@ export default function OllamaDeploymentPage() {
         enrollmentCode: { Value: firmInfo.enrollmentCode ?? '<YOUR-ENROLLMENT-CODE>' },
         firmId: { Value: firmInfo.firmId ?? '<YOUR-FIRM-ID>' },
         localEndpoint: { Value: 'http://localhost:11434/api/generate' },
-        localModel: { Value: 'llama3.2:3b' },
+        localModel: { Value: 'gemma4:e2b' },
         localFormat: { Value: 'ollama' },
         allowedAITools: { Value: ['chatgpt', 'claude', 'gemini', 'copilot'] },
       },

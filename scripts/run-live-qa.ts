@@ -125,7 +125,7 @@ Respond with JSON only: {"score": <number>, "reasoning": "<brief>"}`;
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'llama3.2:3b',
+        model: 'gemma4:e2b',
         prompt: `${SYSTEM_PROMPT}\n\nClassify:\n${text}\n\nJSON:`,
         stream: false,
         format: 'json',
@@ -255,7 +255,7 @@ async function main() {
   const scenarios = singleTurnScenarios();
   console.log(`  Scenarios:     ${scenarios.length} (single-turn, multi-turn runs separately)`);
   console.log(`  Categories:    A-G (benign, PII, biz-conf, edge cases, cross-platform, adversarial)`);
-  console.log(`  Ollama:        http://localhost:11434/api/generate (llama3.2:3b)`);
+  console.log(`  Ollama:        http://localhost:11434/api/generate (gemma4:e2b)`);
   console.log('═══════════════════════════════════════════════════════════════\n');
 
   const results: ScenarioResult[] = [];

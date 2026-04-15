@@ -44,7 +44,7 @@
         <string>http://localhost:11434/api/generate</string>
 
         <key>localModel</key>
-        <string>llama3.2:3b</string>
+        <string>gemma4:e2b</string>
 
         <key>localFormat</key>
         <string>ollama</string>

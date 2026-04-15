@@ -7,7 +7,7 @@
 # What this does:
 #   1. Downloads + silently installs Ollama if not present
 #   2. Registers Ollama as a Windows service (auto-start on boot)
-#   3. Pulls the recommended model (llama3.2:3b) for IronGate Tier 2 detection
+#   3. Pulls the recommended model (gemma4:e2b) for IronGate Tier 2 detection
 #   4. Verifies the service is reachable at localhost:11434
 #
 # Safe to re-run. Logs to C:\ProgramData\IronGate\ollama-install.log.
@@ -23,7 +23,7 @@
 # ============================================================================
 
 $ErrorActionPreference = "Continue"
-$OllamaModel = if ($env:OLLAMA_MODEL) { $env:OLLAMA_MODEL } else { "llama3.2:3b" }
+$OllamaModel = if ($env:OLLAMA_MODEL) { $env:OLLAMA_MODEL } else { "gemma4:e2b" }
 $LogDir = "C:\ProgramData\IronGate"
 $LogFile = "$LogDir\ollama-install.log"
 $OllamaBin = "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe"

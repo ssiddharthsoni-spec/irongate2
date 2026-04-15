@@ -56,7 +56,7 @@
             "IRONGATE_EXTENSION_ID": {
               "deploymentMode": "local-only",
               "localEndpoint": "http://localhost:11434/api/generate",
-              "localModel": "llama3.2:3b",
+              "localModel": "gemma4:e2b",
               "localFormat": "ollama",
               "timeoutMs": 30000,
               "auditLogDestination": "<<REPLACE_ME: none|s3|syslog|webhook>>",

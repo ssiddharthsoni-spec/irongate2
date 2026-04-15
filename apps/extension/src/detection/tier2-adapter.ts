@@ -76,7 +76,7 @@ export interface ManagedDeploymentConfig {
   /** Local LLM endpoint (e.g., http://localhost:11434/api/generate) */
   localEndpoint?: string;
 
-  /** Local model name to use (e.g., llama3.2:3b) */
+  /** Local model name to use (e.g., gemma4:e2b) */
   localModel?: string;
 
   /** Local API format */

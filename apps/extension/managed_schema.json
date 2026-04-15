@@ -23,9 +23,9 @@
     "localModel": {
       "type": "string",
       "title": "Local LLM model name",
-      "description": "Name of the model to use. For Ollama deployments use the Ollama tag (e.g., 'llama3.2:3b'). IronGate has validated these models for production: llama3.2:3b (recommended), gemma4:e2b. Models known to underperform: gemma3:4b, phi3:mini, qwen2.5:3b, all 1B models.",
-      "default": "llama3.2:3b",
-      "examples": ["llama3.2:3b", "gemma4:e2b"]
+      "description": "Name of the model to use. For Ollama deployments use the Ollama tag. IronGate's default and only officially supported model is 'gemma4:e2b' (Google Gemma 4 e2b, 7.2GB, 97.6% accuracy on the ground-truth intent battery). 'llama3.2:3b' is still accepted for devices that can't hold 7GB but is unsupported — accuracy has not been validated against the current classifier prompt. Models known to underperform: gemma3:4b, phi3:mini, qwen2.5:3b, all 1B models.",
+      "default": "gemma4:e2b",
+      "examples": ["gemma4:e2b", "llama3.2:3b"]
     },
     "localFormat": {
       "type": "string",

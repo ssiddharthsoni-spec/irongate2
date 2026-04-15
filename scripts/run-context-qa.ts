@@ -10,13 +10,13 @@
  *   - Per-category breakdown
  *   - Per-scenario latency
  *
- * Requires Ollama running at localhost:11434 with llama3.2:3b pulled.
+ * Requires Ollama running at localhost:11434 with gemma4:e2b pulled.
  * If Ollama is not available, the runner exits with a clear error.
  *
  * Usage:
  *   npx tsx scripts/run-context-qa.ts
  *   npx tsx scripts/run-context-qa.ts --category=R    # run one category
- *   npx tsx scripts/run-context-qa.ts --model=llama3.2:3b --endpoint=http://localhost:11434/api/generate
+ *   npx tsx scripts/run-context-qa.ts --model=gemma4:e2b --endpoint=http://localhost:11434/api/generate
  *   npx tsx scripts/run-context-qa.ts --verbose       # print every reasoning
  */
 
@@ -38,7 +38,7 @@ const hasFlag = (name: string): boolean => args.includes(`--${name}`);
 
 const config: ClassifierConfig = {
   endpoint: flag('endpoint') ?? 'http://localhost:11434/api/generate',
-  model: flag('model') ?? 'llama3.2:3b',
+  model: flag('model') ?? 'gemma4:e2b',
   format: (flag('format') as 'ollama' | 'openai-compatible') ?? 'ollama',
   timeoutMs: Number(flag('timeout') ?? '8000'),
 };

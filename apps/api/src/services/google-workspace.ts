@@ -237,7 +237,7 @@ export async function deployIronGateToOrgUnit(
   if (allowedAITools && allowedAITools.length > 0) managedConfig.allowedAITools = allowedAITools;
   if (enableOllama) {
     managedConfig.localEndpoint = 'http://localhost:11434/api/generate';
-    managedConfig.localModel = 'llama3.2:3b';
+    managedConfig.localModel = 'gemma4:e2b';
     managedConfig.localFormat = 'ollama';
   }
 

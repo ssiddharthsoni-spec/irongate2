@@ -39,7 +39,7 @@
     },
     "localLLMModel": {
       "title": "Private LLM Model",
-      "description": "Model name for the private LLM endpoint (e.g., 'llama3.2:3b', 'mistral:7b'). Defaults to 'llama3.2:3b' if not specified.",
+      "description": "Model name for the private LLM endpoint (e.g., 'gemma4:e2b', 'mistral:7b'). Defaults to 'gemma4:e2b' if not specified — IronGate's validated default.",
       "type": "string"
     },
     "sensitivityThresholdWarn": {

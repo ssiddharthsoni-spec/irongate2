@@ -124,7 +124,7 @@ function createClientLLMBackend(config: ModelRuntimeConfig): RuntimeBackend {
 
       // Support both Ollama and OpenAI-compatible endpoints
       const body = {
-        model: config.clientLlmModel || 'llama3.2:3b',
+        model: config.clientLlmModel || 'gemma4:e2b',
         messages: [
           { role: 'system', content: request.systemPrompt },
           { role: 'user', content: request.userPrompt },

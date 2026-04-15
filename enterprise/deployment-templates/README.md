@@ -17,9 +17,9 @@ When you push these templates via your device management system, every employee 
 Before deploying these templates, your fleet must have:
 
 - **Chrome 138+** (for the `LanguageModel` API fallback path) OR Chrome 110+ (Ollama path only)
-- **Ollama installed** with the `llama3.2:3b` model pulled — see `installer/` for the Ollama deployment package
+- **Ollama installed** with the `gemma4:e2b` model pulled — see `installer/` for the Ollama deployment package
 - **Managed Chrome policy** enabled on the fleet (Chrome Enterprise license, or unmanaged Chromium)
-- **22 GB free disk** per machine (model + Chrome cache + Ollama)
+- **30 GB free disk** per machine (7.2 GB model + Ollama runtime + Chrome cache)
 - **16 GB RAM** per machine (recommended; 8 GB works but is slow)
 
 ## The three templates

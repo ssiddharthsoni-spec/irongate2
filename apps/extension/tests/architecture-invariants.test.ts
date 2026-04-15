@@ -354,14 +354,19 @@ describe('Architecture Invariants — Sovereign AI / Local-Only Mode Contract', 
     expect(workspace).toMatch(/"deploymentMode".*?"local-only"/s);
   });
 
-  it('deployment templates must use the recommended model (llama3.2:3b)', () => {
+  it('deployment templates must use the recommended model (gemma4:e2b)', () => {
     const enterpriseDir = join(REPO_ROOT, 'enterprise/deployment-templates');
     const intune = readFileSync(join(enterpriseDir, 'intune-policy.xml'), 'utf8');
     const jamf = readFileSync(join(enterpriseDir, 'jamf-policy.plist'), 'utf8');
     const workspace = readFileSync(join(enterpriseDir, 'workspace-policy.json'), 'utf8');
-    expect(intune).toContain('llama3.2:3b');
-    expect(jamf).toContain('llama3.2:3b');
-    expect(workspace).toContain('llama3.2:3b');
+    expect(intune).toContain('gemma4:e2b');
+    expect(jamf).toContain('gemma4:e2b');
+    expect(workspace).toContain('gemma4:e2b');
+    // And the deprecated default MUST NOT reappear in templates — this is the
+    // bright-line gate that keeps the product on one brain.
+    expect(intune).not.toContain('llama3.2:3b');
+    expect(jamf).not.toContain('llama3.2:3b');
+    expect(workspace).not.toContain('llama3.2:3b');
   });
 
   // ── v1.0 Final: audit sink, signed bundle, firm pseudonymizer ──────────

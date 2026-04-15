@@ -9,7 +9,7 @@
 # What this does:
 #   1. Installs Ollama (via official installer) if not present
 #   2. Registers Ollama as a LaunchDaemon so it starts on boot
-#   3. Pulls the recommended model (llama3.2:3b) for IronGate Tier 2 detection
+#   3. Pulls the recommended model (gemma4:e2b) for IronGate Tier 2 detection
 #   4. Verifies the service is reachable at localhost:11434
 #
 # Safe to re-run. Logs to /var/log/irongate-ollama-install.log.
@@ -25,7 +25,7 @@
 set -u  # undefined vars are errors (but not -e, so we can handle errors explicitly)
 
 readonly LOG_FILE="/var/log/irongate-ollama-install.log"
-readonly OLLAMA_MODEL="${OLLAMA_MODEL:-llama3.2:3b}"
+readonly OLLAMA_MODEL="${OLLAMA_MODEL:-gemma4:e2b}"
 readonly OLLAMA_BIN="/usr/local/bin/ollama"
 readonly OLLAMA_APP="/Applications/Ollama.app"
 

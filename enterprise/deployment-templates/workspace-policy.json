@@ -24,7 +24,7 @@
       "Value": "http://localhost:11434/api/generate"
     },
     "localModel": {
-      "Value": "llama3.2:3b"
+      "Value": "gemma4:e2b"
     },
     "localFormat": {
       "Value": "ollama"

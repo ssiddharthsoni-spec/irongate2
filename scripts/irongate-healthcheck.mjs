@@ -34,7 +34,7 @@ import { argv, exit } from 'node:process';
 // ── Args ────────────────────────────────────────────────────────────────
 const args = parseArgs(argv.slice(2));
 const ENDPOINT = args.endpoint || process.env.IRONGATE_ENDPOINT || 'http://localhost:11434/api/generate';
-const MODEL = args.model || process.env.IRONGATE_MODEL || 'llama3.2:3b';
+const MODEL = args.model || process.env.IRONGATE_MODEL || 'gemma4:e2b';
 const JSON_OUTPUT = args.json || false;
 const TIMEOUT_MS = Number(args.timeout || process.env.IRONGATE_TIMEOUT || 30000);
 

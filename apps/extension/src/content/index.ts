@@ -224,7 +224,7 @@ function syncPrivateLlmToMainWorld() {
         csPostMessage({
           type: 'IRON_GATE_SET_PRIVATE_LLM',
           endpoint: result.localLLMEndpoint,
-          model: result.localLLMModel || 'llama3.2:3b',
+          model: result.localLLMModel || 'gemma4:e2b',
         });
       }
     });
@@ -236,7 +236,7 @@ function syncPrivateLlmToMainWorld() {
         csPostMessage({
           type: 'IRON_GATE_SET_PRIVATE_LLM',
           endpoint: result.localLLMEndpoint,
-          model: result.localLLMModel || 'llama3.2:3b',
+          model: result.localLLMModel || 'gemma4:e2b',
         });
       }
     });

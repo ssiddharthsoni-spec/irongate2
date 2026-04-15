@@ -112,7 +112,7 @@ The installer:
 2. Symlinks the Ollama binary to `/usr/local/bin/ollama`
 3. Creates `/Library/LaunchDaemons/com.irongate.ollama.plist`
 4. Loads the launchd service (Ollama starts on port 11434)
-5. Pulls the `llama3.2:3b` model (~2 GB, takes 1-5 minutes on a fast network)
+5. Pulls the `gemma4:e2b` model (~7.2 GB, takes 3-15 minutes on a fast network)
 6. Runs the health check
 
 **On Windows (PowerShell as Administrator):**
@@ -166,10 +166,10 @@ You should see:
   IronGate Enterprise Health Check
 ═══════════════════════════════════════════════════════════════
   Endpoint: http://localhost:11434/api/generate
-  Model:    llama3.2:3b
+  Model:    gemma4:e2b
 ───────────────────────────────────────────────────────────────
   ✓ Ollama endpoint reachable                http://localhost:11434/api/tags [54ms]
-  ✓ Expected model loaded                    llama3.2:3b
+  ✓ Expected model loaded                    gemma4:e2b
   ✓ Cold inference roundtrip                 Response: "ok" [15048ms]
   ✓ Inference latency under 3s               1723ms
   ✓ Classification accuracy                  5/6 sanity tests passed [1256ms]
@@ -267,7 +267,7 @@ Now verify the full pipeline works end-to-end on the pilot machine.
 Open the IronGate sidepanel. You should see a **green "🛡 Sovereign mode active"** badge. Click it to expand. It should show:
 
 - Mode: `local-only`
-- Model: `llama3.2:3b`
+- Model: `gemma4:e2b`
 - Endpoint: `http://localhost:11434/api/generate`
 - Status: `Reachable + model loaded`
 - Latency: `<3000ms`
@@ -492,7 +492,7 @@ Click the badge to expand the diagnostic. Common causes:
 | Symptom | Cause | Fix |
 |---|---|---|
 | "Local LLM unreachable" | Ollama service is down | Restart Ollama: `sudo launchctl load /Library/LaunchDaemons/com.irongate.ollama.plist` |
-| "Model not loaded" | Ollama is running but llama3.2:3b is not pulled | Run `ollama pull llama3.2:3b` |
+| "Model not loaded" | Ollama is running but gemma4:e2b is not pulled | Run `ollama pull gemma4:e2b` |
 | "Probe timed out" | Ollama is overloaded or starved for memory | Check Activity Monitor / Task Manager for memory usage; restart Ollama |
 | "Configuration error" | Managed policy has a typo or missing required field | Check `chrome://policy` for the IronGate config and validate against `managed_schema.json` |
 
@@ -507,10 +507,10 @@ node irongate-healthcheck.mjs --json | jq '.checks'
 | Failed check | Fix |
 |---|---|
 | `Ollama endpoint reachable` | Ollama service is down — restart it |
-| `Expected model loaded` | Run `ollama pull llama3.2:3b` |
+| `Expected model loaded` | Run `ollama pull gemma4:e2b` |
 | `Cold inference roundtrip` | Model is loaded but inference is failing — check Ollama logs at `/var/log/irongate-ollama.err` |
 | `Inference latency under 3s` | Machine is starved for memory — close other apps or upgrade RAM |
-| `Classification accuracy` | Model is responding but giving wrong answers — verify the model is `llama3.2:3b`, not a different version |
+| `Classification accuracy` | Model is responding but giving wrong answers — verify the model is `gemma4:e2b`, not a different version |
 
 ### 9.3 "Tier 2 disabled after 3 consecutive failures"
 

@@ -11,7 +11,7 @@
 export interface LocalLLMConfig {
   /** URL of the local LLM endpoint (e.g., http://localhost:11434/api) */
   endpoint: string;
-  /** Model name to use (e.g., "llama3.2:3b", "mistral:7b") */
+  /** Model name to use (e.g., "gemma4:e2b", "mistral:7b") */
   model: string;
   /** Whether to use local LLM for enhanced PII detection */
   enableDetection: boolean;

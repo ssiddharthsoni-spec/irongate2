@@ -353,7 +353,7 @@ export const extensionHeartbeats = pgTable('extension_heartbeats', {
   devicePlatform: varchar('device_platform', { length: 100 }),
   /** Whether Ollama's localhost API is reachable from the extension */
   ollamaReachable: boolean('ollama_reachable'),
-  /** Model name Ollama is serving (e.g., "llama3.2:3b") */
+  /** Model name Ollama is serving (e.g., "gemma4:e2b") */
   ollamaModel: varchar('ollama_model', { length: 100 }),
   /** Whether the configured model is actually pulled and available */
   ollamaModelPulled: boolean('ollama_model_pulled'),

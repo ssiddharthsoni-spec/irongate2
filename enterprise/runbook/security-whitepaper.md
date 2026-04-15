@@ -358,7 +358,7 @@ You should NOT see requests to `irongate-api.onrender.com`, `api.openai.com`, `a
 
 ### 11.3 Verify the model weights
 
-The Llama 3.2 3B model is open-source. Download it independently from `https://ollama.com/library/llama3.2:3b` and verify the SHA-256 matches what we ship.
+The Gemma 4 e2b model is published by Google under the Gemma Terms of Use. Download it independently from `https://ollama.com/library/gemma4:e2b` and verify the SHA-256 matches what we ship.
 
 ### 11.4 Run the health check
 

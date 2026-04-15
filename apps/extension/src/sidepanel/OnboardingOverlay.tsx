@@ -138,7 +138,7 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
         await chrome.storage.local.set({
           tier2Enabled: true,
           tier2Endpoint: 'http://localhost:11434/api/generate',
-          tier2Model: 'llama3.2:3b',
+          tier2Model: 'gemma4:e2b',
         });
       } catch { /* non-fatal */ }
       setOllamaStatus('success');
@@ -695,7 +695,7 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
                 <div className="flex-1">
                   <div className="mb-1">Open Terminal (or Command Prompt) and run:</div>
                   <code className="block bg-gray-50 border border-gray-100 rounded px-2 py-1 font-mono text-[10px]">
-                    ollama pull llama3.2:3b
+                    ollama pull gemma4:e2b
                   </code>
                 </div>
               </li>

@@ -4240,7 +4240,7 @@ const patchedFetch = async function patchedFetch(
             try {
               // Build OpenAI-compatible request for private LLM (Ollama, vLLM, etc.)
               const privateLlmBody = JSON.stringify({
-                model: _privateLlmModel || 'llama3.2:3b',
+                model: _privateLlmModel || 'gemma4:e2b',
                 messages: [
                   { role: 'system', content: 'You are a helpful assistant. The user\'s message may contain pseudonymized names and values for privacy. Respond naturally.' },
                   { role: 'user', content: pseudoResult.maskedText },

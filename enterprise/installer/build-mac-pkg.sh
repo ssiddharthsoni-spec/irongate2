@@ -35,8 +35,8 @@ INSTALL_LOCATION="/Library/IronGate"
 OLLAMA_VERSION="0.5.7"
 OLLAMA_DARWIN_URL="https://github.com/ollama/ollama/releases/download/v${OLLAMA_VERSION}/Ollama-darwin.zip"
 
-MODEL_NAME="llama3.2:3b"
-MODEL_OLLAMA_DIGEST="a80c4f17acd540f8b6d5b9b8e0c1a5b2"  # placeholder; replace with real digest
+MODEL_NAME="gemma4:e2b"
+MODEL_OLLAMA_DIGEST="7fbdbf8f5e45"  # placeholder; replace with real digest
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/enterprise/installer/build/mac"
@@ -155,10 +155,10 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
   sleep 2
 done
 
-# Pull the model (~2GB)
-echo "[$(date)] Pulling llama3.2:3b model" >> "$LOG"
-/usr/local/bin/ollama pull llama3.2:3b >> "$LOG" 2>&1 || {
-  echo "[$(date)] Model pull failed — admin must run 'ollama pull llama3.2:3b' manually" >> "$LOG"
+# Pull the model (~7.2GB)
+echo "[$(date)] Pulling gemma4:e2b model" >> "$LOG"
+/usr/local/bin/ollama pull gemma4:e2b >> "$LOG" 2>&1 || {
+  echo "[$(date)] Model pull failed — admin must run 'ollama pull gemma4:e2b' manually" >> "$LOG"
 }
 
 # Run health check
