@@ -1,9 +1,13 @@
 import { Hono } from 'hono';
 import Stripe from 'stripe';
 import { db } from '../db/client';
-import { subscriptions, invoices, events, users } from '../db/schema';
+import { subscriptions, invoices, events, users, firms } from '../db/schema';
 import { eq, and, desc, gte, sql } from 'drizzle-orm';
 import type { AppEnv } from '../types';
+import crypto from 'crypto';
+import { applySuperAdminRole, applySuperAdminSubscription, isSuperAdminEmail } from '../lib/super-admin';
+import { logger } from '../lib/logger';
+import { invalidateUserCache } from '../middleware/auth';
 
 export const billingRoutes = new Hono<AppEnv>();
 
@@ -33,10 +37,67 @@ function getPriceId(tier: Tier, cycle: Cycle): string | undefined {
 }
 
 // ---------------------------------------------------------------------------
+// Self-healing super-admin: if the caller's email is on the allowlist, make
+// sure they have a firm, an admin role, and a permanent business-tier
+// subscription BEFORE we answer the billing query. That way just reloading
+// /settings/billing upgrades them — no separate bootstrap click, no stuck
+// state when a previous /admin/firm call failed.
+//
+// Idempotent in every branch: safe to run on every request.
+// ---------------------------------------------------------------------------
+async function ensureSuperAdminUpgrade(c: any): Promise<string | null> {
+  const userId = c.get('userId') as string | undefined;
+  if (!userId) return null;
+
+  const [u] = await db
+    .select({ id: users.id, email: users.email, firmId: users.firmId, role: users.role, clerkId: users.clerkId })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (!u || !isSuperAdminEmail(u.email)) return c.get('firmId') || null;
+
+  // Ensure a firm exists
+  let firmId = u.firmId;
+  if (!firmId) {
+    const [newFirm] = await db
+      .insert(firms)
+      .values({
+        name: `${u.email.split('@')[0]}'s workspace`,
+        mode: 'proxy',
+        config: {},
+        encryptionSalt: crypto.randomBytes(16).toString('hex'),
+      })
+      .returning({ id: firms.id });
+    firmId = newFirm.id;
+    await db.update(users).set({ firmId, updatedAt: new Date() }).where(eq(users.id, userId));
+    logger.info('Super-admin firm auto-created', { userId, email: u.email, firmId });
+  }
+
+  await applySuperAdminRole(userId);
+  await applySuperAdminSubscription(firmId);
+
+  // Invalidate cached user so the next request sees role=admin + firmId
+  if (u.clerkId) {
+    try { invalidateUserCache(u.clerkId); } catch { /* non-fatal */ }
+  }
+
+  return firmId;
+}
+
+// ---------------------------------------------------------------------------
 // GET / — Current firm's billing info (subscription + recent invoices)
 // ---------------------------------------------------------------------------
 billingRoutes.get('/', async (c) => {
-  const firmId = c.get('firmId');
+  // Self-heal super-admin before answering. Returns the (possibly newly-
+  // created) firmId to use for this query.
+  const ensuredFirmId = await ensureSuperAdminUpgrade(c);
+  const firmId = ensuredFirmId || c.get('firmId');
+  if (!firmId) {
+    return c.json({
+      subscription: { tier: 'free', status: 'active', stripeCustomerId: null, stripeSubscriptionId: null, stripePriceId: null, currentPeriodStart: null, currentPeriodEnd: null, cancelAtPeriodEnd: false },
+      invoices: [],
+    });
+  }
 
   const [subscription] = await db
     .select()
