@@ -433,12 +433,199 @@ async function stageSignIn(): Promise<void> {
   }
 }
 
+// ── Full end-to-end drive ────────────────────────────────────────────────────
+// Signs in → opens mocked ChatGPT → types each canonical scenario → verifies
+// pseudonymization on the wire + sidepanel activity reflects it. Iterates
+// through every scenario and reports per-row pass/fail.
+
+interface DriveScenario {
+  id: string;
+  prompt: string;
+  expect: 'pass-through' | 'pseudonymize';
+  forbiddenOnWire: string[]; // if pseudonymize, these strings must NOT appear
+}
+
+const FULL_SCENARIOS: DriveScenario[] = [
+  {
+    id: 'RESEARCH',
+    prompt: "What were Steve Jobs' leadership principles at Apple?",
+    expect: 'pass-through',
+    forbiddenOnWire: [],
+  },
+  {
+    id: 'BENIGN',
+    prompt: 'Explain how photosynthesis works in simple terms.',
+    expect: 'pass-through',
+    forbiddenOnWire: [],
+  },
+  {
+    id: 'LEGAL-PII',
+    prompt: 'Draft a settlement letter for my client Robert Johnson, SSN 423-55-8901.',
+    expect: 'pseudonymize',
+    forbiddenOnWire: ['Robert Johnson', '423-55-8901'],
+  },
+  {
+    id: 'CREDENTIAL',
+    prompt: 'Debug: Authorization: Bearer sk-proj-RealLookingKeyAbc123Xyz789De45',
+    expect: 'pseudonymize',
+    forbiddenOnWire: ['sk-proj-RealLookingKeyAbc123Xyz789De45'],
+  },
+];
+
+async function signInViaUI(ctx: BrowserContext, extensionId: string): Promise<{
+  email: string;
+  firmId: string;
+}> {
+  const page = await ctx.newPage();
+  await page.goto(`chrome-extension://${extensionId}/src/sidepanel/index.html`, {
+    waitUntil: 'domcontentloaded',
+  });
+  await page.waitForTimeout(2000);
+
+  await page.getByRole('button', { name: /Legal/i }).first().click();
+  await page.waitForTimeout(300);
+  await page.getByRole('button', { name: /^Continue$/i }).click();
+  await page.waitForTimeout(800);
+  const c1 = await page.getByRole('button', { name: /^Continue$/i }).all();
+  if (c1.length > 0) await c1[c1.length - 1].click();
+  await page.waitForTimeout(800);
+  await page.getByRole('button', { name: /Proxy Mode/i }).click();
+  await page.waitForTimeout(300);
+  const c2 = await page.getByRole('button', { name: /^Continue$/i }).all();
+  if (c2.length > 0) await c2[c2.length - 1].click();
+  await page.waitForTimeout(800);
+  const email = `driver+${Date.now()}@example.com`;
+  await page.fill('input[type="email"]', email);
+  await page.waitForTimeout(300);
+  await page.locator('button').filter({ hasText: /Start.*Trial|Create Account|Register/i }).first().click();
+  await page.waitForTimeout(8000);
+
+  const storage = await page.evaluate(() => new Promise<any>((resolve) => {
+    chrome.storage.local.get(['firm_id', 'firmMode'], resolve);
+  }));
+  await page.close();
+  return { email, firmId: storage.firm_id };
+}
+
+async function stageFull(): Promise<void> {
+  console.log('\n═══════════ FULL END-TO-END DRIVE ═══════════');
+
+  const mockProc = bootMockServer();
+  await waitForMock();
+  console.log('✓ mock server up');
+
+  const { ctx, extensionId, workerLogs } = await bootExtension();
+  console.log(`✓ extension loaded (${extensionId})`);
+
+  await new Promise((r) => setTimeout(r, 3000));
+  const startupErrors = workerLogs.filter((l) => /error|exception|unhandled|reject|typeerror/i.test(l));
+  if (startupErrors.length > 0) {
+    console.log('\n✗ WORKER STARTUP ERRORS:');
+    for (const e of startupErrors.slice(0, 5)) console.log(`    ${e.slice(0, 400)}`);
+  } else {
+    console.log('✓ worker startup clean');
+  }
+
+  try {
+    console.log('\n── sign in ──────────────────────────────────');
+    const { email, firmId } = await signInViaUI(ctx, extensionId);
+    if (!firmId) {
+      console.log(`✗ sign-in failed — no firm_id persisted. Email tried: ${email}`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`✓ signed in (${email}) → firm_id=${firmId}`);
+
+    // Some worker handshakes take a beat after registration
+    await new Promise((r) => setTimeout(r, 2000));
+
+    const results: Array<{
+      id: string;
+      expected: string;
+      intercepted: number;
+      leaked: string[];
+      passThrough: boolean;
+      passed: boolean;
+      notes: string;
+    }> = [];
+
+    for (const sc of FULL_SCENARIOS) {
+      console.log(`\n── scenario ${sc.id} ──────────────────────────────`);
+      await fetch(`${MOCK_BASE}/api/intercepted/clear`);
+
+      const page = await ctx.newPage();
+      const pageLogs: string[] = [];
+      page.on('console', (m) => {
+        const t = m.text();
+        if (/iron|pseudo|classif|error|PROMPT_/i.test(t)) pageLogs.push(`[${m.type()}] ${t}`);
+      });
+      page.on('pageerror', (e) => pageLogs.push(`[PAGEERROR] ${e.message}`));
+
+      try {
+        await page.goto(`${MOCK_BASE}/chatgpt`, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+        await page.waitForTimeout(2500);
+
+        const injected = await page.evaluate(() => (window as any).__IRON_GATE_MAIN_WORLD);
+        console.log(`  injection: ${injected || '(none)'}`);
+
+        await typeAndSubmitOnChatGPT(page, sc.prompt);
+        await page.waitForTimeout(5000);
+
+        const intercepted = await fetch(`${MOCK_BASE}/api/intercepted`).then((r) => r.json());
+        const chatgpt = intercepted.filter((r: any) => r.platform === 'chatgpt');
+        const combined = chatgpt.map((r: any) => r.payload?.body || '').join('\n');
+
+        const leaked = sc.forbiddenOnWire.filter((f) => combined.includes(f));
+        const passThrough = combined.includes(sc.prompt.slice(0, 40));
+
+        let passed = false;
+        let notes = '';
+        if (sc.expect === 'pass-through') {
+          passed = passThrough;
+          notes = passed ? 'benign prompt reached wire unchanged (correct)' : 'benign prompt did NOT reach wire';
+        } else {
+          passed = leaked.length === 0 && combined.length > 0;
+          notes = passed
+            ? `all ${sc.forbiddenOnWire.length} PII strings pseudonymized`
+            : `LEAK: ${leaked.join(', ')}`;
+        }
+
+        console.log(`  intercepted: ${chatgpt.length} request(s), ${combined.length} bytes`);
+        console.log(`  wire snippet: "${combined.slice(0, 120)}${combined.length > 120 ? '…' : ''}"`);
+        console.log(`  ${passed ? '✓' : '✗'} ${notes}`);
+
+        const keyLogs = pageLogs.filter((l) => /pseudonymized|classif|PROMPT_DETECTED|transform/i.test(l)).slice(0, 4);
+        if (keyLogs.length > 0) {
+          for (const l of keyLogs) console.log(`    ${l.slice(0, 200)}`);
+        }
+
+        results.push({ id: sc.id, expected: sc.expect, intercepted: chatgpt.length, leaked, passThrough, passed, notes });
+      } catch (err) {
+        console.log(`  ✗ scenario error: ${err instanceof Error ? err.message : String(err)}`);
+        results.push({ id: sc.id, expected: sc.expect, intercepted: 0, leaked: [], passThrough: false, passed: false, notes: String(err) });
+      }
+      await page.close();
+    }
+
+    console.log('\n══════════ RESULTS ══════════');
+    const passed = results.filter((r) => r.passed).length;
+    for (const r of results) console.log(`  ${r.passed ? '✓' : '✗'} ${r.id.padEnd(12)} ${r.notes}`);
+    console.log(`\n  ${passed}/${results.length} scenarios passed`);
+
+    if (passed < results.length) process.exitCode = 1;
+  } finally {
+    await ctx.close();
+    mockProc.kill();
+  }
+}
+
 const stage = process.argv[2] || 'stage1';
 (async () => {
   if (stage === 'stage1') await stage1();
   else if (stage === 'stage2') await stage2();
   else if (stage === 'stage3') await stage3();
   else if (stage === 'signin') await stageSignIn();
+  else if (stage === 'full') await stageFull();
   else {
     console.error(`Unknown stage: ${stage}`);
     process.exit(2);
