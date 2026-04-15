@@ -58,6 +58,7 @@
 
 import type { TierAdapter, TierResult } from './confidence-router';
 import { scoreToZone } from './confidence-router';
+import { classifyIntentAndContext } from './intent-context-classifier';
 
 // ─── Deployment Mode (read from managed policy at startup) ─────────────────
 
@@ -797,9 +798,10 @@ export async function warmupLocalLlm(): Promise<void> {
     // Warm the intent/context classifier with a single benign prompt.
     // This pulls the Gemma 4 weights into RAM and primes the prompt
     // cache on Ollama so the first real user prompt sees the ~1.3s p50,
-    // not the ~10s cold start.
+    // not the ~10s cold start. Imported statically at the top of this
+    // file — MV3 service workers don't always survive dynamic imports
+    // after bundling.
     try {
-      const { classifyIntentAndContext } = await import('./intent-context-classifier');
       await classifyIntentAndContext('warmup probe', {
         endpoint: cfg.localEndpoint || 'http://localhost:11434/api/generate',
         model: cfg.localModel || 'gemma4:e2b',
