@@ -185,12 +185,12 @@ the *work*. Each item maps to one of the four agent roles above.
 
 | # | Severity | Title | Agent role | Status |
 |---|---|---|---|---|
-| 9  | MED | No rate-limiting on analysis requests (dedup keys on 128 chars only) | Reliability | todo |
-| 10 | MED | Missing international PII (UK NINO, Canadian SIN, Australian TFN, Japan My Number) | Chaos | todo |
-| 11 | MED | Brittle DOM selectors — no fallback validation that matched element is a prompt input | Design | todo |
-| 12 | MED | Missing AI platforms: xAI Grok, Mistral Chat, LM Studio, Ollama web UI | Design | todo |
-| 13 | MED | Audit logs never synced to backend — lost on uninstall | Reliability | todo |
-| 14 | MED | No offline indicator in sidepanel when backend unreachable | Design | todo |
+| 9  | MED | No rate-limiting on analysis requests (dedup keys on 128 chars only) | Reliability | ✅ `proxy-handler.ts:hashPromptForDedup` now uses SHA-256 of the full prompt text via `crypto.subtle.digest`, combined with `sessionId` + `length`. Two prompts that share a 128-char prefix but diverge later no longer collide into the same in-flight entry. |
+| 10 | MED | Missing international PII (UK NINO, Canadian SIN, Australian TFN, Japan My Number) | Chaos | ✅ Regexes were already implemented across `fallback-regex.ts`, `intent-suppression.ts`, `entity-contextualizer.ts`, `agent-detector.ts` — but `UK_NINO`, `CANADIAN_SIN`, `INDIAN_AADHAAR`, `AUSTRALIAN_TFN`, `GERMAN_TAX_ID`, `FRENCH_INSEE`, `EU_IBAN` were not in `HIGH_PII_TYPES`. Now they are — they get the "always-critical floor" treatment. |
+| 11 | MED | Brittle DOM selectors — no fallback validation that matched element is a prompt input | Design | ✅ Added `defaultIsValidPromptInput()` in `adapters/base.ts` (editable + visible + not disabled/hidden). ChatGPT + Claude adapters now validate every selector match and fall back to a generic `textarea`/`contenteditable` scan when named selectors silently break. Exposed on SiteAdapter contract for all platforms to adopt. |
+| 12 | MED | Missing AI platforms: xAI Grok, Mistral Chat, LM Studio, Ollama web UI | Design | deferred to Week 4 (feature-add, not stability) |
+| 13 | MED | Audit logs never synced to backend — lost on uninstall | Reliability | deferred to Week 4 (requires new API surface) |
+| 14 | MED | No offline indicator in sidepanel when backend unreachable | Design | deferred to Week 4 (Ollama unreachable already handled — backend-unreachable indicator is separate work) |
 
 ### WEEK 4 — polish
 
@@ -213,6 +213,7 @@ the *work*. Each item maps to one of the four agent roles above.
 | 0. Truth | merged into Sr. Engineer Audit above | this file |
 | 1. Reliability Engineer — Week 1 | ✅ **shipped** — Items 1, 2, 3, 8 done (4 CRITICAL blockers closed) | `api-auth.ts`, `api-key-store.ts`, `tests/api-client-auth.test.ts` |
 | 1. Reliability Engineer — Week 2 | ✅ **shipped** — Items 4, 5, 6, 7 done (4 HIGH hardening items) | `api-key-store.ts`, `intent-context-classifier.ts`, `tier2-adapter.ts`, `tests/ollama-response-validation.test.ts` |
+| Week 3 | ✅ **shipped** — Items 9, 10, 11 done. Items 12, 13, 14 deferred to Week 4. | `proxy-handler.ts`, `types.ts`, `adapters/base.ts`, `adapters/{chatgpt,claude}.ts` |
 | 2. Design Systems Architect | queued — Week 3 (Items 11, 12, 14) | — |
 | 3. Performance Lead | queued — Week 4 (Item 16) | — |
 | 4. Chaos Auditor | queued — Week 2 (Item 6), Week 4 (Item 20, 21) | — |

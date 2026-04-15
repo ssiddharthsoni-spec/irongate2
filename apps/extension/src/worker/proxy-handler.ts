@@ -195,6 +195,22 @@ export async function relayPrompt(
   return result;
 }
 
+/**
+ * Build a collision-resistant dedup key from the full prompt text.
+ * SHA-256 in SubtleCrypto is available in service workers. We combine the
+ * session id and prompt length as cheap discriminators so a hash collision
+ * (astronomically unlikely) is still further gated. Hex-encoded to keep
+ * the key a plain string for Map semantics.
+ */
+async function hashPromptForDedup(sessionId: string, promptText: string): Promise<string> {
+  const data = new TextEncoder().encode(promptText);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  const hex = Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+  return `${sessionId}:${promptText.length}:${hex}`;
+}
+
 // ─── Full Flow ───────────────────────────────────────────────────────────────
 
 /**
@@ -216,8 +232,13 @@ export async function handleProxyFlow(
   aiToolId: string,
   sessionId: string
 ): Promise<ProxyFlowResult> {
-  // Deduplication: if an identical prompt is already in-flight, return its result
-  const dedupKey = `${sessionId}:${promptText.length}:${promptText.substring(0, 128)}`;
+  // Deduplication: if an identical prompt is already in-flight, return its result.
+  //
+  // Old key used the first 128 chars of the prompt, which collided on any two
+  // prompts sharing a prefix. Two "Draft a letter to…" prompts with different
+  // bodies would be deduplicated into one and both get the same verdict.
+  // Sr. Engineer Audit · Item 9: hash the FULL text via SubtleCrypto SHA-256.
+  const dedupKey = await hashPromptForDedup(sessionId, promptText);
   const existing = _inFlightRequests.get(dedupKey);
   if (existing) {
     proxyLog('Dedup hit — returning in-flight result for same prompt');

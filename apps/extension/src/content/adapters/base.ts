@@ -171,4 +171,46 @@ export interface SiteAdapter {
    */
   injectResponseContent?(parsed: any, mode: 'accumulated' | 'delta', content: string): void;
 
+  /**
+   * Validate that a candidate DOM element actually looks like a prompt input.
+   *
+   * Sr. Engineer Audit · Item 11: selectors like `#prompt-textarea` silently
+   * break when a platform ships a UI update. Without validation, adapters
+   * could match a random `div` and either never fire or misbehave. This
+   * utility checks the structural properties every real input has:
+   *   - editable (textarea, input, or contenteditable="true")
+   *   - visible (non-zero layout bounds)
+   *   - not disabled / not aria-hidden
+   *
+   * Exposed on the adapter contract so all adapters can share the same
+   * validation semantics; `findInput()` implementations should call this
+   * (or the exported `defaultIsValidPromptInput`) on each candidate.
+   */
+  isValidPromptInput?(el: Element | null): boolean;
+}
+
+/**
+ * Default validator — pure, cross-adapter. If a SiteAdapter doesn't
+ * override `isValidPromptInput`, this is what `findInput()` should use.
+ */
+export function defaultIsValidPromptInput(el: Element | null): boolean {
+  if (!el || !(el instanceof HTMLElement)) return false;
+  const tag = el.tagName.toLowerCase();
+  const isNativeEditor =
+    tag === 'textarea' ||
+    (tag === 'input' && /^(text|search|url|email)?$/.test((el as HTMLInputElement).type));
+  const isCE = el.getAttribute('contenteditable') === 'true';
+  if (!isNativeEditor && !isCE) return false;
+
+  // Visible: non-zero bounding rect. offsetParent is null when display:none
+  // but also when position:fixed — so combine with a rect check.
+  const rect = el.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return false;
+
+  // Rejected states
+  if ((el as HTMLInputElement).disabled) return false;
+  if (el.getAttribute('aria-hidden') === 'true') return false;
+  if (el.getAttribute('aria-disabled') === 'true') return false;
+
+  return true;
 }

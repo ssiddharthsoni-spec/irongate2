@@ -1,4 +1,5 @@
 import type { SiteAdapter } from './base';
+import { defaultIsValidPromptInput as isValidInput } from './base';
 
 /**
  * Claude Adapter — claude.ai
@@ -199,10 +200,13 @@ export const ClaudeAdapter: SiteAdapter = {
 
   findInput(): HTMLElement | null {
     for (const sel of this.inputSelectors) {
-      const el = document.querySelector(sel) as HTMLElement;
-      if (el) return el;
+      const el = document.querySelector(sel) as HTMLElement | null;
+      if (el && isValidInput(el)) return el;
     }
-    return null;
+    // Fallback: any visible ProseMirror or contenteditable composer.
+    const fallback = Array.from(document.querySelectorAll('[contenteditable="true"]'))
+      .find(isValidInput) as HTMLElement | undefined;
+    return fallback ?? null;
   },
 
   findSubmitButton(): HTMLElement | null {

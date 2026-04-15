@@ -1,4 +1,5 @@
 import type { SiteAdapter } from './base';
+import { defaultIsValidPromptInput } from './base';
 
 /**
  * ChatGPT Adapter — chatgpt.com, chat.openai.com
@@ -362,11 +363,21 @@ export const ChatGPTAdapter: SiteAdapter = {
   },
 
   findInput(): HTMLElement | null {
+    // Sr. Engineer Audit · Item 11: validate every candidate. A platform UI
+    // update that silently renames #prompt-textarea to something else used
+    // to yield a random matching div with zero bounds — IronGate would
+    // "work" (no visible error) but never actually intercept anything.
+    // Now we skip candidates that aren't truly editable + visible.
     for (const sel of this.inputSelectors) {
-      const el = document.querySelector(sel) as HTMLElement;
-      if (el) return el;
+      const el = document.querySelector(sel) as HTMLElement | null;
+      if (el && defaultIsValidPromptInput(el)) return el;
     }
-    return null;
+    // Last-ditch fallback: any visible textarea on the page. ChatGPT only
+    // has one real composer at a time, so the semantic-first approach is
+    // robust to ID churn.
+    const fallback = Array.from(document.querySelectorAll('textarea, [contenteditable="true"]'))
+      .find(defaultIsValidPromptInput) as HTMLElement | undefined;
+    return fallback ?? null;
   },
 
   findSubmitButton(): HTMLElement | null {

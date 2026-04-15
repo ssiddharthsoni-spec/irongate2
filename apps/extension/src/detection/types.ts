@@ -31,6 +31,13 @@ export const HIGH_PII_TYPES: ReadonlySet<string> = new Set([
   'API_KEY', 'AWS_CREDENTIAL', 'GCP_CREDENTIAL', 'DATABASE_URI', 'PRIVATE_KEY', 'AUTH_TOKEN',
   'CLASSIFICATION_MARKING', 'EXPORT_CONTROL',
   'ENCODED_PII', // Base64-encoded PII — deliberately obfuscated, always high-risk
+  // International national-ID numbers — same risk class as US SSN.
+  // Names match the canonical types used across scorer.ts, intent-suppression.ts,
+  // entity-contextualizer.ts, and agent-detector.ts. Per Sr. Engineer Audit · Item 10,
+  // these were already defined in regex but not surfaced in HIGH_PII_TYPES,
+  // so they weren't benefiting from the "always critical floor" treatment.
+  'UK_NINO', 'CANADIAN_SIN', 'INDIAN_AADHAAR', 'AUSTRALIAN_TFN',
+  'GERMAN_TAX_ID', 'FRENCH_INSEE', 'EU_IBAN',
 ]);
 
 /**
