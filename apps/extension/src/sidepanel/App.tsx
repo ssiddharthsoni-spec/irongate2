@@ -1324,12 +1324,21 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
             </div>
 
             <button
-              onClick={() => {
-                // Save mode and dismiss wizard
-                chrome.storage.local.set({ firmMode: 'proxy' });
+              onClick={async () => {
+                // Save mode and dismiss wizard. Await the storage write so
+                // the following sendMessage doesn't race against persistence
+                // (if the worker restarts between the set and the message,
+                // the mode would be lost).
                 try {
-                  chrome.runtime.sendMessage({ type: 'MODE_CHANGED', payload: { mode: 'proxy' } });
+                  await chrome.storage.local.set({ firmMode: 'proxy' });
                 } catch (err) {
+                  console.warn('[IronGate] firmMode storage write failed:', err instanceof Error ? err.message : String(err));
+                }
+                try {
+                  await chrome.runtime.sendMessage({ type: 'MODE_CHANGED', payload: { mode: 'proxy' } });
+                } catch (err) {
+                  // sendMessage can throw synchronously (invalid context) AND
+                  // reject async (worker dead). Both catch here.
                   console.warn('[IronGate] MODE_CHANGED message failed:', err instanceof Error ? err.message : String(err));
                 }
               }}

@@ -58,9 +58,30 @@ import { createAgentDetector } from '../agent/agent-detector';
 import { pseudonymizeViaApi, depseudonymizeViaApi, checkDetectionHealth, isApiAvailable, getApiCircuitState, getAllCircuitStates, KillSwitchError, type PseudonymizeResult } from './detection-api';
 
 // Debug logging — silent in production, enable via: chrome.storage.local.get('ironGateDebug')
-let _IG_DEBUG = false;
-try { chrome.storage.local.get('ironGateDebug', (r) => { _IG_DEBUG = !!r.ironGateDebug; }); } catch {}
-function igLog(...args: any[]) { if (_IG_DEBUG) console.log('[Iron Gate]', ...args); }
+// Use an opt-in flag so a restarted worker re-reads storage on first log
+// (in MV3 the worker can suspend before the callback fires, leaving _IG_DEBUG
+// stuck at false forever for that session). A cached "known" state avoids
+// doing the storage read on every igLog call.
+let _IG_DEBUG: boolean | null = null;
+try {
+  chrome.storage.local.get('ironGateDebug', (r) => {
+    _IG_DEBUG = Boolean(r?.ironGateDebug);
+  });
+} catch { /* storage API unavailable in this context */ }
+
+function igLog(...args: any[]) {
+  // Fast-path when we know the answer.
+  if (_IG_DEBUG === true) console.log('[Iron Gate]', ...args);
+  else if (_IG_DEBUG === null) {
+    // Unknown — try a synchronous best-effort re-read, then log if positive.
+    try {
+      chrome.storage.local.get('ironGateDebug', (r) => {
+        _IG_DEBUG = Boolean(r?.ironGateDebug);
+        if (_IG_DEBUG) console.log('[Iron Gate]', ...args);
+      });
+    } catch { /* ignore — we'll drop this log */ }
+  }
+}
 
 // Cache last prompt text per tab for ghost detection (Basic tier only).
 // Text is stored briefly and cleared after ghost classification or 30s TTL.
@@ -1064,14 +1085,30 @@ const SIDEPANEL_ONLY: ReadonlySet<string> = new Set([
 const _seenNonces = new Set<string>();
 const NONCE_TTL_MS = 60_000; // Nonces expire after 60s
 const NONCE_CLEANUP_INTERVAL = 120_000;
+const NONCE_HARD_CAP = 10_000; // Defensive upper bound — MV3 workers live briefly
 const _nonceTimestamps = new Map<string, number>();
+let _lastNonceCleanup = 0;
 
-setInterval(() => {
-  const cutoff = Date.now() - NONCE_TTL_MS;
+setInterval(() => { cleanupExpiredNonces(); }, NONCE_CLEANUP_INTERVAL);
+
+function cleanupExpiredNonces(): void {
+  _lastNonceCleanup = Date.now();
+  const cutoff = _lastNonceCleanup - NONCE_TTL_MS;
   for (const [nonce, ts] of _nonceTimestamps) {
     if (ts < cutoff) { _seenNonces.delete(nonce); _nonceTimestamps.delete(nonce); }
   }
-}, NONCE_CLEANUP_INTERVAL);
+  // Defensive: if the map somehow grew past the hard cap (worker lived far
+  // longer than expected, setInterval never fired, etc.), evict oldest.
+  if (_nonceTimestamps.size > NONCE_HARD_CAP) {
+    const sorted = [...(_nonceTimestamps.entries())].sort((a, b) => a[1] - b[1]);
+    const over = _nonceTimestamps.size - NONCE_HARD_CAP;
+    for (let i = 0; i < over; i++) {
+      const key = sorted[i][0];
+      _seenNonces.delete(key);
+      _nonceTimestamps.delete(key);
+    }
+  }
+}
 
 // Messages that require nonce validation (sensitive operations)
 const NONCE_REQUIRED: ReadonlySet<string> = new Set([
@@ -1115,6 +1152,13 @@ async function handleMessage(
     }
     _seenNonces.add(nonce);
     _nonceTimestamps.set(nonce, Date.now());
+    // Opportunistic cleanup — MV3 workers can be suspended before the
+    // setInterval above fires. Running cleanup on every ~NONCE_CLEANUP_INTERVAL
+    // of message traffic guarantees TTL is enforced even on long-lived workers
+    // that never see the timer.
+    if (Date.now() - _lastNonceCleanup > NONCE_CLEANUP_INTERVAL) {
+      cleanupExpiredNonces();
+    }
   }
 
   // ── Kill switch: block ALL prompt processing when active ──

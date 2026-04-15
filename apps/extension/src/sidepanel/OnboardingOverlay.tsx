@@ -185,10 +185,14 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
       return;
     }
     try {
+      // AbortSignal.timeout prevents a hung API from stalling the wizard.
+      // Without it, a Render cold-start can leave the firm-code field
+      // "validating…" indefinitely and the user can't proceed.
       const res = await fetch(`${DEFAULT_API_URL}/auth/validate-firm-code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ firmCode: firmCode.trim() }),
+        signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
         setFirmCodeValid(false);
