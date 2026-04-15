@@ -345,6 +345,21 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
       const promptText = extractPromptFromPayload(body);
       if (!promptText || promptText.length < 10) return null;
 
+      // Sr. Engineer Audit · Item 16: Guard against very large prompts.
+      // A multi-megabyte paste runs regex + pseudonymization on a huge
+      // string inside the content script and can freeze the tab. At this
+      // scale detection accuracy degrades anyway — just pass through
+      // unchanged and let the AI platform deal with it. 1 MB is well above
+      // any realistic prompt (GPT-4's 128K context ≈ 500 KB of text).
+      const MAX_PROMPT_BYTES = 1_048_576;
+      if (promptText.length > MAX_PROMPT_BYTES) {
+        sendToWorker('PROMPT_OVERSIZE_SKIPPED', {
+          aiToolId: detector.id,
+          length: promptText.length,
+        });
+        return null;
+      }
+
       // Run local regex + secret detection in parallel with the LLM classifier.
       // The classifier is the PRIMARY judge of intent/context; regex supplies
       // the entity list used for pseudonymization and for the safety override

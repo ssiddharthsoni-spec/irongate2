@@ -110,6 +110,6 @@
   },
   "web_accessible_resources": [],
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; style-src 'self'; img-src 'self'; object-src 'none'; connect-src 'self' http://localhost:11434 http://127.0.0.1:11434 https://irongate-api.onrender.com;"
+    "extension_pages": "script-src 'self'; style-src 'self'; img-src 'self'; object-src 'none'; connect-src 'self' http://localhost:11434 http://127.0.0.1:11434 https://irongate-api.onrender.com; report-uri https://irongate-api.onrender.com/v1/csp-report"
   }
 }

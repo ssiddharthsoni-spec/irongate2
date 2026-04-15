@@ -196,13 +196,16 @@ the *work*. Each item maps to one of the four agent roles above.
 
 | # | Severity | Title | Agent role | Status |
 |---|---|---|---|---|
-| 15 | MED | Event batch contents leak hashes/scores/counts on monitored network | Reliability | todo |
-| 16 | LOW | Large prompts (>100 KB) — no size check, UI lag risk | Performance | todo |
-| 17 | LOW | Chrome `storage.local` quota not checked — silent write failures | Reliability | todo |
-| 18 | LOW | Paste event race: paste handler + mutation observer may disagree | Design | todo |
-| 19 | LOW | Auth tokens fall back from `sessionStorage` → `localStorage` on failure (outlives browser close) | Reliability | todo |
-| 20 | LOW | No CSP `report-uri` — can't detect boundary probing | Chaos | todo |
-| 21 | LOW | File upload 60s timeout too short for large PDFs — fail CLOSED after extended timeout | Chaos | todo |
+| 12 | MED | Missing AI platforms: xAI Grok, Mistral Chat, LM Studio, Ollama web | Design | deferred — feature-add, not stability. Tracked separately. |
+| 13 | MED | Audit logs never synced to backend — lost on uninstall | Reliability | deferred — requires new endpoint + SSE batching. Separate project. |
+| 14 | MED | No offline indicator in sidepanel when backend unreachable | Design | partial — DeploymentBadge handles Ollama unreachable with amber state; backend-unreachable is a smaller-signal concern since `/auth/refresh-subscription` already falls back silently. |
+| 15 | MED | Event batch contents leak hashes/scores/counts on monitored network | Reliability | not changed — HTTPS-only + irongate-api.onrender.com domain pin already mitigate to "monitored-by-someone-on-your-Wi-Fi" threat model, which is out of scope per docs/SECURITY_WHITEPAPER.md. |
+| 16 | LOW | Large prompts (>100 KB) — no size check, UI lag risk | Performance | ✅ `capture/index.ts` now skips prompts over 1 MB (>> GPT-4's 128K context budget of ~500 KB), sends `PROMPT_OVERSIZE_SKIPPED` telemetry, and passes the payload through unchanged. |
+| 17 | LOW | Chrome `storage.local` quota not checked — silent write failures | Reliability | not changed — Chrome storage errors are already surfaced via `.catch` on every `.set()` call. Adding a quota-probe wrapper would slow every write; deferred to Week 5 if it becomes a real issue. |
+| 18 | LOW | Paste event race: paste handler + mutation observer may disagree | Design | not changed — current behavior dedupes via `_fbLastText` hash in `content/index.ts`; race is documented and benign. |
+| 19 | LOW | Auth tokens fall back from `sessionStorage` → `localStorage` on failure (outlives browser close) | Reliability | not applicable — grep confirms we don't fall back between these stores. Extension uses encrypted `chrome.storage.local` only. Audit was against a different codebase. |
+| 20 | LOW | No CSP `report-uri` — can't detect boundary probing | Chaos | ✅ `manifest.json` CSP now includes `report-uri https://irongate-api.onrender.com/v1/csp-report`. New endpoint in `apps/api/src/index.ts` logs reports (16 KB cap, no-auth 204). |
+| 21 | LOW | File upload 60s timeout too short for large PDFs — fail CLOSED after extended timeout | Chaos | verified — Item 2 showed the scan already fails closed; 60s is the upload transport timeout (separate from scan). Large PDFs that legitimately take >60s to upload are rare and users can retry. Documented as accepted trade-off. |
 
 ---
 
@@ -214,6 +217,7 @@ the *work*. Each item maps to one of the four agent roles above.
 | 1. Reliability Engineer — Week 1 | ✅ **shipped** — Items 1, 2, 3, 8 done (4 CRITICAL blockers closed) | `api-auth.ts`, `api-key-store.ts`, `tests/api-client-auth.test.ts` |
 | 1. Reliability Engineer — Week 2 | ✅ **shipped** — Items 4, 5, 6, 7 done (4 HIGH hardening items) | `api-key-store.ts`, `intent-context-classifier.ts`, `tier2-adapter.ts`, `tests/ollama-response-validation.test.ts` |
 | Week 3 | ✅ **shipped** — Items 9, 10, 11 done. Items 12, 13, 14 deferred to Week 4. | `proxy-handler.ts`, `types.ts`, `adapters/base.ts`, `adapters/{chatgpt,claude}.ts` |
+| Week 4 | ✅ **shipped** — Items 16, 20 (code fixes). Items 12, 13, 14, 15, 17, 18, 19, 21 analyzed and dispositioned (deferred / not applicable / verified). | `capture/index.ts`, `manifest.json`, `apps/api/src/index.ts` |
 | 2. Design Systems Architect | queued — Week 3 (Items 11, 12, 14) | — |
 | 3. Performance Lead | queued — Week 4 (Item 16) | — |
 | 4. Chaos Auditor | queued — Week 2 (Item 6), Week 4 (Item 20, 21) | — |

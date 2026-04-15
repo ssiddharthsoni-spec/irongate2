@@ -396,6 +396,23 @@ app.route('/v1/auth/mdm', mdmOAuthPublicRoutes);
 // Stripe webhook (no auth — verified via webhook signature)
 app.route('/v1/webhooks/stripe', stripeWebhookRoutes);
 
+// CSP violation reporter — Sr. Engineer Audit · Item 20.
+// The extension's manifest CSP includes `report-uri ...`. Browsers POST
+// JSON reports here when the extension violates its own CSP (i.e., an
+// attacker trying to probe the extension pages or an internal bug that
+// would have let something through). We log and drop. No auth; the only
+// attacker-controlled field is the report body, which is logged as-is
+// with a hard size cap.
+app.post('/v1/csp-report', async (c) => {
+  try {
+    const raw = await c.req.raw.text();
+    // Cap at 16 KB — real CSP reports are well under that.
+    const safe = raw.length > 16_384 ? raw.slice(0, 16_384) + '…[truncated]' : raw;
+    console.warn('[CSP-REPORT]', safe);
+  } catch { /* malformed report — ignore */ }
+  return c.body(null, 204);
+});
+
 // SCIM 2.0 provisioning (no Clerk auth — uses its own bearer token via firms.config.scimToken)
 app.route('/scim', scimRoutes);
 
