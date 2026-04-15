@@ -84,7 +84,7 @@ export function TrialBanner() {
           You're on Basic &mdash; ML detection and proxy mode are disabled.
         </p>
         <button
-          onClick={() => chrome.tabs.create({ url: 'https://irongate-dashboard.vercel.app/settings/billing' })}
+          onClick={() => chrome.tabs.create({ url: 'https://irongate-dashboard.vercel.app/sign-in?redirect_url=%2Fsettings%2Fbilling' })}
           className="w-full py-1.5 text-xs font-semibold text-white bg-red-600 rounded-md hover:bg-red-700 transition-colors"
         >
           Upgrade to Pro
@@ -109,7 +109,7 @@ export function TrialBanner() {
           {entitiesDetected} entities detected &mdash; Upgrade to keep ML-powered detection.
         </p>
         <button
-          onClick={() => chrome.tabs.create({ url: 'https://irongate-dashboard.vercel.app/settings/billing' })}
+          onClick={() => chrome.tabs.create({ url: 'https://irongate-dashboard.vercel.app/sign-in?redirect_url=%2Fsettings%2Fbilling' })}
           className="w-full py-1.5 text-xs font-semibold text-white bg-red-600 rounded-md hover:bg-red-700 transition-colors"
         >
           Upgrade Now
@@ -160,7 +160,7 @@ export function TrialBanner() {
         <div className="flex items-center justify-between">
           <span className="text-xs text-gray-600">Basic plan &mdash; regex detection only</span>
           <button
-            onClick={() => chrome.tabs.create({ url: 'https://irongate-dashboard.vercel.app/settings/billing' })}
+            onClick={() => chrome.tabs.create({ url: 'https://irongate-dashboard.vercel.app/sign-in?redirect_url=%2Fsettings%2Fbilling' })}
             className="text-[10px] font-semibold text-iron-600 hover:text-iron-700"
           >
             Upgrade
