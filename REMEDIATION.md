@@ -219,6 +219,7 @@ the *work*. Each item maps to one of the four agent roles above.
 | Week 3 | ✅ **shipped** — Items 9, 10, 11 done. Items 12, 13, 14 deferred to Week 4. | `proxy-handler.ts`, `types.ts`, `adapters/base.ts`, `adapters/{chatgpt,claude}.ts` |
 | Week 4 | ✅ **shipped** — Items 16, 20 (code fixes). Items 12, 13, 14, 15, 17, 18, 19, 21 analyzed and dispositioned (deferred / not applicable / verified). | `capture/index.ts`, `manifest.json`, `apps/api/src/index.ts` |
 | 2. Design Systems Architect | ✅ **shipped** — 4 state-machine / race-condition fixes | `sidepanel/App.tsx` (init state machine), `OnboardingOverlay.tsx` (double-click guard + unmount race), `dashboard/page.tsx` (retry loading) |
+| 3. Performance Lead | ✅ **shipped** — 2 high-impact perf fixes | `api/src/routes/dashboard.ts` (drop oversized entities payload), `api/src/routes/proxy.ts` (opportunistic LLM-budget eviction) |
 | 2. Design Systems Architect | queued — Week 3 (Items 11, 12, 14) | — |
 | 3. Performance Lead | queued — Week 4 (Item 16) | — |
 | 4. Chaos Auditor | queued — Week 2 (Item 6), Week 4 (Item 20, 21) | — |

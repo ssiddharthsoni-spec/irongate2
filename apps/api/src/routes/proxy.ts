@@ -34,10 +34,27 @@ import { piiSafetyNetMiddleware, scanForUnmaskedPII } from '../middleware/pii-sa
 
 const LLM_DAILY_BUDGET = parseInt(process.env.LLM_DAILY_BUDGET_PER_FIRM || '500', 10);
 const _llmCallCounts = new Map<string, { count: number; resetAt: number }>();
+// Performance Lead Phase · Issue #3 — opportunistic eviction.
+// Previously only evicted when the map grew past 5000. That's O(N) per
+// overflow-trigger request AND lets day-1 entries linger for a firm that
+// never hits the cap. Every 256 calls we do an O(N) sweep of expired
+// entries. Bounded, amortized, and keeps the map small across all traffic
+// patterns (not just adversarial ones).
+let _llmBudgetCallsSinceSweep = 0;
+const LLM_BUDGET_SWEEP_EVERY = 256;
 
 /** Check and increment LLM call count for a firm. Returns true if within budget. */
 function checkLlmBudget(firmId: string): boolean {
   const now = Date.now();
+
+  _llmBudgetCallsSinceSweep++;
+  if (_llmBudgetCallsSinceSweep >= LLM_BUDGET_SWEEP_EVERY || _llmCallCounts.size > 5000) {
+    _llmBudgetCallsSinceSweep = 0;
+    for (const [key, val] of _llmCallCounts) {
+      if (val.resetAt < now) _llmCallCounts.delete(key);
+    }
+  }
+
   const entry = _llmCallCounts.get(firmId);
 
   if (!entry || entry.resetAt < now) {
@@ -45,13 +62,6 @@ function checkLlmBudget(firmId: string): boolean {
     const midnight = new Date();
     midnight.setUTCHours(24, 0, 0, 0);
     _llmCallCounts.set(firmId, { count: 1, resetAt: midnight.getTime() });
-
-    // Evict old entries to prevent memory leak
-    if (_llmCallCounts.size > 5000) {
-      for (const [key, val] of _llmCallCounts) {
-        if (val.resetAt < now) _llmCallCounts.delete(key);
-      }
-    }
     return true;
   }
 

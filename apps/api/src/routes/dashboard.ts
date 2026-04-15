@@ -90,13 +90,22 @@ dashboardRoutes.get('/overview', async (c) => {
       highRiskCount: sql<number>`count(*) filter (where ${events.sensitivityScore} > 60)`,
     }).from(events).where(firmCondition).groupBy(events.userId).orderBy(sql`count(*) desc`).limit(10),
 
-    // Q6: Recent high risk events
+    // Q6: Recent high risk events.
+    //
+    // Performance Lead Phase · Issue #2 — we used to `select events.entities`
+    // here, which returns the full JSONB entity array (can be 50-200 KB per
+    // event × 20 rows = multi-MB payloads). The frontend only shows a summary
+    // (tool, score, timestamp) — the entity array was never rendered.
+    //
+    // New shape: return a cheap `entityCount` computed in SQL (jsonb_array_length)
+    // so downstream consumers that want a badge have one, without the payload
+    // cost. Full entity details are accessible via the events detail endpoint.
     db.select({
       id: events.id,
       aiToolId: events.aiToolId,
       sensitivityScore: events.sensitivityScore,
       sensitivityLevel: events.sensitivityLevel,
-      entities: events.entities,
+      entityCount: sql<number>`COALESCE(jsonb_array_length(${events.entities}), 0)`,
       action: events.action,
       captureMethod: events.captureMethod,
       eventHash: events.eventHash,
