@@ -23,6 +23,10 @@ export default function GeneralSettingsPage() {
   const [firmName, setFirmName] = useState('');
   const [industry, setIndustry] = useState('general');
   const [retention, setRetention] = useState(90);
+  // Optimistic-lock token — read on GET, echoed on PUT. Server uses it
+  // to reject concurrent writes with 409 instead of silently clobbering
+  // another admin's edits.
+  const [firmVersion, setFirmVersion] = useState<number | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -36,9 +40,10 @@ export default function GeneralSettingsPage() {
       const response = await apiFetch('/admin/firm');
       if (!response.ok) throw new Error(`Server responded with ${response.status}`);
       const data = await response.json();
-      if (data.firmName) setFirmName(data.firmName);
-      if (data.industry) setIndustry(data.industry);
-      if (data.retention) setRetention(data.retention);
+      if (data.name) setFirmName(data.name);
+      if (data.config?.industry) setIndustry(data.config.industry);
+      if (data.config?.retention) setRetention(data.config.retention);
+      if (typeof data.version === 'number') setFirmVersion(data.version);
     } catch (err: any) {
       setError(err.message || 'Failed to load data. Please try again.');
     } finally {
@@ -51,14 +56,40 @@ export default function GeneralSettingsPage() {
   }, []);
 
   async function handleSave() {
+    if (firmVersion === null) {
+      setSaveMessage({ type: 'error', text: 'Firm config not loaded yet. Try again in a moment.' });
+      return;
+    }
     try {
       setSaving(true);
       setSaveMessage(null);
       const response = await apiFetch('/admin/firm', {
         method: 'PUT',
-        body: JSON.stringify({ firmName, industry, retention }),
+        body: JSON.stringify({
+          name: firmName,
+          config: { industry, retention },
+          version: firmVersion,
+        }),
       });
+
+      // Optimistic-lock conflict — another admin wrote between our read
+      // and our write. The server tells us the current version. Refetch
+      // transparently so the user can re-apply their changes on fresh state.
+      if (response.status === 409) {
+        const body = await response.json().catch(() => ({}));
+        setSaveMessage({
+          type: 'error',
+          text:
+            body?.message ||
+            'This firm was modified by someone else. Refreshing the form — please re-apply your changes.',
+        });
+        await fetchConfig();
+        return;
+      }
+
       if (!response.ok) throw new Error(`Server responded with ${response.status}`);
+      const updated = await response.json().catch(() => null);
+      if (updated && typeof updated.version === 'number') setFirmVersion(updated.version);
       setSaveMessage({ type: 'success', text: 'Settings saved successfully.' });
     } catch (err: any) {
       setSaveMessage({ type: 'error', text: err.message || 'Failed to save settings.' });

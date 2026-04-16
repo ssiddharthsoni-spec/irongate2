@@ -279,23 +279,55 @@ adminRoutes.put('/firm', async (c) => {
   // Chaos Auditor · HIGH: input caps. Without .max() an attacker (or a
   // careless admin) can submit multi-megabyte firm names that bloat the
   // DB row, break UI rendering, and drown logs.
+  //
+  // `version` is the optimistic-lock token. Clients MUST send the version
+  // they read on GET. If it doesn't match the stored version, the write
+  // is rejected with 409 and the client is forced to refetch.
   const updateSchema = z.object({
     name: z.string().min(1).max(255).optional(),
     mode: z.enum(['audit', 'proxy']).optional(),
     config: z.record(z.unknown()).optional(),
+    version: z.number().int().nonnegative(),
   });
 
   const parsed = updateSchema.parse(body);
+  const { version: clientVersion, ...fieldsToUpdate } = parsed;
 
+  // Compare-and-swap: UPDATE ... WHERE id=? AND version=? RETURNING *.
+  // If no row is returned, the stored version didn't match — either
+  // someone else wrote concurrently, or the firm doesn't exist.
   const [updated] = await db
     .update(firms)
-    .set({ ...parsed, updatedAt: new Date() })
-    .where(eq(firms.id, firmId))
+    .set({
+      ...fieldsToUpdate,
+      version: sql`${firms.version} + 1`,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(firms.id, firmId), eq(firms.version, clientVersion)))
     .returning();
 
-  if (!updated) return c.json({ error: 'Firm not found' }, 404);
+  if (!updated) {
+    // Distinguish "doesn't exist" from "concurrent edit" — refetch to
+    // give the client actionable info.
+    const [current] = await db
+      .select({ version: firms.version })
+      .from(firms)
+      .where(eq(firms.id, firmId))
+      .limit(1);
+    if (!current) return c.json({ error: 'Firm not found' }, 404);
+    return c.json(
+      {
+        error: 'version_conflict',
+        message:
+          'This firm was modified by someone else while you were editing. Refresh and re-apply your changes.',
+        currentVersion: current.version,
+        yourVersion: clientVersion,
+      },
+      409,
+    );
+  }
 
-  logAdminAction(c, 'firm.update', 'firm', { resourceId: updated.id, newValue: parsed });
+  logAdminAction(c, 'firm.update', 'firm', { resourceId: updated.id, newValue: fieldsToUpdate });
   return c.json(updated);
 });
 

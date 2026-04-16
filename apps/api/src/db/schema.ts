@@ -30,6 +30,20 @@ export const firms = pgTable('firms', {
   encryptionSalt: varchar('encryption_salt', { length: 64 }),
   /** Shareable code for employees to join this firm from the extension */
   enrollmentCode: varchar('enrollment_code', { length: 50 }).unique(),
+  /**
+   * Optimistic-lock version. Every row starts at 1 and increments on
+   * every successful UPDATE. Clients read this on GET, echo it back on
+   * PUT. The server refuses the write if the stored version has already
+   * advanced — the client is editing stale data and must refetch.
+   *
+   * Eliminates the classic concurrent-edit clobber: two admins both
+   * editing firm config at the same time would each read version=7,
+   * both write — whoever landed last silently overwrote the other's
+   * changes. Now the second write returns 409 and the user is told.
+   *
+   * REMEDIATION.md · Phase 4 deferred item (now landed).
+   */
+  version: integer('version').notNull().default(1),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

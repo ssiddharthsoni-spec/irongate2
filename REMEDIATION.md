@@ -221,6 +221,7 @@ the *work*. Each item maps to one of the four agent roles above.
 | 2. Design Systems Architect | ✅ **shipped** — 4 state-machine / race-condition fixes | `sidepanel/App.tsx` (init state machine), `OnboardingOverlay.tsx` (double-click guard + unmount race), `dashboard/page.tsx` (retry loading) |
 | 3. Performance Lead | ✅ **shipped** — 2 high-impact perf fixes | `api/src/routes/dashboard.ts` (drop oversized entities payload), `api/src/routes/proxy.ts` (opportunistic LLM-budget eviction) |
 | 4. Chaos Auditor | ✅ **shipped** — 4 hardening fixes (string caps, JSON.parse crash guards, idempotent firm create) | `api/src/routes/{admin,feedback,mdm-oauth}.ts` |
+| Post-plan · Concurrent-edit | ✅ **shipped** — optimistic locking on `firms` table (previously deferred Chaos item) | `db/schema.ts`, `db/auto-migrate.ts`, `routes/admin.ts` PUT handler, `dashboard/settings/page.tsx`, `tests/firm-optimistic-lock.test.ts` (6 invariant tests) |
 | 2. Design Systems Architect | queued — Week 3 (Items 11, 12, 14) | — |
 | 3. Performance Lead | queued — Week 4 (Item 16) | — |
 | 4. Chaos Auditor | queued — Week 2 (Item 6), Week 4 (Item 20, 21) | — |

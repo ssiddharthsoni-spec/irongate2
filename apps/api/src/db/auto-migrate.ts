@@ -10,6 +10,9 @@ const migrations: string[] = [
   // --- firms table additions ---
   `ALTER TABLE firms ADD COLUMN IF NOT EXISTS encryption_salt VARCHAR(64)`,
   `ALTER TABLE firms ADD COLUMN IF NOT EXISTS enrollment_code VARCHAR(50) UNIQUE`,
+  // Optimistic-lock version. Default 1 so existing rows get a starting
+  // value; NOT NULL so every future UPDATE can compare-and-swap.
+  `ALTER TABLE firms ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1`,
 
   // --- api_keys table ---
   `CREATE TABLE IF NOT EXISTS api_keys (
