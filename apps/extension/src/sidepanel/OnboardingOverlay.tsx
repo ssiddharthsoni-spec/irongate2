@@ -147,10 +147,17 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
       }
       // Persist tier2 config
       try {
+        // Write to BOTH key sets so every consumer finds the config:
+        //   tier2*          → read by managed-config.ts (Tier 2 adapter)
+        //   localLLM*       → read by content/index.ts (main-world RPC)
+        //   localEndpoint   → read by worker initLocalLlmDeployment
         await chrome.storage.local.set({
           tier2Enabled: true,
           tier2Endpoint: 'http://localhost:11434/api/generate',
           tier2Model: 'gemma4:e2b',
+          localLLMEndpoint: 'http://localhost:11434/api/generate',
+          localLLMModel: 'gemma4:e2b',
+          localLLMEnabled: true,
         });
       } catch { /* non-fatal */ }
       if (!isMountedRef.current) return;
