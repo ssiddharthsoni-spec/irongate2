@@ -356,6 +356,12 @@ class IronGateDashboardSink implements AuditSink {
     const v = this.validate();
     if (!v.ok) return { ok: false, delivered: 0, failed: batch.length, error: v.error };
 
+    // Client-generated idempotency key. A retry after a lost response
+    // carries the same key, so the server returns {duplicate: true}
+    // instead of re-inserting the audit entries. Matches the
+    // server-side cache in apps/api/src/routes/audit.ts.
+    const batchId = crypto.randomUUID();
+
     try {
       const response = await fetch(this.apiUrl, {
         method: 'POST',
@@ -364,7 +370,7 @@ class IronGateDashboardSink implements AuditSink {
           'X-API-Key': this.apiKey,
           'X-IronGate-Schema': '1',
         },
-        body: JSON.stringify({ entries: batch }),
+        body: JSON.stringify({ batchId, entries: batch }),
         signal: AbortSignal.timeout(10000),
       });
       if (!response.ok) {

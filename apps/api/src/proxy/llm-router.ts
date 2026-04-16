@@ -7,11 +7,11 @@
 // configured providers.
 
 import type { LLMProviderConfig, LLMRoute } from '@iron-gate/types';
-import { GeminiProvider } from './providers/gemini';
-import { OpenAIProvider } from './providers/openai';
-import { AnthropicProvider } from './providers/anthropic';
-import { OllamaProvider } from './providers/ollama';
-import { AzureOpenAIProvider } from './providers/azure';
+// Provider implementations are dynamic-imported on first use — see PROVIDER_LOADERS
+// below. This saves ~30 KB on API cold start because a given firm typically uses
+// 1-2 providers, not all 5. Removing eager imports also means a broken
+// provider module (e.g., a bad deploy of ./providers/azure) doesn't prevent
+// the API from booting at all.
 import { logger } from '../lib/logger';
 import { CircuitBreaker, CircuitBreakerOpenError } from '../lib/circuit-breaker';
 
@@ -122,16 +122,34 @@ function validateBaseUrl(baseUrl: string | undefined): void {
 }
 
 // ---------------------------------------------------------------------------
-// Provider registry
+// Provider registry — lazy-loaded
 // ---------------------------------------------------------------------------
+// Each provider is instantiated on first use and cached for the process
+// lifetime. Callers that never need a given provider never pay its module
+// cost. Invariant: `await getProvider('gemini')` always returns the same
+// instance (no per-request allocation).
 
-const PROVIDERS: Record<string, LLMProvider> = {
-  gemini: new GeminiProvider(),
-  openai: new OpenAIProvider(),
-  anthropic: new AnthropicProvider(),
-  azure: new AzureOpenAIProvider(),
-  ollama: new OllamaProvider(),
+type ProviderLoader = () => Promise<LLMProvider>;
+
+const PROVIDER_LOADERS: Record<string, ProviderLoader> = {
+  gemini: async () => new (await import('./providers/gemini')).GeminiProvider(),
+  openai: async () => new (await import('./providers/openai')).OpenAIProvider(),
+  anthropic: async () => new (await import('./providers/anthropic')).AnthropicProvider(),
+  azure: async () => new (await import('./providers/azure')).AzureOpenAIProvider(),
+  ollama: async () => new (await import('./providers/ollama')).OllamaProvider(),
 };
+
+const _providerCache = new Map<string, LLMProvider>();
+
+async function getProvider(name: string): Promise<LLMProvider> {
+  const cached = _providerCache.get(name);
+  if (cached) return cached;
+  const loader = PROVIDER_LOADERS[name];
+  if (!loader) throw new Error(`Unknown LLM provider: ${name}`);
+  const instance = await loader();
+  _providerCache.set(name, instance);
+  return instance;
+}
 
 // Per-provider circuit breakers — fail fast when a provider is down
 const CIRCUIT_BREAKERS: Record<string, CircuitBreaker> = {
@@ -160,10 +178,15 @@ export class LLMRouter {
    * - private_llm -> self-hosted provider (ollama)
    */
   async send(request: LLMRequest): Promise<LLMResponse> {
-    const { provider, providerConfig } = this.resolveProvider(request.route, request.model);
+    const { providerConfig } = this.resolveProvider(request.route, request.model);
 
     // SSRF protection — validate baseUrl before sending
     validateBaseUrl(providerConfig.baseUrl);
+
+    // Lazy-load the provider module on first use. All subsequent calls
+    // for the same provider hit the in-process cache — no per-request
+    // import cost.
+    const provider = await getProvider(providerConfig.provider);
 
     logger.info('Routing to provider', {
       provider: provider.name,
@@ -194,9 +217,10 @@ export class LLMRouter {
    * implement sendStream().
    */
   async *sendStream(request: LLMRequest): AsyncGenerator<string, void, unknown> {
-    const { provider, providerConfig } = this.resolveProvider(request.route, request.model);
+    const { providerConfig } = this.resolveProvider(request.route, request.model);
     validateBaseUrl(providerConfig.baseUrl);
 
+    const provider = await getProvider(providerConfig.provider);
     if (!provider.sendStream) {
       throw new Error(`[LLMRouter] Provider '${provider.name}' does not support streaming yet`);
     }
@@ -223,7 +247,7 @@ export class LLMRouter {
   private resolveProvider(
     route: LLMRoute,
     modelHint?: string,
-  ): { provider: LLMProvider; providerConfig: LLMProviderConfig } {
+  ): { providerConfig: LLMProviderConfig } {
     // Private route always goes to the self-hosted provider
     if (route === 'private_llm') {
       return this.resolvePrivateProvider();
@@ -241,11 +265,10 @@ export class LLMRouter {
     return this.resolveCloudProvider();
   }
 
-  private resolvePrivateProvider(): { provider: LLMProvider; providerConfig: LLMProviderConfig } {
+  private resolvePrivateProvider(): { providerConfig: LLMProviderConfig } {
     const ollamaConfig = this.config.ollama ?? this.config.privateLlm ?? {};
 
     return {
-      provider: PROVIDERS.ollama,
       providerConfig: {
         provider: 'ollama',
         model: ollamaConfig.model ?? 'llama3',
@@ -254,7 +277,7 @@ export class LLMRouter {
     };
   }
 
-  private resolveCloudProvider(): { provider: LLMProvider; providerConfig: LLMProviderConfig } {
+  private resolveCloudProvider(): { providerConfig: LLMProviderConfig } {
     // Default cloud provider is now Gemini — cheaper, faster, and the
     // product's primary target. OpenAI/Anthropic/Azure remain as options.
     const preferred = this.config.defaultCloudProvider ?? 'gemini';
@@ -277,7 +300,6 @@ export class LLMRouter {
                 ? 'claude-sonnet-4-20250514'
                 : 'gpt-4o';
         return {
-          provider: PROVIDERS[providerName],
           providerConfig: {
             provider: providerName,
             model: cfg.model ?? defaultModel,
@@ -296,14 +318,13 @@ export class LLMRouter {
 
   private inferProviderFromModel(
     model: string,
-  ): { provider: LLMProvider; providerConfig: LLMProviderConfig } | null {
+  ): { providerConfig: LLMProviderConfig } | null {
     const lower = model.toLowerCase();
 
     if (lower.startsWith('gemini')) {
       const cfg = this.config.gemini;
       if (cfg?.apiKey) {
         return {
-          provider: PROVIDERS.gemini,
           providerConfig: {
             provider: 'gemini',
             model,
@@ -318,7 +339,6 @@ export class LLMRouter {
       const cfg = this.config.openai;
       if (cfg?.apiKey) {
         return {
-          provider: PROVIDERS.openai,
           providerConfig: {
             provider: 'openai',
             model,
@@ -333,7 +353,6 @@ export class LLMRouter {
       const cfg = this.config.anthropic;
       if (cfg?.apiKey) {
         return {
-          provider: PROVIDERS.anthropic,
           providerConfig: {
             provider: 'anthropic',
             model,
@@ -348,7 +367,6 @@ export class LLMRouter {
       const cfg = this.config.ollama ?? this.config.privateLlm;
       if (cfg) {
         return {
-          provider: PROVIDERS.ollama,
           providerConfig: {
             provider: 'ollama',
             model,

@@ -1,11 +1,13 @@
 // Iron Gate — Audit Trail Routes
 import { Hono } from 'hono';
+import { z } from 'zod';
 import { db } from '../db/client';
-import { events } from '../db/schema';
+import { events, auditLog } from '../db/schema';
 import { eq, and, asc, desc, gte, lte, sql } from 'drizzle-orm';
 import { verifyChain, getChainHead } from '../services/audit-chain';
 import { sha256, hmacSign, hmacVerify } from '@iron-gate/crypto';
 import { getSigningKey } from '../services/signing-key';
+import { logger } from '../lib/logger';
 import type { AppEnv } from '../types';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -338,4 +340,124 @@ auditRoutes.get('/chain', async (c) => {
     limit,
     offset,
   });
+});
+
+// ---------------------------------------------------------------------------
+// POST /v1/audit/batch — ingest audit entries from the extension
+// ---------------------------------------------------------------------------
+// Closes the "audit logs lost on extension uninstall" gap from the
+// Sr. Engineer audit (Item 13). Extension uses IronGateDashboardSink to
+// POST batches here when the customer opts into `auditLogDestination =
+// 'irongate-dashboard'`. Default stays `none` (sovereign mode) — this
+// endpoint is opt-in, never forced.
+//
+// Storage: records go into the generic auditLog table as
+// `action='extension.detection'` with the full entry in `newValue` JSONB.
+// That table already has firmId + createdAt indexes so reports can query
+// by firm and time window without a schema change.
+//
+// Idempotency: same pattern as /events/batch — a client-provided
+// batchId dedupes retries within a 10-minute window.
+
+const auditEntrySchema = z.object({
+  id: z.string().max(64),
+  timestamp: z.string().max(64),
+  firmId: z.string().max(64).optional(),
+  deviceHash: z.string().max(128),
+  aiTool: z.string().max(50),
+  zone: z.enum(['green', 'amber', 'red']),
+  score: z.number().min(0).max(100),
+  entityCount: z.number().int().min(0),
+  entityTypes: z.array(z.string().max(50)).max(100),
+  action: z.enum(['allowed', 'pseudonymized', 'blocked', 'low-risk-passthrough']),
+  tier: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  pseudonymsApplied: z.number().int().min(0),
+  modelUsed: z.string().max(100).optional(),
+  latencyMs: z.number().min(0).optional(),
+  conversationId: z.string().max(64).optional(),
+  turnNumber: z.number().int().min(0).optional(),
+});
+
+const auditBatchSchema = z.object({
+  batchId: z.string().max(64).optional(),
+  entries: z.array(auditEntrySchema).min(1).max(500),
+});
+
+// Batch-idempotency cache mirrors the /events/batch pattern.
+interface AuditBatchResult { count: number; storedAt: number }
+const _auditBatchCache = new Map<string, AuditBatchResult>();
+const AUDIT_CACHE_TTL_MS = 10 * 60_000;
+const AUDIT_CACHE_MAX = 5_000;
+let _auditBatchSweepCounter = 0;
+
+function sweepAuditCache(now: number): void {
+  _auditBatchSweepCounter = 0;
+  for (const [k, v] of _auditBatchCache) {
+    if (now - v.storedAt > AUDIT_CACHE_TTL_MS) _auditBatchCache.delete(k);
+  }
+  if (_auditBatchCache.size > AUDIT_CACHE_MAX) {
+    const sorted = [...(_auditBatchCache.entries())].sort((a, b) => a[1].storedAt - b[1].storedAt);
+    const over = _auditBatchCache.size - AUDIT_CACHE_MAX;
+    for (let i = 0; i < over; i++) _auditBatchCache.delete(sorted[i][0]);
+  }
+}
+
+auditRoutes.post('/batch', async (c) => {
+  const firmId = c.get('firmId');
+  const userId = c.get('userId');
+
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+
+  const parseResult = auditBatchSchema.safeParse(body);
+  if (!parseResult.success) {
+    return c.json({ error: 'Validation error', details: parseResult.error.errors }, 400);
+  }
+  const parsed = parseResult.data;
+
+  // Idempotency short-circuit.
+  const now = Date.now();
+  _auditBatchSweepCounter++;
+  if (_auditBatchSweepCounter >= 256 || _auditBatchCache.size > AUDIT_CACHE_MAX) {
+    sweepAuditCache(now);
+  }
+  const cacheKey = parsed.batchId ? `${firmId}:${parsed.batchId}` : '';
+  if (cacheKey) {
+    const cached = _auditBatchCache.get(cacheKey);
+    if (cached && now - cached.storedAt <= AUDIT_CACHE_TTL_MS) {
+      return c.json({ accepted: cached.count, duplicate: true });
+    }
+  }
+
+  // Insert all entries in one multi-row insert. Any single failure
+  // (invalid FK, constraint violation) aborts the whole batch —
+  // client retries idempotently via batchId.
+  const rows = parsed.entries.map((e) => ({
+    firmId,
+    actorId: userId,
+    action: 'extension.detection',
+    resourceType: 'audit_entry',
+    resourceId: null,
+    newValue: e as any,
+    ipAddress: c.req.header('x-forwarded-for') || c.req.header('cf-connecting-ip') || null,
+    userAgent: c.req.header('user-agent') || null,
+  }));
+
+  try {
+    await db.insert(auditLog).values(rows);
+  } catch (err) {
+    logger.error('Audit batch insert failed', {
+      firmId,
+      count: rows.length,
+      batchId: parsed.batchId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return c.json({ error: 'Failed to insert audit entries' }, 500);
+  }
+
+  if (cacheKey) {
+    _auditBatchCache.set(cacheKey, { count: rows.length, storedAt: Date.now() });
+  }
+
+  return c.json({ accepted: rows.length, duplicate: false });
 });
