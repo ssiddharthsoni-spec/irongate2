@@ -222,6 +222,9 @@ the *work*. Each item maps to one of the four agent roles above.
 | 3. Performance Lead | ✅ **shipped** — 2 high-impact perf fixes | `api/src/routes/dashboard.ts` (drop oversized entities payload), `api/src/routes/proxy.ts` (opportunistic LLM-budget eviction) |
 | 4. Chaos Auditor | ✅ **shipped** — 4 hardening fixes (string caps, JSON.parse crash guards, idempotent firm create) | `api/src/routes/{admin,feedback,mdm-oauth}.ts` |
 | Post-plan · Concurrent-edit | ✅ **shipped** — optimistic locking on `firms` table (previously deferred Chaos item) | `db/schema.ts`, `db/auto-migrate.ts`, `routes/admin.ts` PUT handler, `dashboard/settings/page.tsx`, `tests/firm-optimistic-lock.test.ts` (6 invariant tests) |
+| Post-plan · Batch idempotency | ✅ **shipped** — closes "offline-then-network divergence" (Chaos). Extension sends `batchId` as idempotency key; server now caches 2xx results for 10 min so retry-after-lost-response returns the same result instead of re-inserting events. | `api/src/routes/events.ts` |
+| Post-plan · Subscription upsert race | ✅ **shipped** — `applySuperAdminSubscription` now runs inside a transaction with a Postgres advisory lock keyed on `firmId`. Serializes concurrent callers for the SAME firm (startup sweep + /billing self-heal + register-extension + /admin/firm); different firms still parallel. | `api/src/lib/super-admin.ts` |
+| Post-plan · Dashboard button stuck | ✅ **shipped** — billing upgrade and portal buttons auto-reset after 30 s hang with actionable error. Closes Design Systems Issue #9. | `dashboard/src/app/settings/billing/page.tsx` |
 | 2. Design Systems Architect | queued — Week 3 (Items 11, 12, 14) | — |
 | 3. Performance Lead | queued — Week 4 (Item 16) | — |
 | 4. Chaos Auditor | queued — Week 2 (Item 6), Week 4 (Item 20, 21) | — |

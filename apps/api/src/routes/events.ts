@@ -218,6 +218,46 @@ eventsRoutes.post('/', async (c) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Batch idempotency cache — the extension queue uses a crypto.randomUUID()
+// batchId per batch and retries on failure. Server-side dedup prevents
+// a retry-after-lost-response from inserting the same events twice.
+//
+// REMEDIATION.md · post-plan — closes the "offline-then-network divergence"
+// Chaos audit item. In-memory (Render restarts reset it), 10-min TTL,
+// hard-capped at 5000 entries with LRU-ish eviction.
+// ---------------------------------------------------------------------------
+interface BatchResult {
+  statusCode: 200 | 207 | 500;
+  body: any;
+  storedAt: number;
+}
+const _batchIdempotencyCache = new Map<string, BatchResult>();
+const BATCH_IDEMPOTENCY_TTL_MS = 10 * 60_000;
+const BATCH_IDEMPOTENCY_MAX = 5_000;
+let _batchCacheCallsSinceSweep = 0;
+
+function batchCacheKey(firmId: string, batchId: string): string {
+  return `${firmId}:${batchId}`;
+}
+
+function sweepBatchCache(now: number): void {
+  _batchCacheCallsSinceSweep = 0;
+  for (const [k, v] of _batchIdempotencyCache) {
+    if (now - v.storedAt > BATCH_IDEMPOTENCY_TTL_MS) {
+      _batchIdempotencyCache.delete(k);
+    }
+  }
+  // If still over the cap after TTL sweep, evict oldest until we're under.
+  if (_batchIdempotencyCache.size > BATCH_IDEMPOTENCY_MAX) {
+    const entries = [...(_batchIdempotencyCache.entries())].sort(
+      (a, b) => a[1].storedAt - b[1].storedAt,
+    );
+    const over = _batchIdempotencyCache.size - BATCH_IDEMPOTENCY_MAX;
+    for (let i = 0; i < over; i++) _batchIdempotencyCache.delete(entries[i][0]);
+  }
+}
+
 // POST /v1/events/batch — Batch event ingestion
 eventsRoutes.post('/batch', async (c) => {
   try {
@@ -225,6 +265,25 @@ eventsRoutes.post('/batch', async (c) => {
     const parsed = batchSchema.parse(body);
     const firmId = c.get('firmId');
     const userId = c.get('userId');
+
+    // Idempotency check: if the client retried after a lost response, return
+    // the cached result — events are NOT re-inserted. Opportunistic cache
+    // sweep every 256 calls to keep the map bounded.
+    const now = Date.now();
+    _batchCacheCallsSinceSweep++;
+    if (_batchCacheCallsSinceSweep >= 256 || _batchIdempotencyCache.size > BATCH_IDEMPOTENCY_MAX) {
+      sweepBatchCache(now);
+    }
+    const cacheKey = batchCacheKey(firmId, parsed.batchId);
+    const cached = _batchIdempotencyCache.get(cacheKey);
+    if (cached && now - cached.storedAt <= BATCH_IDEMPOTENCY_TTL_MS) {
+      logger.info('Batch idempotency hit — returning cached result', {
+        firmId,
+        batchId: parsed.batchId,
+        eventCount: parsed.events.length,
+      });
+      return c.json(cached.body, cached.statusCode);
+    }
 
     // Insert each event via audit chain (sequential for chain integrity).
     // Partial failure returns succeeded + failed arrays so the client
@@ -312,14 +371,26 @@ eventsRoutes.post('/batch', async (c) => {
       triggerInferenceDistributed(firmId);
     }
 
-    const statusCode = failed.length === 0 ? 200 : succeeded.length > 0 ? 207 : 500;
-
-    return c.json({
+    const statusCode = (failed.length === 0 ? 200 : succeeded.length > 0 ? 207 : 500) as 200 | 207 | 500;
+    const responseBody = {
       batchId: parsed.batchId,
       eventIds: succeeded.map((r) => r.id),
       count: succeeded.length,
       ...(failed.length > 0 && { failed }),
-    }, statusCode);
+    };
+
+    // Cache the result so a retry with the same batchId returns the same
+    // response instead of re-inserting. Only cache 2xx (success) results —
+    // 500s are transient and should be retried with fresh processing.
+    if (statusCode < 500) {
+      _batchIdempotencyCache.set(cacheKey, {
+        statusCode,
+        body: responseBody,
+        storedAt: Date.now(),
+      });
+    }
+
+    return c.json(responseBody, statusCode);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return c.json({ error: 'Validation error', details: error.errors }, 400);

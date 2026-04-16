@@ -94,10 +94,23 @@ export default function BillingPage() {
     }
     try {
       setUpgrading(planId);
+
+      // Auto-reset the button state if the network hangs for 30s. Without
+      // this the button stayed disabled forever when Render was asleep —
+      // user had no way to retry without reloading the page.
+      const upgradeTimeout = window.setTimeout(() => {
+        setUpgrading(null);
+        setErrorMessage('Request timed out. Check your connection and try again.');
+        setTimeout(() => setErrorMessage(null), 5000);
+      }, 30_000);
+
       const response = await apiFetch('/billing/checkout', {
         method: 'POST',
         body: JSON.stringify({ tier: planId, cycle: billingCycle }),
       });
+
+      // Normal path — clear the safety timeout once we have a response.
+      window.clearTimeout(upgradeTimeout);
 
       // 503 billing_not_configured → show a clear actionable message instead
       // of dropping the user on a fake Stripe URL (which then bottomed out on
@@ -142,9 +155,17 @@ export default function BillingPage() {
   async function handleManageBilling() {
     try {
       setManagingBilling(true);
+
+      const portalTimeout = window.setTimeout(() => {
+        setManagingBilling(false);
+        setErrorMessage('Request timed out. Check your connection and try again.');
+        setTimeout(() => setErrorMessage(null), 5000);
+      }, 30_000);
+
       const response = await apiFetch('/billing/portal', {
         method: 'POST',
       });
+      window.clearTimeout(portalTimeout);
 
       if (response.status === 503) {
         const body = await response.json().catch(() => ({}));

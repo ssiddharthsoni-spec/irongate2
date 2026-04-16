@@ -65,23 +65,59 @@ function farFutureEnd(): Date {
  * Upsert a super-admin subscription for a firm — premium tier, no expiration.
  * Idempotent: safe to call repeatedly. Used at registration time AND by the
  * startup sweep.
+ *
+ * The SELECT-then-INSERT-or-UPDATE pattern has a race window: two callers
+ * simultaneously see no existing row, both INSERT, duplicate subscriptions
+ * for the same firm. Possible callers:
+ *   - Startup super-admin sweep
+ *   - /billing GET ensureSuperAdminUpgrade
+ *   - /auth/register-extension new-user path
+ *   - POST /admin/firm new-firm path
+ *
+ * We resolve it atomically by doing the insert inside a transaction with
+ * an advisory lock keyed on firmId, which serializes concurrent calls for
+ * the SAME firm while leaving different firms parallel.
  */
 export async function applySuperAdminSubscription(
   firmId: string,
   tx?: PgTransaction<any, any, any>,
 ): Promise<void> {
+  // If a caller already has a transaction, reuse it. Otherwise wrap in
+  // our own. Either way the SELECT-then-INSERT/UPDATE sequence runs
+  // under an advisory lock keyed on firmId that serializes concurrent
+  // calls for the SAME firm. Different firms still run in parallel.
+  if (tx) {
+    await upsertInsideTx(firmId, tx);
+    return;
+  }
+  await db.transaction(async (innerTx) => {
+    await upsertInsideTx(firmId, innerTx);
+  });
+}
+
+async function upsertInsideTx(
+  firmId: string,
+  tx: PgTransaction<any, any, any>,
+): Promise<void> {
   const tier = getSuperAdminTier();
   const end = farFutureEnd();
-  const dbOrTx = (tx ?? db) as typeof db;
 
-  const [existing] = await dbOrTx
+  // Advisory lock keyed on a stable hash of the firmId. Transaction-scoped
+  // (auto-released on commit/rollback). Same firm → same lock → concurrent
+  // callers serialize. md5 → 128 bits; we take the first 16 hex chars
+  // (64 bits) and cast to bigint (pg_advisory_xact_lock's signature).
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(('x' || substr(md5(${firmId}), 1, 16))::bit(64)::bigint)`,
+  );
+
+  const [existing] = await tx
     .select({ id: subscriptions.id, tier: subscriptions.tier, status: subscriptions.status })
     .from(subscriptions)
     .where(eq(subscriptions.firmId, firmId))
     .limit(1);
 
   if (existing) {
-    await dbOrTx
+    await tx
       .update(subscriptions)
       .set({
         tier,
@@ -93,7 +129,7 @@ export async function applySuperAdminSubscription(
       })
       .where(eq(subscriptions.id, existing.id));
   } else {
-    await dbOrTx.insert(subscriptions).values({
+    await tx.insert(subscriptions).values({
       firmId,
       stripeCustomerId: `super_admin_${firmId}`,
       tier,
