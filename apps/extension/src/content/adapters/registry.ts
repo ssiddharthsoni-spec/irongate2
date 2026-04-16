@@ -42,6 +42,18 @@ export function getAdapter(hostname?: string): SiteAdapter | null {
       return adapter;
     }
   }
+  // Localhost mock-platform fallback: IronGate's test server at localhost:9000
+  // serves mocked AI platforms at /chatgpt, /claude, /gemini, /perplexity.
+  // The adapter's hostPatterns won't match "localhost", but the URL path
+  // tells us which platform the mock is simulating. This enables automated
+  // wire-verification tests without needing real AI accounts.
+  if (host === 'localhost' || host === '127.0.0.1') {
+    const path = window.location.pathname.toLowerCase();
+    const adapterIds = ALL_ADAPTERS.map(a => a.id);
+    for (const adapter of ALL_ADAPTERS) {
+      if (path.startsWith('/' + adapter.id)) return adapter;
+    }
+  }
   return null;
 }
 

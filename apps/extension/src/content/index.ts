@@ -426,16 +426,34 @@ function tryScriptTagInjection(): void {
   }
 }
 
-// Wait 500ms for the manifest's MAIN world injection to send a heartbeat.
+// Wait for the manifest's MAIN world injection to send a heartbeat.
 // Only try the <script> tag fallback if no heartbeat was received.
+//
+// IMPORTANT: check BOTH the heartbeat flag AND the window property that
+// main-world.ts sets at load time (line 469: __IRON_GATE_MAIN_WORLD =
+// 'active'). The heartbeat message can be delayed by page load, but the
+// window property is set synchronously during script execution. If the
+// property is set, the script IS running — don't launch a second copy.
+//
+// Launching two MAIN world instances was the root cause of the nonce
+// conflict: each instance has its own _IG_MSG_NONCE and _IG_CS_NONCE
+// capture, and they fought over incoming messages. One would capture the
+// content script's nonce, the other would reject it.
 setTimeout(() => {
-  if (!mainWorldAlive) {
-    igLog('No heartbeat after 500ms — trying <script> tag fallback...');
+  // Check the window property first — it's synchronous and reliable
+  const mainWorldProperty = (window as any).__IRON_GATE_MAIN_WORLD === 'active';
+  if (!mainWorldAlive && !mainWorldProperty) {
+    igLog('No heartbeat after 1500ms and no window property — trying <script> tag fallback...');
     tryScriptTagInjection();
   } else {
-    igLog('MAIN world alive via manifest injection — no fallback needed');
+    if (!mainWorldAlive && mainWorldProperty) {
+      mainWorldAlive = true;
+      igLog('MAIN world detected via window property (heartbeat was delayed)');
+    } else {
+      igLog('MAIN world alive via manifest injection — no fallback needed');
+    }
   }
-}, 500);
+}, 1500); // Increased from 500ms to give manifest injection more time
 
 // ── Input validation for MAIN world relay ─────────────────────────────────
 // Validates data from postMessage before relaying to the trusted service worker.
@@ -1020,6 +1038,12 @@ function initialize() {
           if (!chrome.runtime?.id) return;
           const savedMode = result?.firmMode === 'proxy' ? 'proxy' : 'audit';
           engine?.updateConfig({ mode: savedMode });
+          // ALSO sync to MAIN world — the DOM pre-submit interceptor
+          // (Gemini, Copilot) reads mode from main-world.ts, not from the
+          // capture engine. Without this sync, the MAIN world defaults to
+          // proxy (correct) but never receives explicit confirmation —
+          // and if a future change flips the default, Gemini breaks.
+          syncModeToMainWorld(savedMode);
           igLog('Initial mode loaded from storage:', savedMode);
         });
         // Also check managed storage (enterprise policy overrides local)

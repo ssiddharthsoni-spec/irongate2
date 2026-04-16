@@ -478,15 +478,36 @@ igLog(`🚀 Script loaded at ${new Date().toISOString()} — adapter: ${activeAd
 // from the first control message and reject all subsequent messages without it.
 // This prevents malicious page scripts from injecting fake mode changes.
 let _igContentScriptNonce: string | null = null;
+// Grace window: during startup the content script and MAIN world race to
+// establish the nonce handshake. Messages that arrive before the first
+// successful nonce capture were previously silently rejected — which meant
+// IRON_GATE_SET_MODE / SET_ENTERPRISE_POLICY / SET_PROCESSING_MODE never
+// reached the MAIN world if the content script was fractionally faster.
+// The grace window accepts the first N messages unconditionally (each one
+// tries to capture the nonce) so the handshake converges even under timing
+// variance. After GRACE_MAX messages we lock to the captured nonce.
+let _csNonceGraceCount = 0;
+const CS_NONCE_GRACE_MAX = 10;
 
 function isValidContentScriptMessage(data: any): boolean {
   if (!data?._csNonce || typeof data._csNonce !== 'string') return false;
-  // Capture nonce from first message
+  // Capture nonce from first message that carries one
   if (!_igContentScriptNonce) {
     _igContentScriptNonce = data._csNonce;
+    _csNonceGraceCount++;
     return true;
   }
-  return data._csNonce === _igContentScriptNonce;
+  // Exact match — normal path after handshake
+  if (data._csNonce === _igContentScriptNonce) return true;
+  // Grace window: if the previously captured nonce came from a stale
+  // content script instance (extension reload, navigation), allow the
+  // new nonce to replace it during the grace period.
+  if (_csNonceGraceCount < CS_NONCE_GRACE_MAX) {
+    _igContentScriptNonce = data._csNonce;
+    _csNonceGraceCount++;
+    return true;
+  }
+  return false;
 }
 
 window.addEventListener('message', (event) => {
