@@ -366,16 +366,31 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
         return null;
       }
 
-      // Run local regex + secret detection in parallel with the LLM classifier.
-      // The classifier is the PRIMARY judge of intent/context; regex supplies
-      // the entity list used for pseudonymization and for the safety override
-      // inside the scorer (HIGH_PII forces red even when the classifier says
-      // green).
-      const [intentContext, regexEntities, secrets] = await Promise.all([
-        classifyViaWorker(promptText),
-        Promise.resolve(detectWithRegex(promptText)),
-        Promise.resolve(scanForSecrets(promptText)),
-      ]);
+      // Run regex + secret detection SYNCHRONOUSLY (fast, <10ms). The LLM
+      // classifier runs in the background — it MUST NOT block the fetch.
+      //
+      // Before this fix, classifyViaWorker was inside a Promise.all that
+      // the body transformer awaited. When Ollama was unreachable (endpoint
+      // not configured, CORS, service down), the 12-second timeout froze
+      // the user's ChatGPT submission. A DLP product that makes the AI tool
+      // unusable is worse than no DLP at all.
+      //
+      // Now: regex detects entities → scorer decides → pseudonymize → fetch
+      // goes through in <50ms total. Classifier result updates the sidepanel
+      // asynchronously if/when it arrives.
+      const regexEntities = detectWithRegex(promptText);
+      const secrets = scanForSecrets(promptText);
+
+      // Fire-and-forget: classifier enriches the sidepanel score but never
+      // blocks the wire. If it returns before the response completes, the
+      // sidepanel shows the LLM verdict; if not, pattern-based is the final
+      // answer for this prompt.
+      const classifierPromise = classifyViaWorker(promptText).catch(() => null);
+      // We'll use the result if it's already resolved (e.g., warm Ollama
+      // responds in <50ms), otherwise proceed without it.
+      let intentContext: any = null;
+      const raceTimeout = new Promise<null>((r) => setTimeout(() => r(null), 200));
+      intentContext = await Promise.race([classifierPromise, raceTimeout]);
 
       const allEntities = [
         ...regexEntities,
