@@ -9,6 +9,8 @@ import { PoeAdapter } from './poe';
 import { GroqAdapter } from './groq';
 import { HuggingFaceAdapter } from './huggingface';
 import { YouAdapter } from './you';
+import { GrokAdapter } from './grok';
+import { MistralAdapter } from './mistral';
 
 /**
  * All registered site adapters, in priority order.
@@ -25,6 +27,8 @@ const ALL_ADAPTERS: SiteAdapter[] = [
   GroqAdapter,
   HuggingFaceAdapter,
   YouAdapter,
+  GrokAdapter,
+  MistralAdapter,
 ];
 
 /**

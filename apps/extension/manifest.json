@@ -32,7 +32,10 @@
     "https://*.perplexity.ai/*",
     "https://you.com/*",
     "https://huggingface.co/chat/*",
-    "https://groq.com/*"
+    "https://groq.com/*",
+    "https://grok.com/*",
+    "https://x.com/*",
+    "https://chat.mistral.ai/*"
   ],
   "background": {
     "service_worker": "src/worker/index.ts",
@@ -54,6 +57,9 @@
         "https://you.com/*",
         "https://huggingface.co/chat/*",
         "https://groq.com/*",
+        "https://grok.com/*",
+        "https://x.com/*",
+        "https://chat.mistral.ai/*",
         "http://localhost:9000/*"
       ],
       "js": ["src/content/main-world.ts"],
@@ -75,6 +81,9 @@
         "https://you.com/*",
         "https://huggingface.co/chat/*",
         "https://groq.com/*",
+        "https://grok.com/*",
+        "https://x.com/*",
+        "https://chat.mistral.ai/*",
         "http://localhost:9000/*"
       ],
       "js": ["src/content/index.ts"],

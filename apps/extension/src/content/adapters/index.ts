@@ -10,3 +10,5 @@ export { PoeAdapter } from './poe';
 export { GroqAdapter } from './groq';
 export { HuggingFaceAdapter } from './huggingface';
 export { YouAdapter } from './you';
+export { GrokAdapter } from './grok';
+export { MistralAdapter } from './mistral';
