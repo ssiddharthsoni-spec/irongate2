@@ -143,7 +143,7 @@ export default function BillingPage() {
         return;
       }
       window.location.href = checkoutUrl;
-    } catch (err) {
+    } catch {
       setErrorMessage('Failed to start checkout. Please try again.');
       addToast({ type: 'error', message: 'Failed to start checkout. Please try again.' });
       setTimeout(() => setErrorMessage(null), 5000);

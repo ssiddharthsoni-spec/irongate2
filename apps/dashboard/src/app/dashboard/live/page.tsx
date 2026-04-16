@@ -225,7 +225,7 @@ export default function LiveActivityPage() {
   useEffect(() => {
     // Initial fetch
     fetchEvents();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line
   }, []);
 
   useEffect(() => {
