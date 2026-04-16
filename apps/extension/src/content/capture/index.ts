@@ -97,7 +97,13 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
   let submitHandler: SubmitHandlerHandle | null = null;
   let clipboardMonitor: ClipboardMonitorHandle | null = null;
   let fileUploadMonitor: FileUploadMonitorHandle | null = null;
-  let config: CaptureEngineConfig = { mode: 'audit' };
+  // Default to PROXY (fail-closed / protect-by-default). The old default
+  // was 'audit' which meant if the mode-read from storage was slow or
+  // failed, prompts went through unprotected. A security product must
+  // fail toward protection, not toward exposure. If the user truly wants
+  // audit-only, the initial storage read in content/index.ts will set it
+  // within milliseconds of engine creation.
+  let config: CaptureEngineConfig = { mode: 'proxy' };
 
   // Send message to service worker. Every call gets a fresh per-message
   // nonce; the worker rejects sensitive message types that arrive without

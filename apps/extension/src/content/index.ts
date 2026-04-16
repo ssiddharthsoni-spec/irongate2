@@ -1008,6 +1008,31 @@ function initialize() {
       engine = createCaptureEngine(detector);
       engine.start();
 
+      // CRITICAL: Read the CURRENT firmMode from storage and apply it to
+      // the engine BEFORE any prompts flow. The engine defaults to 'audit'
+      // (monitor-only, no pseudonymization). Without this initial read, the
+      // mode only updates on future CHANGE events — but if storage already
+      // has 'proxy' (set during onboarding), no change event fires and the
+      // engine stays in audit. That's the root cause of PII leaking through
+      // on all platforms.
+      try {
+        chrome.storage.local.get('firmMode', (result) => {
+          if (!chrome.runtime?.id) return;
+          const savedMode = result?.firmMode === 'proxy' ? 'proxy' : 'audit';
+          engine?.updateConfig({ mode: savedMode });
+          igLog('Initial mode loaded from storage:', savedMode);
+        });
+        // Also check managed storage (enterprise policy overrides local)
+        chrome.storage.managed?.get('firmMode', (result) => {
+          if (!chrome.runtime?.id) return;
+          if (chrome.runtime.lastError) return;
+          if (result?.firmMode === 'proxy' || result?.firmMode === 'audit') {
+            engine?.updateConfig({ mode: result.firmMode });
+            igLog('Managed mode override:', result.firmMode);
+          }
+        });
+      } catch { /* storage API unavailable — stays on default */ }
+
       // ── Fallback real-time polling ──────────────────────────────────────
       // Direct text polling that bypasses the capture engine's DOM observer.
       // Ensures real-time detection works even if MutationObserver has issues.
