@@ -102,14 +102,32 @@ function createChromeAIBackend(): RuntimeBackend {
 // ── Client LLM via Ollama/vLLM (Tier 2) ─────────────────────────────────────
 
 function createClientLLMBackend(config: ModelRuntimeConfig): RuntimeBackend {
+  // Stored endpoint may be Ollama-native (http://localhost:11434/api/generate)
+  // or a base URL (http://localhost:11434). Derive the base for health checks
+  // and the OpenAI-compatible chat endpoint.
+  function deriveBaseUrl(endpoint: string): string {
+    try {
+      const url = new URL(endpoint);
+      // Strip Ollama-specific paths to get the base
+      url.pathname = url.pathname.replace(/\/api\/(generate|chat|tags)\/?$/, '');
+      // Also strip OpenAI-compatible paths
+      url.pathname = url.pathname.replace(/\/v1\/chat\/completions\/?$/, '');
+      return url.origin + (url.pathname === '/' ? '' : url.pathname);
+    } catch {
+      return endpoint;
+    }
+  }
+
   return {
     name: 'client-llm',
 
     async isAvailable(): Promise<boolean> {
       if (!config.clientLlmEndpoint) return false;
       try {
-        const resp = await fetch(config.clientLlmEndpoint, {
-          method: 'HEAD',
+        const base = deriveBaseUrl(config.clientLlmEndpoint);
+        // Use Ollama's /api/tags — lightweight GET that confirms Ollama is running
+        const resp = await fetch(`${base}/api/tags`, {
+          method: 'GET',
           signal: AbortSignal.timeout(2000),
         });
         return resp.ok;
@@ -121,20 +139,20 @@ function createClientLLMBackend(config: ModelRuntimeConfig): RuntimeBackend {
     async complete(request: CompletionRequest): Promise<CompletionResponse> {
       if (!config.clientLlmEndpoint) throw new Error('No client LLM endpoint');
       const start = performance.now();
+      const base = deriveBaseUrl(config.clientLlmEndpoint);
 
-      // Support both Ollama and OpenAI-compatible endpoints
+      // Use Ollama's native /api/chat for function-calling support
       const body = {
-        model: config.clientLlmModel || 'gemma4:e2b',
+        model: config.clientLlmModel || 'gemma3:4b',
         messages: [
           { role: 'system', content: request.systemPrompt },
           { role: 'user', content: request.userPrompt },
         ],
-        temperature: request.temperature ?? 0.1,
-        max_tokens: request.maxTokens ?? 2048,
         stream: false,
+        options: { temperature: request.temperature ?? 0.1, num_predict: 2000 },
       };
 
-      const resp = await fetch(`${config.clientLlmEndpoint}/v1/chat/completions`, {
+      const resp = await fetch(`${base}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

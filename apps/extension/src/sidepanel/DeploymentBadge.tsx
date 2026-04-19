@@ -112,7 +112,7 @@ export function DeploymentBadge() {
         <span style={dotStyle(color)} />
         <div style={{ flex: 1 }}>
           <div style={{ fontWeight: 600 }}>
-            {healthy ? '🛡 Sovereign mode active' : '🛡 Protection active (pattern-based)'}
+            {healthy ? '🛡 Protection active' : '🛡 Limited mode — local model offline'}
           </div>
           {expanded && (
             <div style={detailStyle}>
@@ -127,7 +127,7 @@ export function DeploymentBadge() {
               {!healthy && (
                 <div style={{ marginTop: 8, fontSize: 11, opacity: 0.85 }}>
                   To enable context-aware classification: install Ollama + run
-                  <code style={{ display: 'block', marginTop: 4, padding: 2, background: 'rgba(0,0,0,0.25)', borderRadius: 3 }}>ollama pull gemma4:e2b</code>
+                  <code style={{ display: 'block', marginTop: 4, padding: 2, background: 'rgba(0,0,0,0.25)', borderRadius: 3 }}>ollama pull gemma3:4b</code>
                 </div>
               )}
               <div style={{ marginTop: 8, fontSize: 11, opacity: 0.7 }}>

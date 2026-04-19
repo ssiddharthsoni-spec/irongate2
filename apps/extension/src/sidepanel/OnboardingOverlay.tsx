@@ -154,9 +154,9 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
         await chrome.storage.local.set({
           tier2Enabled: true,
           tier2Endpoint: 'http://localhost:11434/api/generate',
-          tier2Model: 'gemma4:e2b',
+          tier2Model: 'gemma3:4b',
           localLLMEndpoint: 'http://localhost:11434/api/generate',
-          localLLMModel: 'gemma4:e2b',
+          localLLMModel: 'gemma3:4b',
           localLLMEnabled: true,
         });
       } catch { /* non-fatal */ }
@@ -732,7 +732,7 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
                 <div className="flex-1">
                   <div className="mb-1">Open Terminal (or Command Prompt) and run:</div>
                   <code className="block bg-gray-50 border border-gray-100 rounded px-2 py-1 font-mono text-[10px]">
-                    ollama pull gemma4:e2b
+                    ollama pull gemma3:4b
                   </code>
                 </div>
               </li>

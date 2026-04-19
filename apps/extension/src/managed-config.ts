@@ -11,7 +11,7 @@
 export interface LocalLLMConfig {
   /** URL of the local LLM endpoint (e.g., http://localhost:11434/api) */
   endpoint: string;
-  /** Model name to use (e.g., "gemma4:e2b", "mistral:7b") */
+  /** Model name to use (e.g., "gemma3:4b", "mistral:7b") */
   model: string;
   /** Whether to use local LLM for enhanced PII detection */
   enableDetection: boolean;
@@ -185,7 +185,7 @@ function resolveLocalLLMConfig(source: Record<string, any>): LocalLLMConfig | nu
   if (!endpoint) return null;
   return {
     endpoint,
-    model: safeStr(source.localLLMModel || source.localLLM_model || 'gemma4:e2b', 'gemma4:e2b', MAX_NAME_LENGTH),
+    model: safeStr(source.localLLMModel || source.localLLM_model || 'gemma3:4b', 'gemma3:4b', MAX_NAME_LENGTH),
     enableDetection: source.localLLMEnabled !== false,
     timeoutMs: safeNum(source.localLLMTimeout || source.localLLM_timeout || 5000, 5000, 1000, 30000),
   };
@@ -198,7 +198,15 @@ async function getLocalValues(): Promise<Record<string, any>> {
   const apiKey = await loadApiKey();
   const result = await new Promise<Record<string, any>>((resolve) => {
     chrome.storage.local.get(
-      ['apiBaseUrl', 'firmMode', 'connectionState', 'processingMode'],
+      [
+        'apiBaseUrl', 'firmMode', 'connectionState', 'processingMode',
+        // LLM config — written by onboarding, read by resolveLocalLLMConfig
+        'localLLMEndpoint', 'localLLMModel', 'localLLMEnabled', 'localLLMTimeout',
+        // Tier config — must match getManagedValues() keys for parity
+        'tier2Enabled', 'tier2Endpoint', 'tier2Model', 'tier2Protocol', 'tier2TimeoutMs',
+        'tier25Enabled', 'tier3Enabled', 'tier3Endpoint', 'tier3TimeoutMs',
+        'semanticEnabled', 'semanticCentroidsUrl', 'amberMinScore', 'redMinScore',
+      ],
       (r) => resolve(r),
     );
   });
@@ -243,8 +251,9 @@ export async function resolveConfig(): Promise<ResolvedConfig> {
     isManaged: false,
     localLLM: resolveLocalLLMConfig(local),
     tiers: resolveTierConfig(local),
-    processingMode: local.processingMode === 'server' ? 'server'
-      : local.processingMode === 'shadow' ? 'shadow' : 'local',
+    // Default to local — Regex + Local LLM (Ollama). Cloud API is opt-in
+    // via managed policy only. Unmanaged installs never call the cloud.
+    processingMode: 'local' as 'local' | 'server' | 'shadow',
     serverModePercent: typeof local.serverModePercent === 'number'
       ? Math.max(0, Math.min(100, local.serverModePercent)) : 100,
   };

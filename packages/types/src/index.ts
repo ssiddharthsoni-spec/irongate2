@@ -6,6 +6,9 @@
 export * from './pseudonym-map';
 export * from './detection-api';
 
+// --- Phase 1 Contracts (Two-Stage Pipeline) ---
+export * from './judgment';
+
 // --- AI Tool Detection ---
 
 export type AIToolId =

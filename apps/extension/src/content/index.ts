@@ -20,9 +20,9 @@ if ((window as any)[CS_MARKER]) {
 (window as any)[CS_MARKER] = true;
 
 // Debug logging — silent in production, enable via: chrome.storage.local.set({ironGateDebug: true})
-let _IG_DEBUG = false;
-try { chrome.storage.local.get('ironGateDebug', (r) => { _IG_DEBUG = !!r.ironGateDebug; }); } catch {}
-function igLog(...args: any[]) { if (_IG_DEBUG) console.log('[Iron Gate]', ...args); }
+let _IG_DEBUG = true; // ON for debugging
+try { chrome.storage.local.get('ironGateDebug', (r) => { _IG_DEBUG = true; /* always on */ }); } catch {}
+function igLog(...args: any[]) { if (_IG_DEBUG) console.log('[Iron Gate CS]', ...args); }
 
 /**
  * Iron Gate Content Script
@@ -224,7 +224,7 @@ function syncPrivateLlmToMainWorld() {
         csPostMessage({
           type: 'IRON_GATE_SET_PRIVATE_LLM',
           endpoint: result.localLLMEndpoint,
-          model: result.localLLMModel || 'gemma4:e2b',
+          model: result.localLLMModel || 'gemma3:4b',
         });
       }
     });
@@ -236,7 +236,7 @@ function syncPrivateLlmToMainWorld() {
         csPostMessage({
           type: 'IRON_GATE_SET_PRIVATE_LLM',
           endpoint: result.localLLMEndpoint,
-          model: result.localLLMModel || 'gemma4:e2b',
+          model: result.localLLMModel || 'gemma3:4b',
         });
       }
     });
@@ -340,20 +340,33 @@ const _messageIdCleanupTimer = setInterval(() => {
 }, 30_000);
 
 function isValidMainWorldMessage(data: any): boolean {
-  // Heartbeat establishes the nonce — always accept the first one
-  if (data?.type === 'IRON_GATE_HEARTBEAT' && !_igMainWorldNonce && data._nonce) {
+  if (!data?._nonce || typeof data._nonce !== 'string') return false;
+
+  // Capture nonce from the FIRST message that carries one — not just heartbeats.
+  // The old code only accepted nonces from IRON_GATE_HEARTBEAT. If the content
+  // script loaded after the first heartbeat, the nonce was never captured and
+  // ALL subsequent messages (including IRON_GATE_INTERCEPTED with proxy data)
+  // were silently rejected. This was the root cause of "maskedPrompt: EMPTY"
+  // and "inspector: NULL" in the sidepanel.
+  if (!_igMainWorldNonce) {
     _igMainWorldNonce = data._nonce;
-    return true;
+    igLog('Nonce established from', data.type);
   }
-  // Fail-closed: reject all messages until nonce is established
-  if (!_igMainWorldNonce) return false;
-  // All IRON_GATE_* messages must include the valid session nonce
-  if (data?._nonce !== _igMainWorldNonce) return false;
+
+  // Validate nonce matches
+  if (data._nonce !== _igMainWorldNonce) {
+    // Nonce changed — main-world was reloaded (extension update, navigation).
+    // Accept the new nonce and update.
+    _igMainWorldNonce = data._nonce;
+    _seenMessageIds.clear();
+    _messageIdTimestamps.clear();
+    igLog('Nonce rotated from', data.type);
+  }
+
   // Per-message ID replay prevention
   const mid = data?._mid;
   if (mid) {
     if (_seenMessageIds.has(mid)) {
-      igLog('REJECTED replayed message:', data?.type, 'mid:', mid);
       return false;
     }
     _seenMessageIds.add(mid);
@@ -473,11 +486,19 @@ function sanitizeString(val: unknown, maxLen: number): string {
 // Listen for messages from MAIN world (fetch interception results)
 function handleMainWorldMessages(event: MessageEvent) {
   if (event.source !== window) return;
-  // Validate origin matches current page
   if (event.origin !== window.location.origin) return;
+
+  // LOUD logging for INTERCEPTED messages — this is where proxy data gets lost
+  if (event.data?.type === 'IRON_GATE_INTERCEPTED') {
+    console.log('%c[Iron Gate CS] RECEIVED IRON_GATE_INTERCEPTED', 'color: #00ff00; font-weight: bold; font-size: 14px',
+      'maskedPrompt:', event.data.maskedPrompt ? event.data.maskedPrompt.length + 'ch' : 'EMPTY',
+      'mappings:', event.data.mappings?.length || 0,
+      'entities:', event.data.entityCount);
+  }
+
   // Validate cryptographic nonce from MAIN world script
   if (event.data?.type?.startsWith('IRON_GATE_') && !isValidMainWorldMessage(event.data)) {
-    igLog('REJECTED message with invalid nonce:', event.data?.type);
+    console.warn('[Iron Gate CS] REJECTED message — invalid nonce:', event.data?.type);
     return;
   }
 
@@ -569,7 +590,9 @@ function handleMainWorldMessages(event: MessageEvent) {
   }
 
   // ── Server-mode processing relay ──────────────────────────────────────────
-  // MAIN world requests server-side detection/pseudonymization via the worker.
+  // Gemma classification relay REMOVED — worker handles Gemma directly
+  // via the SENSITIVITY_SCORE handler using maskedPrompt. No relay needed.
+
   if (event.data?.type === 'IRON_GATE_SERVER_PROCESS_REQUEST') {
     const { requestId, text, aiToolId } = event.data;
     if (!requestId || !text) return;
@@ -669,16 +692,42 @@ function handleMainWorldMessages(event: MessageEvent) {
   }
 
   // Low-risk passthrough — entities detected but context deemed benign
+  // ── ENFORCEMENT: Block overlay for critical prompts ──────────────────────
+  // This is the enforcement layer — when the verdict is "block", the fetch
+  // interceptor returns a 502 and posts this message. The content script
+  // shows the block overlay in Shadow DOM. The user can cancel or redact.
+  if (event.data?.type === 'IRON_GATE_BLOCK_PROMPT') {
+    const { score, level, entityCount, entityTypes, explanation } = event.data;
+    igLog(`BLOCK PROMPT: score=${score}, entities=${entityCount}, types=${entityTypes?.join(', ')}`);
+    import('./ui/block-overlay').then(({ showBlockOverlay }) => {
+      showBlockOverlay({
+        score: score || 100,
+        level: level || 'critical',
+        entities: (entityTypes || []).map((t: string) => ({ type: t, count: 1 })),
+        explanation: explanation || 'This prompt contains sensitive data that was blocked from being sent.',
+      }).then((result) => {
+        igLog(`Block overlay result: ${result.action}${result.overrideReason ? ` (reason: ${result.overrideReason})` : ''}`);
+        // If user chose to override, record it
+        if (result.action === 'allow' && result.overrideReason) {
+          try {
+            chrome.runtime.sendMessage({
+              type: 'BLOCK_OVERRIDE',
+              payload: {
+                eventId: crypto.randomUUID(),
+                reason: result.overrideReason,
+                score,
+                entityTypes,
+              },
+            }).catch(() => {});
+          } catch { /* context may be gone */ }
+        }
+      }).catch(() => {});
+    }).catch(() => {});
+    return;
+  }
+
   if (event.data?.type === 'IRON_GATE_LOW_RISK_PASSTHROUGH') {
-    const count = event.data.entityCount || 0;
-    const types = (event.data.entityTypes || []).join(', ');
-    if (toasts && count > 0) {
-      toasts.show({
-        title: 'Low Risk — Sent Unmodified',
-        message: `${count} data point${count > 1 ? 's' : ''} detected (${types}) but context appears benign. Review if this message contains sensitive data.`,
-        type: 'tip',
-      });
-    }
+    // Toast disabled — was firing on every keystroke and crashing ChatGPT
     return;
   }
 
@@ -891,6 +940,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         syncModeToMainWorld(message.payload.mode);
         igLog('Mode switched to:', message.payload.mode);
         sendResponse({ ok: true });
+        break;
+      case 'IRON_GATE_GEMMA_VERDICT':
+        // Worker → content script → main-world: Gemma's context verdict.
+        // Main-world caches this so at submit time it can use the LLM's
+        // judgment (research/fiction/work_sharing) in the scoring decision.
+        csPostMessage({
+          type: 'IRON_GATE_GEMMA_VERDICT',
+          intent: message.intent,
+          sensitivity: message.sensitivity,
+          score: message.score,
+          verdict: message.verdict,
+          source: message.source,
+        });
+        igLog('Gemma verdict forwarded to main-world:', message.verdict, message.sensitivity);
         break;
       case 'IRON_GATE_APPLY_POLICY_BUNDLE':
         // B3: Forward signed bundle rules from worker to main-world.

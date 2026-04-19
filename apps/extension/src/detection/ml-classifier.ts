@@ -29,6 +29,10 @@ async function getClassifier(): Promise<SensitivityClassifierInstance | null> {
 
   _loadingPromise = (async () => {
     try {
+      // Guard: inference.js requires DOM APIs (window) — skip in service worker
+      if (typeof window === 'undefined') {
+        return null;
+      }
       // Dynamic import of the inference module (JS, no type declarations)
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-expect-error — untyped JS module

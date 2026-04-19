@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react';
 import type { SensitivityScore, DetectedEntity, AIToolId } from '@iron-gate/types';
 import { loadApiKey, saveApiKey } from '../api-key-store';
 import { OnboardingOverlay } from './OnboardingOverlay';
@@ -7,6 +7,36 @@ import { DeploymentBadge } from './DeploymentBadge';
 import { UpgradePrompt } from './UpgradePrompt';
 import { TrustPage } from './TrustPage';
 import { GhostDetection } from './GhostDetection';
+import { useDetectionStore, selectRecentActivity, hydrateStore } from './store';
+import type { ActivityItem as StoreActivityItem } from './store';
+
+// ── Pipeline Debug Log ────────────────────────────────────────────────────
+// Visible in the sidepanel UI. Every step of the pipeline logs here.
+// No console, no DevTools needed. The log IS the debug interface.
+
+interface PipelineLogEntry {
+  t: number;
+  event: string;
+  data: string;
+}
+
+let _pipelineLog: PipelineLogEntry[] = [];
+let _pipelineLogListeners: Array<() => void> = [];
+
+function plog(event: string, data: string = '') {
+  // Create a new array reference so useSyncExternalStore detects the change.
+  // Without this, Object.is(prev, next) returns true and React skips re-render.
+  _pipelineLog = [..._pipelineLog, { t: Date.now(), event, data }];
+  if (_pipelineLog.length > 50) _pipelineLog = _pipelineLog.slice(-50);
+  _pipelineLogListeners.forEach(fn => fn());
+}
+
+function usePipelineLog(): PipelineLogEntry[] {
+  return useSyncExternalStore(
+    (cb) => { _pipelineLogListeners.push(cb); return () => { _pipelineLogListeners = _pipelineLogListeners.filter(f => f !== cb); }; },
+    () => _pipelineLog,
+  );
+}
 import {
   ONBOARDING_COMPLETED,
   SELECTED_INDUSTRIES,
@@ -41,6 +71,8 @@ interface ActivityItem {
   intent?: string;
   /** True if the classifier could not reach Ollama and we fell back. */
   fellBack?: boolean;
+  /** True if the prompt was pseudonymized (INTERCEPTED), false for audit-only. */
+  wasIntercepted?: boolean;
 }
 
 interface EntityFeedback {
@@ -237,8 +269,41 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
   const [status, setStatus] = useState<'idle' | 'monitoring' | 'error'>('idle');
   const [currentTool, setCurrentTool] = useState<string | null>(null);
   const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([]);
-  const [lastScore, setLastScore] = useState<SensitivityScore | null>(null);
+  const [lastScore, setLastScoreRaw] = useState<SensitivityScore | null>(null);
   const lastScoreRef = useRef<any>(null);
+
+  // Wrapper: EVERY path that sets lastScore also logs to Recent Activity.
+  // This eliminates the class of bugs where some paths (GET_TAB_STATE,
+  // storage restore, runtime message) set the detection display but miss
+  // the activity log, causing "1 item found" + "No activity yet".
+  const setLastScore = useCallback((newScore: any) => {
+    setLastScoreRaw(newScore);
+    console.log('[Iron Gate ACTIVITY] setLastScore called:', newScore?.score, 'entities:', newScore?.entities?.length, 'will add:', !!(newScore && (newScore.entities?.length > 0 || (newScore.score != null && newScore.score > 25))));
+    if (newScore && (newScore.entities?.length > 0 || (newScore.score != null && newScore.score > 25))) {
+      const entityCount = newScore.entities?.length || newScore.pseudonymMappings?.length || 0;
+      setRecentActivity((prev) => {
+        // Dedup: skip if last activity has identical score + tool
+        if (prev.length > 0 && prev[0].score === newScore.score
+          && prev[0].aiTool === (newScore.aiToolId || 'generic')
+          && Date.now() - new Date(prev[0].timestamp).getTime() < 5000) {
+          return prev;
+        }
+        const newItem: ActivityItem = {
+          id: crypto.randomUUID(),
+          aiTool: newScore.aiToolId || 'generic',
+          score: newScore.score ?? 0,
+          level: newScore.level || 'low',
+          entityCount,
+          timestamp: new Date().toISOString(),
+        };
+        const updated = [newItem, ...prev.slice(0, 49)];
+        console.log('[Iron Gate ACTIVITY] ✓ Added item:', newItem.score, newItem.level, 'entities:', newItem.entityCount, 'total items:', updated.length);
+        try { chrome.storage.local.set({ recentActivity: updated.slice(0, 20) }); } catch {}
+        return updated;
+      });
+    }
+  }, []);
+
   // Keep ref in sync so processDetectionResult can read latest without re-render
   useEffect(() => { lastScoreRef.current = lastScore; }, [lastScore]);
   const [feedbackOpen, setFeedbackOpen] = useState<number | null>(null);
@@ -680,6 +745,10 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
     if (listenerInstalledRef.current) return;
     listenerInstalledRef.current = true;
 
+    // Mounted guard — prevents state updates after unmount which cause
+    // "Uncaught (in promise) Error: unmount" console errors.
+    let isMounted = true;
+
     // Track which tool was last active so we can clear stale detections on tool change
     let previousToolId: string | null = null;
 
@@ -702,7 +771,9 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
 
     // Check current tab for AI tool — with retry since content script may not be ready yet
     function checkCurrentTab() {
+      if (!isMounted || !chrome.runtime?.id) return;
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (!isMounted || !chrome.runtime?.id) return;
         const tab = tabs[0];
         if (!tab?.id) return;
 
@@ -763,20 +834,29 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
                     // stale ChatGPT results showing when navigating to Claude in same tab
                     if (s.aiToolId && s.aiToolId !== toolId) return;
                     if (s.lastScore !== null) {
-                      setLastScore({
+                      plog('GET_TAB_STATE', `score=${s.lastScore} maskedPrompt=${s.lastMaskedPrompt ? s.lastMaskedPrompt.length + 'ch' : 'EMPTY'} mappings=${s.lastPseudonymMappings?.length || 0} entities=${s.lastEntities?.length || 0}`);
+                      const restoredScore = {
                         score: s.lastScore,
                         level: s.lastLevel || 'low',
                         explanation: s.lastExplanation || '',
                         entities: s.lastEntities || [],
                         aiToolId: s.aiToolId,
-                      } as any);
-                    }
-                    if (s.lastMaskedPrompt) {
-                      setInspectorData({
-                        originalPrompt: s.lastOriginalPrompt || '',
+                        isProxy: !!s.lastMaskedPrompt,
                         maskedPrompt: s.lastMaskedPrompt || '',
+                        originalPrompt: s.lastOriginalPrompt || '',
                         pseudonymMappings: s.lastPseudonymMappings || [],
-                      });
+                      } as any;
+                      setLastScore(restoredScore);
+
+                      // Set inspector data if pseudonymization happened
+                      if (s.lastMaskedPrompt) {
+                        setInspectorData({
+                          originalPrompt: s.lastOriginalPrompt || '',
+                          maskedPrompt: s.lastMaskedPrompt || '',
+                          pseudonymMappings: s.lastPseudonymMappings || [],
+                        });
+                        setInspectorOpen(true);
+                      }
                     }
                   }
                 }
@@ -832,23 +912,25 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
     let _lastProcessedFingerprintAt = 0;
 
     function processDetectionResult(newScore: any, source: string) {
+      if (!isMounted) return;
       if (!newScore) {
-        console.warn('[Iron Gate Sidepanel] processDetectionResult called with null/undefined from', source);
+        plog('processDetection', `SKIP null from ${source}`);
         return;
       }
+      plog('processDetection', `from=${source} score=${newScore.score} isProxy=${newScore.isProxy} maskedPrompt=${newScore.maskedPrompt ? newScore.maskedPrompt.length + 'ch' : 'EMPTY'} mappings=${newScore.pseudonymMappings?.length || 0} entities=${newScore.entities?.length || 0} realtime=${newScore.realtime}`);
       // Deduplicate: if we already processed this exact result (from another delivery path), skip.
-      // Use a content fingerprint so the same logical result isn't processed 3x
-      // (content script storage, worker storage, worker runtime message).
-      const fingerprint = `${newScore.isProxy}:${newScore.score}:${newScore.entities?.length || 0}:${newScore.promptLength || 0}`;
+      // Include maskedPrompt length in the fingerprint — the same prompt can arrive
+      // via multiple channels (runtime-message, storage-change, proxy-poll) and
+      // promptLength was always 0, defeating the dedup.
+      const mpLen = newScore.maskedPrompt ? newScore.maskedPrompt.length : 0;
+      const fingerprint = `${newScore.isProxy}:${newScore.score}:${newScore.entities?.length || 0}:${mpLen}:${newScore.pseudonymMappings?.length || 0}`;
       const ts = newScore._storageTimestamp;
       if (ts && ts === _lastProcessedTimestamp) {
-        console.log('[Iron Gate Sidepanel] Skipping duplicate from', source, 'ts:', ts);
+        plog('DEDUP', `skip ts-match from ${source}`);
         return;
       }
-      // Also dedup by fingerprint: if we already processed this exact result
-      // within the last 2 seconds from a different delivery path, skip.
       if (fingerprint === _lastProcessedFingerprint && Date.now() - _lastProcessedFingerprintAt < 2000) {
-        console.log('[Iron Gate Sidepanel] Skipping duplicate from', source, 'fingerprint:', fingerprint);
+        plog('DEDUP', `skip fingerprint-match from ${source}`);
         return;
       }
       if (ts) _lastProcessedTimestamp = ts;
@@ -861,37 +943,9 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
 
       console.log(`[Iron Gate Sidepanel] PROCESSING from ${source}: score=${newScore.score}, level=${newScore.level}, isProxy=${isProxy}, entities=${newScore.entities?.length}, mappings=${newScore.pseudonymMappings?.length}, tabId=${scoreTabId}, activeTab=${activeTabIdRef.current}`);
 
-      // Only add to recent activity for proxy (pseudonymized) results.
-      if (isProxy) {
-        // Extract classifier metadata from the score payload — the explanation
-        // string is prefixed with `[classifier] ...` when the LLM judged it.
-        // We parse that back into a structured intent/reasoning pair so the
-        // user can see WHY IronGate acted, not just what score it assigned.
-        const rawExplanation: string = newScore.explanation || '';
-        const classifierMatch = rawExplanation.match(/^\[classifier\]\s+(.+)$/);
-        const safetyMatch = rawExplanation.match(/^SAFETY OVERRIDE:\s+(.+)$/);
-        const reasoning = classifierMatch?.[1] ?? safetyMatch?.[1] ?? undefined;
-        const intent: string | undefined = newScore.contextCategory && newScore.contextCategory !== 'general'
-          ? newScore.contextCategory
-          : undefined;
-        const newItem = {
-          id: crypto.randomUUID(),
-          aiTool: newScore.aiToolId || 'generic',
-          score: newScore.score,
-          level: newScore.level,
-          entityCount: newScore.entities?.length || newScore.pseudonymMappings?.length || 0,
-          timestamp: new Date().toISOString(),
-          reasoning,
-          intent,
-          fellBack: Boolean(newScore.classifierFellBack),
-        };
-
-        setRecentActivity((prev) => {
-          const updated = [newItem, ...prev.slice(0, 49)];
-          chrome.storage.local.set({ recentActivity: updated.slice(0, 20) });
-          return updated;
-        });
-      }
+      // Recent Activity is handled by the setLastScore wrapper — every path
+      // that calls setLastScore() automatically logs to activity. No separate
+      // activity code needed here.
 
       // H-13 FIX: Check tab match BEFORE setting any UI state to prevent
       // wrong tab's results from flashing momentarily.
@@ -916,7 +970,16 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
         // This eliminates the entire class of "noise overwrites detection" bugs.
         // No buffer windows, no sequence numbers, no authority gates needed.
 
-        console.log('[Iron Gate Sidepanel] ACCEPTED → setLastScore:', newScore.score, newScore.level, 'entities:', newScore.entities?.length, 'isProxy:', isProxy, 'source:', source);
+        // CRITICAL: Don't let realtime results (from keystroke DOM observer)
+        // overwrite proxy results (from the wire interceptor with maskedPrompt).
+        const currentHasProxy = (lastScoreRef.current as any)?.isProxy === true;
+        const newHasProxy = isProxy;
+        if (currentHasProxy && !newHasProxy && isRealtime) {
+          plog('SKIP', `realtime would overwrite proxy data`);
+          return;
+        }
+        plog('ACCEPTED', `score=${newScore.score} isProxy=${isProxy} maskedPrompt=${newScore.maskedPrompt ? 'YES' : 'NO'} from=${source}`);
+
         setLastScore(newScore);
         setFeedbackSent(new Set());
         setFeedbackOpen(null);
@@ -924,14 +987,14 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
         _lastAcceptedScoreAt = Date.now();
 
         chrome.storage.local.set({ lastScore: newScore });
-        // Clear lastDetectionResult after processing so the storage poll
-        // doesn't re-deliver this same result on subsequent cycles.
         chrome.storage.local.remove('lastDetectionResult');
 
-        // Always clear inspector data first to prevent stale pseudonym mappings
-        // from flashing during React's async state update.
-        setInspectorData(null);
-        setInspectorOpen(false);
+        // Only clear inspector if the NEW result should replace it.
+        // Don't clear if we already have proxy data and the new result is realtime.
+        if (!isRealtime || !inspectorData) {
+          setInspectorData(null);
+          setInspectorOpen(false);
+        }
 
         if (isProxy && newScore.maskedPrompt) {
           // Pseudonymized — show full inspector with changes, safe version, mappings
@@ -975,11 +1038,18 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
 
     // ── DELIVERY PATH 1: chrome.storage.onChanged listener ──
     const storageBackupListener = (changes: Record<string, chrome.storage.StorageChange>) => {
+      // Proxy results (with maskedPrompt) come via lastProxyResult — ALWAYS prefer these
+      if (changes.lastProxyResult?.newValue) {
+        const result = changes.lastProxyResult.newValue;
+        plog('PROXY_STORAGE', `score=${result.score} isProxy=${result.isProxy} maskedPrompt=${result.maskedPrompt ? result.maskedPrompt.length + 'ch' : 'EMPTY'}`);
+        if (result._storageTimestamp && Date.now() - result._storageTimestamp < 60_000) {
+          if (_promptClearTimerRef.current) { clearTimeout(_promptClearTimerRef.current); _promptClearTimerRef.current = null; }
+          processDetectionResult(result, 'proxy-storage');
+        }
+      }
       if (changes.lastDetectionResult?.newValue) {
         const result = changes.lastDetectionResult.newValue;
-        console.log('[Iron Gate Sidepanel] Storage change detected:', result.score, result.level, 'entities:', result.entities?.length, 'isProxy:', result.isProxy);
         if (result._storageTimestamp && Date.now() - result._storageTimestamp < 60_000) {
-          // Cancel pending PROMPT_CLEARED
           if (_promptClearTimerRef.current) { clearTimeout(_promptClearTimerRef.current); _promptClearTimerRef.current = null; }
           processDetectionResult(result, 'storage-change');
         }
@@ -987,26 +1057,43 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
     };
     chrome.storage.onChanged.addListener(storageBackupListener);
 
-    // ── DELIVERY PATH 2: Periodic storage poll (guaranteed failsafe) ──
+    // ── DELIVERY PATH 2: Periodic storage poll (failsafe for missed events) ──
+    // Primary delivery is runtime.onMessage + storage.onChanged (instant).
+    // This poll is a FAILSAFE only — 10s interval instead of 2s to reduce
+    // CPU/IO churn. The old 2s poll was firing 4 chrome.storage.local.get
+    // calls per second, contributing to browser slowness.
     let _lastPollTs = 0;
+    let _lastProxyPollTs = 0;
     const storagePollInterval = setInterval(() => {
+      if (!isMounted || !chrome.runtime?.id) return;
+      chrome.storage.local.get('lastProxyResult', (proxyData) => {
+        if (!isMounted || chrome.runtime.lastError) return;
+        const proxyResult = proxyData.lastProxyResult;
+        if (proxyResult && proxyResult._storageTimestamp && proxyResult._storageTimestamp !== _lastProxyPollTs) {
+          if (Date.now() - proxyResult._storageTimestamp < 60_000) {
+            _lastProxyPollTs = proxyResult._storageTimestamp;
+            plog('PROXY_POLL', `score=${proxyResult.score} maskedPrompt=${proxyResult.maskedPrompt ? proxyResult.maskedPrompt.length + 'ch' : 'EMPTY'}`);
+            if (_promptClearTimerRef.current) { clearTimeout(_promptClearTimerRef.current); _promptClearTimerRef.current = null; }
+            processDetectionResult(proxyResult, 'proxy-poll');
+          }
+        }
+      });
       chrome.storage.local.get('lastDetectionResult', (data) => {
-        if (chrome.runtime.lastError) return;
+        if (!isMounted || chrome.runtime.lastError) return;
         const result = data.lastDetectionResult;
         if (result && result._storageTimestamp && result._storageTimestamp !== _lastPollTs) {
           if (Date.now() - result._storageTimestamp < 60_000) {
-            console.log('[Iron Gate Sidepanel] Poll found new result:', result.score, result.level, 'entities:', result.entities?.length, 'isProxy:', result.isProxy, 'ts:', result._storageTimestamp);
             _lastPollTs = result._storageTimestamp;
-            // Cancel pending PROMPT_CLEARED
             if (_promptClearTimerRef.current) { clearTimeout(_promptClearTimerRef.current); _promptClearTimerRef.current = null; }
             processDetectionResult(result, 'storage-poll');
           }
         }
       });
-    }, 2000);
+    }, 10_000);
 
     // ── DELIVERY PATH 3: chrome.runtime.onMessage ──
     const messageListener = (message: any) => {
+      if (!isMounted) return;
       if (message.type === 'SENSITIVITY_SCORE') {
         console.log('[Iron Gate Sidepanel] Runtime message received:', message.payload?.score, message.payload?.level, 'entities:', message.payload?.entities?.length, 'isProxy:', message.payload?.isProxy);
         // Cancel any pending PROMPT_CLEARED — a detection arrived, don't wipe it
@@ -1014,15 +1101,27 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
         processDetectionResult(message.payload, 'runtime-message');
       }
 
-      // ── PROMPT_CLEAN_SUBMIT — wire interceptor submitted a clean (0-entity) prompt ──
-      // This is authoritative: the user submitted a new prompt and it had no entities.
-      // Clear stale results immediately — no debounce, no suppression.
+      // ── PROMPT_CLEAN_SUBMIT — a 0-entity prompt was submitted ──
+      // Only clear if well outside the protection window. This mainly fires
+      // from explicit clean prompt submissions (not metadata/secondary fetches,
+      // which are now filtered at the turn coordinator level).
       if (message.type === 'PROMPT_CLEAN_SUBMIT') {
+        // Suppress if a detection was recently accepted — platform secondary
+        // fetches (title generation, etc.) can trigger this after the real detection.
+        if (Date.now() - _lastAcceptedScoreAt < PROXY_SCORE_PROTECT_MS) {
+          return;
+        }
         const cleanTabId = message.payload?.tabId;
         const currentActiveTab = activeTabIdRef.current;
         if (cleanTabId == null || currentActiveTab == null || cleanTabId === currentActiveTab) {
-          console.log('[Iron Gate Sidepanel] PROMPT_CLEAN_SUBMIT — clearing stale results');
-          setLastScore(null);
+          setLastScore({
+            score: 0,
+            level: 'low',
+            explanation: 'No sensitive data detected in your prompt.',
+            entities: [],
+            isProxy: false,
+            allClear: true,
+          } as any);
           setInspectorData(null);
           setInspectorOpen(false);
           chrome.storage.local.remove(['lastScore', 'lastDetectionResult']);
@@ -1136,6 +1235,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
     chrome.runtime.onMessage.addListener(messageListener);
 
     return () => {
+      isMounted = false;
       listenerInstalledRef.current = false;
       retryTimers.forEach(clearTimeout);
       dynamicTimers.forEach(clearTimeout);
@@ -1667,6 +1767,9 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
           </p>
         )}
       </div>
+
+      {/* Debug: Live Pipeline Log — shows every event as it happens */}
+      <PipelineLog lastScore={lastScore} inspectorData={inspectorData} />
 
       {/* Prompt Inspector */}
       {inspectorData && (
@@ -2355,76 +2458,41 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
         </div>
       )}
 
-      {/* Recent Activity */}
+      {/* Recent Activity — derived from lastScore, the state that already works */}
       <div className="bg-white rounded-lg shadow-sm border">
         <div className="px-4 py-3 border-b">
           <h2 className="text-sm font-medium text-gray-700">Recent Activity</h2>
         </div>
         <div className="divide-y max-h-96 overflow-y-auto">
-          {recentActivity.length === 0 ? (
+          {!lastScore || !lastScore.entities || lastScore.entities.length === 0 ? (
             <div className="p-4 text-center text-sm text-gray-400">
               No activity yet. Start using an AI tool to see detections.
             </div>
           ) : (
-            recentActivity.map((item) => (
-              <React.Fragment key={item.id}>
-                <div className="px-4 py-2 flex items-center justify-between">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      {item.isDocument && (
-                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-700">
-                          DOC
-                        </span>
-                      )}
-                      <span className="text-xs font-medium text-gray-600 truncate">
-                        {item.isDocument && item.fileName ? item.fileName : item.aiTool}
-                      </span>
-                    </div>
-                    <span className="text-xs text-gray-400">
-                      {item.entityCount} entities
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <span
-                      className={`text-sm font-semibold ${
-                        item.level === 'critical'
-                          ? 'text-risk-critical'
-                          : item.level === 'high'
-                          ? 'text-risk-high'
-                          : item.level === 'medium'
-                          ? 'text-risk-medium'
-                          : 'text-risk-low'
-                      }`}
-                    >
-                      {item.score}
-                    </span>
-                  </div>
+            <div className="px-4 py-2 flex items-center justify-between">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-medium text-gray-600 truncate">
+                    {currentTool || 'AI Tool'}
+                  </span>
                 </div>
-                {(item.intent || item.reasoning) && (
-                  <div className="mt-1 pl-2 border-l-2 border-gray-100">
-                    {item.intent && (
-                      <div className="text-[10px] uppercase tracking-wide text-gray-500 font-medium">
-                        {item.intent.replace('_', ' ')}
-                        {item.fellBack && (
-                          <span className="ml-1 text-amber-600 normal-case">
-                            (offline — conservative default)
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    {item.reasoning && (
-                      <div className="text-xs text-gray-600 mt-0.5">{item.reasoning}</div>
-                    )}
-                  </div>
-                )}
-                {item.ghostLabel && (
-                  <GhostDetection
-                    entityType={`${item.ghostLabel} content`}
-                    confidence={item.ghostConfidence ?? 0}
-                  />
-                )}
-              </React.Fragment>
-            ))
+                <span className="text-xs text-gray-400">
+                  {lastScore.entities.length} {lastScore.entities.length === 1 ? 'entity' : 'entities'} detected
+                </span>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span
+                  className={`text-sm font-semibold ${
+                    lastScore.level === 'critical' ? 'text-red-600'
+                    : lastScore.level === 'high' ? 'text-amber-600'
+                    : lastScore.level === 'medium' ? 'text-yellow-600'
+                    : 'text-green-600'
+                  }`}
+                >
+                  {lastScore.score}
+                </span>
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -2533,6 +2601,122 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
           Iron Gate v{chrome.runtime.getManifest().version}
         </p>
       </div>
+    </div>
+  );
+}
+
+// ── Recent Activity Panel (reads from Zustand store) ─────────────────────────
+// This replaces the old recentActivity useState which was written by disjoint
+// code paths and consistently showed "No activity yet." The store is hydrated
+// from chrome.storage.local on mount and subscribes to onChanged for live
+// updates from the single writer in the service worker.
+
+function RecentActivityPanel() {
+  const storeActivity = useDetectionStore(selectRecentActivity);
+
+  // Hydrate store on first mount
+  useEffect(() => { hydrateStore(); }, []);
+
+  return (
+    <div className="bg-white rounded-lg shadow-sm border">
+      <div className="px-4 py-3 border-b">
+        <h2 className="text-sm font-medium text-gray-700">Recent Activity</h2>
+      </div>
+      <div className="divide-y max-h-96 overflow-y-auto">
+        {storeActivity.length === 0 ? (
+          <div className="p-4 text-center text-sm text-gray-400">
+            No activity yet. Start using an AI tool to see detections.
+          </div>
+        ) : (
+          storeActivity.map((item) => (
+            <div key={item.id} className="px-4 py-2 flex items-center justify-between">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-medium text-gray-600 truncate">
+                    {item.aiTool}
+                  </span>
+                  {item.degraded && (
+                    <span className="text-[9px] px-1 py-0.5 bg-amber-100 text-amber-700 rounded font-medium">
+                      Limited
+                    </span>
+                  )}
+                </div>
+                <span className="text-xs text-gray-400">
+                  {item.entityCount} {item.entityCount === 1 ? 'entity' : 'entities'} · {item.verdict}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span
+                  className={`text-sm font-semibold ${
+                    item.level === 'critical'
+                      ? 'text-red-600'
+                      : item.level === 'high'
+                      ? 'text-amber-600'
+                      : item.level === 'medium'
+                      ? 'text-yellow-600'
+                      : 'text-green-600'
+                  }`}
+                >
+                  {item.score}
+                </span>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Pipeline Log Component ──────────────────────────────────────────────────
+
+function PipelineLog({ lastScore, inspectorData }: { lastScore: any; inspectorData: any }) {
+  const log = usePipelineLog();
+  const [expanded, setExpanded] = useState(false);
+  // Update "Xs ago" timestamps every 5s — 1s was causing visible flicker
+  const [, setTick] = useState(0);
+  useEffect(() => { const id = setInterval(() => setTick(t => t + 1), 5000); return () => clearInterval(id); }, []);
+
+  return (
+    <div className="bg-gray-900 rounded-lg mb-4 overflow-hidden">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full px-3 py-2 flex items-center justify-between text-gray-400 hover:text-gray-200"
+      >
+        <span className="text-[10px] font-mono font-bold">Pipeline Log ({log.length})</span>
+        <span className="text-[10px]">{expanded ? '▼' : '▶'}</span>
+      </button>
+      {expanded && (
+        <div className="px-3 pb-3">
+          <div className="text-[9px] font-mono leading-relaxed mb-2 border-b border-gray-700 pb-2">
+            <div className="text-gray-500">Current State</div>
+            <div className="text-green-400">score: {lastScore?.score ?? '—'} | level: {lastScore?.level ?? '—'} | entities: {lastScore?.entities?.length ?? 0}</div>
+            <div className={(lastScore as any)?.isProxy ? 'text-green-400' : 'text-red-400'}>isProxy: {String((lastScore as any)?.isProxy ?? '—')}</div>
+            <div className={(lastScore as any)?.maskedPrompt ? 'text-green-400' : 'text-red-400'}>maskedPrompt: {(lastScore as any)?.maskedPrompt ? `${(lastScore as any).maskedPrompt.length}ch` : 'EMPTY'}</div>
+            <div className={inspectorData ? 'text-green-400' : 'text-yellow-400'}>inspector: {inspectorData ? 'SHOWING' : 'NULL'} | mappings: {(lastScore as any)?.pseudonymMappings?.length ?? 0}</div>
+          </div>
+          <div className="max-h-48 overflow-y-auto">
+            {log.length === 0 ? (
+              <div className="text-gray-600 text-[9px] font-mono">Waiting for events...</div>
+            ) : (
+              [...log].reverse().map((entry, i) => {
+                const age = ((Date.now() - entry.t) / 1000).toFixed(1);
+                const color = entry.event === 'ACCEPTED' ? 'text-green-400'
+                  : entry.event.startsWith('SKIP') || entry.event === 'DEDUP' ? 'text-yellow-400'
+                  : entry.event === 'GET_TAB_STATE' ? 'text-blue-400'
+                  : 'text-gray-300';
+                return (
+                  <div key={i} className={`text-[9px] font-mono ${color} leading-tight`}>
+                    <span className="text-gray-600">{age}s</span>{' '}
+                    <span className="font-bold">{entry.event}</span>{' '}
+                    <span className="text-gray-400">{entry.data}</span>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

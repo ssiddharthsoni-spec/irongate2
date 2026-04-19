@@ -138,14 +138,21 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
     }
   }
 
-  // Handler: real-time typing detection
+  // Handler: typing detection — DEBOUNCED 1.5s.
+  // Pre-computes Gemma's verdict while the user types so it's cached
+  // by submit time. No lag on submit because the verdict is already ready.
+  let _debounceTimer: ReturnType<typeof setTimeout> | null = null;
   function onPromptChange(text: string) {
-    // Prompt text changed — send to worker for analysis
-    sendToWorker('PROMPT_DETECTED', {
-      text,
-      aiToolId: detector.id,
-      captureMethod: 'dom',
-    });
+    if (_debounceTimer) clearTimeout(_debounceTimer);
+    _debounceTimer = setTimeout(() => {
+      if (text.length >= 20) {
+        sendToWorker('PROMPT_DETECTED', {
+          text,
+          aiToolId: detector.id,
+          captureMethod: 'dom',
+        });
+      }
+    }, 1500); // 1.5s after user stops typing
   }
 
   // Handler: input cleared — reset sidepanel score
@@ -381,16 +388,11 @@ export function createCaptureEngine(detector: AIToolDetector): CaptureEngine {
       const regexEntities = detectWithRegex(promptText);
       const secrets = scanForSecrets(promptText);
 
-      // Fire-and-forget: classifier enriches the sidepanel score but never
-      // blocks the wire. If it returns before the response completes, the
-      // sidepanel shows the LLM verdict; if not, pattern-based is the final
-      // answer for this prompt.
-      const classifierPromise = classifyViaWorker(promptText).catch(() => null);
-      // We'll use the result if it's already resolved (e.g., warm Ollama
-      // responds in <50ms), otherwise proceed without it.
+      // REMOVED: classifyViaWorker was a duplicate Ollama call. The main-world
+      // interceptor already sends IRON_GATE_CLASSIFY_REQUEST for Tier 2 judgment.
+      // Two concurrent Ollama calls on the same prompt caused system-wide lag.
+      // The capture engine's job is regex detection + pseudonymization only.
       let intentContext: any = null;
-      const raceTimeout = new Promise<null>((r) => setTimeout(() => r(null), 200));
-      intentContext = await Promise.race([classifierPromise, raceTimeout]);
 
       const allEntities = [
         ...regexEntities,

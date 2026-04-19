@@ -37,6 +37,13 @@ export type ClassifierIntent =
 
 export type ClassifierSensitivity = 'none' | 'low' | 'medium' | 'high' | 'critical';
 
+/** Named entity detected by the LLM classifier. */
+export interface ClassifierNamedEntity {
+  type: string; // PERSON, ORGANIZATION, LOCATION, PROJECT_NAME, etc.
+  text: string;
+  isSensitive: boolean;
+}
+
 export interface IntentContextResult {
   intent: ClassifierIntent;
   valuesAreReal: boolean;
@@ -52,93 +59,70 @@ export interface IntentContextResult {
   /** True when Ollama was unavailable and we fell back */
   fellBack: boolean;
   latencyMs: number;
+  /** Named entities detected by Gemma (NER). Empty when fellBack=true. */
+  namedEntities: ClassifierNamedEntity[];
 }
 
 // ============================================================================
 // THE SYSTEM PROMPT — the single source of truth for classification behavior
 // ============================================================================
 
-export const INTENT_CONTEXT_SYSTEM_PROMPT = `You are IronGate's privacy classifier. You analyze prompts that users send to AI assistants (like ChatGPT, Claude, Gemini) to decide whether the user is SHARING sensitive real work data (which must be protected before sending) or doing something benign like RESEARCH, CREATIVE WRITING, POLICY DISCUSSION, CODE EXAMPLES, or PERSONAL queries.
+export const INTENT_CONTEXT_SYSTEM_PROMPT = `You are a privacy classifier. Output ONLY a JSON object with these EXACT fields and allowed values:
+- intent: MUST be one of: research, creative, meta_discussion, work_sharing, code, personal, educational, ambiguous
+- values_are_real: true or false
+- sensitivity: MUST be one of: none, low, medium, high, critical
+- reasoning: one short sentence
 
-Your output must be valid JSON with exactly these fields:
-{
-  "intent": "research" | "creative" | "meta_discussion" | "work_sharing" | "code" | "personal" | "educational" | "ambiguous",
-  "values_are_real": true or false,
-  "sensitivity": "none" | "low" | "medium" | "high" | "critical",
-  "reasoning": "one short sentence"
-}
+RULES:
+1. Real names + identifiers (SSN, employee ID, MRN, DOB, account numbers) in work context = work_sharing / high or critical / values_are_real: true
+2. Credit cards, CVVs, bank routing numbers = work_sharing / critical / values_are_real: true
+3. Phone + address for a third party = work_sharing / high / values_are_real: true
+4. Public figures (CEOs, politicians, celebrities) being DISCUSSED = research / none / values_are_real: false
+5. Fiction (novel, story, roleplay) even with PII-like patterns = creative / low / values_are_real: false
+6. Code with placeholders (000-00-0000, John Doe, test-key) = code / none / values_are_real: false
+7. User's OWN data (resume, bio, cover letter) = personal / low / values_are_real: true
+8. Policy/compliance DISCUSSION without real data = meta_discussion / none / values_are_real: false
+9. Follow-up referencing a named client/matter/deal = ambiguous / medium / values_are_real: true
+10. Mixing research framing with real data = work_sharing (protect the data)`;
 
-CLASSIFICATION GUIDE:
-
-research — user is asking ABOUT public figures, historical events, journalism, public companies, academic topics. Values are NOT real private data; they are public references.
-  Examples:
-    "What were Steve Jobs' leadership principles at Apple?" → research / values_are_real: false / sensitivity: none
-    "Summarize Warren Buffett's investment philosophy" → research / values_are_real: false / sensitivity: none
-    "What did the press report about Tom Hanks' COVID diagnosis in 2020?" → research / values_are_real: false / sensitivity: none
-
-creative — user is writing fiction, poetry, screenplays, RPG content, or explicitly framing content as hypothetical/imaginary.
-  Examples:
-    "Write a novel scene where detective Sarah reads SSN 123-45-6789" → creative / values_are_real: false / sensitivity: low
-    "Roleplay as a 1920s detective named Sam Hayden" → creative / values_are_real: false / sensitivity: low
-    "Write an NPC shopkeeper dialogue for my RPG" → creative / values_are_real: false / sensitivity: none
-
-meta_discussion — user is DISCUSSING privacy, compliance, policies, training, or incident response. Mentions PII concepts abstractly without sharing real instances.
-  Examples:
-    "What's our policy on handling client SSNs?" → meta_discussion / values_are_real: false / sensitivity: none
-    "Draft a HIPAA training module" → meta_discussion / values_are_real: false / sensitivity: none
-    "What does GDPR require for EU data?" → meta_discussion / values_are_real: false / sensitivity: none
-
-educational — user is asking about FORMATS, ALGORITHMS, or HOW something works, with no real data.
-  Examples:
-    "What does an SSN format look like? (XXX-XX-XXXX)" → educational / values_are_real: false / sensitivity: none
-    "Explain the Luhn algorithm" → educational / values_are_real: false / sensitivity: none
-    "Show me an example form using placeholder names" → educational / values_are_real: false / sensitivity: none
-
-code — prompt contains source code, config, regex, API schemas, test fixtures. Identifiers inside code (0000-00-0000, 4242 4242 4242 4242, "John Doe") are dummies.
-  Examples:
-    "Debug: const testUser = { ssn: '000-00-0000' }" → code / values_are_real: false / sensitivity: none
-    "Write a regex for US phone numbers" → code / values_are_real: false / sensitivity: none
-    "curl -H 'Authorization: Bearer sk-test-placeholder'" → code / values_are_real: false / sensitivity: none
-  EXCEPTION: if the code contains a REAL-LOOKING production credential (e.g., "sk-proj-abc123XYZ..." that's clearly not "test" or "placeholder"), classify as work_sharing / critical.
-
-personal — user is working on their OWN stuff: resume, cover letter, bio, personal email, birthday message. They are the data subject. The test is: could a reasonable reader tell this is about THEM, not a third party they happen to know?
-  Examples:
-    "Improve my resume: managed $2M portfolio at Blackstone 2019-2022" → personal / values_are_real: true / sensitivity: low
-    "Draft a birthday card for my brother David" → personal / values_are_real: true / sensitivity: low
-    "Help me write a cover letter for Google" → personal / values_are_real: true / sensitivity: low
-  NOT personal — sharing a third party's PII, even casually, is work_sharing:
-    "Can you call Alex Park at 415-555-0198 at 2871 Pine Street" → work_sharing / values_are_real: true / sensitivity: high (third-party phone + address)
-    "Verify identity for Marcus Lee, DOB 09/14/1990, home at 4421 Elm Avenue" → work_sharing / values_are_real: true / sensitivity: critical (third-party DOB + address)
-
-work_sharing — user is SHARING real work data: client/patient names with identifiers, privileged matters, non-public deals, real credentials. THIS IS WHAT WE PROTECT.
-  Examples:
-    "Draft a settlement for my client Robert Johnson SSN 423-55-8901" → work_sharing / values_are_real: true / sensitivity: critical
-    "Patient MRN 2024-88341 diagnosed with hypertension" → work_sharing / values_are_real: true / sensitivity: critical
-    "Confidential: acquiring Meridian Health for $2.8B" → work_sharing / values_are_real: true / sensitivity: high
-    "Authorize charge to card 4532-1488-0343-6467 CVV 387" → work_sharing / values_are_real: true / sensitivity: critical
-    "Debug: Authorization: Bearer sk-proj-RealLookingKeyAbc123Xyz789" → work_sharing / values_are_real: true / sensitivity: critical
-
-ambiguous — use ONLY when truly unclear. Err on the side of protection.
-
-CRITICAL RULES:
-1. Case names in legal research (e.g., "Brown v. Board", "Dobbs v. Jackson") are RESEARCH, not work_sharing, when user is studying public precedent.
-2. Public figures (CEOs, politicians, celebrities, historical figures) in discussion contexts are RESEARCH.
-3. Quoted speech from news articles ("Buffett said...", "the article mentions...") is RESEARCH.
-4. Explicit fiction framing (novel/story/roleplay/screenplay/character) is CREATIVE.
-5. Code blocks with obvious placeholders (John Doe, 000-00-0000, test-key, 4242 4242 4242 4242) are CODE.
-6. An SSN with a real-looking name in a legal/medical/HR context is ALWAYS work_sharing / critical.
-7. API keys/tokens that LOOK real (not "placeholder", "example", "test", "xxxx", "YOUR_KEY") are ALWAYS work_sharing / critical.
-8. If the prompt mixes research and real data ("summarize this patient's chart: [real data]"), classify as work_sharing.
-9. User's own SSN/personal data IS still sensitive — it's going to a third-party LLM either way.
-10. Partial identifiers (last-4 of SSN, masked card "****-1234", email prefix only) are work_sharing / MEDIUM — not critical. Caller is verifying, not exposing full PII.
-11. A real plaintiff vs. real defendant pattern ("[Name] vs. [Company]") COMBINED with legal strategy/discovery/tactics language is work_sharing — it's a live case, not public precedent. Only public-record Supreme Court / landmark cases ("Brown v. Board", "Dobbs v. Jackson") are research.
-12. Business proprietary internals (algorithm weights, internal metrics, unannounced financials, pricing formulas, model hyperparameters that are not yours to share) are work_sharing / MEDIUM even without named parties.
-13. Follow-up questions that reference a named client/matter/deal ("what did I say about the Gonzales matter", "summarize what John from Acme told me") are AMBIGUOUS / medium — the named reference implies real work context even if the turn itself is lightweight.
-14. News-style summaries that name specific deal terms, bankers, or advisors for a CURRENT transaction are work_sharing, not research — the prompt is assembling MNPI even if framed as news.
-15. Keep "reasoning" to ONE short sentence. Do not repeat the prompt.
-
-OUTPUT FORMAT:
-Output ONLY the JSON object. No markdown fences, no prose, no explanation outside the "reasoning" field.`;
+// Function-calling tool definition for Ollama /api/chat.
+// This makes Gemma return structured output including named entities.
+const JUDGMENT_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'classifyPrompt',
+    description: 'Classify a user prompt for privacy sensitivity and identify named entities',
+    parameters: {
+      type: 'object',
+      required: ['intent', 'values_are_real', 'sensitivity', 'reasoning', 'named_entities'],
+      properties: {
+        intent: {
+          type: 'string',
+          enum: ['research', 'creative', 'meta_discussion', 'work_sharing', 'code', 'personal', 'educational', 'ambiguous'],
+        },
+        values_are_real: { type: 'boolean' },
+        sensitivity: {
+          type: 'string',
+          enum: ['none', 'low', 'medium', 'high', 'critical'],
+        },
+        reasoning: { type: 'string', description: 'One short sentence' },
+        named_entities: {
+          type: 'array',
+          description: 'All named entities detected in the prompt',
+          items: {
+            type: 'object',
+            required: ['type', 'text', 'is_sensitive'],
+            properties: {
+              type: { type: 'string', enum: ['PERSON', 'ORGANIZATION', 'LOCATION', 'PROJECT_NAME', 'DEAL_CODENAME', 'PRODUCT'] },
+              text: { type: 'string' },
+              is_sensitive: { type: 'boolean' },
+            },
+          },
+        },
+      },
+    },
+  },
+};
 
 // ============================================================================
 // Sensitivity → Zone / Action mapping
@@ -203,7 +187,17 @@ function parseClassifierOutput(raw: string): Omit<IntentContextResult, 'zone' | 
     const valuesAreReal = Boolean(parsed.values_are_real);
     const reasoning = String(parsed.reasoning ?? '').slice(0, 500);
 
-    return { intent, valuesAreReal, sensitivity, reasoning };
+    // Extract named entities from Gemma's NER output
+    const rawEntities = Array.isArray(parsed.named_entities) ? parsed.named_entities : [];
+    const namedEntities: ClassifierNamedEntity[] = rawEntities
+      .filter((e: any) => e && typeof e.type === 'string' && typeof e.text === 'string')
+      .map((e: any) => ({
+        type: String(e.type),
+        text: String(e.text),
+        isSensitive: Boolean(e.is_sensitive),
+      }));
+
+    return { intent, valuesAreReal, sensitivity, reasoning, namedEntities };
   } catch {
     return null;
   }
@@ -225,6 +219,7 @@ export function fallbackResult(startTime: number): IntentContextResult {
     source: 'fallback',
     fellBack: true,
     latencyMs: Date.now() - startTime,
+    namedEntities: [], // Honest: no NER when Gemma is down
   };
 }
 
@@ -234,7 +229,7 @@ export function fallbackResult(startTime: number): IntentContextResult {
 
 export interface ClassifierConfig {
   endpoint: string; // e.g., "http://localhost:11434/api/generate"
-  model: string; // e.g., "gemma4:e2b"
+  model: string; // e.g., "gemma3:4b"
   format: 'ollama' | 'openai-compatible';
   timeoutMs?: number;
   /**
@@ -262,7 +257,7 @@ export async function classifyIntentAndContext(
   const timeout = config.timeoutMs ?? 5000;
 
   try {
-    const userMessage = `Classify this prompt:\n\n---\n${promptText}\n---`;
+    const userMessage = `Classify:\n"${promptText}"`;
     const response = await callLlm(
       INTENT_CONTEXT_SYSTEM_PROMPT,
       userMessage,
@@ -309,40 +304,37 @@ async function callLlm(
 
   try {
     if (config.format === 'ollama') {
-      const response = await fetch(config.endpoint, {
+      // Use /api/generate with format=json for fast structured output.
+      // format=json forces Ollama to output valid JSON without wasting
+      // tokens on prose, markdown fences, or function-calling overhead.
+      // gemma3:4b responds in ~1.7s with this approach vs 12-15s with
+      // function-calling on gemma4:e2b.
+      // Ensure endpoint ends with /api/generate regardless of input format
+      let generateEndpoint = config.endpoint.replace(/\/api\/chat$/, '/api/generate');
+      if (!generateEndpoint.endsWith('/api/generate')) {
+        generateEndpoint = generateEndpoint.replace(/\/+$/, '') + '/api/generate';
+      }
+      const response = await fetch(generateEndpoint, {
         method: 'POST',
         headers,
         body: JSON.stringify({
           model: config.model,
-          prompt: `${systemPrompt}\n\n${userMessage}\n\nJSON:`,
+          system: systemPrompt,
+          prompt: userMessage,
           stream: false,
           format: 'json',
-          options: { temperature: 0.1, num_predict: 200 },
+          options: { temperature: 0.0, num_predict: 150 },
         }),
         signal: controller.signal,
       });
       if (!response.ok) throw new Error(`Ollama ${response.status}`);
-      // Shape validation — mitigates a rogue process binding to :11434 and
-      // returning something that looks like a Chrome 200 but isn't actually
-      // an Ollama reply. We require the documented Ollama generate-API
-      // fields OR at minimum a `response` string. Anything else is rejected
-      // and flows through the conservative fallback. Item 6.
-      const data = (await response.json()) as {
-        response?: unknown;
-        model?: unknown;
-        done?: unknown;
-      };
-      if (typeof data?.response !== 'string') {
-        throw new Error('Ollama response missing the "response" field — endpoint may not be Ollama');
+      const data = (await response.json()) as any;
+
+      if (typeof data?.response === 'string') {
+        return data.response;
       }
-      // Optional sanity: if model/done are present, they should match the
-      // documented shape. We don't fail on their absence (older Ollama
-      // versions omit `done` for non-stream responses) but we do fail on
-      // wrong types.
-      if (data.model !== undefined && typeof data.model !== 'string') {
-        throw new Error('Ollama response "model" field has wrong type');
-      }
-      return data.response;
+
+      throw new Error('Ollama response missing content');
     }
 
     // openai-compatible

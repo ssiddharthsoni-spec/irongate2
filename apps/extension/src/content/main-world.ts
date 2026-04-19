@@ -209,9 +209,8 @@ function igPostMessage(data: Record<string, unknown>): void {
 // ─── State ──────────────────────────────────────────────────────────────────
 
 let mode: 'audit' | 'proxy' = 'proxy';
-let processingMode: 'local' | 'server' = (window as any).__IRON_GATE_PROCESSING_MODE || (() => {
-  try { return localStorage.getItem('ig_last_mode') === 'server' ? 'server' : 'local'; } catch { return 'local'; }
-})();
+// Always local. Regex + Local LLM. Cloud API never fires.
+let processingMode = 'local' as 'local' | 'server';
 let currentReverseMap: Record<string, string> = {};
 let _reverseMapRestored = false;
 
@@ -398,6 +397,31 @@ interface ServerProcessResult {
   killSwitchMessage?: string;
 }
 
+// ─── Gemma Verdict Cache ────────────────────────────────────────────────────
+// Worker pre-computes Gemma's verdict while the user types (PROMPT_DETECTED).
+// The verdict is pushed: worker → content script → main-world via postMessage.
+// At submit time, the fetch interceptor checks this cache to decide whether
+// to pseudonymize. If Gemma says "research/fiction" → skip pseudonymization.
+// If Gemma says "work_sharing/high" → pseudonymize.
+// If no cached verdict (Gemma not ready) → fall back to regex-only scoring.
+let _gemmaVerdict: { intent: string; sensitivity: string; score: number; verdict: string; source: string; promptHash: string; timestamp: number } | null = null;
+const GEMMA_VERDICT_TTL = 30_000; // 30s — covers typing → submit window
+
+function getCachedGemmaVerdict(): typeof _gemmaVerdict {
+  if (!_gemmaVerdict) return null;
+  if (Date.now() - _gemmaVerdict.timestamp > GEMMA_VERDICT_TTL) {
+    _gemmaVerdict = null;
+    return null;
+  }
+  return _gemmaVerdict;
+}
+// Returns the classifier result or null on timeout/error.
+// The nonce is handled by igPostMessage (adds _nonce) and the content
+// script's isValidMainWorldMessage (captures nonce from any message).
+
+// Gemma classification moved to worker (SENSITIVITY_SCORE handler).
+// No cross-context message relay needed — worker calls Ollama directly.
+
 // Server process timeout — 5s default for Detection API (spaCy NER + policy eval).
 // Cold starts may take longer; subsequent calls are fast (~200ms).
 // Falls back to local detection if timeout expires.
@@ -458,8 +482,8 @@ console.log(
 // reset the flag so a retry injection can proceed.
 try {
 
-// Debug logging — compile-time constant, never controllable from page scripts
-const _IG_DEBUG = false;
+// Debug logging — ON so you can see the pipeline in the console
+const _IG_DEBUG = true;
 function igLog(...args: any[]) { if (_IG_DEBUG) console.log('[Iron Gate MAIN]', ...args); }
 
 // Reverse map starts empty each page load (in-memory only, see security note above)
@@ -541,20 +565,10 @@ window.addEventListener('message', (event) => {
       );
     }
   }
-  // Processing mode: 'local' = pseudonymize in MAIN world, 'server' = pass through (API handles it)
+  // Processing mode is locked to 'local'. Everything processed on-device.
+  // Ignore any attempt to set it to 'server' — cloud API is disabled.
   if (event.data?.type === 'IRON_GATE_SET_PROCESSING_MODE') {
-    if (event.data.processingMode === 'local' || event.data.processingMode === 'server') {
-      const old = processingMode;
-      processingMode = event.data.processingMode;
-      (window as any).__IRON_GATE_PROCESSING_MODE = processingMode;
-      try { localStorage.setItem('ig_last_mode', processingMode); } catch {}
-      if (old !== processingMode) {
-        console.log(
-          `%c[Iron Gate MAIN] Processing mode: ${old} → ${processingMode}`,
-          'color: #8b5cf6; font-weight: bold',
-        );
-      }
-    }
+    // No-op. processingMode stays 'local'.
   }
   // Enterprise managed policy state (killSwitch, allowedAITools, firm info).
   // Validated by the content-script nonce check above.
@@ -656,6 +670,27 @@ window.addEventListener('message', (event) => {
     }
   }
   // Receive private LLM config from content script
+  // Receive Gemma 4 classification response from content script
+  // Receive Gemma verdict from worker (via content script relay).
+  // Caches the LLM's context judgment for use at submit time.
+  // CRITICAL: only use this verdict if it matches the CURRENT prompt.
+  // A stale "allow" from a previous clean prompt must NOT suppress
+  // detection on a new sensitive prompt.
+  if (event.data?.type === 'IRON_GATE_GEMMA_VERDICT') {
+    _gemmaVerdict = {
+      intent: event.data.intent || 'ambiguous',
+      sensitivity: event.data.sensitivity || 'medium',
+      score: event.data.score || 50,
+      verdict: event.data.verdict || 'mask',
+      source: event.data.source || 'gemma',
+      promptHash: event.data.promptHash || '',
+      timestamp: Date.now(),
+    };
+    console.log(
+      `%c[Iron Gate] Gemma verdict cached: ${_gemmaVerdict.verdict} (${_gemmaVerdict.intent}/${_gemmaVerdict.sensitivity})`,
+      'color: #a855f7; font-weight: bold',
+    );
+  }
   if (event.data?.type === 'IRON_GATE_SET_PRIVATE_LLM') {
     _privateLlmEndpoint = event.data.endpoint || null;
     _privateLlmModel = event.data.model || null;
@@ -2061,10 +2096,35 @@ const turnCoordinator = (() => {
     });
   }
 
+  // Dedup: prevent the same prompt from emitting twice within a short window.
+  // ChatGPT (and some adapters) can trigger two fetch interceptions for one
+  // user submit, producing near-identical results (e.g., 373ch vs 372ch).
+  // Without dedup, the sidepanel receives 2× events × 5 delivery channels
+  // = 10+ processDetection calls, causing visible flickering and CPU churn.
+  let _lastEmitHash = '';
+  let _lastEmitAt = 0;
+  const DEDUP_WINDOW_MS = 3000;
+
+  function _promptHash(text: string): string {
+    // Fast 53-bit hash of the first 300 chars — enough to identify the same prompt
+    let h = 0;
+    const s = text.substring(0, 300);
+    for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    return String(h);
+  }
+
   return {
     submit(r: QueuedResult): void {
       // INTERCEPTED: always significant — pseudonymization occurred
       if (r.type === 'IRON_GATE_INTERCEPTED') {
+        const hash = _promptHash(r.promptText);
+        const now = Date.now();
+        if (hash === _lastEmitHash && now - _lastEmitAt < DEDUP_WINDOW_MS) {
+          igLog(`Turn coordinator: DEDUP skip (same prompt within ${DEDUP_WINDOW_MS}ms)`);
+          return;
+        }
+        _lastEmitHash = hash;
+        _lastEmitAt = now;
         _emit(r);
         return;
       }
@@ -2081,10 +2141,16 @@ const turnCoordinator = (() => {
         return;
       }
 
-      // ── 0-entity, low-score AUDIT: noise from metadata/preflight/polling ──
-      // DROP. The sidepanel keeps showing the last significant result.
-      // "All Clear" is handled by PROMPT_CLEARED and tab navigation.
-      igLog(`Turn coordinator: DROP 0-entity AUDIT (score=${r.score}) — noise, not forwarded to sidepanel`);
+      // ── 0-entity, low-score AUDIT: DROP ──
+      // These come from metadata fetches, title generation, conversation
+      // updates, and other platform traffic that matches LLM endpoint patterns.
+      // They are indistinguishable from genuinely clean user prompts at this
+      // layer. Sending CLEAN_SUBMIT here caused real detections to be wiped
+      // when a secondary platform fetch arrived seconds later with 0 entities.
+      //
+      // The sidepanel clears via tab navigation and PROMPT_CLEARED (from DOM
+      // observer detecting empty input field). That's the correct signal.
+      igLog(`Turn coordinator: DROP 0-entity AUDIT (score=${r.score}) — not forwarded`);
     },
   };
 })();
@@ -4064,11 +4130,48 @@ const patchedFetch = async function patchedFetch(
           );
         }
 
-        // ── Always run scoring pipeline (contextual keywords matter even without entities) ──
-        // Prompts like "Q3 revenue projections ($18.4M), layoffs (12 people),
-        // acquisition of BetaWorks" contain ZERO regex entities but are highly
-        // sensitive. Contextual keywords catch these.
-        const fullScore = computeScore(promptText, allEntities as DetectedEntity[]);
+        // ── Gemma + Regex: use pre-computed verdict if available ────────
+        // Gemma ran while the user typed (PROMPT_DETECTED → worker → Ollama).
+        // SAFETY RULE: Gemma can only INCREASE protection, never decrease it.
+        // If regex found entities, Gemma cannot suppress pseudonymization —
+        // it can only confirm or escalate. This prevents stale "allow" verdicts
+        // from a previous clean prompt from poisoning sensitive prompt decisions.
+        let intentContext: any = null;
+        const gemmaVerdict = getCachedGemmaVerdict();
+        if (gemmaVerdict) {
+          // Only use Gemma to SUPPRESS if regex found ZERO entities.
+          // If regex found entities, Gemma can only confirm or escalate.
+          const gemmaWantsAllow = gemmaVerdict.verdict === 'allow' || gemmaVerdict.score <= 25;
+          const regexFoundEntities = allEntities.length > 0;
+
+          if (gemmaWantsAllow && regexFoundEntities) {
+            // Gemma says "allow" but regex found real entities — ignore Gemma.
+            // Regex is the safety net. Gemma might be stale or wrong.
+            console.log(
+              `%c[Iron Gate] Gemma says allow but regex found ${allEntities.length} entities — overriding Gemma, protecting data`,
+              'color: #ef4444; font-weight: bold',
+            );
+          } else {
+            intentContext = {
+              intent: gemmaVerdict.intent,
+              sensitivity: gemmaVerdict.sensitivity,
+              valuesAreReal: gemmaVerdict.verdict !== 'allow',
+              zone: gemmaVerdict.score > 60 ? 'red' : gemmaVerdict.score > 25 ? 'amber' : 'green',
+              action: gemmaVerdict.verdict === 'block' ? 'proxy' : gemmaVerdict.verdict === 'allow' ? 'pass' : 'warn',
+              score: gemmaVerdict.score,
+              source: gemmaVerdict.source || 'gemma',
+              fellBack: false,
+            };
+            console.log(
+              `%c[Iron Gate] Using Gemma verdict: ${gemmaVerdict.verdict}/${gemmaVerdict.sensitivity} (score=${gemmaVerdict.score})`,
+              'color: #a855f7; font-weight: bold',
+            );
+          }
+        } else {
+          igLog('Gemma: no cached verdict — regex-only scoring');
+        }
+
+        const fullScore = computeScore(promptText, allEntities as DetectedEntity[], undefined, intentContext);
         let score = fullScore.score;
         let level = fullScore.level;
 
@@ -4261,7 +4364,7 @@ const patchedFetch = async function patchedFetch(
             try {
               // Build OpenAI-compatible request for private LLM (Ollama, vLLM, etc.)
               const privateLlmBody = JSON.stringify({
-                model: _privateLlmModel || 'gemma4:e2b',
+                model: _privateLlmModel || 'gemma3:4b',
                 messages: [
                   { role: 'system', content: 'You are a helpful assistant. The user\'s message may contain pseudonymized names and values for privacy. Respond naturally.' },
                   { role: 'user', content: pseudoResult.maskedText },
@@ -4493,13 +4596,9 @@ const patchedFetch = async function patchedFetch(
             maskedText: '', mappings: [], level, score,
           });
 
-          // ── CRITICAL: Clear stale sidepanel results ──
-          igPostMessage({
-            type: 'IRON_GATE_CLEAN_SUBMIT',
-            score,
-            level,
-            promptLength: promptText.length,
-          });
+          // REMOVED: IRON_GATE_CLEAN_SUBMIT was causing real detections to be
+          // wiped by secondary platform fetches. Sidepanel clears via tab
+          // navigation and PROMPT_CLEARED (DOM observer) instead.
 
           // ── DEF-009 FIX: Wrap response with PREVIOUS turn's reverse map ──
           // The LLM has Turn 1's pseudonymized names in context. Even though

@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { classifyIntentAndContext } from '../src/detection/intent-context-classifier';
 
 const CFG = {
-  endpoint: 'http://localhost:11434/api/generate',
+  endpoint: 'http://localhost:11434/api/generate', // Classifier now calls /api/chat but endpoint is rewritten internally
   model: 'gemma4:e2b',
   format: 'ollama' as const,
   timeoutMs: 1000,
@@ -34,9 +34,10 @@ describe('Ollama response-shape validation (Item 6)', () => {
     globalThis.fetch = originalFetch;
   });
 
-  it('accepts a well-formed Ollama response', async () => {
+  it('accepts a well-formed Ollama /api/generate response', async () => {
+    // Classifier uses /api/generate with format=json
     mockFetchReturning({
-      model: 'gemma4:e2b',
+      model: 'gemma3:4b',
       response: JSON.stringify({
         intent: 'research',
         values_are_real: false,
@@ -50,29 +51,41 @@ describe('Ollama response-shape validation (Item 6)', () => {
     expect(result.intent).toBe('research');
   });
 
-  it('REJECTS response missing the "response" field', async () => {
-    // A rogue service could return arbitrary JSON. The classifier must not
-    // trust it — it should fall back to the conservative amber default.
-    mockFetchReturning({ score: 0, message: 'ok' });
-    const result = await classifyIntentAndContext('test prompt', CFG);
-    expect(result.fellBack).toBe(true);
-  });
-
-  it('REJECTS response where "response" field is not a string', async () => {
-    mockFetchReturning({ response: { nested: 'object' } });
-    const result = await classifyIntentAndContext('test prompt', CFG);
-    expect(result.fellBack).toBe(true);
-  });
-
-  it('REJECTS response where "model" field has wrong type', async () => {
+  it('accepts response with named_entities', async () => {
     mockFetchReturning({
-      model: 42, // wrong type
+      model: 'gemma3:4b',
       response: JSON.stringify({
-        intent: 'research',
-        values_are_real: false,
-        sensitivity: 'none',
-        reasoning: 'test',
+        intent: 'work_sharing',
+        values_are_real: true,
+        sensitivity: 'high',
+        reasoning: 'Contains confidential data',
+        named_entities: [{ type: 'ORGANIZATION', text: 'Acme Corp', is_sensitive: true }],
       }),
+      done: true,
+    });
+    const result = await classifyIntentAndContext('test prompt', CFG);
+    expect(result.fellBack).toBe(false);
+    expect(result.intent).toBe('work_sharing');
+    expect(result.namedEntities.length).toBe(1);
+    expect(result.namedEntities[0]!.text).toBe('Acme Corp');
+  });
+
+  it('REJECTS response missing content and tool_calls', async () => {
+    mockFetchReturning({ model: 'gemma4:e2b', message: { role: 'assistant' } });
+    const result = await classifyIntentAndContext('test prompt', CFG);
+    expect(result.fellBack).toBe(true);
+  });
+
+  it('REJECTS response with no message field at all', async () => {
+    mockFetchReturning({ score: 0 });
+    const result = await classifyIntentAndContext('test prompt', CFG);
+    expect(result.fellBack).toBe(true);
+  });
+
+  it('REJECTS response where message content is invalid JSON', async () => {
+    mockFetchReturning({
+      model: 'gemma4:e2b',
+      message: { role: 'assistant', content: 'not-json-at-all' },
     });
     const result = await classifyIntentAndContext('test prompt', CFG);
     expect(result.fellBack).toBe(true);

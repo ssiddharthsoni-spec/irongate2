@@ -8,6 +8,7 @@ import { eventQueue } from './queue';
 import { apiRequest, configureApiClient, getConfiguredApiKey, getConfiguredBaseUrl } from './api-client';
 import { initAuth, getFirmId, getUserId, getToken, attemptManagedAutoEnroll } from './auth';
 import { detectWithRegex } from '../detection/fallback-regex';
+import { runHealthCheck } from './health-monitor';
 import { computeScore, scoreToLevel } from '../detection/scorer';
 import { pseudonymizeLocal } from '../detection/pseudonymizer';
 import { scanForSecrets } from './detectors/secret-scanner';
@@ -55,6 +56,7 @@ import { ConversationTracker, type ConversationSnapshot } from '../detection/con
 import { analyzeWithExecutiveLens, resolveRoute } from '../detection/executive-lens';
 import { createModelRuntime } from '../agent/model-runtime';
 import { createAgentDetector } from '../agent/agent-detector';
+import { judge as judgePrompt, buildEvidence as buildJudgeEvidence, type JudgeConfig } from '../detection/judge';
 import { pseudonymizeViaApi, depseudonymizeViaApi, checkDetectionHealth, isApiAvailable, getApiCircuitState, getAllCircuitStates, KillSwitchError, type PseudonymizeResult } from './detection-api';
 
 // Debug logging — silent in production, enable via: chrome.storage.local.get('ironGateDebug')
@@ -211,6 +213,12 @@ chrome.runtime.onUpdateAvailable.addListener((details) => {
 let _deploymentMode: 'local-only' | 'hybrid' | 'server-only' = 'local-only';
 let _deploymentInitError: string | null = null;
 let _firmPseudonymizer: FirmPseudonymizer | null = null;
+
+// Tier 2 health state — module-level so alarm handler can access it.
+// Persisted to chrome.storage.session to survive SW restarts.
+let _lastHealthOk = true;
+let _lastNotifyAt = 0;
+const NOTIFY_COOLDOWN_MS = 15 * 60 * 1000;
 let _stopPolicyPoller: (() => void) | null = null;
 
 /** Convert detection result into an audit entry that contains NO original PII text */
@@ -250,19 +258,29 @@ function buildAuditEntry(args: {
 }
 
 let _cachedDeviceHash: string | null = null;
+// Dedup: track last Gemma-judged prompt hash to avoid repeated Ollama calls
+let _lastGemmaHash: string = '';
 function getDeviceHash(): string {
   if (_cachedDeviceHash) return _cachedDeviceHash;
-  // Stable per-device, non-reversible. Used for audit log correlation only.
-  // Synchronously generate from a stored device id (or create one).
-  const stored = localStorage.getItem('iron-gate-device-id');
-  const id = stored || (() => {
-    const v = crypto.randomUUID();
-    try { localStorage.setItem('iron-gate-device-id', v); } catch {}
-    return v;
-  })();
-  _cachedDeviceHash = id;
-  return id;
+  // Stable per-worker-lifecycle. localStorage is NOT available in MV3
+  // service workers — using crypto.randomUUID() as a session-stable ID.
+  // For cross-session persistence, the async initDeviceId() below
+  // replaces this with the stored value from chrome.storage.local.
+  _cachedDeviceHash = crypto.randomUUID();
+  return _cachedDeviceHash;
 }
+
+// Async device ID persistence — replaces the sync UUID once storage is read.
+(async () => {
+  try {
+    const data = await chrome.storage.local.get('iron-gate-device-id');
+    if (data['iron-gate-device-id']) {
+      _cachedDeviceHash = data['iron-gate-device-id'];
+    } else {
+      await chrome.storage.local.set({ 'iron-gate-device-id': _cachedDeviceHash });
+    }
+  } catch { /* non-fatal */ }
+})();
 
 initLocalLlmDeployment().then(async (cfg) => {
   _deploymentMode = cfg.deploymentMode;
@@ -348,39 +366,15 @@ initLocalLlmDeployment().then(async (cfg) => {
     // with the firm's supportContact so the user knows to act before they send
     // more prompts to a degraded system. Rate-limited to one notification per
     // 15 minutes to avoid spam.
-    let _lastHealthOk = true;
-    let _lastNotifyAt = 0;
-    const NOTIFY_COOLDOWN_MS = 15 * 60 * 1000;
-    const HEALTH_POLL_MS = 2 * 60 * 1000;
-    setInterval(async () => {
-      try {
-        const health = await probeTier2Health();
-        const currentlyOk = health.reachable && health.modelLoaded;
-        if (_lastHealthOk && !currentlyOk) {
-          // Transition OK → degraded
-          const now = Date.now();
-          if (now - _lastNotifyAt >= NOTIFY_COOLDOWN_MS) {
-            _lastNotifyAt = now;
-            const contact = (cfg as ManagedDeploymentConfig).supportContact || 'your IT administrator';
-            try {
-              chrome.notifications.create('iron-gate-degraded-' + now, {
-                type: 'basic',
-                iconUrl: chrome.runtime.getURL('public/icons/icon128.png'),
-                title: 'IronGate protection degraded',
-                message: `Local AI classification is offline. ${health.error || 'The Ollama service may have stopped.'} Contact ${contact}.`,
-                priority: 2,
-              });
-            } catch { /* notifications API unavailable */ }
-            igLog(`Tier 2 degraded: ${health.error || 'reachable=false'}`);
-          }
-        } else if (!_lastHealthOk && currentlyOk) {
-          igLog('Tier 2 recovered');
-        }
-        _lastHealthOk = currentlyOk;
-      } catch {
-        /* probe itself failed — don't notify, will retry next tick */
-      }
-    }, HEALTH_POLL_MS);
+    // Use chrome.alarms instead of setInterval — MV3 service workers
+    // are terminated after ~30s of inactivity. setInterval silently dies
+    // on suspension. chrome.alarms survives across wake cycles.
+    chrome.alarms.create('iron-gate-health-poll', { periodInMinutes: 2 });
+    // Persist health state to survive SW restarts
+    chrome.storage.session.get(['_lastHealthOk', '_lastNotifyAt'], (result) => {
+      if (result._lastHealthOk !== undefined) _lastHealthOk = result._lastHealthOk;
+      if (result._lastNotifyAt !== undefined) _lastNotifyAt = result._lastNotifyAt;
+    });
   }
 }).catch((err: unknown) => {
   // Hard fail-closed errors at startup are surfaced to the user via the sidepanel,
@@ -671,11 +665,20 @@ async function restoreConversationTrackers(): Promise<void> {
 // Lazy-initialized confidence router. Rebuilt when config changes (e.g., Tier 2
 // endpoint toggled on/off via managed config).
 let _confidenceRouter: ReturnType<typeof createConfidenceRouter> | null = null;
+let _confidenceRouterConfigHash = '';
 let _routerEntities: import('../detection/types').DetectedEntity[] = [];
 let _routerTextLength = 0;
 
 function getConfidenceRouter(config: import('../managed-config').ResolvedConfig): ReturnType<typeof createConfidenceRouter> {
-  if (_confidenceRouter) return _confidenceRouter;
+  // Invalidate cached router when config changes (fixes singleton cache bug).
+  // Previously the router was cached for the process lifetime — config changes
+  // from managed policy (MDM push) were ignored until SW restart.
+  const configHash = JSON.stringify({
+    t2: config.tiers?.tier2Enabled, t2e: config.tiers?.tier2Endpoint,
+    t3: config.tiers?.tier3Enabled, llm: config.localLLM?.endpoint,
+  });
+  if (_confidenceRouter && configHash === _confidenceRouterConfigHash) return _confidenceRouter;
+  _confidenceRouter = null; // Force rebuild
 
   const adapters: TierAdapter[] = [];
   const tierConfig = config.tiers;
@@ -748,6 +751,7 @@ function getConfidenceRouter(config: import('../managed-config').ResolvedConfig)
     onTierError: (tier, err) => igLog(`Tier ${tier} error:`, err.message),
     semanticClassify,
   });
+  _confidenceRouterConfigHash = configHash;
 
   igLog('Confidence router initialized with', adapters.length, 'adapters');
   return _confidenceRouter;
@@ -1089,7 +1093,9 @@ const NONCE_HARD_CAP = 10_000; // Defensive upper bound — MV3 workers live bri
 const _nonceTimestamps = new Map<string, number>();
 let _lastNonceCleanup = 0;
 
-setInterval(() => { cleanupExpiredNonces(); }, NONCE_CLEANUP_INTERVAL);
+// Use chrome.alarms instead of setInterval for nonce cleanup.
+// MV3 service workers suspend — setInterval silently dies.
+chrome.alarms.create('iron-gate-nonce-cleanup', { periodInMinutes: 2 });
 
 function cleanupExpiredNonces(): void {
   _lastNonceCleanup = Date.now();
@@ -1231,9 +1237,11 @@ async function handleMessage(
       }
       const classifierCfg: IntentContextClassifierConfig = {
         endpoint: cfg?.localEndpoint ?? 'http://localhost:11434/api/generate',
-        model: cfg?.localModel ?? 'gemma4:e2b',
+        model: cfg?.localModel ?? 'gemma3:4b',
         format: (cfg?.localFormat === 'openai-compatible' ? 'openai-compatible' : 'ollama'),
-        timeoutMs: cfg?.timeoutMs ?? 12_000,
+        // 8s timeout — gemma3:4b responds in ~2s warm, ~4s cold.
+        // Generous margin for slow machines. Fire-and-forget from fetch path.
+        timeoutMs: cfg?.timeoutMs ?? 8_000,
         apiKey: cfg?.localApiKey,
       };
       try {
@@ -1311,41 +1319,14 @@ async function handleMessage(
       // Server detection runs in background and updates if it finds more.
       // ════════════════════════════════════════════════════════════════════
 
-      // Credential scan first — instant, always blocks
-      const secrets = scanForSecrets(text);
-      if (secrets.length > 0) {
-        igLog('Credential block —', secrets.length, 'secrets detected locally');
-        const blockTabId = sender.tab?.id;
-        if (blockTabId) {
-          chrome.runtime.sendMessage({
-            type: 'SENSITIVITY_SCORE',
-            payload: {
-              score: 100, level: 'critical',
-              entities: secrets.map(s => ({ type: s.type, start: s.start, end: s.end, confidence: s.confidence, source: 'regex' })),
-              aiToolId, tabId: blockTabId,
-              zone: 'RED', action: 'block',
-              realtime: true,
-            },
-          }).catch(() => {});
-          chrome.action.setBadgeText({ text: '!', tabId: blockTabId }).catch(() => {});
-          chrome.action.setBadgeBackgroundColor({ color: '#EF4444', tabId: blockTabId }).catch(() => {});
-        }
-
-        // Fire-and-forget: audit trail
-        hashText(text).then(promptHash => {
-          queueEventToApi({
-            aiToolId, promptHash, promptLength: text.length,
-            sensitivityScore: 100, sensitivityLevel: 'critical',
-            entities: secrets.map(s => ({
-              type: s.type, text: s.text, start: s.start, end: s.end,
-              confidence: s.confidence, source: 'regex' as const,
-            })),
-            action: 'block', captureMethod,
-          });
-        }).catch(() => {});
-
-        return { received: true, blocked: true, reason: 'credential_detected' };
-      }
+      // Credential scan — run alongside full detection, NOT as early return.
+      // Previously, finding a secret (API_KEY) caused an early return that
+      // skipped regex detection entirely. The sidepanel would only show "1 item
+      // found (API_KEY)" even though the prompt also contained SSN, credit card,
+      // person names, etc. The main-world interceptor would eventually send the
+      // full result, but if that path failed (replacePrompt null), the user was
+      // stuck seeing only 1 entity. Now we combine secrets + regex entities in
+      // a single result so the sidepanel always shows the complete picture.
 
       // ════════════════════════════════════════════════════════════════════
       // SHADOW MODE: Run both local AND server, compare results, log
@@ -1449,63 +1430,24 @@ async function handleMessage(
         }
       }
 
-      // Step 3: LLM Agent detection — PRIMARY for names, orgs, context
-      let agentEntities: import('../detection/types').DetectedEntity[] = [];
-      let agentAvailable = false;
-      try {
-        agentAvailable = await detector.isAvailable();
-        if (agentAvailable) {
-          agentEntities = await detector.detect(text, structuredEntities, {
-            mode: 'primary',
-            timeoutMs: 5000,
-            minConfidence: 0.5,
-          });
-          igLog('Agent detected', agentEntities.length, 'entities (primary mode)');
-        }
-      } catch (err) {
-        igLog('Agent detector error (falling back to regex):', err);
-        console.warn('[Iron Gate] Agent detector failed — falling back to regex-only', err instanceof Error ? err.message : String(err));
-        _pipelineWarnings.push('agent_detector_failed');
-        agentAvailable = false; // Force fallback to regex
-      }
-
-      // Step 4: If agent unavailable or failed, use regex for ALL entity types (fallback)
-      if (!agentAvailable || (agentAvailable && agentEntities.length === 0)) {
-        for (const e of regexEntities) {
-          if (!regexSuperiorTypes.has(e.type)) {
-            // These are the name/org/location entities that regex caught
-            // Less accurate than agent, but better than nothing
-            structuredEntities.push(e);
-          }
-        }
-        igLog('Agent unavailable — using regex fallback for all entity types');
-      }
-
-      // Step 5: Legacy local LLM detection (enterprise, if configured separately)
-      if (config.localLLM) {
-        try {
-          const llmResult = await detectWithLocalLLM(text, config.localLLM);
-          if (llmResult.available && llmResult.entities.length > 0) {
-            for (const llmEntity of llmResult.entities) {
-              const overlaps = agentEntities.some(e =>
-                e.start < llmEntity.end && e.end > llmEntity.start
-              );
-              if (!overlaps) {
-                agentEntities.push(llmEntity);
-              }
-            }
-            igLog('Local LLM added', llmResult.entities.length, 'entities');
-          }
-        } catch (err) {
-          igLog('Local LLM detection error (non-fatal):', err);
-          _pipelineWarnings.push('local_llm_failed');
+      // Step 3: Regex covers all entity types. The agent detector (model-runtime)
+      // was a SEPARATE Ollama call that duplicated work and caused system lag.
+      // Removed: the intent classifier (CLASSIFY_INTENT_CONTEXT) is the single
+      // Ollama call per prompt — it handles intent/sensitivity classification.
+      // Regex handles entity detection. One job per system, no duplication.
+      for (const e of regexEntities) {
+        if (!regexSuperiorTypes.has(e.type)) {
+          structuredEntities.push(e);
         }
       }
 
-      // Step 6: Merge all sources
-      // Priority: dictionary > agent > regex structured
+      // Step 5: REMOVED — detectWithLocalLLM was a second Ollama call doing
+      // entity detection that duplicated regex work and the intent classifier.
+      // Architecture: regex detects entities, intent classifier (Tier 2) judges
+      // sensitivity. One Ollama call, not three.
+
+      // Step 6: Merge all sources — regex + dictionary
       const mergeSources: import('../detection/types').DetectedEntity[][] = [structuredEntities];
-      if (agentEntities.length > 0) mergeSources.push(agentEntities);
       if (dictEntities.length > 0) mergeSources.push(dictEntities);
       const allEntities = mergeEntities(...mergeSources);
 
@@ -1900,27 +1842,138 @@ async function handleMessage(
         }).catch(() => {});
       }
 
+      // ── STAGE 2: Gemma Judgment (runs ONCE per unique prompt) ────────
+      // Pre-computes Gemma's verdict while the user types. The result is
+      // pushed to main-world for use at submit time.
+      // Dedup: skip if we already judged this exact text (same tab, same hash).
+      const _promptHashForGemma = text.substring(0, 200);
+      let _promptHashNum = 0;
+      for (let i = 0; i < _promptHashForGemma.length; i++) _promptHashNum = ((_promptHashNum << 5) - _promptHashNum + _promptHashForGemma.charCodeAt(i)) | 0;
+      const gemmaHashKey = `${pdTabId}:${_promptHashNum}`;
+      const _gemmaAlreadyJudged = _lastGemmaHash === gemmaHashKey;
+      if (!_gemmaAlreadyJudged) _lastGemmaHash = gemmaHashKey;
+
+      if (!_authoritativeSuppressed && allEntities.length > 0 && pdTabId && !_gemmaAlreadyJudged) {
+        const _stage2TabId = pdTabId;
+        const _stage2AiToolId = aiToolId;
+        (async () => {
+          try {
+            const evidence = buildJudgeEvidence(
+              allEntities,
+              sensitivityResult.score,
+              sensitivityResult.level as any,
+              [], // contextual signals — TODO: pipe from contextual-keywords
+              performance.now() - tier1Start,
+            );
+            let judgeCfg: Partial<import('../detection/judge').JudgeConfig> = {};
+            try {
+              const cfg2 = getLockedDeploymentConfig() as any;
+              judgeCfg = {
+                endpoint: cfg2?.localEndpoint?.replace(/\/api\/generate$/, '') ?? 'http://localhost:11434',
+                model: cfg2?.localModel ?? 'gemma3:4b',
+                timeoutMs: cfg2?.timeoutMs ?? 5000,
+              };
+            } catch { /* use defaults */ }
+
+            const judgment = await judgePrompt(text, evidence, _stage2AiToolId as any, judgeCfg);
+
+            // Only update sidepanel if Stage 2 produced a meaningful result
+            // and the source is actually from the LLM (not a fallback)
+            if (judgment.source === 'gemma4' || judgment.source === 'bright-line') {
+              chrome.runtime.sendMessage({
+                type: 'SENSITIVITY_SCORE',
+                payload: {
+                  score: judgment.score,
+                  level: judgment.level,
+                  explanation: judgment.reasoning,
+                  entities: judgment.entities.map((e: any) => ({
+                    type: e.type,
+                    start: e.start,
+                    end: e.end,
+                    confidence: e.confidence,
+                    source: 'regex' as const,
+                    isSensitive: e.isSensitive,
+                    contextNote: e.contextNote,
+                  })),
+                  aiToolId: _stage2AiToolId,
+                  tabId: _stage2TabId,
+                  realtime: true,
+                  judgmentSource: judgment.source,
+                  judgmentVerdict: judgment.verdict,
+                  judgmentLatencyMs: judgment.latency.totalMs,
+                },
+              }).catch(() => {});
+
+              // Also write to storage as backup
+              chrome.storage.local.set({
+                lastDetectionResult: {
+                  score: judgment.score,
+                  level: judgment.level,
+                  explanation: judgment.reasoning,
+                  entities: judgment.entities.map((e: any) => ({
+                    type: e.type, start: e.start, end: e.end,
+                    confidence: e.confidence, source: 'regex',
+                    isSensitive: e.isSensitive,
+                  })),
+                  aiToolId: _stage2AiToolId,
+                  tabId: _stage2TabId,
+                  realtime: true,
+                  judgmentSource: judgment.source,
+                  _storageTimestamp: Date.now(),
+                },
+              }).catch(() => {});
+
+              igLog(`STAGE 2 (${judgment.source}): verdict=${judgment.verdict} score=${judgment.score} latency=${judgment.latency.totalMs}ms`);
+
+              // Push Gemma verdict to the content script → main-world for
+              // use in the NEXT submit's pseudonymization decision.
+              // The main-world caches this so at submit time it can check:
+              // "is this research/fiction/code?" and skip pseudonymization.
+              if (_stage2TabId) {
+                chrome.tabs.sendMessage(_stage2TabId, {
+                  type: 'IRON_GATE_GEMMA_VERDICT',
+                  intent: judgment.verdict === 'allow' ? 'research' : 'work_sharing',
+                  sensitivity: judgment.level,
+                  score: judgment.score,
+                  verdict: judgment.verdict,
+                  source: judgment.source,
+                }).catch(() => {});
+              }
+            }
+          } catch (err) {
+            igLog('Stage 2 judge() error (non-fatal):', err instanceof Error ? err.message : String(err));
+          }
+        })();
+      }
+
       // ── PRIMARY delivery: write to storage for sidepanel ──
       // Only write SIGNIFICANT results (has entities or score > 25).
-      // 0-entity low-score results are noise and must NEVER reach storage —
-      // storage is a bypass channel that the sidepanel's poll/onChanged reads,
-      // and stale noise in storage can overwrite real detections.
+      // NEVER overwrite proxy data (with maskedPrompt) with realtime data (without).
       // Also skip if authoritative-suppressed (MAIN world result is fresher).
       const hasSignificantPD = allEntities.length > 0 || sensitivityResult.score > 25;
       if (!_authoritativeSuppressed && hasSignificantPD) {
-        chrome.storage.local.set({
-          lastDetectionResult: {
-            score: sensitivityResult.score,
-            level: sensitivityResult.level,
-            entities: allEntities.map((e) => ({
-              type: e.type, start: e.start, end: e.end,
-              confidence: e.confidence, source: e.source,
-            })),
-            aiToolId,
-            realtime: true,
-            _storageTimestamp: Date.now(),
-          },
-        }).catch(() => {});
+        // Check if storage already has proxy data — don't overwrite with realtime
+        chrome.storage.local.get('lastDetectionResult', (existing) => {
+          if (chrome.runtime.lastError) return;
+          const prev = existing.lastDetectionResult;
+          if (prev?.isProxy && prev?._storageTimestamp && Date.now() - prev._storageTimestamp < 10_000) {
+            // Storage has fresh proxy data — don't overwrite with realtime
+            return;
+          }
+          chrome.storage.local.set({
+            lastDetectionResult: {
+              score: sensitivityResult.score,
+              level: sensitivityResult.level,
+              entities: allEntities.map((e: any) => ({
+                type: e.type, start: e.start, end: e.end,
+                confidence: e.confidence, source: e.source,
+              })),
+              aiToolId,
+              realtime: true,
+              _storageTimestamp: Date.now(),
+            },
+          }).catch(() => {});
+        });
       }
 
       return {
@@ -2147,18 +2200,122 @@ async function handleMessage(
       }
 
       // ── IMMEDIATE: Re-broadcast to sidepanel FIRST — before any async API work ──
-      // sidepanel only receives messages from the worker, NOT from content scripts.
-      // This MUST happen before queueEventToApiMinimized() which can take 2-3s.
       chrome.runtime.sendMessage({
         type: 'SENSITIVITY_SCORE',
         payload: { ...payload, tabId: ssTabId },
       }).catch(() => {});
 
+      // ── Gemma enrichment REMOVED from SENSITIVITY_SCORE path ──────────
+      // Gemma already runs in the PROMPT_DETECTED path (pre-computed while
+      // typing). Running it again here was a DUPLICATE Ollama call causing
+      // lag on 16GB machines. One Gemma call per prompt, not two.
+      if (false && isFromContentScript && payload.isProxy && ssTabId) {
+        (async () => {
+          try {
+            console.log('[Iron Gate] Gemma: preparing judge call...');
+            // Use maskedPrompt for classification — originalPrompt is stripped
+            // for security (never sent via postMessage). The masked version has
+            // the same intent/context (e.g., "Draft a PIP for James Mitchell"
+            // classifies identically to "Draft a PIP for David Park").
+            const promptText = payload.maskedPrompt || payload.originalPrompt || '';
+            if (!promptText || promptText.length < 10) return;
+            const regexEntities = (entities || []).map((e: any) => ({
+              type: e.type || 'UNKNOWN', text: '', start: e.start || 0,
+              end: e.end || 0, confidence: e.confidence || 0.5, source: 'regex' as const,
+            }));
+            const evidence = buildJudgeEvidence(regexEntities, score, level as any, [], 0);
+            let judgeCfg: any = {};
+            try {
+              const cfg2 = getLockedDeploymentConfig() as any;
+              judgeCfg = {
+                endpoint: cfg2?.localEndpoint?.replace(/\/api\/generate$/, '') ?? 'http://localhost:11434',
+                model: cfg2?.localModel ?? 'gemma3:4b',
+                timeoutMs: cfg2?.timeoutMs ?? 5000,
+              };
+            } catch { /* defaults */ }
+            console.log(`[Iron Gate] Gemma calling judge() with ${promptText.length}ch prompt, model=${judgeCfg.model || 'default'}`);
+            const judgment = await judgePrompt(promptText, evidence, payload.aiToolId || 'unknown', judgeCfg);
+            console.log(`[Iron Gate] Gemma result: source=${judgment.source} verdict=${judgment.verdict} score=${judgment.score} latency=${judgment.latency?.totalMs}ms`);
+            if (judgment.source === 'gemma4' || judgment.source === 'bright-line') {
+              igLog(`Gemma enrichment: verdict=${judgment.verdict} score=${judgment.score} entities=${judgment.entities.length} latency=${judgment.latency.totalMs}ms`);
+              // Update sidepanel with Gemma-enriched result
+              chrome.runtime.sendMessage({
+                type: 'SENSITIVITY_SCORE',
+                payload: {
+                  ...payload, tabId: ssTabId,
+                  score: judgment.score, level: judgment.level,
+                  explanation: judgment.reasoning,
+                  entities: judgment.entities.map((e: any) => ({
+                    type: e.type, start: e.start, end: e.end,
+                    confidence: e.confidence, source: 'regex',
+                  })),
+                  judgmentSource: judgment.source,
+                  judgmentVerdict: judgment.verdict,
+                },
+              }).catch(() => {});
+              // Also update storage
+              chrome.storage.local.set({
+                lastProxyResult: {
+                  ...payload, tabId: ssTabId,
+                  score: judgment.score, level: judgment.level,
+                  explanation: judgment.reasoning,
+                  judgmentSource: judgment.source,
+                  _storageTimestamp: Date.now(),
+                },
+              }).catch(() => {});
+
+              // Push verdict to content script → main-world for future decisions
+              if (ssTabId) {
+                chrome.tabs.sendMessage(ssTabId, {
+                  type: 'IRON_GATE_GEMMA_VERDICT',
+                  intent: judgment.verdict === 'allow' ? 'research' : 'work_sharing',
+                  sensitivity: judgment.level,
+                  score: judgment.score,
+                  verdict: judgment.verdict,
+                  source: judgment.source,
+                }).catch(() => {});
+              }
+            }
+          } catch (err) {
+            console.error('[Iron Gate] Gemma enrichment error:', err instanceof Error ? err.message : String(err), err);
+          }
+        })();
+      }
+
+      // ── SINGLE WRITER: Append to detection_results ──────────────────────
+      // This is the ONLY place in the codebase that writes detection_results.
+      // The sidepanel's Zustand store subscribes to chrome.storage.onChanged
+      // and derives everything from this one key: activity feed, entity
+      // counts, detection panel. No other writer. No other key.
+      if (entities && entities.length > 0 || score > 25) {
+        const resultEntry = {
+          id: crypto.randomUUID(),
+          timestamp: Date.now(),
+          aiTool: payload.aiToolId || 'unknown',
+          tabId: ssTabId,
+          score,
+          level,
+          entities: (entities || []).map((e: any) => ({
+            type: e.type, start: e.start || 0, end: e.end || 0,
+            confidence: e.confidence || 0.85, source: e.source || 'regex',
+            isSensitive: e.isSensitive,
+          })),
+          pseudonymMappings: pseudonymMappings || [],
+          maskedPrompt: maskedPrompt || '',
+          originalPrompt: payload.originalPrompt || '',
+          wasIntercepted: !!payload.isProxy,
+          degraded: !payload.judgmentSource || payload.judgmentSource === 'pattern-only',
+          source: payload.judgmentSource || 'pattern-only',
+        };
+        chrome.storage.local.get('detection_results', (data) => {
+          if (chrome.runtime.lastError) return;
+          const prev: any[] = Array.isArray(data.detection_results) ? data.detection_results : [];
+          const next = [...prev.slice(-49), resultEntry];
+          chrome.storage.local.set({ detection_results: next }).catch(() => {});
+        });
+      }
+
       // IMMEDIATE BACKUP: Write to storage so sidepanel picks it up via onChanged.
-      // Wire intercept results (both INTERCEPTED and AUDIT) are authoritative —
-      // they MUST reach the sidepanel through all delivery paths. Without storage
-      // backup, 0-entity "All Clear" results rely solely on runtime.sendMessage
-      // which MV3 frequently drops, causing the sidepanel to show nothing.
       const hasSignificantResult = payload.isProxy || payload.wireIntercept || (entities && entities.length > 0) || score > 25;
       if (hasSignificantResult) {
         try {
@@ -2167,6 +2324,14 @@ async function handleMessage(
             tabId: ssTabId,
             _storageTimestamp: Date.now(),
           };
+          // Proxy results (with maskedPrompt) go to a SEPARATE key that
+          // realtime PROMPT_DETECTED results can't overwrite. This is the
+          // fix for "isProxy: undefined / maskedPrompt: EMPTY" — the DOM
+          // observer's realtime results were always overwriting the wire
+          // interceptor's proxy results in lastDetectionResult.
+          if (payload.isProxy && payload.maskedPrompt) {
+            chrome.storage.local.set({ lastProxyResult: storagePayload }).catch(() => {});
+          }
           chrome.storage.local.set({ lastDetectionResult: storagePayload }).catch(() => {});
         } catch { /* storage write failed — primary path may still work */ }
       }
@@ -2862,6 +3027,47 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       console.warn('[Iron Gate] Heartbeat failed:', err)
     );
   }
+  // Health check — replaces setInterval in health-monitor.ts
+  if (alarm.name === 'iron-gate-health-check') {
+    runHealthCheck().catch(() => {});
+  }
+
+  // Nonce cleanup — replaces setInterval which dies on SW suspension
+  if (alarm.name === 'iron-gate-nonce-cleanup') {
+    cleanupExpiredNonces();
+  }
+
+  // Tier 2 health poll — replaces setInterval which dies on SW suspension
+  if (alarm.name === 'iron-gate-health-poll') {
+    (async () => {
+      try {
+        const health = await probeTier2Health();
+        const currentlyOk = health.reachable && health.modelLoaded;
+        if (_lastHealthOk && !currentlyOk) {
+          const now = Date.now();
+          if (now - _lastNotifyAt >= NOTIFY_COOLDOWN_MS) {
+            _lastNotifyAt = now;
+            try {
+              chrome.notifications.create('iron-gate-degraded-' + now, {
+                type: 'basic',
+                iconUrl: chrome.runtime.getURL('public/icons/icon128.png'),
+                title: 'IronGate protection degraded',
+                message: `Local AI classification is offline. ${health.error || 'The Ollama service may have stopped.'}`,
+                priority: 2,
+              });
+            } catch { /* notifications API unavailable */ }
+            igLog(`Tier 2 degraded: ${health.error || 'reachable=false'}`);
+          }
+        } else if (!_lastHealthOk && currentlyOk) {
+          igLog('Tier 2 recovered');
+        }
+        _lastHealthOk = currentlyOk;
+        // Persist state to survive SW restarts
+        chrome.storage.session.set({ _lastHealthOk: currentlyOk, _lastNotifyAt }).catch(() => {});
+      } catch { /* probe failed — retry next alarm */ }
+    })();
+  }
+
   // Trial notification alarms
   handleTrialAlarm(alarm.name).catch((err) =>
     console.warn('[Iron Gate] Trial alarm handler failed:', err)
@@ -3030,7 +3236,7 @@ async function probeOllamaStatus(): Promise<{
     const data = (await response.json()) as { models?: Array<{ name: string }> };
     const models = data.models ?? [];
     // The default model IronGate uses; upgrade path is to read from managed config
-    const targetModel = 'gemma4:e2b';
+    const targetModel = 'gemma3:4b';
     const modelPulled = models.some(
       (m) => m.name === targetModel || m.name === `${targetModel}:latest`,
     );
