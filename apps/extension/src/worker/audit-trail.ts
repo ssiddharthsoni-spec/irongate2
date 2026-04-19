@@ -43,33 +43,91 @@ interface AuditRecord {
   hmac: string;
 }
 
-// ── HMAC signing (persisted across service worker restarts) ───────────
+// ── HMAC signing (non-extractable, persisted via IndexedDB) ─────────
+// The HMAC key is generated with extractable: false so a user cannot
+// read the key from storage, delete audit records, and re-sign the log.
+// IndexedDB can store non-extractable CryptoKey objects as structured
+// cloneable data — chrome.storage.local cannot.
 
 let _hmacKey: CryptoKey | null = null;
+const HMAC_DB_NAME = 'irongate-hmac';
+const HMAC_STORE_NAME = 'keys';
+const HMAC_KEY_ID = 'audit-hmac-v1';
+
+function openHmacDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(HMAC_DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(HMAC_STORE_NAME)) {
+        db.createObjectStore(HMAC_STORE_NAME);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
 
 async function getHmacKey(): Promise<CryptoKey> {
   if (_hmacKey) return _hmacKey;
 
-  // Try to load persisted HMAC key
-  const result = await chrome.storage.local.get(AUDIT_HMAC_KEY);
-  if (result[AUDIT_HMAC_KEY]) {
-    try {
-      const rawKey = Uint8Array.from(atob(result[AUDIT_HMAC_KEY]), c => c.charCodeAt(0));
-      _hmacKey = await crypto.subtle.importKey(
-        'raw', rawKey, { name: 'HMAC', hash: 'SHA-256' }, true, ['sign', 'verify'],
-      );
+  // Try to load non-extractable key from IndexedDB
+  try {
+    const db = await openHmacDb();
+    const key = await new Promise<CryptoKey | undefined>((resolve, reject) => {
+      const tx = db.transaction(HMAC_STORE_NAME, 'readonly');
+      const req = tx.objectStore(HMAC_STORE_NAME).get(HMAC_KEY_ID);
+      req.onsuccess = () => resolve(req.result as CryptoKey | undefined);
+      req.onerror = () => reject(req.error);
+    });
+    if (key) {
+      _hmacKey = key;
+      db.close();
       return _hmacKey;
-    } catch { /* corrupted — regenerate */ }
-  }
+    }
+    db.close();
+  } catch { /* IndexedDB unavailable — generate ephemeral key */ }
 
-  // Generate new HMAC key and persist it
+  // Migrate: check for old extractable key in chrome.storage.local
+  try {
+    const result = await chrome.storage.local.get(AUDIT_HMAC_KEY);
+    if (result[AUDIT_HMAC_KEY]) {
+      const rawKey = Uint8Array.from(atob(result[AUDIT_HMAC_KEY]), c => c.charCodeAt(0));
+      // Re-import as NON-extractable and store in IndexedDB
+      _hmacKey = await crypto.subtle.importKey(
+        'raw', rawKey, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'],
+      );
+      // Persist to IndexedDB and remove from chrome.storage.local
+      try {
+        const db = await openHmacDb();
+        await new Promise<void>((resolve, reject) => {
+          const tx = db.transaction(HMAC_STORE_NAME, 'readwrite');
+          tx.objectStore(HMAC_STORE_NAME).put(_hmacKey, HMAC_KEY_ID);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        });
+        db.close();
+        await chrome.storage.local.remove(AUDIT_HMAC_KEY);
+      } catch { /* migration failed — key still works in memory */ }
+      return _hmacKey;
+    }
+  } catch { /* no legacy key */ }
+
+  // Generate new NON-extractable HMAC key
   _hmacKey = await crypto.subtle.generateKey(
-    { name: 'HMAC', hash: 'SHA-256' }, true, ['sign', 'verify'],
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'],
   );
-  const exported = await crypto.subtle.exportKey('raw', _hmacKey);
-  await chrome.storage.local.set({
-    [AUDIT_HMAC_KEY]: btoa(String.fromCharCode(...new Uint8Array(exported))),
-  });
+  // Persist to IndexedDB
+  try {
+    const db = await openHmacDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(HMAC_STORE_NAME, 'readwrite');
+      tx.objectStore(HMAC_STORE_NAME).put(_hmacKey, HMAC_KEY_ID);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  } catch { /* persistence failed — key exists in memory for this session */ }
   return _hmacKey;
 }
 
