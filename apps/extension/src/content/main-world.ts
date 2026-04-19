@@ -2171,16 +2171,30 @@ const turnCoordinator = (() => {
         return;
       }
 
-      // ── 0-entity, low-score AUDIT: DROP ──
-      // These come from metadata fetches, title generation, conversation
-      // updates, and other platform traffic that matches LLM endpoint patterns.
-      // They are indistinguishable from genuinely clean user prompts at this
-      // layer. Sending CLEAN_SUBMIT here caused real detections to be wiped
-      // when a secondary platform fetch arrived seconds later with 0 entities.
-      //
-      // The sidepanel clears via tab navigation and PROMPT_CLEARED (from DOM
-      // observer detecting empty input field). That's the correct signal.
-      igLog(`Turn coordinator: DROP 0-entity AUDIT (score=${r.score}) — not forwarded`);
+      // ── 0-entity, low-score AUDIT: emit with dedup ──
+      // These can be: (a) genuinely clean user prompts, or (b) platform
+      // metadata fetches (title generation, conversation updates).
+      // We can't distinguish at this layer, but we CAN dedup: if the same
+      // prompt hash was recently emitted as INTERCEPTED (within 5s), this
+      // is a secondary fetch — drop it. Otherwise, emit so the sidepanel
+      // can show "All Clear" for genuinely clean prompts.
+      if (r.promptText && r.promptText.length > 20) {
+        const hash = _promptHash(r.promptText);
+        const now = Date.now();
+        // If this hash matches the last INTERCEPTED emission (within 5s),
+        // it's a secondary platform fetch for the same prompt — drop.
+        if (hash === _lastEmitHash && now - _lastEmitAt < 5000) {
+          igLog(`Turn coordinator: DROP 0-entity AUDIT (secondary fetch, same hash)`);
+          return;
+        }
+        // Different hash = new prompt. Emit so sidepanel shows "All Clear".
+        _lastEmitHash = hash;
+        _lastEmitAt = now;
+        _emit(r);
+        igLog(`Turn coordinator: EMIT clean prompt (${r.promptText.length}ch, score=${r.score})`);
+        return;
+      }
+      igLog(`Turn coordinator: DROP 0-entity AUDIT (short/empty, score=${r.score})`);
     },
   };
 })();
