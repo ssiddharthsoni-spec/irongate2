@@ -174,11 +174,14 @@ describe('Architecture Invariants — Console Output Hygiene', () => {
 describe('Architecture Invariants — Session State', () => {
   it('_countSessionEntityReferences must support both full-entity and word-level matching', () => {
     const src = readMainWorld();
-    expect(src).toMatch(/function _countSessionEntityReferences/);
-    // The function should check both full-text inclusion AND word-level matching
-    // (catches "Sarah Chen" when registry has "Dr. Sarah Chen")
-    const fnSrc = src.match(/function _countSessionEntityReferences[\s\S]+?^}/m)?.[0] ?? '';
-    expect(fnSrc, 'word-level matching missing').toMatch(/words\.every/);
+    // Delegate function exists in main-world.ts
+    expect(src).toMatch(/_countSessionEntityReferences/);
+    // Word-level matching is in the extracted session-entities.ts module
+    const fs = require('fs');
+    const sessionSrc = fs.readFileSync(
+      require('path').join(__dirname, '../src/content/main-world/session-entities.ts'), 'utf-8'
+    );
+    expect(sessionSrc, 'word-level matching missing in session-entities.ts').toMatch(/words\.every/);
   });
 
   it('session entities must be cleared on conversation boundary', () => {

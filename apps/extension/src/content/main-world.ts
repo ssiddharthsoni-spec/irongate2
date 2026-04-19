@@ -28,6 +28,7 @@ import {
   replacePseudonymsCore,
   type CachedPseudoEntry,
 } from './main-world/depseudo-engine';
+import { createSessionEntityTracker } from './main-world/session-entities';
 
 // ─── Full Scoring Pipeline ──────────────────────────────────────────────────
 // Import the REAL scoring pipeline — intent suppression, context analysis,
@@ -345,40 +346,11 @@ function _buildFailClosedResponse(url: string, reason: string): Response {
 // references these entities (even without re-detecting them as PII), the
 // score is boosted to prevent GREEN passthrough of PII that was previously
 // flagged. This fixes DEF-016: "follow-up with prior PII scores too low".
-const _sessionEntities = new Set<string>();
-const MAX_SESSION_ENTITIES = 500;
-
-/** Check if text references entities from prior turns.
- * Uses both full-entity matching AND individual word matching for person names.
- * This catches "Sarah Chen" when the registry has "Dr. Sarah Chen" or vice versa.
- */
-function _countSessionEntityReferences(text: string): number {
-  if (_sessionEntities.size === 0) return 0;
-  const textLower = text.toLowerCase();
-  let count = 0;
-  const counted = new Set<string>(); // avoid double-counting
-
-  for (const entity of _sessionEntities) {
-    const entityLower = entity.toLowerCase();
-    // Full entity match
-    if (entityLower.length >= 4 && textLower.includes(entityLower)) {
-      if (!counted.has(entityLower)) { counted.add(entityLower); count++; }
-      continue;
-    }
-    // Word-level matching: check if individual words from the entity appear
-    // in the text. "Sarah Chen" matches if both "sarah" and "chen" appear.
-    // Only for multi-word entities (person names, org names).
-    const words = entityLower.split(/\s+/).filter(w => w.length >= 3);
-    if (words.length >= 2) {
-      const allWordsPresent = words.every(w => textLower.includes(w));
-      if (allWordsPresent && !counted.has(entityLower)) {
-        counted.add(entityLower);
-        count++;
-      }
-    }
-  }
-  return count;
-}
+// Session entity tracking — extracted to ./main-world/session-entities.ts
+const _sessionTracker = createSessionEntityTracker(500);
+// Backward-compatible aliases used throughout main-world.ts
+const _sessionEntities = { add: (v: string) => _sessionTracker.add(v), clear: () => _sessionTracker.clear(), get size() { return _sessionTracker.size; } };
+function _countSessionEntityReferences(text: string): number { return _sessionTracker.countReferences(text); }
 let _activeStreamCount = 0;
 let _pendingClear = false;
 let _lastConversationPath: string = window.location.pathname;
@@ -3835,14 +3807,7 @@ function registerPseudonymization(
   _resetMapActivityTimer(); // Reset 30-min inactivity timeout on new pseudonymization
   for (const m of mappings) {
     addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
-    if (m.original.length >= 4) {
-      _sessionEntities.add(m.original);
-      // Evict oldest entries if over cap (Set iterates in insertion order)
-      if (_sessionEntities.size > MAX_SESSION_ENTITIES) {
-        const iter = _sessionEntities.values();
-        _sessionEntities.delete(iter.next().value!);
-      }
-    }
+    _sessionEntities.add(m.original); // tracker handles min length + eviction internally
   }
   if (!options?.skipDomRescan && mappings.length > 0) {
     startPersistentDomDepseudo();
