@@ -390,6 +390,13 @@ export async function attemptManagedAutoEnroll(): Promise<boolean> {
   try {
     const config = await resolveConfig();
 
+    // Sovereign AI: block cloud enrollment in local-only mode
+    try {
+      const { getLockedDeploymentConfig } = await import('../detection/tier2-adapter');
+      const cfg = getLockedDeploymentConfig();
+      if (cfg.deploymentMode === 'local-only') return false;
+    } catch { /* config not yet initialized — proceed with enrollment check */ }
+
     // Only applies to managed deployments with an enrollment code
     if (!config.isManaged || !config.enrollmentCode) return false;
 

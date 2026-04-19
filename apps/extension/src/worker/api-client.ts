@@ -6,6 +6,7 @@
 import { resolveConfig, onManagedConfigChanged } from '../managed-config';
 import { loadApiKey } from '../api-key-store';
 import { reportSecurityAnomaly } from '../security/network-guard';
+import { assertCloudCallsPermitted } from '../detection/tier2-adapter';
 
 let API_BASE_URL = 'https://irongate-api.onrender.com/v1';
 
@@ -102,6 +103,12 @@ interface RequestOptions {
  * Make an authenticated API request with exponential backoff retry.
  */
 export async function apiRequest<T>(options: RequestOptions): Promise<T> {
+  // Sovereign AI guard: block all cloud API calls in local-only mode.
+  // This is the centralized funnel — apiRequest is used by queue, weight
+  // resolver, event flush, suppression rules, and compliance profile.
+  try { assertCloudCallsPermitted('api-client.apiRequest'); }
+  catch { throw new ApiError(403, 'Cloud calls blocked in local-only mode'); }
+
   const { method, path, body, retries = 3 } = options;
   const url = `${config.baseUrl}${path}`;
 

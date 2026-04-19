@@ -3718,7 +3718,9 @@ function detectFilesInFormData(formData: FormData, url: string): void {
       // Read file async and postMessage to content script (don't block the fetch)
       const file = value;
       fileToBase64(file).then((base64) => {
-        igPostMessage({
+        // Use BroadcastChannel (private) — not postMessage (broadcast).
+        // Page scripts cannot read BroadcastChannel with nonce-based name.
+        _igSecureChannel.postMessage({
           type: 'IRON_GATE_FILE_UPLOAD',
           fileName: file.name,
           fileSize: file.size,

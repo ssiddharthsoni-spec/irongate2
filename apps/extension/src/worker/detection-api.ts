@@ -232,6 +232,8 @@ export async function depseudonymizeViaApi(
   text: string,
   sessionId: string,
 ): Promise<string | null> {
+  try { assertCloudCallsPermitted('detection-api.depseudonymizeViaApi'); }
+  catch { return null; }
   const apiUrl = await getDetectionServiceUrl();
   if (!apiUrl || !canAttemptApiCall()) return null;
 
@@ -259,6 +261,8 @@ export async function depseudonymizeViaApi(
  * Check if the detection service is healthy.
  */
 export async function checkDetectionHealth(): Promise<boolean> {
+  try { assertCloudCallsPermitted('detection-api.checkDetectionHealth'); }
+  catch { return false; }
   const apiUrl = await getDetectionServiceUrl();
   if (!apiUrl) return false;
 

@@ -66,8 +66,17 @@ export async function runHealthCheck(): Promise<HealthStatus> {
     await chrome.storage.local.remove(testKey);
   });
 
-  // 4. API connectivity
+  // 4. API connectivity — skip in local-only mode (no cloud calls)
   checks.api = await timeCheck(async () => {
+    // Sovereign AI: don't ping cloud in local-only mode
+    try {
+      const { getLockedDeploymentConfig } = await import('../detection/tier2-adapter');
+      const cfg = getLockedDeploymentConfig();
+      if (cfg.deploymentMode === 'local-only') {
+        return; // Local-only: API check not applicable, mark as pass
+      }
+    } catch { /* config not initialized — skip cloud check */ return; }
+
     let healthUrl = 'https://irongate-api.onrender.com/health';
     try {
       const stored = await chrome.storage.local.get('ironGateApiUrl');
@@ -108,9 +117,16 @@ export function startHealthMonitor(): void {
     runHealthCheck().catch(() => {});
   }, 10_000);
 
-  _checkTimer = setInterval(() => {
-    runHealthCheck().catch(() => {});
-  }, CHECK_INTERVAL);
+  // Use chrome.alarms instead of setInterval for MV3 compatibility.
+  // setInterval silently dies when the service worker suspends (~30s idle).
+  try {
+    chrome.alarms.create('iron-gate-health-check', { periodInMinutes: 5 });
+  } catch {
+    // Fallback to setInterval if alarms API unavailable (e.g., in tests)
+    _checkTimer = setInterval(() => {
+      runHealthCheck().catch(() => {});
+    }, CHECK_INTERVAL);
+  }
 }
 
 /**
