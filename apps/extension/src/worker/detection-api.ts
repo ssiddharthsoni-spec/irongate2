@@ -18,6 +18,7 @@
 
 import { getToken, getFirmId, getUserId } from './auth';
 import { resolveConfig } from '../managed-config';
+import { assertCloudCallsPermitted } from '../detection/tier2-adapter';
 import { CircuitBreaker, type CircuitState, type CircuitBreakerStats } from './circuit-breaker';
 
 // ---------------------------------------------------------------------------
@@ -149,6 +150,10 @@ export async function pseudonymizeViaApi(
     aiTool?: string;
   } = {},
 ): Promise<PseudonymizeResult | null> {
+  // Sovereign AI guard: local-only mode must never send raw text to the cloud.
+  try { assertCloudCallsPermitted('detection-api.pseudonymizeViaApi'); }
+  catch { return null; }
+
   if (!canAttemptApiCall()) {
     console.warn('[Iron Gate] Detection API circuit breaker open — using local fallback');
     return null;

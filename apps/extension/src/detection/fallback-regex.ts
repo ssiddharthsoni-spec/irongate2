@@ -224,14 +224,14 @@ const REGEX_PATTERNS: RegexPattern[] = [
   // Organizations after contextual keywords (multi-word names)
   {
     type: 'ORGANIZATION',
-    pattern: /\b(?:company|firm|corporation|organization|entity|employer|contractor|vendor|supplier|subsidiary|parent\s+company|activist(?:\s+fund)?|investor|fund|bank|lender)\s*(?::|called|named|is|,)?\s+[A-Z][a-z]+(?:\s+(?:[A-Z][a-z]+|&|No\.\s*\d+|of|the|and))+\b/gi,
+    pattern: /\b(?:company|firm|corporation|organization|entity|employer|contractor|vendor|supplier|subsidiary|parent\s+company|activist(?:\s+fund)?|investor|fund|bank|lender|customer|client|account|partner|prospect|tenant|portfolio\s+company)\s*(?::|called|named|is|,)?\s+[A-Z][a-z]+(?:\s+(?:[A-Z][a-z]+|&|No\.\s*\d+|of|the|and))+\b/gi,
     confidence: 0.75,
     contextual: true,
   },
   // Organizations after contextual keywords (single-word names like "Blackstone", "ModaGlobal")
   {
     type: 'ORGANIZATION',
-    pattern: /\b(?:company|firm|corporation|organization|entity|employer|contractor|vendor|supplier|subsidiary|parent\s+company|activist(?:\s+fund)?|investor|fund|bank|lender|PE\s+firm|PE\s+owner|backed\s+by|acquired\s+by|owned\s+by)\s*(?::|called|named|is|,)?\s+([A-Z][a-zA-Z]{2,})\b/gi,
+    pattern: /\b(?:company|firm|corporation|organization|entity|employer|contractor|vendor|supplier|subsidiary|parent\s+company|activist(?:\s+fund)?|investor|fund|bank|lender|PE\s+firm|PE\s+owner|backed\s+by|acquired\s+by|owned\s+by|customer|client|account|partner|prospect|tenant)\s*(?::|called|named|is|,)?\s+([A-Z][a-zA-Z]{2,})\b/gi,
     confidence: 0.7,
     contextual: true,
   },
@@ -267,6 +267,15 @@ const REGEX_PATTERNS: RegexPattern[] = [
     type: 'ORGANIZATION',
     pattern: /\b(?:Memorial|Mount|Saint|St\.?|Johns|Children's|Presbyterian|Cleveland|Mayo|Stanford|Harvard|Yale|Princeton|Columbia|Duke|MIT|NYU|UCLA|UCSF|Northwestern|Vanderbilt|Emory)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}\b/g,
     confidence: 0.75,
+  },
+  // Parenthetical org names in financial writing: "Top customer (Fabrikam)",
+  // "acquired by (Alpine Systems)", "vendor (DeltaCore)". Very common in P&L
+  // summaries and board memos where the entity name is parenthetical.
+  {
+    type: 'ORGANIZATION',
+    pattern: /\b(?:customer|client|account|vendor|partner|acquir\w*|target|prospect|portfolio)\s*\(\s*([A-Z][a-zA-Z]{2,}(?:\s+[A-Z][a-z]+)*)\s*\)/gi,
+    confidence: 0.8,
+    contextual: true,
   },
   // Known financial entity patterns: "Name + Capital/Partners/Asset Management"
   // Also handles single-word names before role descriptors
@@ -849,6 +858,65 @@ const REGEX_PATTERNS: RegexPattern[] = [
 
 // ── Anti-evasion: strip zero-width characters and detect base64-encoded PII ──
 
+// ── Brand Dictionary (C-3 from architect audit) ─────────────────────────────
+// Single-word brand names that regex patterns miss because they have no
+// corporate suffix (Inc, Corp, LLC) and no CamelCase internal caps.
+// This is data-driven: adding a brand is a one-line entry, not a regex patch.
+// Confidence is lower (0.55) because single words can be ambiguous in some
+// contexts ("Notion" = the app vs "notion" = concept). The scorer's context
+// layers handle disambiguation.
+const KNOWN_BRAND_ORGS: ReadonlySet<string> = new Set([
+  // Top SaaS / Tech
+  'Salesforce', 'Stripe', 'Shopify', 'Notion', 'Figma', 'Datadog',
+  'Twilio', 'Snowflake', 'Palantir', 'Databricks', 'Confluent',
+  'Cloudflare', 'Okta', 'Zendesk', 'Atlassian', 'Workday',
+  'ServiceNow', 'Splunk', 'Elasticsearch', 'MongoDB', 'Supabase',
+  'Vercel', 'Netlify', 'Fastly', 'Akamai', 'Zscaler',
+  'CrowdStrike', 'SentinelOne', 'Fortinet', 'Palo',
+  // FAANG / Big Tech
+  'Google', 'Apple', 'Amazon', 'Microsoft', 'Meta', 'Netflix',
+  'Tesla', 'Nvidia', 'Intel', 'AMD', 'Qualcomm', 'Broadcom',
+  'Oracle', 'SAP', 'Adobe', 'Autodesk', 'Intuit',
+  // Finance
+  'Blackstone', 'Citadel', 'Bloomberg', 'Fidelity', 'Schwab',
+  'Vanguard', 'Visa', 'Mastercard', 'PayPal', 'Square', 'Robinhood',
+  'Coinbase', 'Binance', 'Revolut', 'Plaid', 'Marqeta',
+  // Enterprise / Industrial
+  'Siemens', 'Honeywell', 'Caterpillar', 'Deere', 'Boeing',
+  'Airbus', 'Raytheon', 'Lockheed', 'Northrop',
+  // Consulting / Professional Services
+  'Deloitte', 'Accenture', 'McKinsey', 'Gartner', 'Forrester',
+  // Pharma / Health
+  'Pfizer', 'Moderna', 'Merck', 'Novartis', 'Roche',
+  'AstraZeneca', 'Amgen', 'Gilead', 'Regeneron', 'Illumina',
+  // Consumer
+  'Nike', 'Adidas', 'Starbucks', 'Walmart', 'Costco', 'Target',
+  'Disney', 'Spotify', 'Uber', 'Airbnb', 'DoorDash', 'Instacart',
+  // Fictional test companies (used in Iron Gate testing)
+  'Fabrikam', 'Contoso', 'Proseware', 'Northwind', 'Adatum',
+]);
+
+/** Detect known single-word brand names as ORGANIZATION entities. */
+function detectKnownBrands(text: string): DetectedEntity[] {
+  const entities: DetectedEntity[] = [];
+  for (const brand of KNOWN_BRAND_ORGS) {
+    // Word-boundary search, case-sensitive (brands are proper nouns)
+    const re = new RegExp(`\\b${brand}\\b`, 'g');
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      entities.push({
+        type: 'ORGANIZATION',
+        text: m[0],
+        start: m.index,
+        end: m.index + m[0].length,
+        confidence: 0.55,
+        source: 'regex',
+      });
+    }
+  }
+  return entities;
+}
+
 /** Zero-width and invisible characters that can be inserted to evade detection */
 const ZERO_WIDTH_RE = /[\u200B\u200C\u200D\uFEFF\u00AD\u034F\u061C\u180E\u2060\u2061\u2062\u2063\u2064\u206A-\u206F]/g;
 
@@ -969,15 +1037,33 @@ function runRegexPatterns(text: string): DetectedEntity[] {
       // For contextual patterns, extract just the name part (last capitalized words).
       // Trim first — patterns like pipe-delimited may capture trailing whitespace
       // before a lookahead, which breaks the $ anchor.
+      // Also strip trailing punctuation (parentheses, brackets) that wraps org names
+      // in financial text like "Top customer (Fabrikam):" — the closing ')' prevents
+      // the $ anchor from matching the capitalized name.
       if (contextual) {
-        const nameMatch = match[0].trimEnd().match(/[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}$/);
-        if (nameMatch) {
-          const nameStart = match[0].lastIndexOf(nameMatch[0]);
-          matchText = nameMatch[0];
-          matchStart = match.index + nameStart;
-          matchEnd = matchStart + matchText.length;
+        // If the pattern has a capturing group, prefer it — it's the most precise
+        // extraction (e.g., parenthetical org pattern captures just the org name).
+        if (match[1] && /[A-Z]/.test(match[1])) {
+          const capturedName = match[1].trim();
+          const capturedStart = match[0].indexOf(capturedName);
+          if (capturedStart >= 0) {
+            matchText = capturedName;
+            matchStart = match.index + capturedStart;
+            matchEnd = matchStart + matchText.length;
+          } else {
+            continue;
+          }
         } else {
-          continue;
+          const cleaned = match[0].trimEnd().replace(/[)\]}>:;,]+$/, '').trimEnd();
+          const nameMatch = cleaned.match(/[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}$/);
+          if (nameMatch) {
+            const nameStart = match[0].lastIndexOf(nameMatch[0]);
+            matchText = nameMatch[0];
+            matchStart = match.index + nameStart;
+            matchEnd = matchStart + matchText.length;
+          } else {
+            continue;
+          }
         }
       }
 
@@ -1114,6 +1200,11 @@ function runRegexPatterns(text: string): DetectedEntity[] {
 export function detectWithRegex(text: string): DetectedEntity[] {
   const entities: DetectedEntity[] = [];
 
+  // Anti-evasion: Unicode NFKC normalization to defeat homoglyph attacks.
+  // Converts Cyrillic/Greek/mathematical look-alikes to ASCII equivalents
+  // so regex patterns like [A-Z][a-z]+ match regardless of character origin.
+  text = text.normalize('NFKC');
+
   // Anti-evasion: detect base64-encoded PII in the original text
   entities.push(...detectBase64PII(text));
 
@@ -1130,6 +1221,13 @@ export function detectWithRegex(text: string): DetectedEntity[] {
 
   // Run patterns on original text
   entities.push(...runRegexPatterns(text));
+
+  // ── Brand dictionary scan (C-3 from architect audit) ────────────────────
+  // Single-word brands like "Salesforce", "Stripe", "Snowflake" are invisible
+  // to regex (no suffix, no CamelCase). A data-driven dictionary separates
+  // policy (which brands matter) from mechanism (how we match).
+  // Only match when word-boundary delimited to avoid substring false positives.
+  entities.push(...detectKnownBrands(text));
 
   // ── PII-proximity name scan ──────────────────────────────────────────────
   // If the text already has high-value PII (SSN, DOB, phone, email, etc.),

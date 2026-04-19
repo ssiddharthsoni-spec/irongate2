@@ -34,6 +34,7 @@ import {
   warmupLocalLlm,
   probeTier2Health,
   getLockedDeploymentConfig,
+  assertCloudCallsPermitted,
   LocalDeploymentError,
   type Tier2Config,
   type ManagedDeploymentConfig,
@@ -862,15 +863,24 @@ resolveConfig().then((config) => {
   if (config.isManaged) {
     configureApiClient({ apiKey: config.apiKey, baseUrl: config.apiUrl });
     igLog('Enterprise managed mode active. Mode:', firmMode);
-    // Start kill switch enforcement with the configured API URL
-    startKillSwitchEnforcement(config.apiUrl || KILL_SWITCH_API_URL);
+    // Kill switch: only poll cloud in non-local-only modes.
+    // In local-only mode, kill switch is read from chrome.storage.managed only.
+    if (_deploymentMode !== 'local-only') {
+      startKillSwitchEnforcement(config.apiUrl || KILL_SWITCH_API_URL);
+    } else {
+      igLog('Local-only mode: kill switch via managed policy only (no cloud polling)');
+    }
     // Pre-fetch feedback suppression rules and compliance profile
-    refreshSuppressionRules().catch((err) => igLog('Suppression rules refresh failed:', err));
-    refreshComplianceProfile().catch((err) => igLog('Compliance profile refresh failed:', err));
+    if (_deploymentMode !== 'local-only') {
+      refreshSuppressionRules().catch((err) => igLog('Suppression rules refresh failed:', err));
+      refreshComplianceProfile().catch((err) => igLog('Compliance profile refresh failed:', err));
+    }
   } else {
     igLog('Individual mode. Loaded firm mode:', firmMode);
-    // Start kill switch enforcement with default API URL
-    startKillSwitchEnforcement(KILL_SWITCH_API_URL);
+    // Individual users: only poll if not in local-only deployment mode
+    if (_deploymentMode !== 'local-only') {
+      startKillSwitchEnforcement(KILL_SWITCH_API_URL);
+    }
   }
   // Auto-detect Detection API availability and switch to server mode
   // This enables the thin-client architecture when the Detection Service is reachable.
@@ -1334,7 +1344,10 @@ async function handleMessage(
       // API call runs in background — results compared after local finishes.
       // ════════════════════════════════════════════════════════════════════
       let shadowServerPromise: Promise<{ action: string; score: number } | null> | undefined;
-      if (config.processingMode === 'shadow') {
+      // Sovereign AI guard: shadow mode sends raw text to cloud — block in local-only
+      let _shadowPermitted = true;
+      try { assertCloudCallsPermitted('worker.shadowMode'); } catch { _shadowPermitted = false; }
+      if (config.processingMode === 'shadow' && _shadowPermitted) {
         // Shadow mode: run Detection API in background for comparison
         // Prefer Detection Service (Python FastAPI) over old Node.js proxy
         if (isApiAvailable()) {
@@ -2059,6 +2072,9 @@ async function handleMessage(
 
       // ── Fallback: old Node.js proxy endpoint ──
       // Used when Detection Service is unavailable (circuit breaker open, no URL configured).
+      // Sovereign AI guard: block in local-only mode
+      try { assertCloudCallsPermitted('worker.SERVER_PROCESS.fallback'); }
+      catch { return { error: 'BLOCKED_LOCAL_ONLY: cloud calls not permitted in local-only mode' }; }
       if ((config.processingMode !== 'server' && config.processingMode !== 'shadow') || !config.apiKey) {
         return { error: 'Server mode not active and Detection API unavailable' };
       }

@@ -231,7 +231,10 @@ export async function resolveConfig(): Promise<ResolvedConfig> {
       firmId: safeStr(managed.firmId || local.connectionState?.firmId || null, null as any, MAX_NAME_LENGTH),
       firmName: safeStr(managed.firmName || local.connectionState?.firmName || null, null as any, MAX_NAME_LENGTH),
       isManaged: true,
-      localLLM: resolveLocalLLMConfig(managed) || resolveLocalLLMConfig(local),
+      // In managed mode, NEVER fall through to local storage for security-sensitive
+      // fields. A user could set localLLMEndpoint to an external server in local
+      // storage, routing classification prompts to their own server.
+      localLLM: resolveLocalLLMConfig(managed),
       tiers: resolveTierConfig(managed),
       processingMode: managed.processingMode === 'server' ? 'server'
         : managed.processingMode === 'shadow' ? 'shadow' : 'local',

@@ -74,7 +74,7 @@ export function createTier3ServerAdapter(config: Tier3Config): TierAdapter {
         const { getLockedDeploymentConfig } = require('./tier2-adapter');
         const cfg = getLockedDeploymentConfig();
         if (cfg?.deploymentMode === 'local-only') return false;
-      } catch { /* init not called — permit in dev mode */ }
+      } catch { return false; /* fail closed: if deployment config unavailable, block cloud calls */ }
       return (config.enabled !== false) && !_disabled;
     },
 
