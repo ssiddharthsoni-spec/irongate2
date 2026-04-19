@@ -261,6 +261,39 @@ function buildAuditEntry(args: {
 let _cachedDeviceHash: string | null = null;
 // Dedup: track last Gemma-judged prompt hash to avoid repeated Ollama calls
 let _lastGemmaHash: string = '';
+
+// ── Intent-drift detection ──────────────────────────────────────────────────
+// Tracks rolling window of Gemma verdicts. If >80% of last 50 are in the same
+// zone, the model may be corrupted, wrong, or under adversarial influence.
+const DRIFT_WINDOW = 50;
+const DRIFT_THRESHOLD = 0.8;
+const _gemmaVerdictHistory: string[] = [];
+let _driftWarningEmitted = false;
+
+function trackGemmaVerdict(verdict: string): void {
+  _gemmaVerdictHistory.push(verdict);
+  if (_gemmaVerdictHistory.length > DRIFT_WINDOW) _gemmaVerdictHistory.shift();
+  if (_gemmaVerdictHistory.length < DRIFT_WINDOW) return; // not enough data
+
+  // Count most common verdict
+  const counts: Record<string, number> = {};
+  for (const v of _gemmaVerdictHistory) counts[v] = (counts[v] || 0) + 1;
+  const maxCount = Math.max(...Object.values(counts));
+  const dominantVerdict = Object.entries(counts).find(([, c]) => c === maxCount)?.[0];
+  const ratio = maxCount / DRIFT_WINDOW;
+
+  if (ratio >= DRIFT_THRESHOLD && !_driftWarningEmitted) {
+    _driftWarningEmitted = true;
+    console.warn(`[Iron Gate] INTENT DRIFT WARNING: ${(ratio * 100).toFixed(0)}% of last ${DRIFT_WINDOW} Gemma verdicts are "${dominantVerdict}". Model may be corrupted or serving wrong model.`);
+    // Surface to sidepanel
+    chrome.runtime.sendMessage({
+      type: 'IRON_GATE_ANOMALY',
+      payload: { type: 'intent_drift', message: `Gemma returning "${dominantVerdict}" for ${(ratio * 100).toFixed(0)}% of prompts`, ratio, dominantVerdict },
+    }).catch(() => {});
+  } else if (ratio < DRIFT_THRESHOLD * 0.9) {
+    _driftWarningEmitted = false; // reset when distribution normalizes
+  }
+}
 function getDeviceHash(): string {
   if (_cachedDeviceHash) return _cachedDeviceHash;
   // Stable per-worker-lifecycle. localStorage is NOT available in MV3
@@ -1937,6 +1970,7 @@ async function handleMessage(
               }).catch(() => {});
 
               igLog(`STAGE 2 (${judgment.source}): verdict=${judgment.verdict} score=${judgment.score} latency=${judgment.latency.totalMs}ms`);
+              trackGemmaVerdict(judgment.verdict);
 
               // Push Gemma verdict to the content script → main-world for
               // use in the NEXT submit's pseudonymization decision.

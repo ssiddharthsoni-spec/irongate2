@@ -2049,6 +2049,24 @@ let _rapidScanPending = false;
 // restore silently dropped. Sequence numbers are immune to timing.
 let _clearSequence = 0;
 let _lastClearTime = 0;
+
+// ── Conversation boundary timeout ──────────────────────────────────────────
+// Fallback: if URL-based conversation detection fails (platform changed their
+// URL structure), clear the map after 30 minutes of no pseudonymization activity.
+// This prevents stale pseudonyms from leaking across conversations indefinitely.
+const MAP_INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+let _mapActivityTimer: ReturnType<typeof setTimeout> | null = null;
+
+function _resetMapActivityTimer(): void {
+  if (_mapActivityTimer) clearTimeout(_mapActivityTimer);
+  _mapActivityTimer = setTimeout(() => {
+    if (Object.keys(currentReverseMap).length > 0) {
+      igLog('Map inactivity timeout (30 min) — clearing stale pseudonyms');
+      clearReverseMapFully();
+    }
+  }, MAP_INACTIVITY_TIMEOUT);
+}
+
 // ─── Turn Coordinator ─────────────────────────────────────────────────────────
 // LLM platforms fire 2-5 fetch/XHR requests per user turn (preflight, metadata,
 // conversation history, actual prompt). Each produces its own detection result.
@@ -2227,7 +2245,7 @@ function clearReverseMapFully(): void {
     _persistentObserver = null;
   }
   if (_persistentPollTimer) {
-    clearInterval(_persistentPollTimer);
+    clearTimeout(_persistentPollTimer);
     _persistentPollTimer = null;
   }
   _persistentReplacementCount = 0;
@@ -2356,18 +2374,41 @@ function startPersistentDomDepseudo(): void {
     characterData: true,
   });
 
-  // Fallback polling at 500ms — catches anything mutations missed
+  // Fallback polling with exponential backoff — starts at 500ms, backs off
+  // to 10s when no replacements are found. Resets to 500ms on any replacement.
+  // This saves CPU on long idle conversations while staying responsive during
+  // active streaming.
   let _pollCount = 0;
-  _persistentPollTimer = setInterval(() => {
-    if (Object.keys(currentReverseMap).length === 0) return;
-    _pollCount++;
-    const count = scanTextNodes(document.body);
-    if (count > 0) {
-      _persistentReplacementCount += count;
-      igLog(`DOM POLL: ${count} replacements in poll #${_pollCount} (total: ${_persistentReplacementCount})`);
-      scheduleRapidFollowUp();
-    }
-  }, 500);
+  let _pollInterval = 500;
+  let _consecutiveEmptyPolls = 0;
+  const POLL_MIN = 500;
+  const POLL_MAX = 10_000;
+
+  function schedulePoll(): void {
+    _persistentPollTimer = setTimeout(() => {
+      if (Object.keys(currentReverseMap).length === 0) {
+        schedulePoll();
+        return;
+      }
+      _pollCount++;
+      const count = scanTextNodes(document.body);
+      if (count > 0) {
+        _persistentReplacementCount += count;
+        _consecutiveEmptyPolls = 0;
+        _pollInterval = POLL_MIN; // Reset to fast polling on replacement
+        igLog(`DOM POLL: ${count} replacements in poll #${_pollCount} (total: ${_persistentReplacementCount})`);
+        scheduleRapidFollowUp();
+      } else {
+        _consecutiveEmptyPolls++;
+        // Exponential backoff: 500 → 1000 → 2000 → 4000 → 8000 → 10000
+        if (_consecutiveEmptyPolls > 3) {
+          _pollInterval = Math.min(_pollInterval * 2, POLL_MAX);
+        }
+      }
+      schedulePoll();
+    }, _pollInterval) as any;
+  }
+  schedulePoll();
 
   // BUG-01: Clean up observer + poll timer on navigation to prevent memory leak.
   // Each navigation was adding another observer + timer layer without cleanup.
@@ -2377,7 +2418,7 @@ function startPersistentDomDepseudo(): void {
       _persistentObserver = null;
     }
     if (_persistentPollTimer) {
-      clearInterval(_persistentPollTimer);
+      clearTimeout(_persistentPollTimer);
       _persistentPollTimer = null;
     }
   });
@@ -3791,6 +3832,7 @@ function registerPseudonymization(
   mappings: Array<{ pseudonym: string; original: string; type: string }>,
   options?: { skipDomRescan?: boolean },
 ): void {
+  _resetMapActivityTimer(); // Reset 30-min inactivity timeout on new pseudonymization
   for (const m of mappings) {
     addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
     if (m.original.length >= 4) {

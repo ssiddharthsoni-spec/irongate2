@@ -740,10 +740,11 @@ function composeFromClassifier(
   let score = ctx.score;
   let zone = ctx.zone;
 
-  // SAFETY ESCALATION: HIGH_PII in a "green" verdict is a hard override.
-  // The classifier may have read a real SSN as "user's own data" — but it
-  // still leaves the device. Force RED floor.
-  if (hasHighPII && zone === 'green') {
+  // SAFETY ESCALATION: HIGH_PII in a green/amber verdict is a hard override.
+  // The classifier may misread fictional framing or "personal" intent, but
+  // SSN/CC/credentials must ALWAYS be pseudonymized regardless of context.
+  // Regex is the safety net — if it found HIGH_PII, we protect.
+  if (hasHighPII && (zone === 'green' || zone === 'amber')) {
     zone = 'red';
     score = Math.max(score, SINGLE_CRITICAL_ENTITY_FLOOR);
   }

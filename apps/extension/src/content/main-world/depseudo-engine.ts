@@ -78,7 +78,26 @@ export function buildRegexCache(reverseMap: Record<string, string>): CachedPseud
   // Sort entries by pseudonym length DESCENDING before building cache.
   // Longer pseudonyms must be replaced first to prevent substring collisions.
   // E.g., "Contoso Holdings" must be replaced before "Contoso".
-  return entries
+  // Expand person-name entries to include first-name-only variants.
+  // AI responses often use "James" instead of "James Mitchell". Without
+  // this, the first name leaks through de-pseudonymization.
+  const expanded: Array<[string, string]> = [];
+  for (const [pseudonym, original] of entries) {
+    expanded.push([pseudonym, original]);
+    if (looksLikePersonName(pseudonym) && looksLikePersonName(original)) {
+      const pseudoFirst = pseudonym.split(/\s+/)[0];
+      const origFirst = original.split(/\s+/)[0];
+      // Only add first-name mapping if it's not already in the map
+      // and the first name is long enough to be safe (≥3 chars)
+      if (pseudoFirst && origFirst && pseudoFirst.length >= 3
+          && pseudoFirst !== origFirst
+          && !entries.some(([k]) => k === pseudoFirst)) {
+        expanded.push([pseudoFirst, origFirst]);
+      }
+    }
+  }
+
+  return expanded
     .filter(([pseudonym, original]) => pseudonym !== original)
     .sort((a, b) => b[0].length - a[0].length)
     .map(([pseudonym, original]) => {
