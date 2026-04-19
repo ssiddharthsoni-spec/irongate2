@@ -20,8 +20,8 @@ if ((window as any)[CS_MARKER]) {
 (window as any)[CS_MARKER] = true;
 
 // Debug logging — silent in production, enable via: chrome.storage.local.set({ironGateDebug: true})
-let _IG_DEBUG = true; // ON for debugging
-try { chrome.storage.local.get('ironGateDebug', (r) => { _IG_DEBUG = true; /* always on */ }); } catch {}
+let _IG_DEBUG = false;
+try { chrome.storage.local.get('ironGateDebug', (r) => { _IG_DEBUG = Boolean(r?.ironGateDebug); }); } catch {}
 function igLog(...args: any[]) { if (_IG_DEBUG) console.log('[Iron Gate CS]', ...args); }
 
 /**
@@ -319,6 +319,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 // This prevents other page scripts from injecting fake messages.
 let mainWorldAlive = false;
 let _igMainWorldNonce: string | null = null;
+let _igSecureChannel: BroadcastChannel | null = null;
 
 // ── Per-message replay prevention ───────────────────────────────────────────
 // Each message from MAIN world carries a unique _mid (crypto.randomUUID()).
@@ -351,6 +352,16 @@ function isValidMainWorldMessage(data: any): boolean {
   if (!_igMainWorldNonce) {
     _igMainWorldNonce = data._nonce;
     igLog('Nonce established from', data.type);
+    // Open BroadcastChannel for secure data from main-world.
+    // Channel name includes nonce — page scripts can't guess it.
+    if (!_igSecureChannel) {
+      _igSecureChannel = new BroadcastChannel(`ig_${data._nonce}`);
+      _igSecureChannel.onmessage = (evt) => {
+        if (!chrome.runtime?.id) return;
+        handleSecureChannelMessage(evt.data);
+      };
+      igLog('Secure BroadcastChannel established');
+    }
   }
 
   // Validate nonce matches
@@ -481,6 +492,59 @@ function clampNumber(val: unknown, min: number, max: number, fallback: number): 
 function sanitizeString(val: unknown, maxLen: number): string {
   if (typeof val !== 'string') return '';
   return val.substring(0, maxLen);
+}
+
+// ── Secure BroadcastChannel handler ──────────────────────────────────────────
+// Receives sensitive data (reverse map, file uploads, server process requests)
+// via BroadcastChannel instead of window.postMessage. Page scripts cannot
+// listen because the channel name includes the unguessable nonce.
+function handleSecureChannelMessage(data: any) {
+  if (!data?.type) return;
+
+  if (data.type === 'IRON_GATE_FILE_UPLOAD') {
+    if (data.fileBase64 && typeof data.fileBase64 === 'string' && data.fileBase64.length > MAX_FILE_BASE64_LEN) return;
+    const fileName = sanitizeString(data.fileName, 500);
+    const fileSize = clampNumber(data.fileSize, 0, 100_000_000, 0);
+    const fileType = sanitizeString(data.fileType, 100);
+    const fileBase64 = sanitizeString(data.fileBase64, MAX_FILE_BASE64_LEN);
+    igLog(`File upload via secure channel: ${fileName} (${fileSize} bytes)`);
+    chrome.runtime.sendMessage({
+      type: 'FILE_UPLOAD_DETECTED',
+      payload: { fileName, fileSize, fileType, fileBase64, aiToolId: detector?.id || 'unknown', timestamp: Date.now() },
+    }).catch(() => {});
+    return;
+  }
+
+  if (data.type === 'IRON_GATE_SERVER_PROCESS_REQUEST') {
+    const { requestId, text, aiToolId } = data;
+    if (!requestId || !text) return;
+    chrome.runtime.sendMessage({
+      type: 'SERVER_PROCESS',
+      payload: { text, aiToolId, requestId },
+    }, (response) => {
+      if (!chrome.runtime?.id) return;
+      csPostMessage({
+        type: 'IRON_GATE_SERVER_PROCESS_RESPONSE',
+        requestId,
+        result: response?.result || null,
+        error: response?.error || (chrome.runtime.lastError?.message) || null,
+      });
+    });
+    return;
+  }
+
+  if (data.type === 'IRON_GATE_PERSIST_REVERSE_MAP') {
+    const map = data.map;
+    const seq = typeof data._seq === 'number' ? data._seq : 0;
+    if (map && typeof map === 'object') {
+      getTabMapKey().then((tabKey) => {
+        return encryptAndStore(tabKey, map).then(() => {
+          chrome.storage.session.set({ [`${tabKey}_seq`]: seq }).catch(() => {});
+        });
+      }).catch(() => {});
+    }
+    return;
+  }
 }
 
 // Listen for messages from MAIN world (fetch interception results)

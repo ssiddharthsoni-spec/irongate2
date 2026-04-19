@@ -193,6 +193,12 @@ function notifyContentScript(
 const _IG_MSG_NONCE = crypto.getRandomValues(new Uint8Array(16))
   .reduce((s, b) => s + b.toString(16).padStart(2, '0'), '');
 
+// ─── Secure BroadcastChannel for sensitive data ──────────────────────────────
+// Uses the nonce as channel name — only the content script (which captures the
+// nonce from postMessage handshake) can listen. Page scripts cannot guess the
+// channel name. Used for: reverse map, file uploads, server process requests.
+const _igSecureChannel = new BroadcastChannel(`ig_${_IG_MSG_NONCE}`);
+
 /**
  * Secure postMessage wrapper that auto-includes the session nonce AND a
  * unique per-message ID. The content script validates the session nonce
@@ -238,6 +244,7 @@ let _enterprisePolicy: EnterprisePolicyState = {
 // When present, all pseudonymization is deterministic per firm.
 let _firmKeyBytes: Uint8Array | null = null;
 const _firmFakeCache = new Map<string, string>();
+const MAX_FIRM_FAKE_CACHE = 2000;
 
 // B3: Signed policy bundle state — applied by the worker's bundle poller.
 // These override/augment the built-in detection rules. Mutations only happen
@@ -320,6 +327,14 @@ function _buildKillSwitchResponse(reason: string): Response {
   });
 }
 
+function _buildFailClosedResponse(url: string, reason: string): Response {
+  return new Response(JSON.stringify({
+    error: 'iron_gate_blocked',
+    reason,
+    message: 'Iron Gate blocked this request because pseudonymization failed. Your original data was NOT sent to the AI.',
+  }), { status: 502, headers: { 'Content-Type': 'application/json' } });
+}
+
 // registerPseudonymization() and wrapResponse() are defined after all their
 // dependencies (addReverseMapping, startPersistentDomDepseudo, scanTextNodes,
 // depseudonymizeResponse, activeAdapter) to satisfy TypeScript lexical ordering.
@@ -331,6 +346,7 @@ function _buildKillSwitchResponse(reason: string): Response {
 // score is boosted to prevent GREEN passthrough of PII that was previously
 // flagged. This fixes DEF-016: "follow-up with prior PII scores too low".
 const _sessionEntities = new Set<string>();
+const MAX_SESSION_ENTITIES = 500;
 
 /** Check if text references entities from prior turns.
  * Uses both full-entity matching AND individual word matching for person names.
@@ -370,6 +386,17 @@ let _lastConversationPath: string = window.location.pathname;
 // ─── Private LLM config (set via IRON_GATE_SET_PRIVATE_LLM from content script)
 let _privateLlmEndpoint: string | null = null;
 let _privateLlmModel: string | null = null;
+
+function _isAllowedLlmEndpoint(endpoint: string): boolean {
+  try {
+    const url = new URL(endpoint);
+    const host = url.hostname.toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1'
+      || host === '[::1]' || host.endsWith('.local');
+  } catch {
+    return false;
+  }
+}
 
 // ─── Server-mode processing: request/response relay via content script ────────
 // MAIN world can't access chrome APIs, so we relay through the content script
@@ -446,12 +473,14 @@ function requestServerProcess(text: string, aiToolId: string): Promise<ServerPro
 
     _serverProcessPending.set(requestId, { resolve, reject, timer });
 
-    window.postMessage({
+    // Send via BroadcastChannel (private) — raw prompt text must not be
+    // broadcast via window.postMessage where page scripts can read it.
+    _igSecureChannel.postMessage({
       type: 'IRON_GATE_SERVER_PROCESS_REQUEST',
       requestId,
       text,
       aiToolId,
-    }, window.location.origin);
+    });
   });
 }
 
@@ -511,7 +540,8 @@ let _igContentScriptNonce: string | null = null;
 // tries to capture the nonce) so the handshake converges even under timing
 // variance. After GRACE_MAX messages we lock to the captured nonce.
 let _csNonceGraceCount = 0;
-const CS_NONCE_GRACE_MAX = 10;
+const CS_NONCE_GRACE_MAX = 2;
+const _csNonceGraceDeadline = Date.now() + 1000; // 1s window from script load
 
 function isValidContentScriptMessage(data: any): boolean {
   if (!data?._csNonce || typeof data._csNonce !== 'string') return false;
@@ -526,7 +556,7 @@ function isValidContentScriptMessage(data: any): boolean {
   // Grace window: if the previously captured nonce came from a stale
   // content script instance (extension reload, navigation), allow the
   // new nonce to replace it during the grace period.
-  if (_csNonceGraceCount < CS_NONCE_GRACE_MAX) {
+  if (_csNonceGraceCount < CS_NONCE_GRACE_MAX && Date.now() < _csNonceGraceDeadline) {
     _igContentScriptNonce = data._csNonce;
     _csNonceGraceCount++;
     return true;
@@ -692,7 +722,13 @@ window.addEventListener('message', (event) => {
     );
   }
   if (event.data?.type === 'IRON_GATE_SET_PRIVATE_LLM') {
-    _privateLlmEndpoint = event.data.endpoint || null;
+    const candidate = event.data.endpoint || null;
+    if (candidate && !_isAllowedLlmEndpoint(candidate)) {
+      igLog('REJECTED private LLM endpoint — not localhost:', candidate);
+      _privateLlmEndpoint = null;
+    } else {
+      _privateLlmEndpoint = candidate;
+    }
     _privateLlmModel = event.data.model || null;
     if (_privateLlmEndpoint) {
       igLog('Private LLM configured:', _privateLlmEndpoint, _privateLlmModel);
@@ -897,6 +933,10 @@ _prefetchFirmPseudonyms = async function firmPseudonymPrefetch(entities) {
       const fake = _firmFakeFromBytes(e.type, bytes);
       if (fake) {
         _firmFakeCache.set(cacheKey, fake);
+        if (_firmFakeCache.size > MAX_FIRM_FAKE_CACHE) {
+          const iter = _firmFakeCache.keys();
+          _firmFakeCache.delete(iter.next().value!);
+        }
         currentForwardMap[normalized] = fake;
       }
     } catch { /* HKDF failed — leave empty, random fallback handles it */ }
@@ -1582,9 +1622,9 @@ function _scheduleMapPersist(): void {
   if (_mapPersistTimer) clearTimeout(_mapPersistTimer);
   _mapPersistTimer = setTimeout(() => {
     _mapPersistPending = false;
-    // Send current reverse map to content script for chrome.storage.session persistence
-    // Include _seq so stale restores can be rejected on page reload
-    igPostMessage({
+    // Send reverse map via BroadcastChannel (private, not readable by page scripts).
+    // The channel name includes the nonce — only the content script can listen.
+    _igSecureChannel.postMessage({
       type: 'IRON_GATE_PERSIST_REVERSE_MAP',
       map: { ...currentReverseMap },
       _seq: _clearSequence,
@@ -3628,7 +3668,8 @@ function _readFileToBase64AndPost(file: File, source: string): void {
         binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
       }
       const base64 = btoa(binary);
-      igPostMessage({
+      // Send via BroadcastChannel (private) — not postMessage (broadcast)
+      _igSecureChannel.postMessage({
         type: 'IRON_GATE_FILE_UPLOAD',
         fileName: file.name,
         fileSize: file.size,
@@ -3752,6 +3793,11 @@ function registerPseudonymization(
     addReverseMapping(currentReverseMap, m.pseudonym, m.original, m.type);
     if (m.original.length >= 4) {
       _sessionEntities.add(m.original);
+      // Evict oldest entries if over cap (Set iterates in insertion order)
+      if (_sessionEntities.size > MAX_SESSION_ENTITIES) {
+        const iter = _sessionEntities.values();
+        _sessionEntities.delete(iter.next().value!);
+      }
     }
   }
   if (!options?.skipDomRescan && mappings.length > 0) {
@@ -4136,6 +4182,8 @@ const patchedFetch = async function patchedFetch(
         // If regex found entities, Gemma cannot suppress pseudonymization —
         // it can only confirm or escalate. This prevents stale "allow" verdicts
         // from a previous clean prompt from poisoning sensitive prompt decisions.
+        // IntentContextResult shape — typed as any because IIFE can't import from
+        // intent-context-classifier.ts. The scorer validates fields at runtime.
         let intentContext: any = null;
         const gemmaVerdict = getCachedGemmaVerdict();
         if (gemmaVerdict) {
@@ -4530,13 +4578,15 @@ const patchedFetch = async function patchedFetch(
               }
             } catch (fetchErr) {
               console.error(
-                '%c[Iron Gate WIRE] ❌ Modified request FAILED — sending original (fail-open)',
+                '%c[Iron Gate WIRE] Modified request FAILED — blocking (fail-closed). Original data NOT sent.',
                 'color: #ef4444; font-weight: bold; font-size: 13px',
                 '\nError:', fetchErr
               );
-              // Fail OPEN: send original unmodified request, wrap response
-              const failOpenResponse = await originalFetch.call(window, input, init);
-              return wrapResponse(failOpenResponse, url);
+              igPostMessage({
+                type: 'IRON_GATE_DEPSEUDO_FAILURE',
+                detail: 'Pseudonymized request failed. Your original data was NOT sent to the AI.',
+              });
+              return _buildFailClosedResponse(url, 'Pseudonymized fetch failed');
             }
 
             const _t3 = performance.now();
@@ -4551,12 +4601,14 @@ const patchedFetch = async function patchedFetch(
             // behavior and prevents doubling latency on body rejection.
             if (!modifiedResponse.ok && modifiedResponse.status >= 400) {
               console.warn(
-                `%c[Iron Gate WIRE] ⚠️ Tool rejected modified body (${modifiedResponse.status}) — sending original (fail-open)`,
+                `%c[Iron Gate WIRE] Tool rejected modified body (${modifiedResponse.status}) — blocking (fail-closed). Original data NOT sent.`,
                 'color: #f59e0b; font-weight: bold',
               );
-              // Tool rejected modified body: fail-open with original, wrap response
-              const failOpenResponse = await originalFetch.call(window, input, init);
-              return wrapResponse(failOpenResponse, url);
+              igPostMessage({
+                type: 'IRON_GATE_DEPSEUDO_FAILURE',
+                detail: `AI tool rejected the pseudonymized request (status ${modifiedResponse.status}). Your original data was NOT sent.`,
+              });
+              return _buildFailClosedResponse(url, `Tool rejected modified body (${modifiedResponse.status})`);
             }
 
             // De-pseudonymize the user's own message bubble in the DOM.
