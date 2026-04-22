@@ -2171,23 +2171,22 @@ const turnCoordinator = (() => {
         return;
       }
 
-      // ── 0-entity, low-score AUDIT: emit with dedup ──
-      // These can be: (a) genuinely clean user prompts, or (b) platform
-      // metadata fetches (title generation, conversation updates).
-      // We can't distinguish at this layer, but we CAN dedup: if the same
-      // prompt hash was recently emitted as INTERCEPTED (within 5s), this
-      // is a secondary fetch — drop it. Otherwise, emit so the sidepanel
-      // can show "All Clear" for genuinely clean prompts.
+      // ── 0-entity, low-score AUDIT: emit only if no recent INTERCEPTED ──
+      // After an INTERCEPTED event, platforms send secondary fetches (title
+      // generation, conversation updates, metadata) that produce 0-entity
+      // AUDITs with DIFFERENT content hashes. These must be suppressed
+      // regardless of hash — the time window is what matters.
       if (r.promptText && r.promptText.length > 20) {
-        const hash = _promptHash(r.promptText);
         const now = Date.now();
-        // If this hash matches the last INTERCEPTED emission (within 5s),
-        // it's a secondary platform fetch for the same prompt — drop.
-        if (hash === _lastEmitHash && now - _lastEmitAt < 5000) {
-          igLog(`Turn coordinator: DROP 0-entity AUDIT (secondary fetch, same hash)`);
+        // If ANY emission happened recently (within 10s), this is likely
+        // a secondary platform fetch — suppress to protect the real detection.
+        // 10s covers: AI response streaming (2-8s) + title generation (1-3s).
+        if (now - _lastEmitAt < 10_000) {
+          igLog(`Turn coordinator: DROP 0-entity AUDIT (within 10s of last emit)`);
           return;
         }
-        // Different hash = new prompt. Emit so sidepanel shows "All Clear".
+        // No recent emission = genuinely new clean prompt.
+        const hash = _promptHash(r.promptText);
         _lastEmitHash = hash;
         _lastEmitAt = now;
         _emit(r);
