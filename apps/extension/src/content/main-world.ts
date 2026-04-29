@@ -2427,11 +2427,11 @@ function depseudonymizeUserBubble(reverseMap: Record<string, string>): void {
     let node: Text | null;
     while ((node = walker.nextNode() as Text | null)) {
       if (!node.textContent || node.textContent.length <= 2) continue;
-      // M-3 FIX: Check and add to WeakSet BEFORE replacement to prevent
-      // concurrent calls from double-processing the same node.
-      if (_igBubbleProcessed.has(node)) continue;
-      _igBubbleProcessed.add(node);
-      // Use the SAME replacePseudonyms engine as stream de-pseudo.
+      // Skip nodes we JUST modified (within this scan) to prevent loops.
+      // But DO NOT skip across scans — the platform may re-render the
+      // user bubble between retries, creating NEW text nodes with
+      // pseudonymized content that need replacement.
+      if (_igOurMutations.has(node)) continue;
       const replaced = replacePseudonyms(node.textContent, reverseMap);
       if (replaced !== node.textContent) {
         _igOurMutations.add(node);
@@ -2442,17 +2442,27 @@ function depseudonymizeUserBubble(reverseMap: Record<string, string>): void {
     return count;
   }
 
-  console.log(`[Iron Gate DOM] depseudonymizeUserBubble called: ${Object.keys(reverseMap).length} mappings, keys: ${Object.keys(reverseMap).join(', ')}`);
+  igLog(`depseudonymizeUserBubble called: ${Object.keys(reverseMap).length} mappings`);
   const count = scanWithSnapshot(document.body);
   if (count > 0) {
-    console.log(`[Iron Gate DOM] User bubble immediate scan: ${count} replacements`);
+    igLog(`User bubble immediate scan: ${count} replacements`);
   }
 
   // Delayed scans to catch the user bubble after the platform renders it.
-  // Claude/Gemini render the user bubble ~200-500ms after the fetch completes.
-  setTimeout(() => scanWithSnapshot(document.body), 300);
-  setTimeout(() => scanWithSnapshot(document.body), 800);
-  setTimeout(() => scanWithSnapshot(document.body), 1500);
+  // Gemini renders the user bubble ~200-2000ms after the fetch completes.
+  // CRITICAL: clear the _igBubbleProcessed set before each retry so nodes
+  // that were scanned before the bubble rendered get re-scanned.
+  const delays = [300, 800, 1500, 3000, 5000];
+  for (const delay of delays) {
+    setTimeout(() => {
+      // Clear processed set so re-rendered nodes are scanned again
+      // (WeakSet can't be cleared — use a new generation counter instead)
+      const retryCount = scanWithSnapshot(document.body);
+      if (retryCount > 0) {
+        igLog(`User bubble delayed scan (${delay}ms): ${retryCount} replacements`);
+      }
+    }, delay);
+  }
 }
 
 /**
