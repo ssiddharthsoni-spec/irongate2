@@ -3970,8 +3970,59 @@ const patchedFetch = async function patchedFetch(
         }
       }
 
-      // dom-presubmit (Gemini): adapter handles pseudonymization via DOM,
-      // we wrap the response for de-pseudonymization via DOM observer.
+      // dom-presubmit (Gemini): the DOM pre-submit approach doesn't work on
+      // Quill-based editors (Quill maintains an internal Delta model separate
+      // from the DOM — execCommand modifies DOM but Quill reverts it).
+      // Instead, pseudonymize directly in the request body at the wire level.
+      if (mode === 'proxy' && init?.body && typeof init.body === 'string'
+          && Object.keys(currentForwardMap).length > 0) {
+        try {
+          let modifiedBody = init.body;
+          const wireMappings: PseudonymMapping[] = [];
+
+          // Replace each known original→pseudonym in the request body.
+          // The batchexecute format has the prompt as a string inside nested
+          // JSON — string replacement at the serialized level works because
+          // the original text appears verbatim (possibly JSON-escaped).
+          for (const [original, pseudonym] of Object.entries(currentForwardMap)) {
+            if (original.length < 3) continue;
+            // Plain text replacement
+            if (modifiedBody.includes(original)) {
+              modifiedBody = modifiedBody.split(original).join(pseudonym);
+              wireMappings.push({ original, pseudonym, type: 'WIRE_PROXY' });
+            }
+            // JSON-escaped replacement (for nested JSON strings)
+            const origEscaped = original.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+            const pseudEscaped = pseudonym.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+            if (origEscaped !== original && modifiedBody.includes(origEscaped)) {
+              modifiedBody = modifiedBody.split(origEscaped).join(pseudEscaped);
+            }
+          }
+
+          if (wireMappings.length > 0) {
+            igLog(`Gemini wire proxy: replaced ${wireMappings.length} entities in batchexecute body`);
+            turnCoordinator.submit({
+              type: 'IRON_GATE_INTERCEPTED', promptText: '(wire-level)',
+              allEntities: wireMappings.map(m => ({
+                type: 'PERSON', text: m.original, start: 0, end: m.original.length,
+                confidence: 0.9, source: 'regex' as const,
+              })),
+              maskedText: '(wire-modified)',
+              mappings: wireMappings.map(m => ({ pseudonym: m.pseudonym, type: m.type, length: m.original.length })),
+              level: 'high', score: 100,
+            });
+            const newInit = { ...init, body: modifiedBody };
+            const wireResponse = await originalFetch.call(window, input, newInit);
+            // Do NOT wrap the response — Gemini's batchexecute format is not SSE.
+            // DOM observer handles de-pseudonymization for Gemini responses.
+            return wireResponse;
+          }
+        } catch (err) {
+          igLog('Gemini wire proxy error (non-fatal):', err instanceof Error ? err.message : String(err));
+        }
+      }
+
+      // No modifications needed (no forward map entries) — pass through unchanged.
       const skipResponse = await originalFetch.call(window, input, init);
       return wrapResponse(skipResponse, url);
     }
