@@ -998,12 +998,16 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
 
         if (isProxy && newScore.maskedPrompt) {
           // Pseudonymized — show full inspector with changes, safe version, mappings.
-          // KEEP the result with the MOST mappings — Gemini/Claude send multiple
-          // fetch requests per submit, each producing different mapping counts.
-          // The one with the most mappings is the most complete pseudonymization.
+          // Gemini/Claude send multiple fetch requests per submit (within 3s),
+          // each producing different mapping counts. Within that window, keep
+          // the result with the MOST mappings. After 3s, it's a new prompt —
+          // always show the new result regardless of mapping count.
           const newMappingCount = newScore.pseudonymMappings?.length || 0;
           const currentMappingCount = inspectorData?.pseudonymMappings?.length || 0;
-          if (newMappingCount >= currentMappingCount) {
+          const timeSinceLastAccept = Date.now() - _lastAcceptedScoreAt;
+          const isSamePromptWindow = timeSinceLastAccept < 3000;
+
+          if (!isSamePromptWindow || newMappingCount >= currentMappingCount) {
             setInspectorData({
               originalPrompt: newScore.originalPrompt || '',
               maskedPrompt: newScore.maskedPrompt,
