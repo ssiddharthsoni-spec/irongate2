@@ -1609,8 +1609,10 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
         <DeploymentBadge />
       </div>
 
-      {/* Trial Banner */}
-      {!isManaged && <TrialBanner />}
+      {/* Trial Banner — only show for cloud users (with API key).
+          Local-only users (Ollama + regex) don't use Iron Gate's cloud
+          and shouldn't see trial urgency. */}
+      {!isManaged && apiKeySaved && <TrialBanner />}
 
       {/* Collapsible Settings Panel */}
       {settingsOpen && !isManaged && (
