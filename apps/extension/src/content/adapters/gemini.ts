@@ -89,7 +89,7 @@ export const GeminiAdapter: SiteAdapter = {
 
   fileUploadPatterns: [/content-push\.googleapis\.com\/upload/],
 
-  responseStreamStrategy: 'raw-chunk',  // Gemini uses non-standard streaming format
+  responseStreamStrategy: 'none',  // Gemini's batchexecute response is not SSE — DOM observer handles de-pseudo
   skipFetchProxy: false,  // Wire-level verification + fallback pseudonymization
   skipXhrProxy: false,
 
