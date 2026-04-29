@@ -1055,15 +1055,21 @@ function filterEntitiesForPseudonymization(
 
   const ownerships = classifyEntityOwnership(text, allEntities, contextCategory);
 
+  // If ANY HIGH_PII_TYPES are present (SSN, credit card, medical record),
+  // pseudonymize ALL entities — the presence of an SSN means this is real
+  // third-party PII, not a resume or personal task. This prevents the
+  // ownership filter from skipping person names when an SSN is present.
+  const hasHighPII = allEntities.some(e => HIGH_PII_TYPES.has(e.type));
+  const hasCritical = allEntities.some(e => ALWAYS_CRITICAL_TYPES.has(e.type));
+
+  if (hasHighPII || hasCritical) {
+    // When HIGH_PII is present, pseudonymize everything except VALUE_TYPES
+    return allEntities;
+  }
+
   return allEntities.filter((entity, i) => {
     const ownership = ownerships[i];
     if (!ownership) return true; // Safety: if ownership missing, pseudonymize
-
-    // Always pseudonymize credentials regardless of ownership
-    if (ALWAYS_CRITICAL_TYPES.has(entity.type)) return true;
-
-    // Always pseudonymize HIGH_PII_TYPES (SSN, credit card, medical record, etc.)
-    if (HIGH_PII_TYPES.has(entity.type)) return true;
 
     // Self-owned entities in benign context → allow through
     if (ownership.ownership === 'self' && isBenignContext && ownership.confidence >= 0.7) return false;
