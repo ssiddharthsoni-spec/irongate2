@@ -997,12 +997,19 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
         }
 
         if (isProxy && newScore.maskedPrompt) {
-          // Pseudonymized — show full inspector with changes, safe version, mappings
-          setInspectorData({
-            originalPrompt: newScore.originalPrompt || '',
-            maskedPrompt: newScore.maskedPrompt,
-            pseudonymMappings: newScore.pseudonymMappings || [],
-          });
+          // Pseudonymized — show full inspector with changes, safe version, mappings.
+          // KEEP the result with the MOST mappings — Gemini/Claude send multiple
+          // fetch requests per submit, each producing different mapping counts.
+          // The one with the most mappings is the most complete pseudonymization.
+          const newMappingCount = newScore.pseudonymMappings?.length || 0;
+          const currentMappingCount = inspectorData?.pseudonymMappings?.length || 0;
+          if (newMappingCount >= currentMappingCount) {
+            setInspectorData({
+              originalPrompt: newScore.originalPrompt || '',
+              maskedPrompt: newScore.maskedPrompt,
+              pseudonymMappings: newScore.pseudonymMappings || [],
+            });
+          }
           setInspectorOpen(true);
         } else if (newScore.entities && newScore.entities.length > 0 && !newScore.realtime) {
           // Entities detected but NOT pseudonymized (passthrough) — show what was found and why
