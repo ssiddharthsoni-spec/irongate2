@@ -1,5 +1,6 @@
 import type { SiteAdapter } from './base';
-import { extractPromptFromBatchexecute, replacePromptInBatchexecute } from '../main-world/gemini-wire';
+// Wire parser available but not active — DOM pre-submit is the current strategy.
+// import { extractPromptFromBatchexecute, replacePromptInBatchexecute } from '../main-world/gemini-wire';
 
 /**
  * Gemini Adapter — gemini.google.com
@@ -77,8 +78,8 @@ export const GeminiAdapter: SiteAdapter = {
 
   hostPatterns: [/gemini\.google\.com/],
 
-  transport: 'fetch',  // Enable wire-level interception as safety net
-  interception: 'dom-presubmit',  // DOM pre-submit is primary, wire is verification/fallback
+  transport: 'dom-only',
+  interception: 'dom-presubmit',
 
   apiPatterns: [
     /gemini\.google\.com\/app\/_\/api/,
@@ -89,9 +90,9 @@ export const GeminiAdapter: SiteAdapter = {
 
   fileUploadPatterns: [/content-push\.googleapis\.com\/upload/],
 
-  responseStreamStrategy: 'none',  // Gemini's batchexecute response is not SSE — DOM observer handles de-pseudo
-  skipFetchProxy: false,  // Wire-level verification + fallback pseudonymization
-  skipXhrProxy: false,
+  responseStreamStrategy: 'none',
+  skipFetchProxy: true,
+  skipXhrProxy: true,
 
   inputSelectors: [
     '.ql-editor[contenteditable="true"]',
@@ -122,14 +123,12 @@ export const GeminiAdapter: SiteAdapter = {
 
   usesShadowDom: true,
 
-  // Wire-level extraction/replacement for batchexecute format.
-  // Used as verification + fallback when DOM pre-submit fails.
-  extractPrompt(body: string): string | null {
-    return extractPromptFromBatchexecute(body);
+  extractPrompt(_body: string): string | null {
+    return null; // DOM pre-submit handles extraction
   },
 
-  replacePrompt(body: string, original: string, replacement: string): string | null {
-    return replacePromptInBatchexecute(body, original, replacement);
+  replacePrompt(_body: string, _original: string, _replacement: string): string | null {
+    return null; // DOM pre-submit handles replacement
   },
 
   readInput(el: HTMLElement): string {

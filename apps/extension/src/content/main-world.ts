@@ -3970,64 +3970,8 @@ const patchedFetch = async function patchedFetch(
         }
       }
 
-      // dom-presubmit (Gemini): DOM pre-submit handles pseudonymization,
-      // but we VERIFY at the wire level and fall back if needed.
-      const bodyStr = typeof init?.body === 'string' ? init.body : null;
-
-      if (bodyStr && Object.keys(currentForwardMap).length > 0) {
-        // Check: does the wire body contain ORIGINAL text (DOM pre-submit failed)?
-        const promptText = activeAdapter.extractPrompt?.(bodyStr);
-        if (promptText) {
-          // Check if any original entity is still in the extracted prompt
-          const originals = Object.keys(currentForwardMap);
-          const hasOriginal = originals.some(orig =>
-            orig.length >= 4 && promptText.toLowerCase().includes(orig.toLowerCase())
-          );
-
-          if (hasOriginal) {
-            // DOM pre-submit FAILED — real data in the wire payload.
-            // Attempt wire-level replacement as fallback.
-            igLog('DOM pre-submit FAILED — attempting wire-level fallback');
-            let modifiedBody = bodyStr;
-            const wireMappings: PseudonymMapping[] = [];
-            for (const [original, pseudonym] of Object.entries(currentForwardMap)) {
-              const replaced = activeAdapter.replacePrompt?.(modifiedBody, original, pseudonym);
-              if (replaced) {
-                modifiedBody = replaced;
-                wireMappings.push({ original, pseudonym, type: 'WIRE_FALLBACK' });
-              }
-            }
-
-            if (wireMappings.length > 0) {
-              igLog(`Wire fallback: replaced ${wireMappings.length} entities`);
-              // Notify sidepanel — this is VERIFIED protection
-              turnCoordinator.submit({
-                type: 'IRON_GATE_INTERCEPTED', promptText,
-                allEntities: wireMappings.map(m => ({
-                  type: 'PERSON', text: m.original, start: 0, end: m.original.length,
-                  confidence: 0.9, source: 'regex' as const,
-                })),
-                maskedText: promptText, // approximate
-                mappings: wireMappings.map(m => ({ pseudonym: m.pseudonym, type: m.type, length: m.original.length })),
-                level: 'high', score: 100,
-              });
-              const newInit = { ...init, body: modifiedBody };
-              const fallbackResponse = await originalFetch.call(window, input, newInit);
-              return wrapResponse(fallbackResponse, url);
-            } else {
-              // Wire-level replacement also failed — BLOCK the request
-              igLog('Wire fallback FAILED — blocking request (fail-closed)');
-              igPostMessage({
-                type: 'IRON_GATE_DEPSEUDO_FAILURE',
-                detail: 'Both DOM and wire-level pseudonymization failed. Request blocked to protect your data.',
-              });
-              return _buildFailClosedResponse(url, 'Pseudonymization failed on both DOM and wire paths');
-            }
-          }
-        }
-      }
-
-      // DOM pre-submit succeeded (or no entities to verify) — pass through, wrap response
+      // dom-presubmit (Gemini): adapter handles pseudonymization via DOM,
+      // we wrap the response for de-pseudonymization via DOM observer.
       const skipResponse = await originalFetch.call(window, input, init);
       return wrapResponse(skipResponse, url);
     }
