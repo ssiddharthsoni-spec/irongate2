@@ -240,9 +240,12 @@ describe('Gemini Payload Contracts', () => {
   });
 
   // Gemini adapter IS responsible for DOM operations
-  it('Gemini adapter should use DOM interception strategy', () => {
-    expect(GeminiAdapter.skipFetchProxy).toBe(true);
+  it('Gemini adapter should use hybrid DOM + wire strategy', () => {
+    expect(GeminiAdapter.skipFetchProxy).toBe(false);
     expect(GeminiAdapter.interception).toBe('dom-presubmit');
+    // extractPrompt and replacePrompt must be implemented for wire fallback
+    expect(typeof GeminiAdapter.extractPrompt).toBe('function');
+    expect(typeof GeminiAdapter.replacePrompt).toBe('function');
   });
 
   it('Gemini adapter extractPrompt returns null (by design)', () => {

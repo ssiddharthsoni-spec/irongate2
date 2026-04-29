@@ -3970,7 +3970,64 @@ const patchedFetch = async function patchedFetch(
         }
       }
 
-      // dom-presubmit (Gemini): adapter handles request pseudonymization, we wrap response
+      // dom-presubmit (Gemini): DOM pre-submit handles pseudonymization,
+      // but we VERIFY at the wire level and fall back if needed.
+      const bodyStr = typeof init?.body === 'string' ? init.body : null;
+
+      if (bodyStr && Object.keys(currentForwardMap).length > 0) {
+        // Check: does the wire body contain ORIGINAL text (DOM pre-submit failed)?
+        const promptText = activeAdapter.extractPrompt?.(bodyStr);
+        if (promptText) {
+          // Check if any original entity is still in the extracted prompt
+          const originals = Object.keys(currentForwardMap);
+          const hasOriginal = originals.some(orig =>
+            orig.length >= 4 && promptText.toLowerCase().includes(orig.toLowerCase())
+          );
+
+          if (hasOriginal) {
+            // DOM pre-submit FAILED — real data in the wire payload.
+            // Attempt wire-level replacement as fallback.
+            igLog('DOM pre-submit FAILED — attempting wire-level fallback');
+            let modifiedBody = bodyStr;
+            const wireMappings: PseudonymMapping[] = [];
+            for (const [original, pseudonym] of Object.entries(currentForwardMap)) {
+              const replaced = activeAdapter.replacePrompt?.(modifiedBody, original, pseudonym);
+              if (replaced) {
+                modifiedBody = replaced;
+                wireMappings.push({ original, pseudonym, type: 'WIRE_FALLBACK' });
+              }
+            }
+
+            if (wireMappings.length > 0) {
+              igLog(`Wire fallback: replaced ${wireMappings.length} entities`);
+              // Notify sidepanel — this is VERIFIED protection
+              turnCoordinator.submit({
+                type: 'IRON_GATE_INTERCEPTED', promptText,
+                allEntities: wireMappings.map(m => ({
+                  type: 'PERSON', text: m.original, start: 0, end: m.original.length,
+                  confidence: 0.9, source: 'regex' as const,
+                })),
+                maskedText: promptText, // approximate
+                mappings: wireMappings.map(m => ({ pseudonym: m.pseudonym, type: m.type, length: m.original.length })),
+                level: 'high', score: 100,
+              });
+              const newInit = { ...init, body: modifiedBody };
+              const fallbackResponse = await originalFetch.call(window, input, newInit);
+              return wrapResponse(fallbackResponse, url);
+            } else {
+              // Wire-level replacement also failed — BLOCK the request
+              igLog('Wire fallback FAILED — blocking request (fail-closed)');
+              igPostMessage({
+                type: 'IRON_GATE_DEPSEUDO_FAILURE',
+                detail: 'Both DOM and wire-level pseudonymization failed. Request blocked to protect your data.',
+              });
+              return _buildFailClosedResponse(url, 'Pseudonymization failed on both DOM and wire paths');
+            }
+          }
+        }
+      }
+
+      // DOM pre-submit succeeded (or no entities to verify) — pass through, wrap response
       const skipResponse = await originalFetch.call(window, input, init);
       return wrapResponse(skipResponse, url);
     }
@@ -6032,12 +6089,16 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
       if (sessionMappings.length > 0) {
         igLog(`${source} DOM DEF-016: Force-pseudonymizing ${sessionMappings.length} session entities`);
         registerPseudonymization(sessionMappings);
-        turnCoordinator.submit({
-          type: 'IRON_GATE_INTERCEPTED', promptText: text, allEntities,
-          maskedText: pseudonymizedText, mappings: sanitizeMappingsForTransit(sessionMappings),
-          level: 'high', score: Math.max(score, 50),
-        });
-        return { maskedText: pseudonymizedText, mappings: sessionMappings };
+        return {
+          maskedText: pseudonymizedText, mappings: sessionMappings,
+          _notificationData: {
+            type: 'IRON_GATE_INTERCEPTED' as const,
+            promptText: text, allEntities,
+            maskedText: pseudonymizedText,
+            mappings: sanitizeMappingsForTransit(sessionMappings),
+            level: 'high', score: Math.max(score, 50),
+          },
+        };
       }
     }
 
@@ -6107,13 +6168,20 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
 
     igLog(`${adapterName} DOM PROXY (${source}): Pseudonymized ${allEntities.length} entities (${level}, score=${score})`);
 
-    turnCoordinator.submit({
-      type: 'IRON_GATE_INTERCEPTED', promptText: text, allEntities,
-      maskedText: pseudoResult.maskedText, mappings: sanitizeMappingsForTransit(pseudoResult.mappings),
-      level, score,
-    });
-
-    return pseudoResult;
+    // DO NOT notify sidepanel here — the caller must verify the DOM write
+    // succeeded (writeInput) before claiming "protected". The notification
+    // data is returned alongside the pseudoResult for the caller to send
+    // AFTER verification.
+    return {
+      ...pseudoResult,
+      _notificationData: {
+        type: 'IRON_GATE_INTERCEPTED' as const,
+        promptText: text, allEntities,
+        maskedText: pseudoResult.maskedText,
+        mappings: sanitizeMappingsForTransit(pseudoResult.mappings),
+        level, score,
+      },
+    };
   }
 
   // ── Enter key interception (capture phase — runs before platform handlers) ──
@@ -6181,6 +6249,14 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
       return;
     }
 
+    // Notify sidepanel ONLY after writeInput confirmed success.
+    // Before this fix, notification fired inside adapterDomPseudonymize()
+    // BEFORE writeInput was called — so the sidepanel showed "protected"
+    // even when the DOM write failed and real data went through.
+    if ((result as any)._notificationData) {
+      turnCoordinator.submit((result as any)._notificationData);
+    }
+
     setTimeout(() => {
       domInterceptBusy = true;
       const sendBtn = activeAdapter?.findSubmitButton();
@@ -6222,6 +6298,10 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
         if (!writeOk) {
           igLog('_domEnterSubmit: writeInput failed — blocking submit to protect PII');
           return;
+        }
+        // Notify AFTER writeInput success
+        if ((result as any)._notificationData) {
+          turnCoordinator.submit((result as any)._notificationData);
         }
       }
     }
@@ -6294,7 +6374,15 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
               return;
             }
             _lastPseudoOutput = result.maskedText;
-            activeAdapter?.writeInput(inputEl, result.maskedText);
+            const gateWriteOk = activeAdapter?.writeInput(inputEl, result.maskedText);
+            if (!gateWriteOk) {
+              igLog('File-gate SendBtn: writeInput failed — blocking');
+              return;
+            }
+            // Notify AFTER writeInput success
+            if ((result as any)._notificationData) {
+              turnCoordinator.submit((result as any)._notificationData);
+            }
           }
         }
         setTimeout(() => {
@@ -6341,6 +6429,11 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
         adapter: adapterName,
       });
       return;
+    }
+
+    // Notify AFTER writeInput success
+    if ((result as any)._notificationData) {
+      turnCoordinator.submit((result as any)._notificationData);
     }
 
     setTimeout(() => {

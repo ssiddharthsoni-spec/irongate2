@@ -720,9 +720,10 @@ describe('Gemini URL-Encoded Format', () => {
   // Gemini extractPrompt returns null by design (DOM-only strategy)
   // But replacePrompt should work on URL-encoded bodies
 
-  it('should have DOM-only strategy', () => {
-    expect(GeminiAdapter.transport).toBe('dom-only');
-    expect(GeminiAdapter.skipFetchProxy).toBe(true);
+  it('should have hybrid DOM + wire strategy', () => {
+    expect(GeminiAdapter.transport).toBe('fetch');
+    expect(GeminiAdapter.skipFetchProxy).toBe(false);
+    expect(GeminiAdapter.interception).toBe('dom-presubmit');
   });
 
   it('should replace in f.req URL-encoded body', () => {
@@ -1360,7 +1361,7 @@ describe('Transport & Interception Strategy', () => {
     expect(HuggingFaceAdapter.transport).toBe('fetch');
     expect(PoeAdapter.transport).toBe('fetch');
     expect(YouAdapter.transport).toBe('fetch');
-    expect(GeminiAdapter.transport).toBe('dom-only');
+    expect(GeminiAdapter.transport).toBe('fetch');
     expect(CopilotAdapter.transport).toBe('websocket-signalr');
     expect(PerplexityAdapter.transport).toBe('websocket-socketio');
   });

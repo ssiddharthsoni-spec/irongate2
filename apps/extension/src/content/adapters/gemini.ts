@@ -1,4 +1,5 @@
 import type { SiteAdapter } from './base';
+import { extractPromptFromBatchexecute, replacePromptInBatchexecute } from '../main-world/gemini-wire';
 
 /**
  * Gemini Adapter — gemini.google.com
@@ -76,8 +77,8 @@ export const GeminiAdapter: SiteAdapter = {
 
   hostPatterns: [/gemini\.google\.com/],
 
-  transport: 'dom-only',
-  interception: 'dom-presubmit',
+  transport: 'fetch',  // Enable wire-level interception as safety net
+  interception: 'dom-presubmit',  // DOM pre-submit is primary, wire is verification/fallback
 
   apiPatterns: [
     /gemini\.google\.com\/app\/_\/api/,
@@ -88,9 +89,9 @@ export const GeminiAdapter: SiteAdapter = {
 
   fileUploadPatterns: [/content-push\.googleapis\.com\/upload/],
 
-  responseStreamStrategy: 'none',  // DOM pre-submit, no wire response
-  skipFetchProxy: true,  // batchexecute body is opaque
-  skipXhrProxy: true,
+  responseStreamStrategy: 'raw-chunk',  // Gemini uses non-standard streaming format
+  skipFetchProxy: false,  // Wire-level verification + fallback pseudonymization
+  skipXhrProxy: false,
 
   inputSelectors: [
     '.ql-editor[contenteditable="true"]',
@@ -121,13 +122,14 @@ export const GeminiAdapter: SiteAdapter = {
 
   usesShadowDom: true,
 
-  // Not used for Gemini (DOM pre-submit only, no wire extraction)
-  extractPrompt(_body: string): string | null {
-    return null;
+  // Wire-level extraction/replacement for batchexecute format.
+  // Used as verification + fallback when DOM pre-submit fails.
+  extractPrompt(body: string): string | null {
+    return extractPromptFromBatchexecute(body);
   },
 
-  replacePrompt(_body: string, _original: string, _replacement: string): string | null {
-    return null;
+  replacePrompt(body: string, original: string, replacement: string): string | null {
+    return replacePromptInBatchexecute(body, original, replacement);
   },
 
   readInput(el: HTMLElement): string {
