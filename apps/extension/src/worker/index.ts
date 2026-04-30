@@ -2622,33 +2622,35 @@ async function handleMessage(
           const entities = detectWithRegex(textContent);
           const scoreResult = computeScore(textContent, entities);
 
-          // Run Gemma for context analysis (same as prompt detection)
-          let gemmaVerdict: string | null = null;
-          let gemmaScore: number | null = null;
-          if (textContent.length >= 20 && entities.length > 0) {
-            try {
-              let judgeCfg: any = {};
-              try {
-                const cfg2 = getLockedDeploymentConfig() as any;
-                judgeCfg = {
-                  endpoint: cfg2?.localEndpoint?.replace(/\/api\/generate$/, '') ?? 'http://localhost:11434',
-                  model: cfg2?.localModel ?? 'gemma3:4b',
-                  timeoutMs: cfg2?.timeoutMs ?? 8000,
-                };
-              } catch {}
-              const evidence = buildJudgeEvidence(entities, scoreResult.score, scoreResult.level as any, [], 0);
-              const judgment = await judgePrompt(textContent.substring(0, 4000), evidence, aiToolId || 'file-scan', judgeCfg);
-              gemmaVerdict = judgment.verdict;
-              gemmaScore = judgment.score;
-              igLog(`Gemma file verdict: ${judgment.verdict} score=${judgment.score} source=${judgment.source}`);
-            } catch (gemmaErr) {
-              igLog('Gemma file scan error (non-fatal):', gemmaErr instanceof Error ? gemmaErr.message : String(gemmaErr));
-            }
-          }
+          // Return regex results IMMEDIATELY — don't block on Gemma.
+          // The file scan gate waits max 3s. Gemma takes 3-5s.
+          // Regex alone catches SSNs, names, accounts — sufficient for the gate.
+          // Gemma enrichment runs async and updates the sidepanel after.
+          const finalScore = scoreResult.score;
+          const finalLevel = scoreResult.level;
 
-          // Use the higher score between regex and Gemma
-          const finalScore = gemmaScore !== null ? Math.max(scoreResult.score, gemmaScore) : scoreResult.score;
-          const finalLevel = scoreToLevel(finalScore);
+          // Fire-and-forget: Gemma enriches the scan result asynchronously
+          if (textContent.length >= 20 && entities.length > 0) {
+            (async () => {
+              try {
+                let judgeCfg: any = {};
+                try {
+                  const cfg2 = getLockedDeploymentConfig() as any;
+                  judgeCfg = {
+                    endpoint: cfg2?.localEndpoint?.replace(/\/api\/generate$/, '') ?? 'http://localhost:11434',
+                    model: cfg2?.localModel ?? 'gemma3:4b',
+                    timeoutMs: cfg2?.timeoutMs ?? 8000,
+                  };
+                } catch {}
+                const evidence = buildJudgeEvidence(entities, scoreResult.score, scoreResult.level as any, [], 0);
+                const judgment = await judgePrompt(textContent.substring(0, 4000), evidence, aiToolId || 'file-scan', judgeCfg);
+                igLog(`Gemma file verdict: ${judgment.verdict} score=${judgment.score}`);
+                trackGemmaVerdict(judgment.verdict);
+              } catch (gemmaErr) {
+                igLog('Gemma file scan error (non-fatal):', gemmaErr instanceof Error ? gemmaErr.message : String(gemmaErr));
+              }
+            })();
+          }
 
           result = {
             fileName,
@@ -2659,13 +2661,12 @@ async function handleMessage(
             level: finalLevel,
             entitiesFound: entities.length,
             explanation: entities.length > 0
-              ? `Local scan: found ${entities.length} sensitive ${entities.length === 1 ? 'entity' : 'entities'} in "${fileName}".${gemmaVerdict ? ` Gemma verdict: ${gemmaVerdict}.` : ''}`
+              ? `Local scan: found ${entities.length} sensitive ${entities.length === 1 ? 'entity' : 'entities'} in "${fileName}". Gemma analyzing context...`
               : `Local scan: no sensitive data detected in "${fileName}".`,
             entities: entities.map(e => ({ type: e.type, confidence: e.confidence })),
             breakdown: scoreResult.breakdown,
-            gemmaVerdict: gemmaVerdict || undefined,
           };
-          igLog(`Local file scan: "${fileName}" score=${result.score} level=${result.level} entities=${result.entitiesFound} gemma=${gemmaVerdict || 'n/a'}`);
+          igLog(`Local file scan: "${fileName}" score=${result.score} level=${result.level} entities=${result.entitiesFound}`);
         } else {
           result = await analyzeFile(fileName, fileBase64, fileType);
         }
