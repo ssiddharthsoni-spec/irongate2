@@ -6316,9 +6316,9 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
     if (!inputEl.contains(e.target as Node) && e.target !== inputEl) return;
 
     const text = activeAdapter?.readInput(inputEl);
-    if (!text || text.length < 10) return;
 
-    // Always gate on file uploads (regardless of proxy/audit mode)
+    // Check file gate BEFORE text length check — file uploads with no
+    // text prompt must still be blocked if the file is sensitive.
     if (pendingFileScans.size > 0) {
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -6474,9 +6474,9 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
     if (!inputEl) return;
 
     const text = activeAdapter?.readInput(inputEl);
-    if (!text || text.length < 10) return;
 
-    // Check file upload gate (regardless of proxy/audit mode)
+    // Check file upload gate BEFORE text length check — a file upload
+    // with no text prompt should still be gated.
     if (pendingFileScans.size > 0) {
       e.preventDefault();
       e.stopImmediatePropagation();
