@@ -925,12 +925,13 @@ const _proxyNonce = '__IG_' + Array.from(crypto.getRandomValues(new Uint8Array(1
 // but NOT pseudonymized. Replacing these with fakes corrupts the AI's analysis
 // (e.g., fake salaries produce wrong gap calculations). They're only sensitive
 // in combination with identifiers — once names are pseudonymized, the values are safe.
+// Entity types kept REAL (not pseudonymized) so AI computations stay accurate.
+// ONLY truly non-identifying values belong here — NOT financial identifiers.
+// ACCOUNT_NUMBER was removed: bank account numbers are direct fraud vectors.
 const VALUE_TYPES: ReadonlySet<string> = new Set([
   'MONETARY_AMOUNT',
   'DATE',
   'PERCENTAGE',
-  'ACCOUNT_NUMBER',
-  'EMPLOYEE_ID',
 ]);
 
 function pseudonymizeLocal(text: string, entities: DetectedEntity[]): PseudonymResult {
@@ -3974,10 +3975,25 @@ const patchedFetch = async function patchedFetch(
       // Quill-based editors (Quill maintains an internal Delta model separate
       // from the DOM — execCommand modifies DOM but Quill reverts it).
       // Instead, pseudonymize directly in the request body at the wire level.
-      if (mode === 'proxy' && init?.body && typeof init.body === 'string'
+      //
+      // Gemini sends batchexecute as URL-encoded form data. The body can be:
+      // - string (URL-encoded)
+      // - URLSearchParams
+      // - FormData
+      // We need to handle all formats.
+      let bodyStr: string | null = null;
+      if (init?.body) {
+        if (typeof init.body === 'string') bodyStr = init.body;
+        else if (init.body instanceof URLSearchParams) bodyStr = init.body.toString();
+        else if (typeof init.body === 'object' && 'toString' in init.body) bodyStr = init.body.toString();
+      }
+
+      console.log(`[Iron Gate] Gemini wire check: body=${bodyStr ? bodyStr.length + 'ch' : 'null'} forwardMap=${Object.keys(currentForwardMap).length} mode=${mode}`);
+
+      if (mode === 'proxy' && bodyStr
           && Object.keys(currentForwardMap).length > 0) {
         try {
-          let modifiedBody = init.body;
+          let modifiedBody = bodyStr;
           const wireMappings: PseudonymMapping[] = [];
 
           // Replace each known original→pseudonym in the request body.
@@ -5107,8 +5123,54 @@ XMLHttpRequest.prototype.send = function(body?: any) {
   if (adapterIsLLMEndpoint(url, activeAdapter) && bodyStr && bodyStr.length >= 50) {
     igLog(`XHR intercepted — mode: ${mode}, url: ${url.substring(0, 80)}, body length: ${bodyStr.length}, originalType: ${body?.constructor?.name}`);
 
+    // For dom-presubmit adapters (Gemini): the DOM write fails because Quill
+    // reverts it. Replace entity text directly in the XHR body before sending.
+    if (activeAdapter?.interception === 'dom-presubmit'
+        && mode === 'proxy' && Object.keys(currentForwardMap).length > 0 && bodyStr) {
+      // Gemini's batchexecute body is URL-encoded form data.
+      // Use URLSearchParams to decode, replace in the decoded f.req value,
+      // then re-encode. This handles %20, +, %22 etc. automatically.
+      try {
+        const params = new URLSearchParams(bodyStr);
+        let fReq = params.get('f.req');
+        if (fReq) {
+          let xhrReplacements = 0;
+          for (const [original, pseudonym] of Object.entries(currentForwardMap)) {
+            if (original.length < 3) continue;
+            // Plain text replacement in decoded JSON
+            if (fReq.includes(original)) {
+              fReq = fReq.split(original).join(pseudonym);
+              xhrReplacements++;
+            }
+            // JSON-escaped form (for doubly-escaped nested JSON)
+            const origEsc = original.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+            const pseudEsc = pseudonym.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+            if (origEsc !== original && fReq.includes(origEsc)) {
+              fReq = fReq.split(origEsc).join(pseudEsc);
+            }
+          }
+          if (xhrReplacements > 0) {
+            params.set('f.req', fReq);
+            const modifiedXhrBody = params.toString();
+            console.warn(`[Iron Gate] Gemini XHR wire proxy: replaced ${xhrReplacements} entities in f.req`);
+            return originalXHRSend.call(this, modifiedXhrBody);
+          } else {
+            console.warn(`[Iron Gate] Gemini XHR: 0 replacements in decoded f.req. keys: ${Object.keys(currentForwardMap).slice(0, 3).join(', ')}. f.req sample: ${fReq?.substring(0, 120)}`);
+          }
+        } else {
+          console.warn(`[Iron Gate] Gemini XHR: no f.req param in body`);
+        }
+      } catch (e) {
+        console.warn(`[Iron Gate] Gemini XHR parse error: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    } else {
+      // Log why the wire proxy didn't run
+      if (activeAdapter?.interception === 'dom-presubmit') {
+        console.warn(`[Iron Gate] Gemini XHR: skipped wire proxy. mode=${mode} forwardMap=${Object.keys(currentForwardMap).length} bodyStr=${bodyStr ? bodyStr.length + 'ch' : 'null'}`);
+      }
+    }
+
     // Skip XHR proxy for platforms where DOM/WS handles interception.
-    // Adapter registry checks active adapter flags + cross-domain patterns.
     if (shouldSkipXhrProxy(url, activeAdapter)) {
       return originalXHRSend.call(this, body);
     }
