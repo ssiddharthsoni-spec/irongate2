@@ -2578,7 +2578,68 @@ async function handleMessage(
       }
 
       try {
-        const result = await analyzeFile(fileName, fileBase64, fileType);
+        // In local-only mode, scan locally using regex instead of cloud API.
+        // Decode base64 to text, run detectWithRegex + computeScore.
+        let result: any;
+        let isLocalScan = false;
+        try {
+          assertCloudCallsPermitted('worker.FILE_UPLOAD_DETECTED');
+        } catch {
+          isLocalScan = true;
+        }
+
+        if (isLocalScan) {
+          // Local scan: decode file content and run regex detection
+          let textContent = '';
+          try {
+            const binary = atob(fileBase64);
+            // Try to extract readable text from the file
+            // For text-based files (txt, csv, json, xml, html, md), decode directly
+            // For PDF/DOCX, extract printable ASCII/UTF-8 sequences
+            const textExtensions = new Set(['txt', 'csv', 'json', 'xml', 'html', 'md', 'yml', 'yaml', 'env', 'log', 'ini', 'conf', 'cfg']);
+            if (textExtensions.has(fileType)) {
+              textContent = binary;
+            } else {
+              // Extract readable text strings from binary (PDF, DOCX, etc.)
+              // This captures text content embedded in the file format
+              const chunks: string[] = [];
+              let current = '';
+              for (let i = 0; i < binary.length; i++) {
+                const c = binary.charCodeAt(i);
+                if (c >= 32 && c < 127) {
+                  current += binary[i];
+                } else {
+                  if (current.length >= 4) chunks.push(current);
+                  current = '';
+                }
+              }
+              if (current.length >= 4) chunks.push(current);
+              textContent = chunks.join(' ');
+            }
+          } catch { textContent = ''; }
+
+          // Run regex detection on extracted text
+          const entities = detectWithRegex(textContent);
+          const scoreResult = computeScore(textContent, entities);
+
+          result = {
+            fileName,
+            fileType,
+            fileSize: fileBase64.length,
+            textLength: textContent.length,
+            score: scoreResult.score,
+            level: scoreResult.level,
+            entitiesFound: entities.length,
+            explanation: entities.length > 0
+              ? `Local scan: found ${entities.length} sensitive ${entities.length === 1 ? 'entity' : 'entities'} in "${fileName}".`
+              : `Local scan: no sensitive data detected in "${fileName}".`,
+            entities: entities.map(e => ({ type: e.type, confidence: e.confidence })),
+            breakdown: scoreResult.breakdown,
+          };
+          igLog(`Local file scan: "${fileName}" score=${result.score} level=${result.level} entities=${result.entitiesFound}`);
+        } else {
+          result = await analyzeFile(fileName, fileBase64, fileType);
+        }
 
         // Broadcast scan result to sidepanel AND content scripts on all tabs
         const scanResult = { type: 'FILE_SCAN_RESULT', payload: { ...result, aiToolId } };
