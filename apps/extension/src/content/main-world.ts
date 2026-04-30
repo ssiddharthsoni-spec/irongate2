@@ -3880,6 +3880,44 @@ const patchedFetch = async function patchedFetch(
     igLog(`fetch #${_fetchCallCount}: ${method} ${url.substring(0, 100)}`);
   }
 
+  // ── GATE: Block file upload requests if scan found high-risk content ──
+  // Platforms upload file bytes BEFORE the conversation submit (separate
+  // HTTP request). If we only block the conversation submit, the file data
+  // is already on the server. Block the file upload request itself.
+  if (mode === 'proxy' && method === 'POST' && isFileUploadEndpoint(url)) {
+    // Check if any completed scan is high-risk
+    for (const [, scan] of pendingFileScans) {
+      if (scan.status === 'complete' && scan.result && scan.result.score >= 61) {
+        igLog(`BLOCKED file upload to ${url.substring(0, 60)} — scan score ${scan.result.score}`);
+        return new Response(JSON.stringify({
+          blocked: true,
+          reason: `Iron Gate blocked this file upload: "${scan.fileName}" scored ${scan.result.score} (${scan.result.level}).`,
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+    }
+    // If scan is still pending (scanning), hold the upload until scan completes
+    const pendingScans = Array.from(pendingFileScans.values()).filter(s => s.status === 'scanning');
+    if (pendingScans.length > 0) {
+      igLog(`Holding file upload — ${pendingScans.length} scan(s) pending`);
+      const waitStart = Date.now();
+      while (Date.now() - waitStart < 5000) {
+        await new Promise(r => setTimeout(r, 300));
+        const stillPending = Array.from(pendingFileScans.values()).some(s => s.status === 'scanning');
+        if (!stillPending) break;
+      }
+      // Re-check after waiting
+      for (const [, scan] of pendingFileScans) {
+        if (scan.status === 'complete' && scan.result && scan.result.score >= 61) {
+          igLog(`BLOCKED file upload after scan: "${scan.fileName}" score=${scan.result.score}`);
+          return new Response(JSON.stringify({
+            blocked: true,
+            reason: `Iron Gate blocked this file upload: "${scan.fileName}" scored ${scan.result.score} (${scan.result.level}).`,
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+      }
+    }
+  }
+
   // ─── ENTERPRISE POLICY GATE (A4) ─────────────────────────────────────
   // Before any other logic, check the two managed-config gates:
   //   1. killSwitch — org has disabled ALL AI tools (e.g., incident response)
@@ -5148,6 +5186,16 @@ XMLHttpRequest.prototype.send = function(body?: any) {
       hasPromptText = decoded.includes('David') || decoded.includes('Emily') || decoded.includes('termination') || decoded.includes('performance');
     } catch {}
     console.warn(`[IG-DIAG] XHR POST: ${url.substring(0, 80)} | ${bodyType} | hasPrompt=${hasPromptText}`);
+  }
+
+  // ── GATE: Block file upload XHR if scan found high-risk content ──
+  if (mode === 'proxy' && xhrMethod === 'POST' && isFileUploadEndpoint(url)) {
+    for (const [, scan] of pendingFileScans) {
+      if (scan.status === 'complete' && scan.result && scan.result.score >= 61) {
+        igLog(`BLOCKED XHR file upload to ${url.substring(0, 60)} — score ${scan.result.score}`);
+        return; // Don't send the XHR at all
+      }
+    }
   }
 
   // ─── File Upload Detection in XHR (deferred to avoid blocking) ─────────
