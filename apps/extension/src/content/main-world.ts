@@ -3899,6 +3899,18 @@ const patchedFetch = async function patchedFetch(
   // For GET/DELETE/etc: no body to pseudonymize, but response may contain
   // pseudonymized conversation data (e.g., Claude reloads conversation via GET).
   // We MUST de-pseudonymize these responses or React re-renders with fake names.
+  // Diagnostic: log Gemini fetch POSTs to find conversation endpoint
+  if (method === 'POST' && activeAdapter?.id === 'gemini') {
+    const bodyType = !init?.body ? 'null' : typeof init.body === 'string' ? `string(${init.body.length})` : `${init.body?.constructor?.name}`;
+    let hasPromptText = false;
+    try {
+      const probe = typeof init?.body === 'string' ? init.body : init?.body?.toString?.() || '';
+      const decoded = decodeURIComponent(probe.substring(0, 5000));
+      hasPromptText = decoded.includes('David') || decoded.includes('Emily') || decoded.includes('termination') || decoded.includes('performance');
+    } catch {}
+    console.warn(`[IG-DIAG] FETCH POST: ${url.substring(0, 80)} | ${bodyType} | hasPrompt=${hasPromptText}`);
+  }
+
   if (method !== 'POST' && method !== 'PUT' && method !== 'PATCH') {
     // GET/non-POST: no body to pseudonymize, but wrap response if map has entries
     const response = await originalFetch.call(window, input, init);
@@ -3988,8 +4000,46 @@ const patchedFetch = async function patchedFetch(
         else if (typeof init.body === 'object' && 'toString' in init.body) bodyStr = init.body.toString();
       }
 
-      console.log(`[Iron Gate] Gemini wire check: body=${bodyStr ? bodyStr.length + 'ch' : 'null'} forwardMap=${Object.keys(currentForwardMap).length} mode=${mode}`);
+      if (mode === 'proxy' && bodyStr
+          && Object.keys(currentForwardMap).length > 0) {
+        try {
+          // URL-decode via URLSearchParams, replace in decoded f.req, re-encode
+          const fetchParams = new URLSearchParams(bodyStr);
+          let fReqFetch = fetchParams.get('f.req');
+          if (fReqFetch) {
+            let fetchReplacements = 0;
+            for (const [original, pseudonym] of Object.entries(currentForwardMap)) {
+              if (original.length < 3) continue;
+              if (fReqFetch.includes(original)) {
+                fReqFetch = fReqFetch.split(original).join(pseudonym);
+                fetchReplacements++;
+              }
+              const origEsc = original.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+              const pseudEsc = pseudonym.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+              if (origEsc !== original && fReqFetch.includes(origEsc)) {
+                fReqFetch = fReqFetch.split(origEsc).join(pseudEsc);
+              }
+            }
+            if (fetchReplacements > 0) {
+              fetchParams.set('f.req', fReqFetch);
+              const modifiedFetchBody = fetchParams.toString();
+              console.warn(`[Iron Gate] Gemini fetch wire proxy: replaced ${fetchReplacements} entities in f.req`);
+              turnCoordinator.submit({
+                type: 'IRON_GATE_INTERCEPTED', promptText: '(wire-level)',
+                allEntities: [], maskedText: '(wire-modified)',
+                mappings: [], level: 'high', score: 100,
+              });
+              const newInit = { ...init, body: modifiedFetchBody };
+              const wireResponse = await originalFetch.call(window, input, newInit);
+              return wireResponse;
+            }
+          }
+        } catch (err) {
+          igLog('Gemini fetch wire error:', err instanceof Error ? err.message : String(err));
+        }
+      }
 
+      // Fallback: also try old string-based replacement for non-form-data bodies
       if (mode === 'proxy' && bodyStr
           && Object.keys(currentForwardMap).length > 0) {
         try {
@@ -5083,10 +5133,17 @@ XMLHttpRequest.prototype.send = function(body?: any) {
   const url = meta?.url || '';
   const xhrMethod = meta?.method || 'GET';
 
-  // Diagnostic: log ALL XHR POST requests on Gemini to find the chat endpoint
-  if (xhrMethod === 'POST' && (url.includes('gemini') || url.includes('google') || url.includes('googleapis'))) {
+  // Diagnostic: log ALL XHR POST requests to find conversation endpoint
+  if (xhrMethod === 'POST' && activeAdapter?.id === 'gemini') {
     const bodyType = body === null ? 'null' : body === undefined ? 'undefined' : typeof body === 'string' ? `string(${body.length})` : `${body?.constructor?.name || typeof body}`;
-    igLog(`XHR POST: ${url.substring(0, 120)} | body: ${bodyType}`);
+    // Check if body contains user's text (probe for the conversation request)
+    let hasPromptText = false;
+    try {
+      const probe = typeof body === 'string' ? body : body?.toString?.() || '';
+      const decoded = decodeURIComponent(probe.substring(0, 5000));
+      hasPromptText = decoded.includes('David') || decoded.includes('Emily') || decoded.includes('termination') || decoded.includes('performance');
+    } catch {}
+    console.warn(`[IG-DIAG] XHR POST: ${url.substring(0, 80)} | ${bodyType} | hasPrompt=${hasPromptText}`);
   }
 
   // ─── File Upload Detection in XHR (deferred to avoid blocking) ─────────
