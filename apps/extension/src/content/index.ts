@@ -510,6 +510,7 @@ function handleSecureChannelMessage(data: any) {
     igLog(`File upload via secure channel: ${fileName} (${fileSize} bytes)`);
     chrome.runtime.sendMessage({
       type: 'FILE_UPLOAD_DETECTED',
+      nonce: crypto.randomUUID(),
       payload: { fileName, fileSize, fileType, fileBase64, aiToolId: detector?.id || 'unknown', timestamp: Date.now() },
     }).catch(() => {});
     return;
@@ -585,6 +586,7 @@ function handleMainWorldMessages(event: MessageEvent) {
       chrome.runtime.sendMessage(
         {
           type: 'FILE_UPLOAD_DETECTED',
+          nonce: crypto.randomUUID(),
           payload: {
             fileName,
             fileSize,

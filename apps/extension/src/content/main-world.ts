@@ -3711,8 +3711,12 @@ function _readFileToBase64AndPost(file: File, source: string): void {
         binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
       }
       const base64 = btoa(binary);
-      // Send via BroadcastChannel (private) — not postMessage (broadcast)
-      _igSecureChannel.postMessage({
+      // Send file content to content script for scanning.
+      // BroadcastChannel can silently drop large messages (>1MB varies by browser).
+      // File base64 can be 100KB+ which exceeds some limits.
+      // Use igPostMessage for reliability — the file content is already being
+      // sent to Iron Gate's own worker, not to the AI tool.
+      igPostMessage({
         type: 'IRON_GATE_FILE_UPLOAD',
         fileName: file.name,
         fileSize: file.size,
