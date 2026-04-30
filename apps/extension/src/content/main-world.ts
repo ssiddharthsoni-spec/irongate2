@@ -6203,9 +6203,10 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
       if (sessionMappings.length > 0) {
         igLog(`${source} DOM DEF-016: Force-pseudonymizing ${sessionMappings.length} session entities`);
         registerPseudonymization(sessionMappings);
+        const suppressSessionNotif = activeAdapter?.id === 'gemini';
         return {
           maskedText: pseudonymizedText, mappings: sessionMappings,
-          _notificationData: {
+          _notificationData: suppressSessionNotif ? null : {
             type: 'IRON_GATE_INTERCEPTED' as const,
             promptText: text, allEntities,
             maskedText: pseudonymizedText,
@@ -6282,13 +6283,16 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
 
     igLog(`${adapterName} DOM PROXY (${source}): Pseudonymized ${allEntities.length} entities (${level}, score=${score})`);
 
-    // DO NOT notify sidepanel here — the caller must verify the DOM write
-    // succeeded (writeInput) before claiming "protected". The notification
-    // data is returned alongside the pseudoResult for the caller to send
-    // AFTER verification.
+    // For dom-presubmit adapters (Gemini): do NOT include notification data.
+    // The DOM writeInput returns true but Quill reverts the change — the
+    // notification would claim "protected" when the wire payload is unmodified.
+    // The XHR wire proxy sends the REAL notification after verified replacement.
+    // For other adapters using DOM pre-submit in the future, include it.
+    const suppressNotification = activeAdapter?.id === 'gemini';
+
     return {
       ...pseudoResult,
-      _notificationData: {
+      _notificationData: suppressNotification ? null : {
         type: 'IRON_GATE_INTERCEPTED' as const,
         promptText: text, allEntities,
         maskedText: pseudoResult.maskedText,
