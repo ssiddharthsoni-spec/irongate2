@@ -483,8 +483,11 @@ console.log(
 // reset the flag so a retry injection can proceed.
 try {
 
-// Debug logging — ON so you can see the pipeline in the console
-const _IG_DEBUG = true;
+// Debug logging — OFF in production. Enable via: localStorage.setItem('ironGateDebug', 'true')
+// The outer scope (line ~95) already reads this flag and suppresses console.log.
+// This inner _IG_DEBUG MUST NOT be hardcoded true — it was leaking all internal
+// state (scores, entities, adapter strategy, timing) to DevTools in production.
+const _IG_DEBUG = (() => { try { return localStorage.getItem('ironGateDebug') === 'true'; } catch { return false; } })();
 function igLog(...args: any[]) { if (_IG_DEBUG) console.log('[Iron Gate MAIN]', ...args); }
 
 // Reverse map starts empty each page load (in-memory only, see security note above)
@@ -3941,18 +3944,6 @@ const patchedFetch = async function patchedFetch(
   // For GET/DELETE/etc: no body to pseudonymize, but response may contain
   // pseudonymized conversation data (e.g., Claude reloads conversation via GET).
   // We MUST de-pseudonymize these responses or React re-renders with fake names.
-  // Diagnostic: log Gemini fetch POSTs to find conversation endpoint
-  if (method === 'POST' && activeAdapter?.id === 'gemini') {
-    const bodyType = !init?.body ? 'null' : typeof init.body === 'string' ? `string(${init.body.length})` : `${init.body?.constructor?.name}`;
-    let hasPromptText = false;
-    try {
-      const probe = typeof init?.body === 'string' ? init.body : init?.body?.toString?.() || '';
-      const decoded = decodeURIComponent(probe.substring(0, 5000));
-      hasPromptText = decoded.includes('David') || decoded.includes('Emily') || decoded.includes('termination') || decoded.includes('performance');
-    } catch {}
-    console.warn(`[IG-DIAG] FETCH POST: ${url.substring(0, 80)} | ${bodyType} | hasPrompt=${hasPromptText}`);
-  }
-
   if (method !== 'POST' && method !== 'PUT' && method !== 'PATCH') {
     // GET/non-POST: no body to pseudonymize, but wrap response if map has entries
     const response = await originalFetch.call(window, input, init);
@@ -4065,7 +4056,7 @@ const patchedFetch = async function patchedFetch(
             if (fetchReplacements > 0) {
               fetchParams.set('f.req', fReqFetch);
               const modifiedFetchBody = fetchParams.toString();
-              console.warn(`[Iron Gate] Gemini fetch wire proxy: replaced ${fetchReplacements} entities in f.req`);
+              igLog(`Gemini fetch wire proxy: replaced ${fetchReplacements} entities in f.req`);
               turnCoordinator.submit({
                 type: 'IRON_GATE_INTERCEPTED', promptText: '(wire-level)',
                 allEntities: [], maskedText: '(wire-modified)',
@@ -4224,18 +4215,8 @@ const patchedFetch = async function patchedFetch(
       // parser, falling back to the generic multi-format extractor.
       const promptText = activeAdapter?.extractPrompt(bodyString) ?? extractPrompt(bodyString);
 
-      // ── DIAGNOSTIC: Log extraction result for all platforms ──
-      console.log(
-        '%c[Iron Gate DIAG] extractPrompt result',
-        'color: #f59e0b; font-weight: bold',
-        {
-          adapter: activeAdapter?.id || 'generic',
-          bodyLength: bodyString.length,
-          promptLength: promptText?.length ?? 0,
-          promptPreview: promptText ? promptText.substring(0, 300) : '(null)',
-          url: typeof input === 'string' ? input : (input as Request)?.url?.substring(0, 100),
-        }
-      );
+      // Diagnostic — NO prompt text logged (PII leak risk)
+      igLog(`extractPrompt: adapter=${activeAdapter?.id || 'generic'} bodyLen=${bodyString.length} promptLen=${promptText?.length ?? 0}`);
 
       if (!promptText || promptText.length < 10) {
         igLog(`extractPrompt returned ${promptText === null ? 'null' : `${promptText?.length} chars`} — body: ${bodyString.length} chars`);
@@ -4359,20 +4340,8 @@ const patchedFetch = async function patchedFetch(
 
         igLog(`Detected ${allEntities.length} entities in prompt (${promptText.length} chars)`);
 
-        // ── DIAGNOSTIC: Log every detected entity for debugging ──
-        if (allEntities.length > 0) {
-          console.log(
-            '%c[Iron Gate DIAG] Detected entities:',
-            'color: #f59e0b; font-weight: bold',
-            allEntities.map(e => ({ type: e.type, text: (e as any).text?.substring(0, 40) || (e as any).value?.substring(0, 40), confidence: (e as any).confidence }))
-          );
-        } else {
-          console.warn(
-            '%c[Iron Gate DIAG] ZERO entities detected from prompt:',
-            'color: #ef4444; font-weight: bold',
-            { promptLength: promptText.length, promptPreview: promptText.substring(0, 500) }
-          );
-        }
+        // Log entity count and types only — NEVER log entity text or prompt content
+        igLog(`Detected ${allEntities.length} entities: ${[...new Set(allEntities.map(e => e.type))].join(', ') || 'none'}`);
 
         // ── Gemma + Regex: use pre-computed verdict if available ────────
         // Gemma ran while the user typed (PROMPT_DETECTED → worker → Ollama).
@@ -4830,7 +4799,17 @@ const patchedFetch = async function patchedFetch(
 
             return modifiedResponse;
           } else {
-            console.warn('[Iron Gate MAIN] replacePrompt returned null — body format not recognized');
+            // replacePrompt returned null — body format not recognized.
+            // FAIL CLOSED: do NOT send the original PII to the AI.
+            // The user sees "protected" in the sidepanel (notification already
+            // fired from the detection step), but without this block, the
+            // original text would be sent — a false sense of security.
+            console.error('[Iron Gate] BLOCKED: replacePrompt returned null — cannot safely pseudonymize. Original data NOT sent.');
+            igPostMessage({
+              type: 'IRON_GATE_DEPSEUDO_FAILURE',
+              detail: 'Could not pseudonymize your prompt (body format not recognized). Request blocked to protect your data.',
+            });
+            return _buildFailClosedResponse(url, 'replacePrompt returned null — body format not recognized');
           }
         } else {
           // No entities to pseudonymize, but contextual score may still be high
@@ -5175,18 +5154,7 @@ XMLHttpRequest.prototype.send = function(body?: any) {
   const url = meta?.url || '';
   const xhrMethod = meta?.method || 'GET';
 
-  // Diagnostic: log ALL XHR POST requests to find conversation endpoint
-  if (xhrMethod === 'POST' && activeAdapter?.id === 'gemini') {
-    const bodyType = body === null ? 'null' : body === undefined ? 'undefined' : typeof body === 'string' ? `string(${body.length})` : `${body?.constructor?.name || typeof body}`;
-    // Check if body contains user's text (probe for the conversation request)
-    let hasPromptText = false;
-    try {
-      const probe = typeof body === 'string' ? body : body?.toString?.() || '';
-      const decoded = decodeURIComponent(probe.substring(0, 5000));
-      hasPromptText = decoded.includes('David') || decoded.includes('Emily') || decoded.includes('termination') || decoded.includes('performance');
-    } catch {}
-    console.warn(`[IG-DIAG] XHR POST: ${url.substring(0, 80)} | ${bodyType} | hasPrompt=${hasPromptText}`);
-  }
+
 
   // ── GATE: Block file upload XHR if scan found high-risk content ──
   if (mode === 'proxy' && xhrMethod === 'POST' && isFileUploadEndpoint(url)) {
@@ -5261,21 +5229,21 @@ XMLHttpRequest.prototype.send = function(body?: any) {
           if (xhrReplacements > 0) {
             params.set('f.req', fReq);
             const modifiedXhrBody = params.toString();
-            console.warn(`[Iron Gate] Gemini XHR wire proxy: replaced ${xhrReplacements} entities in f.req`);
+            igLog(`Gemini XHR wire proxy: replaced ${xhrReplacements} entities in f.req`);
             return originalXHRSend.call(this, modifiedXhrBody);
           } else {
-            console.warn(`[Iron Gate] Gemini XHR: 0 replacements in decoded f.req. keys: ${Object.keys(currentForwardMap).slice(0, 3).join(', ')}. f.req sample: ${fReq?.substring(0, 120)}`);
+            igLog(`Gemini XHR: 0 replacements in decoded f.req`);
           }
         } else {
-          console.warn(`[Iron Gate] Gemini XHR: no f.req param in body`);
+          igLog(`Gemini XHR: no f.req param in body`);
         }
       } catch (e) {
-        console.warn(`[Iron Gate] Gemini XHR parse error: ${e instanceof Error ? e.message : String(e)}`);
+        igLog(`Gemini XHR parse error`);
       }
     } else {
       // Log why the wire proxy didn't run
       if (activeAdapter?.interception === 'dom-presubmit') {
-        console.warn(`[Iron Gate] Gemini XHR: skipped wire proxy. mode=${mode} forwardMap=${Object.keys(currentForwardMap).length} bodyStr=${bodyStr ? bodyStr.length + 'ch' : 'null'}`);
+        igLog(`Gemini XHR: skipped wire proxy`);
       }
     }
 
