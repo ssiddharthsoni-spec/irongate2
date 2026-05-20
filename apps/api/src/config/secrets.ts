@@ -116,7 +116,8 @@ export async function loadSecrets(): Promise<Readonly<AppSecrets>> {
   if (_cached) return _cached;
 
   // Use AWS Secrets Manager ONLY when explicitly configured.
-  // Default to env vars for all deployments (Render, Railway, etc.).
+  // Default to env vars for all deployments (Render in production, local
+  // for dev). Set SECRETS_MANAGER_NAME to opt in to AWS SM.
   const useAwsSm = !!process.env.SECRETS_MANAGER_NAME;
 
   let secrets: AppSecrets;

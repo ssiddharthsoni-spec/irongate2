@@ -3,7 +3,8 @@ import postgres from 'postgres';
 import dns from 'node:dns';
 import * as schema from './schema';
 
-// Force IPv4 resolution — Railway can't reach Supabase over IPv6
+// Force IPv4 resolution — some cloud hosts (incl. Render) can't reach
+// Supabase reliably over IPv6 in their default network configuration.
 dns.setDefaultResultOrder('ipv4first');
 
 // --- Write connection (primary) ---
