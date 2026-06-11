@@ -61,7 +61,7 @@ export interface Judgment {
   /** Entity-level annotations from the LLM */
   entities: JudgmentEntity[];
   /** Pseudonym map for masking (only populated when verdict === 'mask') */
-  pseudonymMap: PseudonymEntry[];
+  pseudonymMap: JudgmentPseudonymEntry[];
   /** Which stage produced this judgment */
   source: JudgmentSource;
   /** Processing latencies */
@@ -92,7 +92,10 @@ export interface JudgmentEntity {
   contextNote?: string;
 }
 
-export interface PseudonymEntry {
+// Renamed from PseudonymEntry: pseudonym-map.ts exports a structurally
+// different interface of the same name, and both are `export *`-ed from
+// the package barrel — the collision broke fresh-clone builds (TS2308).
+export interface JudgmentPseudonymEntry {
   /** Character span in the original text */
   span: [number, number];
   /** The original sensitive text */
