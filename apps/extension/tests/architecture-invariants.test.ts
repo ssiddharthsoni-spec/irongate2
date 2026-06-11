@@ -854,3 +854,31 @@ describe('Architecture Invariants — WP3 single sources', () => {
     expect(defs.map(f => f.split('/src/')[1])).toEqual(['detection/types.ts']);
   });
 });
+
+describe('Architecture Invariants — inline fallback stays in sync', () => {
+  // worker/index.ts inlineFetchInterceptor is the LAST-RESORT degraded-mode
+  // protector when main-world injection fails. executeScript({func}) forces
+  // it to be self-contained — it cannot import types.ts — so these checks
+  // pin its inlined constants to the canonical sources instead.
+  const WORKER = join(REPO_ROOT, 'apps/extension/src/worker/index.ts');
+
+  it('quickScore HIGH list is a subset of the canonical critical/high types', () => {
+    const src = readFileSync(WORKER, 'utf8');
+    const m = src.match(/const HIGH = \[([^\]]+)\]/);
+    expect(m, 'inline HIGH list must exist (fallback protector)').toBeTruthy();
+    const inlineHigh = m![1].split(',').map(s => s.trim().replace(/['"]/g, ''));
+    const canonical = new Set([
+      // ALWAYS_CRITICAL_TYPES + canonical high-PII identity/financial types
+      'API_KEY', 'PRIVATE_KEY', 'AWS_CREDENTIAL', 'GCP_CREDENTIAL', 'DATABASE_URI',
+      'SSN', 'CREDIT_CARD', 'PASSPORT_NUMBER', 'DRIVERS_LICENSE', 'MEDICAL_RECORD',
+    ]);
+    for (const t of inlineHigh) {
+      expect(canonical.has(t), `inline HIGH entry ${t} drifted from canonical types`).toBe(true);
+    }
+  });
+
+  it('quickScore band boundaries match SCORE_BANDS', () => {
+    const src = readFileSync(WORKER, 'utf8');
+    expect(src).toMatch(/capped >= 86 \? 'critical' : capped >= 61 \? 'high' : capped >= 26 \? 'medium' : 'low'/);
+  });
+});
