@@ -2462,9 +2462,9 @@ const turnCoordinator = (() => {
     extra?: Record<string, unknown>;
   };
 
-  function _emit(r: QueuedResult): void {
-    igLog(`Turn coordinator: EMIT ${r.type} score=${r.score} entities=${r.allEntities.length}`);
-    notifyContentScript(r.type, r.promptText, r.allEntities, r.maskedText, r.mappings, r.level, r.score, r.extra);
+  function _emit(r: QueuedResult, turn: { epoch: number; seq: number }): void {
+    igLog(`Turn coordinator: EMIT ${r.type} score=${r.score} entities=${r.allEntities.length} turn=${turn.epoch}/${turn.seq}`);
+    notifyContentScript(r.type, r.promptText, r.allEntities, r.maskedText, r.mappings, r.level, r.score, { ...r.extra, turn });
 
     // B1: Record an audit entry for the configured sink. The audit entry
     // contains ONLY counts and types — never the original prompt text or
@@ -2500,11 +2500,45 @@ const turnCoordinator = (() => {
     });
   }
 
+  // ── Turn identity (WP1) ───────────────────────────────────────────────────
+  // The coordinator is the ONE place that knows a user turn began, so it
+  // mints TurnId here and stamps every emission. Downstream (worker
+  // updateTabState via shouldReplaceDisplay) arbitrates display purely on
+  // (turn, phase) — the old 10s suppression window is gone.
+  //
+  //   epoch  per-pageload (Date.now at init) — reload beats everything older
+  //   seq    monotonic per pageload; mint = seq++ on a genuine user turn
+  //
+  // Minting rules:
+  //   INTERCEPTED                 → always a turn (pseudonymization happened)
+  //   0-entity low-score AUDIT    → a turn ONLY when correlated with a real
+  //     user action (Enter/click within USER_ACTION_WINDOW_MS — recorded by
+  //     the DOM handlers) or when it's the first prompt of the pageload.
+  //     Otherwise it's a secondary platform fetch (title generation,
+  //     metadata) and is dropped: the wire alone cannot distinguish the two,
+  //     which is exactly why the old emission-history window misfired —
+  //     a clean prompt within 10s of a previous turn was swallowed and the
+  //     panel went stale. Keyboard/click submits (the overwhelming case)
+  //     are now exact; WP2's adapter URL classification closes the rest.
+  //   AUDIT with entities/score   → stamped with the CURRENT turn (echo of it)
+  const _TURN_EPOCH = Date.now();
+  let _turnSeq = 0;
+  let _lastUserActionAt = 0;
+  const USER_ACTION_WINDOW_MS = 3000;
+
+  function _currentTurn(): { epoch: number; seq: number } {
+    return { epoch: _TURN_EPOCH, seq: _turnSeq };
+  }
+  function _mintTurn(): { epoch: number; seq: number } {
+    _turnSeq++;
+    return _currentTurn();
+  }
+
   // Dedup: prevent the same prompt from emitting twice within a short window.
   // ChatGPT (and some adapters) can trigger two fetch interceptions for one
   // user submit, producing near-identical results (e.g., 373ch vs 372ch).
-  // Without dedup, the sidepanel receives 2× events × 5 delivery channels
-  // = 10+ processDetection calls, causing visible flickering and CPU churn.
+  // This is PRODUCER noise control (one user action → two wire calls must
+  // not mint two turns); display arbitration no longer depends on it.
   let _lastEmitHash = '';
   let _lastEmitAt = 0;
   const DEDUP_WINDOW_MS = 3000;
@@ -2518,8 +2552,15 @@ const turnCoordinator = (() => {
   }
 
   return {
+    /** DOM Enter/click handlers call this on every user submit gesture. */
+    noteUserAction(): void {
+      _lastUserActionAt = Date.now();
+    },
+
     submit(r: QueuedResult): void {
-      // INTERCEPTED: always significant — pseudonymization occurred
+      // INTERCEPTED: always significant — pseudonymization occurred.
+      // The hash dedup keeps one user action that triggers two near-identical
+      // wire calls from minting two turns.
       if (r.type === 'IRON_GATE_INTERCEPTED') {
         const hash = _promptHash(r.promptText);
         const now = Date.now();
@@ -2529,42 +2570,41 @@ const turnCoordinator = (() => {
         }
         _lastEmitHash = hash;
         _lastEmitAt = now;
-        _emit(r);
+        _emit(r, _mintTurn());
         return;
       }
 
-      // AUDIT with entities: found something — always significant
+      // AUDIT with entities: found something — significant echo of the
+      // current turn (it must never displace the turn's INTERCEPTED, which
+      // shouldReplaceDisplay guarantees via phase rank).
       if (r.allEntities.length > 0) {
-        _emit(r);
+        _emit(r, _currentTurn());
         return;
       }
 
-      // AUDIT with meaningful score (contextual/semantic detection): significant
+      // AUDIT with meaningful score (contextual/semantic detection)
       if (r.score > 25) {
-        _emit(r);
+        _emit(r, _currentTurn());
         return;
       }
 
-      // ── 0-entity, low-score AUDIT: emit only if no recent INTERCEPTED ──
-      // After an INTERCEPTED event, platforms send secondary fetches (title
-      // generation, conversation updates, metadata) that produce 0-entity
-      // AUDITs with DIFFERENT content hashes. These must be suppressed
-      // regardless of hash — the time window is what matters.
+      // ── 0-entity, low-score AUDIT: clean user prompt OR platform noise ──
+      // The wire alone cannot tell a clean user submit from a secondary
+      // platform fetch (title generation, metadata) — both arrive here.
+      // Discriminator: a real submit is correlated with a user gesture the
+      // DOM handlers just recorded. First prompt of the pageload also mints
+      // (covers entry paths with no keystroke, e.g. voice on a fresh page).
       if (r.promptText && r.promptText.length > 20) {
         const now = Date.now();
-        // If ANY emission happened recently (within 10s), this is likely
-        // a secondary platform fetch — suppress to protect the real detection.
-        // 10s covers: AI response streaming (2-8s) + title generation (1-3s).
-        if (now - _lastEmitAt < 10_000) {
-          igLog(`Turn coordinator: DROP 0-entity AUDIT (within 10s of last emit)`);
+        const userActed = now - _lastUserActionAt < USER_ACTION_WINDOW_MS;
+        if (userActed || _turnSeq === 0) {
+          _lastEmitHash = _promptHash(r.promptText);
+          _lastEmitAt = now;
+          _emit(r, _mintTurn());
+          igLog(`Turn coordinator: EMIT clean prompt (${r.promptText.length}ch, score=${r.score}, userActed=${userActed})`);
           return;
         }
-        // No recent emission = genuinely new clean prompt.
-        const hash = _promptHash(r.promptText);
-        _lastEmitHash = hash;
-        _lastEmitAt = now;
-        _emit(r);
-        igLog(`Turn coordinator: EMIT clean prompt (${r.promptText.length}ch, score=${r.score})`);
+        igLog('Turn coordinator: DROP 0-entity AUDIT (no user gesture — secondary platform fetch)');
         return;
       }
       igLog(`Turn coordinator: DROP 0-entity AUDIT (short/empty, score=${r.score})`);
@@ -6939,6 +6979,11 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
     if (domInterceptBusy) return;
     if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
 
+    // Record the user gesture FIRST — the turn coordinator uses it to tell
+    // a clean user submit apart from secondary platform fetches, regardless
+    // of whether this handler ends up intercepting anything.
+    turnCoordinator.noteUserAction();
+
     const inputEl = activeAdapter?.findInput();
     if (!inputEl) {
       // Only fail closed when the user is actually submitting from an
@@ -7085,6 +7130,10 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
     const target = e.target as HTMLElement;
     const btn = target.closest('button');
     if (!btn) return;
+
+    // Record the user gesture for turn-identity clean-submit correlation
+    // (any button click counts — the coordinator's 3s window scopes it).
+    turnCoordinator.noteUserAction();
 
     // Check if this looks like a send/submit button. We match in this order:
     //   1. Adapter-specific submitSelectors (authoritative — platform-tuned)
