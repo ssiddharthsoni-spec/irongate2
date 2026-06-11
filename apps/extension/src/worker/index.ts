@@ -18,7 +18,7 @@ import { recordAttestation, getAuditLog, clearAuditLog } from './audit-trail';
 import { initTrialAlarms, handleTrialAlarm } from './trial-notifications';
 import { classifyIfPro, classifyForGhost } from '../detection/ml-classifier';
 import { isPro } from '../shared/tier-gate';
-import { inferPhase, phaseAllowsReplace } from '../shared/event-phase';
+import { inferPhase, shouldReplaceDisplay } from '../shared/event-phase';
 import { TOTAL_ENTITIES_DETECTED, WEEKLY_SCAN_COUNT } from '../shared/storage-keys';
 import { startKillSwitchPoller } from '../security/kill-switch-poller';
 import {
@@ -1038,6 +1038,23 @@ interface TabState {
   lastPseudonymMappings?: any[];
   detectionCount: number;
   lastDetectionTime: number;
+  // ── WP1 turn identity ──
+  // Real turn id + phase of the displayed result. updateTabState gates
+  // every display write through shouldReplaceDisplay(lastTurn/lastPhase),
+  // so this stored state is ALWAYS the best-known truth for the tab and
+  // the sidepanel renders it verbatim with zero arbitration of its own.
+  lastTurn?: { epoch: number; seq: number } | null;
+  lastPhase?: 'preview' | 'authoritative' | 'enrichment' | 'audit';
+  // Live-typing feedback — a SEPARATE slot from the turn outcome. Written
+  // freely while the user composes, cleared by each authoritative result
+  // or PROMPT_CLEARED. Keeping it apart from the display fields is what
+  // lets PROMPT_CLEARED work without a suppression window: clearing the
+  // composing banner can never wipe the inspector again.
+  preview?: { score: number; level: string; entityCount: number; at: number } | null;
+  // PROMPT_TURN_INVALIDATED annotation: pseudonymization happened but the
+  // request never reached the LLM. Cleared by the next accepted result.
+  transportStatus?: 'blocked' | null;
+  transportReason?: string | null;
 }
 
 const TAB_STATE_KEY = 'iron_gate_tab_states';
@@ -1886,45 +1903,21 @@ async function handleMessage(
           lastBroadcastScoreByTab.set(pdTabId, sensitivityResult.score);
           pruneMap(lastBroadcastByTab);
           pruneMap(lastBroadcastScoreByTab);
-          chrome.runtime.sendMessage({
-            type: 'SENSITIVITY_SCORE',
-            payload: {
+          // WP1: live-typing detection goes to the tab state's PREVIEW slot
+          // (its own field — never arbitrates against the turn outcome).
+          // The sidepanel observes tab state via storage.onChanged; the old
+          // runtime-message broadcast channel is gone. maskedPrompt and
+          // pseudonymMappings are intentionally NOT part of previews — the
+          // Prompt Inspector only shows the authoritative MAIN-world result.
+          updateTabState(pdTabId, {
+            aiToolId,
+            preview: {
               score: sensitivityResult.score,
               level: sensitivityResult.level,
-              entities: allEntities.map((e) => ({
-                type: e.type,
-                start: e.start,
-                end: e.end,
-                confidence: e.confidence,
-                source: e.source,
-              })),
-              aiToolId,
-              tabId: pdTabId,
-              // NOTE: maskedPrompt and pseudonymMappings are intentionally OMITTED
-              // from real-time typing detection. The Prompt Inspector should only show
-              // data from the authoritative MAIN world path (IRON_GATE_INTERCEPTED),
-              // which has the actual pseudonymization result. The worker's own detection
-              // may differ from the MAIN world's, and its async timing can cause it to
-              // overwrite the correct authoritative data in the sidepanel.
-              promptLength: text.length,
-              realtime: true, // Legacy flag — kept for back-compat
-              phase: 'preview' as const, // ← lifecycle tag: live-typing detection
-              zone: routingDecision?.finalZone ?? scoreToZone(sensitivityResult.score),
-              action: routedAction ?? (sensitivityResult.level === 'critical' ? 'block' : 'pass'),
-              wasEscalated: routingDecision?.wasEscalated ?? false,
-              tiersConsulted: routingDecision?.tiersConsulted?.map(t => t.source) ?? ['local-regex-scorer'],
-              // Executive Lens routing
-              executiveRoute,
-              executiveIndustry: lensResult.industry,
-              executiveRules: lensResult.triggeredRules,
-              executiveExplanation: lensResult.explanation,
-              privateLlmEndpoint: executiveRoute === 'private_llm' && config.localLLM ? config.localLLM.endpoint : undefined,
-              privateLlmModel: executiveRoute === 'private_llm' && config.localLLM ? config.localLLM.model : undefined,
-              pipelineWarnings: _pipelineWarnings.length > 0 ? _pipelineWarnings : undefined,
+              entityCount: allEntities.length,
+              at: now,
             },
           }).catch(() => {});
-
-          // (Storage write moved outside debounce — see below return)
         }
 
         } // end of 0-entity suppression else block
@@ -2010,47 +2003,17 @@ async function handleMessage(
             // Only update sidepanel if Stage 2 produced a meaningful result
             // and the source is actually from the LLM (not a fallback)
             if (judgment.source === 'gemma4' || judgment.source === 'bright-line') {
-              chrome.runtime.sendMessage({
-                type: 'SENSITIVITY_SCORE',
-                payload: {
+              // WP1: the Stage-2 verdict judged the COMPOSED text (typing-time),
+              // so it refines the PREVIEW slot — it is composing feedback, not
+              // a turn outcome, and must never touch the display fields. The
+              // old runtime broadcast + lastDetectionResult backup are gone.
+              updateTabState(_stage2TabId, {
+                aiToolId: _stage2AiToolId,
+                preview: {
                   score: judgment.score,
                   level: judgment.level,
-                  explanation: judgment.reasoning,
-                  entities: judgment.entities.map((e: any) => ({
-                    type: e.type,
-                    start: e.start,
-                    end: e.end,
-                    confidence: e.confidence,
-                    source: 'regex' as const,
-                    isSensitive: e.isSensitive,
-                    contextNote: e.contextNote,
-                  })),
-                  aiToolId: _stage2AiToolId,
-                  tabId: _stage2TabId,
-                  realtime: true, // legacy flag
-                  phase: 'enrichment' as const, // ← async LLM verdict; never replaces authoritative
-                  judgmentSource: judgment.source,
-                  judgmentVerdict: judgment.verdict,
-                  judgmentLatencyMs: judgment.latency.totalMs,
-                },
-              }).catch(() => {});
-
-              // Also write to storage as backup
-              chrome.storage.local.set({
-                lastDetectionResult: {
-                  score: judgment.score,
-                  level: judgment.level,
-                  explanation: judgment.reasoning,
-                  entities: judgment.entities.map((e: any) => ({
-                    type: e.type, start: e.start, end: e.end,
-                    confidence: e.confidence, source: 'regex',
-                    isSensitive: e.isSensitive,
-                  })),
-                  aiToolId: _stage2AiToolId,
-                  tabId: _stage2TabId,
-                  realtime: true,
-                  judgmentSource: judgment.source,
-                  _storageTimestamp: Date.now(),
+                  entityCount: judgment.entities.length,
+                  at: Date.now(),
                 },
               }).catch(() => {});
 
@@ -2091,35 +2054,11 @@ async function handleMessage(
         })();
       }
 
-      // ── PRIMARY delivery: write to storage for sidepanel ──
-      // Only write SIGNIFICANT results (has entities or score > 25).
-      // NEVER overwrite proxy data (with maskedPrompt) with realtime data (without).
-      // Also skip if authoritative-suppressed (MAIN world result is fresher).
-      const hasSignificantPD = allEntities.length > 0 || sensitivityResult.score > 25;
-      if (!_authoritativeSuppressed && hasSignificantPD) {
-        // Check if storage already has proxy data — don't overwrite with realtime
-        chrome.storage.local.get('lastDetectionResult', (existing) => {
-          if (chrome.runtime.lastError) return;
-          const prev = existing.lastDetectionResult;
-          if (prev?.isProxy && prev?._storageTimestamp && Date.now() - prev._storageTimestamp < 10_000) {
-            // Storage has fresh proxy data — don't overwrite with realtime
-            return;
-          }
-          chrome.storage.local.set({
-            lastDetectionResult: {
-              score: sensitivityResult.score,
-              level: sensitivityResult.level,
-              entities: allEntities.map((e: any) => ({
-                type: e.type, start: e.start, end: e.end,
-                confidence: e.confidence, source: e.source,
-              })),
-              aiToolId,
-              realtime: true,
-              _storageTimestamp: Date.now(),
-            },
-          }).catch(() => {});
-        });
-      }
+      // WP1: realtime results reach the sidepanel via the tab state's
+      // preview slot (written above, debounced). The lastDetectionResult
+      // storage backup — with its 10s freshness window guarding proxy data —
+      // is gone: display arbitration lives in updateTabState's
+      // shouldReplaceDisplay gate, and previews can't touch display fields.
 
       return {
         received: true,
@@ -2274,47 +2213,23 @@ async function handleMessage(
       return { error: 'All retries exhausted' };
     }
 
-    // ── PROMPT_CLEAN_SUBMIT — wire interceptor found 0 entities on a real user prompt ──
-    // Unlike PROMPT_CLEARED (input field emptied) this is an authoritative signal
-    // that a new prompt was submitted and it's clean. Clears stale sidepanel results
-    // without the debounce/suppress logic that PROMPT_CLEARED has.
-    case 'PROMPT_CLEAN_SUBMIT': {
-      const cleanTabId = sender.tab?.id;
-      if (cleanTabId) {
-        igLog('PROMPT_CLEAN_SUBMIT: clearing stale sidepanel results');
-        chrome.runtime.sendMessage({
-          type: 'PROMPT_CLEAN_SUBMIT',
-          payload: {
-            tabId: cleanTabId,
-            score: message.payload?.score || 0,
-            level: message.payload?.level || 'low',
-          },
-        }).catch(() => {});
-      }
-      return { received: true };
-    }
+    // PROMPT_CLEAN_SUBMIT case REMOVED (WP1): its producer was deleted long
+    // ago (main-world.ts — "was causing real detections to be wiped"); clean
+    // user submits now mint a TurnId in the coordinator and flow as ordinary
+    // turn-stamped results. The whole consumer chain was dead-listening.
 
     // ── PROMPT_CLEARED — user emptied the input field ──
-    // Broadcast to sidepanel so it resets stale detection results.
-    // Suppress for a window after an authoritative SENSITIVITY_SCORE
-    // (from IRON_GATE_INTERCEPTED relay), because ChatGPT clears the input
-    // immediately after submission — we don't want to wipe the inspector
-    // data that was just set from the real pseudonymization result.
+    // WP1: clears ONLY the tab state's preview slot (composing feedback).
+    // The turn outcome (inspector data) lives in separate display fields, so
+    // no suppression window is needed: ChatGPT emptying the input right
+    // after submit can no longer wipe the just-set pseudonymization result.
     case 'PROMPT_CLEARED': {
       const clearTabId = sender.tab?.id;
       if (clearTabId) {
-        const authTime = lastAuthoritativeByTab.get(clearTabId) || 0;
-        if (Date.now() - authTime < AUTHORITATIVE_SUPPRESS_MS) {
-          igLog(`PROMPT_CLEARED: suppressed — authoritative result active`);
-          return { received: true, suppressed: true };
-        }
         lastPromptTextByTab.delete(clearTabId);
         lastBroadcastByTab.delete(clearTabId);
         lastBroadcastScoreByTab.delete(clearTabId);
-        chrome.runtime.sendMessage({
-          type: 'PROMPT_CLEARED',
-          payload: { tabId: clearTabId, aiToolId: message.payload?.aiToolId },
-        }).catch(() => {});
+        updateTabState(clearTabId, { preview: null }).catch(() => {});
       }
       return { received: true };
     }
@@ -2334,27 +2249,22 @@ async function handleMessage(
       if (invTabId) {
         igLog(`Turn invalidated for tab ${invTabId} — reason: ${message.payload?.reason || '(unspecified)'}`);
         lastAuthoritativeByTab.delete(invTabId);
-        // Wipe the tab's stored state so a subsequent GET_TAB_STATE poll
-        // doesn't restore the now-retracted result.
+        // WP1: ANNOTATE, don't wipe. The pseudonymization DID happen — that
+        // information is real and worth showing — but the masked text never
+        // reached the LLM. The sidepanel renders transportStatus as a
+        // "request blocked, data NOT sent" banner over the kept swap list.
+        // (The old worker-wipe raced the old sidepanel-annotate; the
+        // annotation semantic won — the panel never claims 'sent' for data
+        // that wasn't sent, without losing the audit-relevant swap view.)
         getTabState(invTabId).then(s => {
-          if (s) {
+          if (s && s.lastScore !== null && s.lastScore !== undefined) {
             updateTabState(invTabId, {
-              lastScore: null,
-              lastLevel: 'low',
-              lastExplanation: '',
-              lastEntities: [],
-              lastMaskedPrompt: '',
-              lastOriginalPrompt: '',
-              lastPseudonymMappings: [],
+              transportStatus: 'blocked',
+              transportReason: message.payload?.reason || 'request blocked',
             }).catch(() => {});
           }
         }).catch(() => {});
       }
-      // Broadcast to sidepanel so it can null its lastScore.
-      chrome.runtime.sendMessage({
-        type: 'PROMPT_TURN_INVALIDATED',
-        payload: { tabId: invTabId, reason: message.payload?.reason || null },
-      }).catch(() => {});
       return { received: true };
     }
 
@@ -2386,142 +2296,11 @@ async function handleMessage(
         }
       }
 
-      // ── IMMEDIATE: Re-broadcast to sidepanel FIRST — before any async API work ──
-      chrome.runtime.sendMessage({
-        type: 'SENSITIVITY_SCORE',
-        payload: { ...payload, tabId: ssTabId },
-      }).catch(() => {});
+      // WP1: no runtime re-broadcast — the sidepanel observes tab state via
+      // storage.onChanged. The gated updateTabState below is THE delivery.
 
-      // ── Gemma enrichment REMOVED from SENSITIVITY_SCORE path ──────────
-      // Gemma already runs in the PROMPT_DETECTED path (pre-computed while
-      // typing). Running it again here was a DUPLICATE Ollama call causing
-      // lag on 16GB machines. One Gemma call per prompt, not two.
-      if (false && isFromContentScript && payload.isProxy && ssTabId) {
-        (async () => {
-          try {
-            console.log('[Iron Gate] Gemma: preparing judge call...');
-            // Use maskedPrompt for classification — originalPrompt is stripped
-            // for security (never sent via postMessage). The masked version has
-            // the same intent/context (e.g., "Draft a PIP for James Mitchell"
-            // classifies identically to "Draft a PIP for David Park").
-            const promptText = payload.maskedPrompt || payload.originalPrompt || '';
-            if (!promptText || promptText.length < 10) return;
-            const regexEntities = (entities || []).map((e: any) => ({
-              type: e.type || 'UNKNOWN', text: '', start: e.start || 0,
-              end: e.end || 0, confidence: e.confidence || 0.5, source: 'regex' as const,
-            }));
-            const evidence = buildJudgeEvidence(regexEntities, score, level as any, [], 0);
-            let judgeCfg: any = {};
-            try {
-              const cfg2 = getLockedDeploymentConfig() as any;
-              judgeCfg = {
-                endpoint: cfg2?.localEndpoint?.replace(/\/api\/generate$/, '') ?? 'http://localhost:11434',
-                model: cfg2?.localModel ?? 'gemma3:4b',
-                timeoutMs: cfg2?.timeoutMs ?? 5000,
-              };
-            } catch { /* defaults */ }
-            console.log(`[Iron Gate] Gemma calling judge() with ${promptText.length}ch prompt, model=${judgeCfg.model || 'default'}`);
-            const judgment = await judgePrompt(promptText, evidence, payload.aiToolId || 'unknown', judgeCfg);
-            console.log(`[Iron Gate] Gemma result: source=${judgment.source} verdict=${judgment.verdict} score=${judgment.score} latency=${judgment.latency?.totalMs}ms`);
-            if (judgment.source === 'gemma4' || judgment.source === 'bright-line') {
-              igLog(`Gemma enrichment: verdict=${judgment.verdict} score=${judgment.score} entities=${judgment.entities.length} latency=${judgment.latency.totalMs}ms`);
-              // Update sidepanel with Gemma-enriched result
-              chrome.runtime.sendMessage({
-                type: 'SENSITIVITY_SCORE',
-                payload: {
-                  ...payload, tabId: ssTabId,
-                  score: judgment.score, level: judgment.level,
-                  explanation: judgment.reasoning,
-                  entities: judgment.entities.map((e: any) => ({
-                    type: e.type, start: e.start, end: e.end,
-                    confidence: e.confidence, source: 'regex',
-                  })),
-                  judgmentSource: judgment.source,
-                  judgmentVerdict: judgment.verdict,
-                },
-              }).catch(() => {});
-              // Also update storage
-              chrome.storage.local.set({
-                lastProxyResult: {
-                  ...payload, tabId: ssTabId,
-                  score: judgment.score, level: judgment.level,
-                  explanation: judgment.reasoning,
-                  judgmentSource: judgment.source,
-                  _storageTimestamp: Date.now(),
-                },
-              }).catch(() => {});
-
-              // Push verdict to content script → main-world for future decisions
-              if (ssTabId) {
-                chrome.tabs.sendMessage(ssTabId, {
-                  type: 'IRON_GATE_GEMMA_VERDICT',
-                  intent: judgment.verdict === 'allow' ? 'research' : 'work_sharing',
-                  sensitivity: judgment.level,
-                  score: judgment.score,
-                  verdict: judgment.verdict,
-                  source: judgment.source,
-                }).catch(() => {});
-              }
-            }
-          } catch (err) {
-            console.error('[Iron Gate] Gemma enrichment error:', err instanceof Error ? err.message : String(err), err);
-          }
-        })();
-      }
-
-      // ── SINGLE WRITER: Append to detection_results ──────────────────────
-      // This is the ONLY place in the codebase that writes detection_results.
-      // The sidepanel's Zustand store subscribes to chrome.storage.onChanged
-      // and derives everything from this one key: activity feed, entity
-      // counts, detection panel. No other writer. No other key.
-      if (entities && entities.length > 0 || score > 25) {
-        const resultEntry = {
-          id: crypto.randomUUID(),
-          timestamp: Date.now(),
-          aiTool: payload.aiToolId || 'unknown',
-          tabId: ssTabId,
-          score,
-          level,
-          entities: (entities || []).map((e: any) => ({
-            type: e.type, start: e.start || 0, end: e.end || 0,
-            confidence: e.confidence || 0.85, source: e.source || 'regex',
-            isSensitive: e.isSensitive,
-          })),
-          pseudonymMappings: pseudonymMappings || [],
-          maskedPrompt: maskedPrompt || '',
-          originalPrompt: payload.originalPrompt || '',
-          wasIntercepted: !!payload.isProxy,
-          degraded: !payload.judgmentSource || payload.judgmentSource === 'pattern-only',
-          source: payload.judgmentSource || 'pattern-only',
-        };
-        chrome.storage.local.get('detection_results', (data) => {
-          if (chrome.runtime.lastError) return;
-          const prev: any[] = Array.isArray(data.detection_results) ? data.detection_results : [];
-          const next = [...prev.slice(-49), resultEntry];
-          chrome.storage.local.set({ detection_results: next }).catch(() => {});
-        });
-      }
-
-      // IMMEDIATE BACKUP: Write to storage so sidepanel picks it up via onChanged.
-      const hasSignificantResult = payload.isProxy || payload.wireIntercept || (entities && entities.length > 0) || score > 25;
-      if (hasSignificantResult) {
-        try {
-          const storagePayload = {
-            ...payload,
-            tabId: ssTabId,
-            _storageTimestamp: Date.now(),
-          };
-          // Proxy results (with maskedPrompt) go to a SEPARATE key that
-          // realtime PROMPT_DETECTED results can't overwrite. This is the
-          // fix for "isProxy: undefined / maskedPrompt: EMPTY" — the DOM
-          // observer's realtime results were always overwriting the wire
-          // interceptor's proxy results in lastDetectionResult.
-          if (payload.isProxy && payload.maskedPrompt) {
-            chrome.storage.local.set({ lastProxyResult: storagePayload }).catch(() => {});
-          }
-          chrome.storage.local.set({ lastDetectionResult: storagePayload }).catch(() => {});
-        } catch { /* storage write failed — primary path may still work */ }
-      }
+      // WP1: the lastProxyResult/lastDetectionResult storage backups are gone.
+      // The gated per-tab state write below is the single delivery path.
 
       // ── DEFERRED: Stats, API reporting, tab state (none of this blocks sidepanel) ──
       if (isFromContentScript) {
@@ -2588,32 +2367,33 @@ async function handleMessage(
         getTabState(ssTabId).then(tabState => {
           const incomingPhase = inferPhase(payload);
           const incomingHasEntities = (entities?.length ?? 0) > 0;
-          // Content-derived turn identifier — see event-phase.ts for the
-          // architectural rationale. Different turns produce different
-          // masked prompts, so this is enough to distinguish "same-turn
-          // re-broadcast" from "new-turn arrival" without a turn-ID
-          // wiring layer.
+          // WP1: real turn identity, minted by the main-world coordinator.
+          // turnKey stays as the legacy same-rank tiebreaker for turnless
+          // payloads (shouldReplaceDisplay falls through to it).
+          const t = payload.turn;
+          const incomingTurn = (t && typeof t.epoch === 'number' && typeof t.seq === 'number')
+            ? { epoch: t.epoch, seq: t.seq }
+            : null;
           const incomingTurnKey = (payload.maskedPrompt as string) || (payload.promptHash as string) || '';
           const currentSnapshot = tabState
             ? {
-                phase: inferPhase({
-                  // Reconstruct what the cached state's phase would have been.
-                  isProxy: !!tabState.lastMaskedPrompt,
-                  realtime: false,
-                }),
+                phase: tabState.lastPhase
+                  ?? inferPhase({ isProxy: !!tabState.lastMaskedPrompt, realtime: false }),
                 hasEntities: (tabState.lastEntities?.length ?? 0) > 0,
+                turn: tabState.lastTurn ?? null,
                 turnKey: tabState.lastMaskedPrompt || tabState.lastPromptHash || '',
               }
             : null;
-          if (!phaseAllowsReplace(currentSnapshot, {
+          if (!shouldReplaceDisplay(currentSnapshot, {
             phase: incomingPhase,
             hasEntities: incomingHasEntities,
+            turn: incomingTurn,
             turnKey: incomingTurnKey,
           })) {
             igLog(
               'Tab state: skipping write — incoming phase=' + incomingPhase
+                + ' turn=' + (incomingTurn ? `${incomingTurn.epoch}/${incomingTurn.seq}` : 'none')
                 + ' would not replace current phase=' + (currentSnapshot?.phase ?? 'null'),
-              { currentEntities: tabState?.lastEntities?.length, incomingScore: score },
             );
             return;
           }
@@ -2630,6 +2410,13 @@ async function handleMessage(
             lastPseudonymMappings: pseudonymMappings,
             detectionCount: (tabState?.detectionCount || 0) + 1,
             lastDetectionTime: Date.now(),
+            lastTurn: incomingTurn,
+            lastPhase: incomingPhase,
+            // An accepted result ends the composing state and clears any
+            // transport-blocked annotation from the previous turn.
+            preview: null,
+            transportStatus: null,
+            transportReason: null,
           }).catch(() => {});
         }).catch(() => {});
       }

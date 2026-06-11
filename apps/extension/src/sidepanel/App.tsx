@@ -7,9 +7,6 @@ import { DeploymentBadge } from './DeploymentBadge';
 import { UpgradePrompt } from './UpgradePrompt';
 import { TrustPage } from './TrustPage';
 import { GhostDetection } from './GhostDetection';
-import { useDetectionStore, selectRecentActivity, hydrateStore } from './store';
-import type { ActivityItem as StoreActivityItem } from './store';
-import { inferPhase, phaseAllowsReplace } from '../shared/event-phase';
 
 // ── Pipeline Debug Log ────────────────────────────────────────────────────
 // Visible in the sidepanel UI. Every step of the pipeline logs here.
@@ -306,74 +303,21 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
   const [lastScore, setLastScoreRaw] = useState<SensitivityScore | null>(null);
   const lastScoreRef = useRef<any>(null);
   // Timestamp of the last "significant" lastScore (proxy/wireIntercept with
-  // entities OR any score with entities). Read by the setLastScore wrapper
-  // below to enforce the "no 0-entity overwrite within protect window"
-  // invariant, AND mirrored from the useEffect's local _lastAcceptedScoreAt
-  // for back-compat with the existing PROMPT_CLEARED/CLEAN_SUBMIT guards.
-  const lastAcceptAtRef = useRef(0);
-  const PROXY_PROTECT_MS = 5_000;
-
   // Wrapper: EVERY path that sets lastScore goes through here.
-  //  • Single-source-of-truth for the "don't erase a confirmed protection
-  //    result with a 0-entity update inside the protect window" invariant.
-  //    PROMPT_CLEAN_SUBMIT, GET_TAB_STATE restore, processDetectionResult,
-  //    and any future caller all get the same protection.
-  //  • Every setter also logs to Recent Activity (eliminates the older
+  //  • Every setter logs to Recent Activity (eliminates the older
   //    "1 item found" + "No activity yet" class of bugs).
   const setLastScore = useCallback((newScore: any) => {
-    // Single invariant, centralized in shared/event-phase.ts:
-    //   audit / enrichment can never replace authoritative.
-    //   preview can be replaced by anything that comes later.
-    //   authoritative replaces itself only with another authoritative
-    //     (refinement / re-broadcast) or `null` (turn-end reset).
-    //
-    // The reset paths (PROMPT_CLEARED debounced timer, conversation switch,
-    // tool change, tab change) all call setLastScore(null). null is always
-    // allowed through; the next turn starts from an empty current.
-    if (newScore) {
-      const incomingPhase = inferPhase(newScore);
-      const incomingHasEntities = (newScore.entities?.length ?? 0) > 0;
-      // Content-derived turn key: maskedPrompt is unique per turn (it's
-      // the literal text Iron Gate produced for THIS submit). Two events
-      // with different maskedPrompt values are different turns and the
-      // newer one is allowed to replace the older one.
-      const incomingTurnKey = (newScore as any).maskedPrompt
-        || (newScore as any).promptHash
-        || '';
-
-      const current = lastScoreRef.current as any;
-      const currentSnapshot = current
-        ? {
-            phase: inferPhase(current),
-            hasEntities: (current.entities?.length ?? 0) > 0,
-            turnKey: current.maskedPrompt || current.promptHash || '',
-          }
-        : null;
-
-      if (!phaseAllowsReplace(currentSnapshot, {
-        phase: incomingPhase,
-        hasEntities: incomingHasEntities,
-        turnKey: incomingTurnKey,
-      })) {
-        console.log(
-          '[Iron Gate ACTIVITY] setLastScore SUPPRESSED — incoming phase='
-            + incomingPhase + '(entities=' + (newScore.entities?.length ?? 0) + ')'
-            + ' would not replace current phase=' + (currentSnapshot?.phase ?? 'null')
-            + '(entities=' + (current?.entities?.length ?? 0) + ')',
-        );
-        return;
-      }
-    }
+    // WP1: NO arbitration here. The worker is the single display arbiter —
+    // it gates every per-tab state write through shouldReplaceDisplay()
+    // (real turn ids + phase ranks), and this component renders that state
+    // verbatim via applyTabState below. The previous in-component phase
+    // gate was a second copy of the rule keyed on content-derived turnKey,
+    // and it permanently suppressed "All Clear" after a protected turn
+    // (audit, June 2026). Do not re-add arbitration in the UI.
     setLastScoreRaw(newScore);
     // Mirror into ref synchronously so a follow-up call in the same task
     // sees the just-set value rather than waiting for the useEffect commit.
     lastScoreRef.current = newScore;
-    // Update the protect-window timestamp when accepting a "significant"
-    // value (proxy/wireIntercept with entities, or any score with entities).
-    // Don't update on null or 0-entity sets — those don't deserve protection.
-    if (newScore && ((newScore.entities?.length ?? 0) > 0 || newScore.isProxy === true || newScore.wireIntercept === true)) {
-      lastAcceptAtRef.current = Date.now();
-    }
     console.log('[Iron Gate ACTIVITY] setLastScore called:', newScore?.score, 'entities:', newScore?.entities?.length, 'will add:', !!(newScore && (newScore.entities?.length > 0 || (newScore.score != null && newScore.score > 25))));
     if (newScore && (newScore.entities?.length > 0 || (newScore.score != null && newScore.score > 25))) {
       const entityCount = newScore.entities?.length || newScore.pseudonymMappings?.length || 0;
@@ -400,8 +344,58 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
     }
   }, []);
 
-  // Keep ref in sync so processDetectionResult can read latest without re-render
+  // Keep ref in sync so listeners can read latest without re-render
   useEffect(() => { lastScoreRef.current = lastScore; }, [lastScore]);
+
+  // ── WP1: THE single render mapping — worker-owned TabState → display ──────
+  // The worker already arbitrated every write via shouldReplaceDisplay(), so
+  // this is a pure mapping with an identity fingerprint for idempotent
+  // re-application (mount hydrate, tab checks, and onChanged can all deliver
+  // the same state; identical turn/phase/time must not re-render).
+  const lastAppliedTabStateRef = useRef<string>('');
+  const applyTabState = useCallback((s: any | null) => {
+    const fp = s
+      ? `${s.lastTurn?.epoch ?? 0}/${s.lastTurn?.seq ?? 0}:${s.lastPhase ?? ''}:${s.lastDetectionTime ?? 0}:${s.preview?.at ?? 0}:${s.transportStatus ?? ''}`
+      : 'null';
+    if (fp === lastAppliedTabStateRef.current) return;
+    lastAppliedTabStateRef.current = fp;
+
+    if (!s) { setLastScore(null); return; }
+
+    const hasTurnResult = s.lastScore !== null && s.lastScore !== undefined;
+    // Live-typing preview occupies the gauge only while it's newer than the
+    // last turn outcome; an accepted result clears the preview slot worker-side.
+    const previewIsNewer = s.preview
+      && (!hasTurnResult || s.preview.at > (s.lastDetectionTime || 0));
+    if (previewIsNewer) {
+      setLastScore({
+        score: s.preview.score,
+        level: s.preview.level,
+        explanation: 'Analyzing as you type…',
+        entities: [],
+        aiToolId: s.aiToolId,
+        realtime: true,
+      } as any);
+      return;
+    }
+    if (!hasTurnResult) { setLastScore(null); return; }
+
+    setLastScore({
+      score: s.lastScore,
+      level: s.lastLevel || 'low',
+      explanation: s.lastExplanation || '',
+      entities: s.lastEntities || [],
+      aiToolId: s.aiToolId,
+      isProxy: s.lastPhase === 'authoritative' && !!s.lastMaskedPrompt,
+      wireIntercept: s.lastPhase === 'authoritative',
+      maskedPrompt: s.lastMaskedPrompt || '',
+      originalPrompt: s.lastOriginalPrompt || '',
+      pseudonymMappings: s.lastPseudonymMappings || [],
+      allClear: (s.lastEntities?.length ?? 0) === 0 && (s.lastScore ?? 0) <= 25,
+      transportStatus: s.transportStatus || undefined,
+      transportReason: s.transportReason || undefined,
+    } as any);
+  }, [setLastScore]);
   const [feedbackOpen, setFeedbackOpen] = useState<number | null>(null);
   const [feedbackSent, setFeedbackSent] = useState<Set<number>>(new Set());
   const [promptFeedback, setPromptFeedback] = useState<'yes' | 'no' | 'not_sensitive' | null>(null);
@@ -410,7 +404,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
   //
   // ARCHITECTURE: inspectorData and inspectorOpen are DERIVED from lastScore
   // via the useEffect below. They are never set imperatively from
-  // processDetectionResult, GET_TAB_STATE restore, or any other call site —
+  // applyTabState, GET_TAB_STATE restore, or any other call site —
   // the canonical state is always lastScore, and the inspector is just a
   // view of it. This eliminates the "keep more mappings within 3s window"
   // race condition that produced stale inspector content (4 swaps from a
@@ -651,8 +645,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
           chrome.storage.local.get(['recentActivity'], (result) => {
             if (result.recentActivity && Array.isArray(result.recentActivity)) setRecentActivity(result.recentActivity);
           });
-          chrome.storage.local.remove(['lastScore', 'lastDetectionResult']);
-          return; // Skip individual mode setup
+                    return; // Skip individual mode setup
         }
       } catch {
         // No managed storage — continue with individual mode
@@ -701,13 +694,12 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
           }).catch(() => {});
         }
       }).catch(() => {});
-      chrome.storage.local.get(['apiBaseUrl', 'connectionState', 'firmMode', 'recentActivity', 'lastScore'], (result) => {
+      chrome.storage.local.get(['apiBaseUrl', 'connectionState', 'firmMode', 'recentActivity'], (result) => {
         if (result.apiBaseUrl) { setApiUrl(result.apiBaseUrl); setApiUrlDraft(result.apiBaseUrl); }
         if (result.connectionState) setConnection(result.connectionState);
         if (result.firmMode) setMode(result.firmMode);
         if (result.recentActivity && Array.isArray(result.recentActivity)) setRecentActivity(result.recentActivity);
-        chrome.storage.local.remove(['lastScore', 'lastDetectionResult']);
-      });
+              });
     }
     loadConfig();
 
@@ -960,8 +952,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
               setCurrentTool(null);
               if (previousToolId) {
                 setLastScore(null);
-                chrome.storage.local.remove(['lastScore', 'lastDetectionResult']);
-                previousToolId = null;
+                                previousToolId = null;
               }
             }
             return;
@@ -977,8 +968,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
             if (toolChanged) {
               setLastScore(null);
               lastScoreRef.current = null;
-              chrome.storage.local.remove(['lastScore', 'lastDetectionResult']);
-            }
+                          }
             previousToolId = toolId;
 
             // Fetch per-tab detection state from service worker
@@ -993,22 +983,11 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
                     // Only restore tab state if it's from the same AI tool — prevents
                     // stale ChatGPT results showing when navigating to Claude in same tab
                     if (s.aiToolId && s.aiToolId !== toolId) return;
-                    if (s.lastScore !== null) {
-                      plog('GET_TAB_STATE', `score=${s.lastScore} maskedPrompt=${s.lastMaskedPrompt ? s.lastMaskedPrompt.length + 'ch' : 'EMPTY'} mappings=${s.lastPseudonymMappings?.length || 0} entities=${s.lastEntities?.length || 0}`);
-                      const restoredScore = {
-                        score: s.lastScore,
-                        level: s.lastLevel || 'low',
-                        explanation: s.lastExplanation || '',
-                        entities: s.lastEntities || [],
-                        aiToolId: s.aiToolId,
-                        isProxy: !!s.lastMaskedPrompt,
-                        maskedPrompt: s.lastMaskedPrompt || '',
-                        originalPrompt: s.lastOriginalPrompt || '',
-                        pseudonymMappings: s.lastPseudonymMappings || [],
-                      } as any;
-                      // setLastScore cascades to inspectorData via the useEffect.
-                      setLastScore(restoredScore);
-                    }
+                    plog('GET_TAB_STATE', `score=${s.lastScore} turn=${s.lastTurn ? `${s.lastTurn.epoch}/${s.lastTurn.seq}` : 'none'} phase=${s.lastPhase || '-'}`);
+                    // WP1: same single render mapping as the live listener —
+                    // idempotent, so periodic re-checks can't resurrect or
+                    // flicker anything.
+                    applyTabState(s);
                   }
                 }
               );
@@ -1021,8 +1000,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
             if (previousToolId) {
               setLastScore(null);
               lastScoreRef.current = null;
-              chrome.storage.local.remove(['lastScore', 'lastDetectionResult']);
-              previousToolId = null;
+                            previousToolId = null;
             }
           }
         }); } catch { /* Tab may be closing or extension context invalidated */ }
@@ -1056,286 +1034,37 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
     };
     chrome.tabs.onActivated.addListener(activatedListener);
 
-    // ── Core detection result processor — used by both runtime messages AND storage backup ──
-    // Deduplicates via _storageTimestamp to prevent double-processing when both paths deliver.
-    let _lastProcessedTimestamp = 0;
-    let _lastProcessedFingerprint = '';
-    let _lastProcessedFingerprintAt = 0;
-
-    function processDetectionResult(newScore: any, source: string) {
-      if (!isMounted) return;
-      if (!newScore) {
-        plog('processDetection', `SKIP null from ${source}`);
-        return;
-      }
-      plog('processDetection', `from=${source} score=${newScore.score} isProxy=${newScore.isProxy} maskedPrompt=${newScore.maskedPrompt ? newScore.maskedPrompt.length + 'ch' : 'EMPTY'} mappings=${newScore.pseudonymMappings?.length || 0} entities=${newScore.entities?.length || 0} realtime=${newScore.realtime}`);
-      // Deduplicate: if we already processed this exact result (from another delivery path), skip.
-      // Include maskedPrompt length in the fingerprint — the same prompt can arrive
-      // via multiple channels (runtime-message, storage-change, proxy-poll) and
-      // promptLength was always 0, defeating the dedup.
-      const mpLen = newScore.maskedPrompt ? newScore.maskedPrompt.length : 0;
-      const fingerprint = `${newScore.isProxy}:${newScore.score}:${newScore.entities?.length || 0}:${mpLen}:${newScore.pseudonymMappings?.length || 0}`;
-      const ts = newScore._storageTimestamp;
-      if (ts && ts === _lastProcessedTimestamp) {
-        plog('DEDUP', `skip ts-match from ${source}`);
-        return;
-      }
-      if (fingerprint === _lastProcessedFingerprint && Date.now() - _lastProcessedFingerprintAt < 2000) {
-        plog('DEDUP', `skip fingerprint-match from ${source}`);
-        return;
-      }
-      if (ts) _lastProcessedTimestamp = ts;
-      _lastProcessedFingerprint = fingerprint;
-      _lastProcessedFingerprintAt = Date.now();
-
-      const scoreTabId = newScore.tabId;
-      const isRealtime = newScore.realtime === true;
-      const isProxy = newScore.isProxy === true;
-
-      console.log(`[Iron Gate Sidepanel] PROCESSING from ${source}: score=${newScore.score}, level=${newScore.level}, isProxy=${isProxy}, entities=${newScore.entities?.length}, mappings=${newScore.pseudonymMappings?.length}, tabId=${scoreTabId}, activeTab=${activeTabIdRef.current}`);
-
-      // Recent Activity is handled by the setLastScore wrapper — every path
-      // that calls setLastScore() automatically logs to activity. No separate
-      // activity code needed here.
-
-      // H-13 FIX: Check tab match BEFORE setting any UI state to prevent
-      // wrong tab's results from flashing momentarily.
-      const currentActiveTab = activeTabIdRef.current;
-      if (scoreTabId != null && currentActiveTab != null && scoreTabId !== currentActiveTab) {
-        console.log(`[Iron Gate Sidepanel] Ignoring result for tab ${scoreTabId} (active tab is ${currentActiveTab})`);
-        return;
-      }
-      if (scoreTabId == null || currentActiveTab == null || scoreTabId === currentActiveTab) {
-        // Determine if this result should update the display.
-        // Check rules BEFORE calling setState to avoid the race where
-        // setState fires (scheduling a re-render) but shouldUpdate is false.
-        // ── SUPPRESSION: None needed ──────────────────────────────────────
-        //
-        // The Turn Coordinator (main-world.ts) drops ALL 0-entity low-score
-        // AUDITs at the source. Every result that reaches the sidepanel is
-        // significant (INTERCEPTED, has entities, or score > 25).
-        //
-        // "All Clear" is handled by PROMPT_CLEARED (input field cleared after
-        // submit, debounced) and tab navigation — NOT by 0-entity AUDITs.
-        //
-        // This eliminates the entire class of "noise overwrites detection" bugs.
-        // No buffer windows, no sequence numbers, no authority gates needed.
-
-        // ── Authoritative-result protection ──────────────────────────────
-        // Stage-2 (Gemma) verdict and other late enrichments can broadcast a
-        // 0-entity SENSITIVITY_SCORE after the wire interceptor has already
-        // captured + pseudonymized the real prompt. Without this guard, the
-        // sidepanel flashes "All Clear" even though 8 entities were just
-        // protected on the wire.
-        //
-        // Two failure modes the original guard didn't cover:
-        //   (a) lastScoreRef.current lags behind setLastScore by one render
-        //       cycle (ref is synced via useEffect at L308). Two calls landing
-        //       in the same task both saw the pre-proxy state, so the realtime
-        //       Gemma broadcast slipped through.
-        //   (b) Predicate required isRealtime===true. Storage-onChanged paths
-        //       and any future enrichment that omits the flag bypassed it.
-        //
-        // Replace with a stronger invariant: for a short window after a
-        // proxy/wireIntercept-with-entities result is accepted, NO incoming
-        // non-proxy 0-entity result may overwrite it. The window covers the
-        // typical Stage-2 (Gemma) latency (~2-3s) plus a margin. After it
-        // elapses, normal updates resume so a fresh clean prompt can reset
-        // the panel.
-        const currentScore = lastScoreRef.current as any;
-        const currentHasProxy = currentScore?.isProxy === true || currentScore?.wireIntercept === true;
-        const currentEntityCount = currentScore?.entities?.length ?? 0;
-        const newEntityCount = newScore.entities?.length ?? 0;
-        const newHasProxy = isProxy;
-        const withinProxyProtect = Date.now() - _lastAcceptedScoreAt < PROXY_SCORE_PROTECT_MS;
-
-        if (currentHasProxy && currentEntityCount > 0 && !newHasProxy && newEntityCount === 0 && withinProxyProtect) {
-          plog('SKIP', `0-entity ${isRealtime ? 'realtime' : 'enrichment'} would erase proxy result (current=${currentEntityCount}, age=${Date.now() - _lastAcceptedScoreAt}ms)`);
-          return;
-        }
-        // Original narrower guard kept for the realtime-with-entities case
-        // (e.g. a realtime Stage-1 broadcast that misclassifies should not
-        // outrank a proxy result, even if it has entities of its own).
-        if (currentHasProxy && !newHasProxy && isRealtime) {
-          plog('SKIP', `realtime would overwrite proxy data`);
-          return;
-        }
-        plog('ACCEPTED', `score=${newScore.score} isProxy=${isProxy} maskedPrompt=${newScore.maskedPrompt ? 'YES' : 'NO'} from=${source}`);
-
-        setLastScore(newScore);
-        // Mirror into the ref synchronously so a follow-up call in the same
-        // task (Gemma broadcast vs storage.onChanged) sees the just-accepted
-        // value instead of waiting for the useEffect at L308 to commit.
-        lastScoreRef.current = newScore;
-        setFeedbackSent(new Set());
-        setFeedbackOpen(null);
-        setPromptFeedback(null);
-        _lastAcceptedScoreAt = Date.now();
-
-        chrome.storage.local.set({ lastScore: newScore });
-        chrome.storage.local.remove('lastDetectionResult');
-
-        // Inspector data is now derived from lastScore via a useEffect at
-        // component scope — see the inspectorData state declaration above.
-        // No imperative setInspectorData here; the effect handles every
-        // transition (pseudonymized → passthrough → cleared) consistently.
-      }
-    }
-
-    // Shared ref for cancelling PROMPT_CLEARED debounce from any delivery path
-    let _promptClearTimerRef = { current: null as ReturnType<typeof setTimeout> | null };
-    // Track when ANY accepted score was last set — suppress PROMPT_CLEARED for a window after.
-    // Without this, PROMPT_CLEARED (from platform auto-clearing input after submit) wipes
-    // the scan result. Both proxy (INTERCEPTED) and audit (AUDIT) results need protection.
-    let _lastAcceptedScoreAt = 0;
-    const PROXY_SCORE_PROTECT_MS = 5_000;
-
-    // ── DELIVERY PATH 1: chrome.storage.onChanged listener ──
-    const storageBackupListener = (changes: Record<string, chrome.storage.StorageChange>) => {
-      // Proxy results (with maskedPrompt) come via lastProxyResult — ALWAYS prefer these
-      if (changes.lastProxyResult?.newValue) {
-        const result = changes.lastProxyResult.newValue;
-        plog('PROXY_STORAGE', `score=${result.score} isProxy=${result.isProxy} maskedPrompt=${result.maskedPrompt ? result.maskedPrompt.length + 'ch' : 'EMPTY'}`);
-        if (result._storageTimestamp && Date.now() - result._storageTimestamp < 60_000) {
-          if (_promptClearTimerRef.current) { clearTimeout(_promptClearTimerRef.current); _promptClearTimerRef.current = null; }
-          processDetectionResult(result, 'proxy-storage');
-        }
-      }
-      if (changes.lastDetectionResult?.newValue) {
-        const result = changes.lastDetectionResult.newValue;
-        if (result._storageTimestamp && Date.now() - result._storageTimestamp < 60_000) {
-          if (_promptClearTimerRef.current) { clearTimeout(_promptClearTimerRef.current); _promptClearTimerRef.current = null; }
-          processDetectionResult(result, 'storage-change');
-        }
-      }
+    // ── WP1 SINGLE DELIVERY: worker-owned per-tab state via storage.onChanged ──
+    // The worker is the only writer of display state (gated through
+    // shouldReplaceDisplay with real turn ids). This listener + the
+    // GET_TAB_STATE hydrate are the ONLY delivery paths. The previous five
+    // (runtime message, lastProxyResult/lastDetectionResult onChanged, 10s
+    // poll, 8s re-restore-as-delivery) and their dedup heuristics
+    // (2s fingerprint, 5s protect window, 1.5s clear debounce) are deleted —
+    // they were the stale-panel bug class.
+    const TAB_STATES_STORAGE_KEY = 'iron_gate_tab_states';
+    const tabStateListener = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      areaName: string,
+    ) => {
+      if (!isMounted || areaName !== 'session') return;
+      const ch = changes[TAB_STATES_STORAGE_KEY];
+      if (!ch?.newValue) return;
+      const tabId = activeTabIdRef.current;
+      if (tabId == null) return;
+      applyTabState(ch.newValue[tabId] ?? null);
     };
-    chrome.storage.onChanged.addListener(storageBackupListener);
-
-    // ── DELIVERY PATH 2: Periodic storage poll (failsafe for missed events) ──
-    // Primary delivery is runtime.onMessage + storage.onChanged (instant).
-    // This poll is a FAILSAFE only — 10s interval instead of 2s to reduce
-    // CPU/IO churn. The old 2s poll was firing 4 chrome.storage.local.get
-    // calls per second, contributing to browser slowness.
-    let _lastPollTs = 0;
-    let _lastProxyPollTs = 0;
-    const storagePollInterval = setInterval(() => {
-      if (!isMounted || !chrome.runtime?.id) return;
-      chrome.storage.local.get('lastProxyResult', (proxyData) => {
-        if (!isMounted || chrome.runtime.lastError) return;
-        const proxyResult = proxyData.lastProxyResult;
-        if (proxyResult && proxyResult._storageTimestamp && proxyResult._storageTimestamp !== _lastProxyPollTs) {
-          if (Date.now() - proxyResult._storageTimestamp < 60_000) {
-            _lastProxyPollTs = proxyResult._storageTimestamp;
-            plog('PROXY_POLL', `score=${proxyResult.score} maskedPrompt=${proxyResult.maskedPrompt ? proxyResult.maskedPrompt.length + 'ch' : 'EMPTY'}`);
-            if (_promptClearTimerRef.current) { clearTimeout(_promptClearTimerRef.current); _promptClearTimerRef.current = null; }
-            processDetectionResult(proxyResult, 'proxy-poll');
-          }
-        }
-      });
-      chrome.storage.local.get('lastDetectionResult', (data) => {
-        if (!isMounted || chrome.runtime.lastError) return;
-        const result = data.lastDetectionResult;
-        if (result && result._storageTimestamp && result._storageTimestamp !== _lastPollTs) {
-          if (Date.now() - result._storageTimestamp < 60_000) {
-            _lastPollTs = result._storageTimestamp;
-            if (_promptClearTimerRef.current) { clearTimeout(_promptClearTimerRef.current); _promptClearTimerRef.current = null; }
-            processDetectionResult(result, 'storage-poll');
-          }
-        }
-      });
-    }, 10_000);
+    chrome.storage.onChanged.addListener(tabStateListener);
 
     // ── DELIVERY PATH 3: chrome.runtime.onMessage ──
     const messageListener = (message: any) => {
       if (!isMounted) return;
-      if (message.type === 'SENSITIVITY_SCORE') {
-        console.log('[Iron Gate Sidepanel] Runtime message received:', message.payload?.score, message.payload?.level, 'entities:', message.payload?.entities?.length, 'isProxy:', message.payload?.isProxy);
-        // Cancel any pending PROMPT_CLEARED — a detection arrived, don't wipe it
-        if (_promptClearTimerRef.current) { clearTimeout(_promptClearTimerRef.current); _promptClearTimerRef.current = null; }
-        processDetectionResult(message.payload, 'runtime-message');
-      }
 
-      // ── PROMPT_CLEAN_SUBMIT — a 0-entity prompt was submitted ──
-      // Only clear if well outside the protection window. This mainly fires
-      // from explicit clean prompt submissions (not metadata/secondary fetches,
-      // which are now filtered at the turn coordinator level).
-      if (message.type === 'PROMPT_CLEAN_SUBMIT') {
-        // Suppress if a detection was recently accepted — platform secondary
-        // fetches (title generation, etc.) can trigger this after the real detection.
-        if (Date.now() - _lastAcceptedScoreAt < PROXY_SCORE_PROTECT_MS) {
-          return;
-        }
-        const cleanTabId = message.payload?.tabId;
-        const currentActiveTab = activeTabIdRef.current;
-        if (cleanTabId == null || currentActiveTab == null || cleanTabId === currentActiveTab) {
-          // setLastScore cascades to inspectorData via the useEffect.
-          setLastScore({
-            score: 0,
-            level: 'low',
-            explanation: 'No sensitive data detected in your prompt.',
-            entities: [],
-            isProxy: false,
-            allClear: true,
-          } as any);
-          chrome.storage.local.remove(['lastScore', 'lastDetectionResult']);
-        }
-        return;
-      }
-
-      // ── PROMPT_CLEARED — user emptied the input field ──
-      // Debounced by 1.5s: ChatGPT clears the input immediately after submission,
-      // which races with the SENSITIVITY_SCORE from the MAIN world interceptor.
-      // If a SENSITIVITY_SCORE arrives within the window, the clear is cancelled.
-      if (message.type === 'PROMPT_CLEARED') {
-        // Suppress PROMPT_CLEARED if ANY score was recently accepted.
-        // Platforms (Claude, ChatGPT, Gemini) auto-clear the input after submit,
-        // which races with detection results. Without this protection, the "All Clear"
-        // or "Protected" result gets wiped before the user can see it.
-        if (Date.now() - _lastAcceptedScoreAt < PROXY_SCORE_PROTECT_MS) return;
-
-        const clearTabId = message.payload?.tabId;
-        const currentActiveTab = activeTabIdRef.current;
-        if (clearTabId == null || currentActiveTab == null || clearTabId === currentActiveTab) {
-          if (_promptClearTimerRef.current) clearTimeout(_promptClearTimerRef.current);
-          _promptClearTimerRef.current = setTimeout(() => {
-            _promptClearTimerRef.current = null;
-            // setLastScore(null) cascades to inspectorData via the useEffect.
-            setLastScore(null);
-            chrome.storage.local.remove(['lastScore', 'lastDetectionResult']);
-          }, 1500);
-        }
-      }
-
-      // ── PROMPT_TURN_INVALIDATED ────────────────────────────────────────
-      // Main-world fired IRON_GATE_INTERCEPTED before the actual fetch (so
-      // the badge updates instantly), but the fetch then failed or the LLM
-      // rejected the modified body. The pseudonymization DID happen — that
-      // information is real and worth showing — but the masked text never
-      // reached the LLM. Annotate the existing lastScore with
-      // `transportStatus: 'blocked'` so the inspector keeps the swap list
-      // visible AND surfaces a clear "request blocked, data NOT sent"
-      // banner. The integrity property is preserved: the panel never
-      // claims "sent to AI" for data that wasn't sent.
-      if (message.type === 'PROMPT_TURN_INVALIDATED') {
-        const invTabId = message.payload?.tabId;
-        const currentActiveTab = activeTabIdRef.current;
-        if (invTabId == null || currentActiveTab == null || invTabId === currentActiveTab) {
-          const reason: string = message.payload?.reason || 'request blocked';
-          console.log('[Iron Gate Sidepanel] Turn marked as transport-blocked:', reason);
-          const current = lastScoreRef.current as any;
-          if (current) {
-            const annotated = { ...current, transportStatus: 'blocked' as const, transportReason: reason };
-            // Direct ref write + raw setter — annotating is not a competing
-            // event subject to phase precedence; it's a status update on
-            // the existing turn.
-            lastScoreRef.current = annotated;
-            setLastScoreRaw(annotated);
-          }
-          // Don't touch storage / lastAcceptAtRef — those reflect the
-          // pseudonymization event which DID legitimately happen.
-        }
-      }
-
+      // WP1: SENSITIVITY_SCORE / PROMPT_CLEAN_SUBMIT / PROMPT_CLEARED /
+      // PROMPT_TURN_INVALIDATED branches removed — detection display flows
+      // exclusively through worker-owned tab state (see tabStateListener).
+      // Clears land as preview-slot updates; transport blocks land as
+      // tab-state annotations. Only non-detection messages remain below.
       if (message.type === 'GHOST_DETECTION') {
         const { label, confidence } = message.payload;
         setRecentActivity((prev) => {
@@ -1421,11 +1150,9 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
       listenerInstalledRef.current = false;
       retryTimers.forEach(clearTimeout);
       dynamicTimers.forEach(clearTimeout);
-      if (_promptClearTimerRef.current) clearTimeout(_promptClearTimerRef.current);
       clearInterval(periodicCheck);
-      clearInterval(storagePollInterval);
       chrome.runtime.onMessage.removeListener(messageListener);
-      chrome.storage.onChanged.removeListener(storageBackupListener);
+      chrome.storage.onChanged.removeListener(tabStateListener);
       chrome.tabs.onUpdated.removeListener(tabListener);
       chrome.tabs.onActivated.removeListener(activatedListener);
     };
@@ -2850,64 +2577,10 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
 // from chrome.storage.local on mount and subscribes to onChanged for live
 // updates from the single writer in the service worker.
 
-function RecentActivityPanel() {
-  const storeActivity = useDetectionStore(selectRecentActivity);
-
-  // Hydrate store on first mount
-  useEffect(() => { hydrateStore(); }, []);
-
-  return (
-    <div className="bg-white rounded-lg shadow-sm border">
-      <div className="px-4 py-3 border-b">
-        <h2 className="text-sm font-medium text-gray-700">Recent Activity</h2>
-      </div>
-      <div className="divide-y max-h-96 overflow-y-auto">
-        {storeActivity.length === 0 ? (
-          <div className="p-4 text-center text-sm text-gray-400">
-            No activity yet. Start using an AI tool to see detections.
-          </div>
-        ) : (
-          storeActivity.map((item) => (
-            <div key={item.id} className="px-4 py-2 flex items-center justify-between">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-medium text-gray-600 truncate">
-                    {item.aiTool}
-                  </span>
-                  {item.degraded && (
-                    <span className="text-[9px] px-1 py-0.5 bg-amber-100 text-amber-700 rounded font-medium">
-                      Limited
-                    </span>
-                  )}
-                </div>
-                <span className="text-xs text-gray-400">
-                  {item.entityCount} {item.entityCount === 1 ? 'entity' : 'entities'} · {item.verdict}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <span
-                  className={`text-sm font-semibold ${
-                    item.level === 'critical'
-                      ? 'text-red-600'
-                      : item.level === 'high'
-                      ? 'text-amber-600'
-                      : item.level === 'medium'
-                      ? 'text-yellow-600'
-                      : 'text-green-600'
-                  }`}
-                >
-                  {item.score}
-                </span>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── Pipeline Log Component ──────────────────────────────────────────────────
+// RecentActivityPanel (zustand store UI) deleted in WP1 — it was never
+// rendered, its selector caused an infinite-render loop, and the worker-owned
+// tab state is the single source of truth. The rendered activity list is the
+// recentActivity useState fed by setLastScore.
 
 function PipelineLog({ lastScore, inspectorData }: { lastScore: any; inspectorData: any }) {
   const log = usePipelineLog();

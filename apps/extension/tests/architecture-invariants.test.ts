@@ -748,3 +748,55 @@ describe('Architecture Invariants — Selector death fails closed on dom-presubm
     expect(src).toMatch(/IRON_GATE_SELECTOR_FAILURE/);
   });
 });
+
+describe('Architecture Invariants — WP1 turn identity & single delivery', () => {
+  // June 2026: the stale-sidepanel class (~10 reports) was caused by missing
+  // turn identity patched with four stacked timing heuristics across five
+  // delivery channels. These invariants keep them from growing back.
+  const APP = join(REPO_ROOT, 'apps/extension/src/sidepanel/App.tsx');
+  const WORKER = join(REPO_ROOT, 'apps/extension/src/worker/index.ts');
+  const CS = join(REPO_ROOT, 'apps/extension/src/content/index.ts');
+
+  it('worker arbitrates display via shouldReplaceDisplay with real turn ids', () => {
+    const src = readFileSync(WORKER, 'utf8');
+    expect(src).toMatch(/shouldReplaceDisplay\(currentSnapshot/);
+    expect(src).toMatch(/lastTurn: incomingTurn/);
+  });
+
+  it('the legacy display storage keys are retired everywhere', () => {
+    for (const f of [APP, WORKER, CS]) {
+      const src = readFileSync(f, 'utf8');
+      expect(src, `${f} must not write lastDetectionResult`).not.toMatch(/storage\.local\.set\(\{\s*lastDetectionResult/);
+      expect(src, `${f} must not write lastProxyResult`).not.toMatch(/storage\.local\.set\(\{\s*lastProxyResult/);
+    }
+  });
+
+  it('sidepanel has no timing heuristics and no detection arbitration', () => {
+    const src = readFileSync(APP, 'utf8');
+    expect(src).not.toMatch(/PROXY_SCORE_PROTECT_MS|_lastProcessedFingerprint|_promptClearTimerRef/);
+    expect(src).not.toMatch(/processDetectionResult/);
+    expect(src, 'no detection storage poll').not.toMatch(/setInterval\([^)]*storage/s);
+    expect(src).toMatch(/applyTabState/);
+    expect(src, 'UI must not arbitrate phases').not.toMatch(/phaseAllowsReplace/);
+  });
+
+  it('the main-world coordinator mints turn ids and the 10s window is gone', () => {
+    const src = readMainWorld();
+    expect(src).toMatch(/_mintTurn\(\)/);
+    expect(src).toMatch(/noteUserAction/);
+    expect(src).not.toMatch(/now - _lastEmitAt < 10_000/);
+  });
+
+  it('the dead CLEAN_SUBMIT chain stays dead', () => {
+    for (const f of [WORKER, CS, APP]) {
+      const src = readFileSync(f, 'utf8');
+      expect(src, `${f}`).not.toMatch(/case 'PROMPT_CLEAN_SUBMIT'|type: 'PROMPT_CLEAN_SUBMIT'/);
+    }
+  });
+
+  it('zustand store stays deleted', () => {
+    expect(() => readFileSync(join(REPO_ROOT, 'apps/extension/src/sidepanel/store.ts'), 'utf8')).toThrow();
+    const pkg = readFileSync(join(REPO_ROOT, 'apps/extension/package.json'), 'utf8');
+    expect(pkg).not.toContain('zustand');
+  });
+});

@@ -661,22 +661,10 @@ function handleMainWorldMessages(event: MessageEvent) {
     return;
   }
 
-  // Clean submit — 0 entities detected, clear stale sidepanel results
-  if (event.data?.type === 'IRON_GATE_CLEAN_SUBMIT') {
-    if (badge) {
-      badge.update(0, 'low');
-      badge.showStandby();
-    }
-    chrome.runtime.sendMessage({
-      type: 'PROMPT_CLEAN_SUBMIT',
-      payload: {
-        score: event.data.score || 0,
-        level: event.data.level || 'low',
-        promptLength: event.data.promptLength || 0,
-      },
-    }).catch(() => {});
-    return;
-  }
+  // IRON_GATE_CLEAN_SUBMIT relay REMOVED (WP1): the main-world producer was
+  // deleted long ago, so this block was unreachable. Clean user submits now
+  // mint a TurnId in the coordinator and arrive as ordinary turn-stamped
+  // IRON_GATE_AUDIT results.
 
   // Low-risk passthrough — entities detected but context deemed benign
   // ── ENFORCEMENT: Block overlay for critical prompts ──────────────────────
@@ -814,6 +802,13 @@ function handleMainWorldMessages(event: MessageEvent) {
       isProxy, // legacy flag — true = pseudonymized (INTERCEPTED), false = audit only
       wireIntercept: event.data.wireIntercept === true, // legacy flag
       phase, // ← canonical lifecycle tag for downstream precedence rule
+      // WP1: real turn identity minted by the main-world coordinator —
+      // validated shape only; the worker's display gate keys on it.
+      turn: (event.data.turn
+          && typeof event.data.turn.epoch === 'number'
+          && typeof event.data.turn.seq === 'number')
+        ? { epoch: event.data.turn.epoch, seq: event.data.turn.seq }
+        : null,
     };
 
     // M-9 fix: Atomic check-and-relay — capture runtime ref and send in the same
@@ -829,19 +824,20 @@ function handleMainWorldMessages(event: MessageEvent) {
       }).then(() => {
         igLog('SENSITIVITY_SCORE relayed successfully');
       }).catch((err: unknown) => {
-        console.warn('[Iron Gate] runtime.sendMessage failed — using storage backup:', err);
-        // BACKUP: Write to chrome.storage.local so sidepanel can pick it up.
-        // BUT: 0-entity non-authoritative results must NEVER be persisted to storage.
-        // Storage is a bypass channel — the sidepanel's storage poll and onChanged
-        // listener would deliver stale 0-entity results that overwrite real detections.
-        // Only authoritative results (proxy, wireIntercept, or has entities) are worth persisting.
-        if (relayPayload.isProxy || relayPayload.wireIntercept || (relayPayload.entities && relayPayload.entities.length > 0)) {
-          try {
-            chrome.storage.local.set({
-              lastDetectionResult: { ...relayPayload, _storageTimestamp: Date.now() },
-            }).catch(() => {});
-          } catch { /* storage failed too */ }
-        }
+        // WP1: the worker is the SINGLE writer of display state — no storage
+        // bypass channel here anymore (it raced the worker's gated writes).
+        // sendMessage wakes a suspended MV3 worker; a failure is transient,
+        // so retry once. The turn id makes the retry idempotent downstream.
+        console.warn('[Iron Gate] runtime.sendMessage failed — retrying once:', err);
+        setTimeout(() => {
+          if (!chrome.runtime?.id) return;
+          chrome.runtime.sendMessage({
+            type: 'SENSITIVITY_SCORE',
+            payload: relayPayload,
+          }).catch((err2: unknown) => {
+            console.warn('[Iron Gate] SENSITIVITY_SCORE retry failed — result lost:', err2);
+          });
+        }, 250);
       });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -867,25 +863,11 @@ function handleMainWorldMessages(event: MessageEvent) {
       console.warn('[Iron Gate] runtime.sendMessage threw:', err);
     }
 
-    // ALWAYS write storage backup for authoritative results — belt and suspenders.
-    // The sidepanel has a storage.onChanged listener that processes this.
-    // Wire intercept AUDITs (clean prompts in proxy mode) also need storage backup
-    // because chrome.runtime.sendMessage is unreliable in MV3 — without this,
-    // "All Clear" results have ZERO storage backup and get silently lost.
-    if (isProxy || relayPayload.wireIntercept) {
-      try {
-        const _ts = Date.now();
-        chrome.storage.local.set({
-          lastDetectionResult: { ...relayPayload, _storageTimestamp: _ts },
-        }).then(() => {
-          igLog('CS Storage backup written successfully, ts:', _ts, 'isProxy:', relayPayload.isProxy, 'entities:', relayPayload.entities?.length);
-        }).catch((err: unknown) => {
-          console.warn('[Iron Gate CS] Storage backup FAILED:', err);
-        });
-      } catch {
-        igLog('Storage backup write failed');
-      }
-    }
+    // WP1: belt-and-suspenders lastDetectionResult backup REMOVED. Redundant
+    // channels were root cause #1 of the stale-panel class: one event became
+    // N racing deliveries needing dedup at both ends. The worker's gated
+    // per-tab state write (observed by the sidepanel via storage.onChanged)
+    // is the one delivery path; the relay above retries once on failure.
 
     // Update floating sensitivity badge with current score/level
     if (badge) {
@@ -1198,7 +1180,11 @@ function initialize() {
 
       // Welcome toast on first load (only once per session)
       try {
-        chrome.storage.session.get('welcomeShown', (result) => {
+        // WP1: chrome.storage.LOCAL, not session — content scripts cannot
+        // access storage.session (TRUSTED_CONTEXTS only), so the old check
+        // silently failed and the toast fired on every page load. Local
+        // also gives the better semantic: welcome once ever, not per session.
+        chrome.storage.local.get('welcomeShown', (result) => {
           if (!chrome.runtime?.id) return;
           if (chrome.runtime.lastError) return; // Storage not accessible
           if (!result?.welcomeShown && toasts) {
@@ -1208,11 +1194,11 @@ function initialize() {
               message: `Monitoring ${detector?.name ?? 'unknown'} for sensitive data. Your prompts are being scanned in real time.`,
               duration: 4000,
             });
-            chrome.storage.session.set({ welcomeShown: true }).catch(() => {});
+            chrome.storage.local.set({ welcomeShown: true }).catch(() => {});
           }
         });
       } catch {
-        // chrome.storage.session may not be available in all contexts
+        // chrome.storage may not be available in all contexts
       }
       // ── Voice mode detection ──────────────────────────────────────────
       // Watch for voice input activation on supported platforms.
