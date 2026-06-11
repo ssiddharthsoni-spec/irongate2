@@ -200,7 +200,9 @@ export const ChatGPTAdapter: SiteAdapter = {
         console.log(
           '%c[Iron Gate DIAG] ChatGPT extractPrompt: body is NOT messages format',
           'color: #f59e0b; font-weight: bold',
-          { topLevelKeys: Object.keys(parsed || {}), bodyLength: body.length, bodyPreview: body.substring(0, 200) }
+          // SECURITY: structural fields only — never log raw body text
+          // (prompt content) to the page console.
+          { topLevelKeys: Object.keys(parsed || {}), bodyLength: body.length }
         );
         return null;
       }
@@ -221,10 +223,9 @@ export const ChatGPTAdapter: SiteAdapter = {
             hasContentParts: !!(m.content?.parts),
             contentPartsCount: m.content?.parts?.length,
             contentPartTypes: m.content?.parts?.map((p: any) => typeof p),
+            // SECURITY: length only — never log message text to the page console.
             contentLength: typeof m.content === 'string' ? m.content.length
               : m.content?.parts?.[0] ? String(m.content.parts[0]).length : 0,
-            contentPreview: typeof m.content === 'string' ? m.content.substring(0, 80)
-              : m.content?.parts?.[0] ? String(m.content.parts[0]).substring(0, 80) : '(none)',
           })),
         }
       );
@@ -248,7 +249,7 @@ export const ChatGPTAdapter: SiteAdapter = {
             console.log(
               '%c[Iron Gate DIAG] ChatGPT extractPrompt: found user msg at index ' + i,
               'color: #22c55e; font-weight: bold',
-              { textLength: text.length, textPreview: text.substring(0, 200) }
+              { textLength: text.length }
             );
             return text;
           }
@@ -258,7 +259,7 @@ export const ChatGPTAdapter: SiteAdapter = {
           console.log(
             '%c[Iron Gate DIAG] ChatGPT extractPrompt: found user msg (string content) at index ' + i,
             'color: #22c55e; font-weight: bold',
-            { textLength: m.content.length, textPreview: m.content.substring(0, 200) }
+            { textLength: m.content.length }
           );
           return m.content;
         }
@@ -277,7 +278,8 @@ export const ChatGPTAdapter: SiteAdapter = {
         console.warn(
           '%c[Iron Gate DIAG] ChatGPT extractPrompt: user msg at index ' + i + ' has NO extractable text',
           'color: #ef4444; font-weight: bold',
-          { content: m.content, contentType: typeof m.content }
+          // SECURITY: shape only — never dump the raw content object.
+          { contentType: typeof m.content, contentKeys: m.content && typeof m.content === 'object' ? Object.keys(m.content) : undefined }
         );
       }
 

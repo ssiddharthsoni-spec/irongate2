@@ -613,3 +613,32 @@ describe('Architecture Invariants — Sovereign AI / Local-Only Mode Contract', 
     expect(src).toMatch(/\?\s*2\s*:.*\?\s*1\s*:\s*0|exit\(1\)/);
   });
 });
+
+describe('Architecture Invariants — No raw prompt text in console logs', () => {
+  // June 2026 audit: chatgpt.ts logged up to 200 chars of the user's prompt
+  // (bodyPreview/textPreview/contentPreview) to the PAGE console on every
+  // submit — visible to any script with console access. The same class was
+  // fixed once before (36fe93f) and recurred. Diagnostics may log lengths,
+  // counts, and key names — never content.
+  it('no *Preview log fields anywhere in extension src', async () => {
+    const files = await glob('apps/extension/src/**/*.{ts,tsx}', { cwd: REPO_ROOT, absolute: true });
+    const offenders: string[] = [];
+    for (const f of files) {
+      const src = readFileSync(f, 'utf8');
+      if (/\b(?:body|text|content|prompt|payload)Preview\s*:/.test(src)) offenders.push(f);
+    }
+    expect(offenders, `Raw-text preview fields found in: ${offenders.join(', ')}`).toEqual([]);
+  });
+
+  it('adapter console calls must not log substring slices of message content', async () => {
+    const files = await glob('apps/extension/src/content/adapters/*.ts', { cwd: REPO_ROOT, absolute: true });
+    const offenders: string[] = [];
+    for (const f of files) {
+      const src = readFileSync(f, 'utf8');
+      // console.<fn>( ... .substring(0, N) ... ) within one statement —
+      // the signature of logging a content preview.
+      if (/console\.\w+\([^;]*\.substring\(0,\s*\d+\)/s.test(src)) offenders.push(f);
+    }
+    expect(offenders, `Console content-slice logging found in: ${offenders.join(', ')}`).toEqual([]);
+  });
+});
