@@ -20,7 +20,7 @@
     "posthog-js": "^1.352.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "recharts": "^2.13.0",
+    "recharts": "^3.7.0",
     "zustand": "^5.0.0"
   },
   "devDependencies": {
