@@ -820,3 +820,17 @@ describe('Architecture Invariants — WP2 scoped DOM observation', () => {
     expect(editableGuards).toBeGreaterThanOrEqual(2);
   });
 });
+
+describe('Architecture Invariants — WP2 platform decisions live in adapters', () => {
+  // The Gemini/ChatGPT fix-revert ping-pong happened because per-platform
+  // behavior was encoded in three competing places. Behavior DECISIONS now
+  // come only from adapter contract capabilities; main-world must never
+  // branch on a platform id. (Bulk relocation of the remaining platform
+  // code blocks happens in the WP3 decomposition; this ratchet stops new
+  // special-cases from landing meanwhile.)
+  it('main-world contains zero adapter-id equality checks', () => {
+    const src = readMainWorld();
+    expect(src).not.toMatch(/activeAdapter[?!]?\.id\s*===/);
+    expect(src).not.toMatch(/adapter\.id\s*===\s*'(?:gemini|copilot|chatgpt|claude)'/);
+  });
+});

@@ -98,6 +98,9 @@ export const GeminiAdapter: SiteAdapter = {
 
   responseStreamStrategy: 'none',
   skipFetchProxy: true,
+  // Quill reverts DOM writeInput; the XHR wire proxy sends the real
+  // notification after verified replacement — see base.ts.
+  wireConfirmsNotification: true,
   skipXhrProxy: true,
 
   inputSelectors: [

@@ -59,6 +59,21 @@ export interface SiteAdapter {
   primaryEndpointPatterns?: RegExp[];
 
   /**
+   * WP2: the platform's WebSocket transport is timing-sensitive — the
+   * engine must not patch ws.send or touch the instance at all (Copilot
+   * SignalR hangs on ANY interference). Detection happens via
+   * dom-capture-wire instead.
+   */
+  wsTransportFragile?: boolean;
+
+  /**
+   * WP2: DOM writeInput cannot be trusted as proof of protection (e.g.
+   * Quill reverts it) — the wire proxy sends the REAL notification after
+   * verified replacement, so the DOM path must not emit one.
+   */
+  wireConfirmsNotification?: boolean;
+
+  /**
    * Should the fetch proxy skip this site?
    * True for platforms where DOM pre-submit handles everything (Gemini)
    * or where fetch isn't the primary transport (Copilot).

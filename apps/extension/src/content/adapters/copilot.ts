@@ -41,6 +41,8 @@ export const CopilotAdapter: SiteAdapter = {
   // Pseudonymization is handled by dom-capture-wire → WS.prototype.send patch.
   responseStreamStrategy: 'none',  // WS handler does response de-pseudo
   skipFetchProxy: true,
+  // SignalR hangs on any ws.send patching or instance access — see base.ts.
+  wsTransportFragile: true,
   skipXhrProxy: true,
 
   inputSelectors: [

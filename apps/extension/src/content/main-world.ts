@@ -6302,11 +6302,12 @@ function _walkPseudoSignalR(obj: any): { value: any; changed: boolean } {
 // Patch WebSocket.prototype.send for Copilot SignalR pseudonymization.
 const _origWsSend = OriginalWebSocket.prototype.send;
 OriginalWebSocket.prototype.send = function(this: WebSocket, data: string | ArrayBufferLike | Blob | ArrayBufferView) {
-  // Copilot: completely bypass WS.prototype.send patch.
-  // ANY processing here (even passthrough) can interfere with SignalR's
-  // tight send/receive timing and cause Copilot to hang.
-  // Detection still works via dom-capture-wire; pseudonymization is deferred.
-  if (activeAdapter?.id === 'copilot') {
+  // Fragile WS transports (Copilot SignalR): completely bypass the
+  // ws.send patch — ANY processing here can interfere with the protocol's
+  // tight send/receive timing and hang the platform. Detection still works
+  // via dom-capture-wire; pseudonymization is deferred. Capability comes
+  // from the adapter contract, never a platform id check.
+  if (activeAdapter?.wsTransportFragile) {
     return _origWsSend.call(this, data);
   }
   // File upload gate — block WS frames if a high-risk document was detected
@@ -6347,8 +6348,8 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
   // Copilot: return the raw WebSocket IMMEDIATELY — do NOT enter the isLLM
   // processing block at all. Any instance property access, logging, or patching
   // on the WS can interfere with SignalR's connection lifecycle.
-  const isCopilotWS = activeAdapter?.id === 'copilot' && activeAdapter.isWsEndpoint?.(urlStr);
-  if (isCopilotWS) {
+  const isFragileWS = activeAdapter?.wsTransportFragile === true && activeAdapter.isWsEndpoint?.(urlStr);
+  if (isFragileWS) {
     return ws;
   }
 
@@ -6362,7 +6363,7 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
     // For Copilot, outgoing pseudonymization is handled by WebSocket.prototype.send
     // patch — do NOT also patch ws.send on the instance (would double-pseudonymize).
     // For all other platforms, patch ws.send on the instance.
-    if (!isCopilotWS) {
+    if (!isFragileWS) {
     const originalSend = ws.send.bind(ws);
     ws.send = function(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
       // File upload gate — block WS frames if a high-risk document was detected
@@ -6670,14 +6671,14 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
 
       return _sendResult(strData);
     };
-    } // end if (!isCopilotWS) — skip instance send patch for Copilot
+    } // end if (!isFragileWS) — skip instance send patch for Copilot
 
     // Response de-pseudonymization via addEventListener
     // SKIP for Copilot — patching WS instance properties (addEventListener, onmessage)
     // breaks SignalR's internal ping/pong validation, causing "Ping received after close"
     // errors and killing the WebSocket connection. Copilot response de-pseudo is handled
     // by the DOM observer watching `.ac-container` response elements.
-    if (isCopilotWS) {
+    if (isFragileWS) {
       igLog('Copilot WS: skipping addEventListener/onmessage patching to avoid breaking SignalR');
       return ws;
     }
@@ -7015,12 +7016,10 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
 
     igLog(`${adapterName} DOM PROXY (${source}): Pseudonymized ${allEntities.length} entities (${level}, score=${score})`);
 
-    // For dom-presubmit adapters (Gemini): do NOT include notification data.
-    // The DOM writeInput returns true but Quill reverts the change — the
-    // notification would claim "protected" when the wire payload is unmodified.
-    // The XHR wire proxy sends the REAL notification after verified replacement.
-    // For other adapters using DOM pre-submit in the future, include it.
-    const suppressNotification = activeAdapter?.id === 'gemini';
+    // Adapters where the wire proxy sends the verified notification must
+    // not get one from the DOM path (writeInput may be reverted by the
+    // editor and the claim would be false). Contract capability, not an id.
+    const suppressNotification = activeAdapter?.wireConfirmsNotification === true;
 
     return {
       ...pseudoResult,
