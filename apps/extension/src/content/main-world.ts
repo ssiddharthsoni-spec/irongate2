@@ -28,6 +28,7 @@ import {
   looksLikePersonName,
   buildRegexCache,
   replacePseudonymsCore,
+  HoldbackReplacer,
   type CachedPseudoEntry,
 } from './main-world/depseudo-engine';
 import { createSessionEntityTracker } from './main-world/session-entities';
@@ -3133,10 +3134,18 @@ function depseudonymizeResponseRaw(response: Response, reverseMap: Record<string
 
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
-  const maxPseudoLen = Math.min(Math.max(...mapKeys.map(k => k.length), 0), 200);
   let chunkCount = 0;
-  let totalReplacements = 0;
-  let holdback = ''; // Hold back tail of each chunk to handle pseudonyms split across chunks
+
+  // DEF-031: prefix-aware holdback (extracted to depseudo-engine.ts so the
+  // chunk-boundary logic is unit-tested against the SHIPPED code). The
+  // previous inline version split before replacing, leaking pseudonyms that
+  // straddled the cut, and flushed the holdback unreplaced on error.
+  // Candidate tokens come from the real regex cache so fragment entries
+  // (first names of multi-word fakes) are held back too.
+  const hb = new HoldbackReplacer(
+    (text) => replacePseudonyms(text, snapshotMap),
+    buildRegexCache(snapshotMap).map((e) => e.pseudonym),
+  );
 
   const stream = new ReadableStream({
     async pull(controller) {
@@ -3144,30 +3153,18 @@ function depseudonymizeResponseRaw(response: Response, reverseMap: Record<string
         const { done, value } = await reader.read();
 
         if (done) {
-          // Flush held-back content
-          if (holdback.length > 0) {
-            const replaced = replacePseudonyms(holdback, snapshotMap);
-            if (replaced !== holdback) totalReplacements++;
-            controller.enqueue(encoder.encode(replaced));
-          }
-          igLog(`depseudonymizeResponseRaw: stream complete — ${chunkCount} chunks, ${totalReplacements} replacements`);
+          const remainder = hb.flush();
+          if (remainder.length > 0) controller.enqueue(encoder.encode(remainder));
+          igLog(`depseudonymizeResponseRaw: stream complete — ${chunkCount} chunks, ${hb.replacedCount} replacements`);
           controller.close();
           _onStreamEnd(); // M-4
           return;
         }
 
         chunkCount++;
-        const decoded = holdback + decoder.decode(value, { stream: true });
-
-        // Hold back the last maxPseudoLen chars to handle pseudonyms split across chunks
-        const safeLen = Math.max(0, decoded.length - maxPseudoLen);
-        const safeText = decoded.substring(0, safeLen);
-        holdback = decoded.substring(safeLen);
-
+        const safeText = hb.push(decoder.decode(value, { stream: true }));
         if (safeText.length > 0) {
-          const replaced = replacePseudonyms(safeText, snapshotMap);
-          if (replaced !== safeText) totalReplacements++;
-          controller.enqueue(encoder.encode(replaced));
+          controller.enqueue(encoder.encode(safeText));
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -3176,10 +3173,8 @@ function depseudonymizeResponseRaw(response: Response, reverseMap: Record<string
           console.warn('[Iron Gate MAIN] depseudonymizeResponseRaw: stream error', msg);
         }
         try {
-          if (holdback.length > 0) {
-            controller.enqueue(encoder.encode(holdback));
-            holdback = '';
-          }
+          const remainder = hb.flush();
+          if (remainder.length > 0) controller.enqueue(encoder.encode(remainder));
           controller.close();
         } catch {
           try { controller.error(err); } catch { /* already closed */ }

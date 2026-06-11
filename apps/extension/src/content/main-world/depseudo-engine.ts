@@ -336,3 +336,105 @@ export function replacePseudonymsCore(text: string, cache: CachedPseudoEntry[]):
 
   return result;
 }
+
+// ─── Raw-Chunk Holdback Processor ───────────────────────────────────────────
+//
+// DEF-031 (June 2026 audit): the raw-chunk stream path split each decoded
+// chunk into [safe prefix | holdback tail] BEFORE running replacement, so a
+// pseudonym straddling the cut leaked verbatim — its head was emitted
+// unreplaced and its tail alone never matched. Reproduced on the Claude
+// adapter (responseStreamStrategy: 'raw-chunk').
+//
+// A naive replace-then-split is ALSO wrong: the replacement cache contains
+// fragment entries (first names of multi-word fakes), so replacing the full
+// buffer eagerly rewrites the fragment of a not-yet-complete full name at
+// the buffer's end ("…Robert Ch" → "…Siddharth Ch", then "en" arrives →
+// corrupted "Siddharth Chen" — the same emitted-prefix instability class as
+// the audit's delta-mode finding).
+//
+// Correct design: PREFIX-AWARE holdback. The replacer must never see a
+// buffer tail that could still grow into a (longer) pseudonym:
+//   1. Scan the raw tail for the earliest suffix that is a prefix of — or
+//      equal to — any candidate token. Equality is held too: a complete
+//      token at the very end lacks its right-context, and the next chunk
+//      may extend it into a longer token or supply a letter that fails the
+//      word-boundary check ("Robert Chen" + "nai" must NOT be replaced).
+//   2. Emit replace(everything before that point) — provably final text.
+//   3. Keep the tail RAW until the next chunk or flush() resolves it.
+// The holdback is bounded by maxTokenLen, so memory cannot grow unbounded.
+
+export class HoldbackReplacer {
+  private holdback = '';
+  /** Number of push/flush calls whose emitted text contained ≥1 replacement (for logging). */
+  public replacedCount = 0;
+  private readonly tokensLower: string[];
+  private readonly maxTokenLen: number;
+  private readonly firstChars: Set<string>;
+
+  /**
+   * @param replace         full replacement function (production wires
+   *                        replacePseudonyms over the stream's snapshot map)
+   * @param candidateTokens every string the replacer can match — the regex
+   *                        cache's pseudonyms INCLUDING fragment entries
+   */
+  constructor(
+    private readonly replace: (text: string) => string,
+    candidateTokens: string[],
+  ) {
+    this.tokensLower = candidateTokens
+      .filter((t) => t.length >= 2)
+      .map((t) => t.toLowerCase());
+    this.maxTokenLen = Math.min(
+      Math.max(...this.tokensLower.map((t) => t.length), 0),
+      200,
+    );
+    this.firstChars = new Set(this.tokensLower.map((t) => t[0]));
+  }
+
+  /** Process the next decoded chunk; returns text that is provably final. */
+  push(chunk: string): string {
+    const buf = this.holdback + chunk;
+    const holdStart = this.findHoldStart(buf);
+    this.holdback = buf.substring(holdStart);
+    const emitRaw = buf.substring(0, holdStart);
+    if (emitRaw.length === 0) return '';
+    const emitted = this.replace(emitRaw);
+    if (emitted !== emitRaw) this.replacedCount++;
+    return emitted;
+  }
+
+  /**
+   * Stream ended (normally or on error) — return the final remainder with a
+   * last replacement pass applied. The pre-fix error path enqueued the
+   * holdback UNREPLACED; routing both endings through flush() closes that.
+   */
+  flush(): string {
+    const raw = this.holdback;
+    this.holdback = '';
+    if (raw.length === 0) return '';
+    const out = this.replace(raw);
+    if (out !== raw) this.replacedCount++;
+    return out;
+  }
+
+  /**
+   * Earliest index in the tail window whose suffix could still grow into a
+   * candidate token; everything before it is final. Cost is bounded:
+   * window ≤ maxTokenLen chars, inner loop only for chars that start a token.
+   */
+  private findHoldStart(buf: string): number {
+    if (this.tokensLower.length === 0 || buf.length === 0) return buf.length;
+    const bufLower = buf.toLowerCase();
+    const windowStart = Math.max(0, buf.length - this.maxTokenLen);
+    for (let i = windowStart; i < buf.length; i++) {
+      if (!this.firstChars.has(bufLower[i])) continue;
+      const suffix = bufLower.substring(i);
+      for (const t of this.tokensLower) {
+        if (t.length >= suffix.length && t.startsWith(suffix)) {
+          return i;
+        }
+      }
+    }
+    return buf.length;
+  }
+}
