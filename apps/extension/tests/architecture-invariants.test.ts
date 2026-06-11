@@ -800,3 +800,23 @@ describe('Architecture Invariants — WP1 turn identity & single delivery', () =
     expect(pkg).not.toContain('zustand');
   });
 });
+
+describe('Architecture Invariants — WP2 scoped DOM observation', () => {
+  // The body-wide characterData observer is the pattern that froze ChatGPPT
+  // in May 2026 and is default-rejected by project policy. Observation must
+  // go through the adapter-resolved conversation root.
+  it('no static document.body observation in main-world', () => {
+    const src = readMainWorld();
+    expect(src).not.toMatch(/\.observe\(\s*document\.body/);
+    expect(src).toMatch(/_resolveDepseudoRoot/);
+    expect(src).toMatch(/_depseudoScanRoot/);
+    // Full-document sweeps must go through the scoped root helper.
+    expect(src).not.toMatch(/scanTextNodes\(document\.body\)/);
+  });
+
+  it('scans and characterData processing skip editable regions', () => {
+    const src = readMainWorld();
+    const editableGuards = (src.match(/isContentEditable/g) ?? []).length;
+    expect(editableGuards).toBeGreaterThanOrEqual(2);
+  });
+});

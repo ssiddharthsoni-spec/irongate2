@@ -2392,8 +2392,8 @@ function _handleRestoreReverseMap(data: any): void {
   // get their original text restored (don't wait for a new pseudonymization event)
   startPersistentDomDepseudo();
   // Delay initial scan to let Claude finish rendering conversation history
-  setTimeout(() => scanTextNodes(document.body), 1500);
-  setTimeout(() => scanTextNodes(document.body), 3000);
+  setTimeout(() => scanTextNodes(_depseudoScanRoot()), 1500);
+  setTimeout(() => scanTextNodes(_depseudoScanRoot()), 3000);
 }
 
 // ── Conversation boundary timeout ──────────────────────────────────────────
@@ -2643,6 +2643,7 @@ function clearReverseMapFully(): void {
     _persistentObserver.disconnect();
     _persistentObserver = null;
   }
+  _observedRoot = null;
   if (_persistentPollTimer) {
     clearTimeout(_persistentPollTimer);
     _persistentPollTimer = null;
@@ -2674,10 +2675,49 @@ function _onStreamEnd(): void {
   }
 }
 
+// ── WP2: scoped observation root ─────────────────────────────────────────────
+// The persistent observer used to watch document.body with characterData —
+// the default-rejected pattern that froze ChatGPT in May. It now observes
+// the conversation container resolved from the adapter's responseSelectors
+// (previously a dead contract field), upgrading from the body fallback as
+// soon as the container renders. The poll re-resolves when React replaces
+// the container.
+let _observedRoot: HTMLElement | null = null;
+
+function _resolveDepseudoRoot(): HTMLElement {
+  try {
+    const sels = activeAdapter?.responseSelectors || [];
+    for (const sel of sels) {
+      const el = document.querySelector(sel) as HTMLElement | null;
+      if (el) {
+        // Message-level selector → climb to the stable conversation root.
+        const main = el.closest('main') as HTMLElement | null;
+        return main || el.parentElement || el;
+      }
+    }
+    const main = document.querySelector('main') as HTMLElement | null;
+    if (main) return main;
+  } catch { /* invalid selector — fall through */ }
+  return document.body;
+}
+
+/** Scan root for follow-up sweeps/polls — current container, body only as fallback. */
+function _depseudoScanRoot(): Node {
+  return _observedRoot && _observedRoot.isConnected ? _observedRoot : document.body;
+}
+
 function scanTextNodes(root: Node): number {
   if (Object.keys(currentReverseMap).length === 0) return 0;
 
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    // Never rewrite the user's composer: displayed content must show real
+    // names, but editable text is user-owned (and skipping it removes the
+    // hottest typing-time code path from every scan).
+    acceptNode: (n) =>
+      n.parentElement && n.parentElement.isContentEditable
+        ? NodeFilter.FILTER_REJECT
+        : NodeFilter.FILTER_ACCEPT,
+  });
   let replacements = 0;
   let textNode: Node | null = walker.nextNode();
   while (textNode) {
@@ -2704,9 +2744,9 @@ function scheduleRapidFollowUp(): void {
   _rapidScanPending = true;
   // Scan again at 100ms and 300ms to catch React's next render cycle
   setTimeout(() => {
-    scanTextNodes(document.body);
+    scanTextNodes(_depseudoScanRoot());
     setTimeout(() => {
-      scanTextNodes(document.body);
+      scanTextNodes(_depseudoScanRoot());
       _rapidScanPending = false;
     }, 200);
   }, 100);
@@ -2754,6 +2794,9 @@ function startPersistentDomDepseudo(): void {
     // BUT: if the new text contains a pseudonym, React reverted our
     // replacement (e.g. a subsequent WS heartbeat / save triggered a
     // re-render). In that case do NOT skip — fall through and replace.
+    // Never rewrite the user's composer (mirrors the scanTextNodes filter).
+    if (node.parentElement?.isContentEditable) return;
+
     if (_igOurMutations.has(node)) {
       _igOurMutations.delete(node);
       const revertedText = node.textContent || '';
@@ -2834,11 +2877,22 @@ function startPersistentDomDepseudo(): void {
     }
   });
 
-  _persistentObserver.observe(document.body, {
-    childList: true,
-    subtree: true,
-    characterData: true,
-  });
+  // WP2: observe the conversation container, not document.body. Re-attach
+  // (via _attachObserver below, called from the poll) when React replaces
+  // the container or a better root appears after the body fallback.
+  function _attachObserver(): void {
+    const root = _resolveDepseudoRoot();
+    if (_observedRoot === root && root.isConnected) return;
+    _persistentObserver?.disconnect();
+    _observedRoot = root;
+    _persistentObserver?.observe(root, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    igLog(`DOM de-pseudo observer attached to <${root.tagName.toLowerCase()}>${root === document.body ? ' (FALLBACK: body — container not found yet)' : ''}`);
+  }
+  _attachObserver();
 
   // Fallback polling with exponential backoff — starts at 500ms, backs off
   // to 10s when no replacements are found. Resets to 500ms on any replacement.
@@ -2857,7 +2911,12 @@ function startPersistentDomDepseudo(): void {
         return;
       }
       _pollCount++;
-      const count = scanTextNodes(document.body);
+      // Re-resolve the observation root: the container may have been
+      // replaced by a React re-render, or rendered after a body fallback.
+      if (!_observedRoot?.isConnected || _observedRoot === document.body) {
+        _attachObserver();
+      }
+      const count = scanTextNodes(_depseudoScanRoot());
       if (count > 0) {
         _persistentReplacementCount += count;
         _consecutiveEmptyPolls = 0;
@@ -4589,9 +4648,9 @@ function registerPseudonymization(
   }
   if (!options?.skipDomRescan && mappings.length > 0) {
     startPersistentDomDepseudo();
-    setTimeout(() => scanTextNodes(document.body), 200);
-    setTimeout(() => scanTextNodes(document.body), 800);
-    setTimeout(() => scanTextNodes(document.body), 2000);
+    setTimeout(() => scanTextNodes(_depseudoScanRoot()), 200);
+    setTimeout(() => scanTextNodes(_depseudoScanRoot()), 800);
+    setTimeout(() => scanTextNodes(_depseudoScanRoot()), 2000);
   }
 }
 
@@ -6640,7 +6699,7 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
                 [0, 50, 150, 400].forEach(delay => {
                   setTimeout(() => {
                     if (Object.keys(currentReverseMap).length > 0) {
-                      const count = scanTextNodes(document.body);
+                      const count = scanTextNodes(_depseudoScanRoot());
                       if (count > 0) {
                         _persistentReplacementCount += count;
                         scheduleRapidFollowUp();
@@ -6728,7 +6787,7 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
                   [0, 50, 150, 400].forEach(delay => {
                     setTimeout(() => {
                       if (Object.keys(currentReverseMap).length > 0) {
-                        const count = scanTextNodes(document.body);
+                        const count = scanTextNodes(_depseudoScanRoot());
                         if (count > 0) {
                           _persistentReplacementCount += count;
                           scheduleRapidFollowUp();
