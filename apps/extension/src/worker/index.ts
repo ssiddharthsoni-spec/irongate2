@@ -1230,6 +1230,7 @@ const CONTENT_SCRIPT_ONLY: ReadonlySet<string> = new Set([
   'PERSIST_REVERSE_MAP',
   'REQUEST_REVERSE_MAP',
   'SELECTOR_FAILURE',
+  'DEPSEUDO_TELEMETRY',
 ]);
 
 async function handleMessage(
@@ -1349,6 +1350,27 @@ async function handleMessage(
             at: Date.now(),
           },
         }).catch(() => {});
+      }
+      return { ok: true };
+    }
+
+    // WP2: de-pseudo mechanism counters (adapterId:mechanism → replacements).
+    // Snapshot semantics: main-world sends its cumulative per-pageload
+    // counters, keyed by sender tab — the worker keeps the latest snapshot
+    // per tab and a lifetime total. Inspect via
+    // chrome.storage.local.get('ig_depseudo_telemetry').
+    case 'DEPSEUDO_TELEMETRY': {
+      const dtTabId = sender.tab?.id;
+      const counters = message.payload?.counters;
+      if (dtTabId && counters && typeof counters === 'object') {
+        chrome.storage.local.get('ig_depseudo_telemetry', (data) => {
+          if (chrome.runtime.lastError) return;
+          const t = (data.ig_depseudo_telemetry && typeof data.ig_depseudo_telemetry === 'object')
+            ? data.ig_depseudo_telemetry : { perTab: {}, updatedAt: 0 };
+          t.perTab[dtTabId] = counters;
+          t.updatedAt = Date.now();
+          chrome.storage.local.set({ ig_depseudo_telemetry: t }).catch(() => {});
+        });
       }
       return { ok: true };
     }

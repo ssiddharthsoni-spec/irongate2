@@ -661,6 +661,23 @@ function handleMainWorldMessages(event: MessageEvent) {
     return;
   }
 
+  // De-pseudo replacement telemetry (counts only, never text) — accumulate
+  // in the worker for debugging and the WP5 wire-cutover gate.
+  if (event.data?.type === 'IRON_GATE_DEPSEUDO_TELEMETRY') {
+    const counters = event.data.counters;
+    if (counters && typeof counters === 'object' && !Array.isArray(counters)) {
+      const bounded: Record<string, number> = {};
+      let n = 0;
+      for (const [k, v] of Object.entries(counters)) {
+        if (n >= 50 || typeof k !== 'string' || typeof v !== 'number') continue;
+        bounded[k.slice(0, 64)] = v;
+        n++;
+      }
+      chrome.runtime.sendMessage({ type: 'DEPSEUDO_TELEMETRY', payload: { counters: bounded } }).catch(() => {});
+    }
+    return;
+  }
+
   // Selector death on a dom-presubmit platform — main-world blocked the send
   // fail-closed; surface "protection degraded" through the worker tab state.
   if (event.data?.type === 'IRON_GATE_SELECTOR_FAILURE') {

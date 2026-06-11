@@ -2675,6 +2675,27 @@ function _onStreamEnd(): void {
   }
 }
 
+// ── WP2: per-mechanism replacement telemetry ─────────────────────────────────
+// Counts only (adapterId:mechanism → replacements) — never text. This is the
+// arbitration data the platform fix ping-pong never had: when a fix "works",
+// these counters show WHICH layer did the work. Also the cutover gate for
+// WP5 (wire must show 100% before the DOM system is deleted on a platform).
+const _replacementTelemetry: Record<string, number> = {};
+let _telemetryDirty = false;
+
+function recordReplacements(mechanism: 'wire-raw' | 'wire-sse' | 'wire-ws' | 'dom-observer' | 'dom-poll' | 'dom-scan', count: number): void {
+  if (count <= 0) return;
+  const key = `${activeAdapter?.id || 'unknown'}:${mechanism}`;
+  _replacementTelemetry[key] = (_replacementTelemetry[key] || 0) + count;
+  _telemetryDirty = true;
+}
+
+setInterval(() => {
+  if (!_telemetryDirty) return;
+  _telemetryDirty = false;
+  igPostMessage({ type: 'IRON_GATE_DEPSEUDO_TELEMETRY', counters: { ..._replacementTelemetry } });
+}, 30_000);
+
 // ── WP2: scoped observation root ─────────────────────────────────────────────
 // The persistent observer used to watch document.body with characterData —
 // the default-rejected pattern that froze ChatGPT in May. It now observes
@@ -2814,6 +2835,7 @@ function startPersistentDomDepseudo(): void {
         _igOurMutations.add(node);
         node.textContent = replaced;
         _persistentReplacementCount++;
+        recordReplacements('dom-observer', 1);
         // React may immediately re-render — schedule a follow-up sweep
         // (same trigger the pre-debounce code used).
         scheduleRapidFollowUp();
@@ -2866,6 +2888,7 @@ function startPersistentDomDepseudo(): void {
           const count = scanTextNodes(node);
           if (count > 0) {
             _persistentReplacementCount += count;
+            recordReplacements('dom-observer', count);
             didReplace = true;
           }
         }
@@ -2919,6 +2942,7 @@ function startPersistentDomDepseudo(): void {
       const count = scanTextNodes(_depseudoScanRoot());
       if (count > 0) {
         _persistentReplacementCount += count;
+        recordReplacements('dom-poll', count);
         _consecutiveEmptyPolls = 0;
         _pollInterval = POLL_MIN; // Reset to fast polling on replacement
         igLog(`DOM POLL: ${count} replacements in poll #${_pollCount} (total: ${_persistentReplacementCount})`);
@@ -3295,6 +3319,7 @@ function depseudonymizeResponseRaw(response: Response, reverseMap: Record<string
           const remainder = hb.flush();
           if (remainder.length > 0) controller.enqueue(encoder.encode(remainder));
           igLog(`depseudonymizeResponseRaw: stream complete — ${chunkCount} chunks, ${hb.replacedCount} replacements`);
+          recordReplacements('wire-raw', hb.replacedCount);
           controller.close();
           _onStreamEnd(); // M-4
           return;
@@ -3680,6 +3705,7 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
 
           if (_IG_DEBUG) {
             igLog(`depseudonymizeResponse stream complete — ${chunkCount} chunks, ${totalReplacements} replacements, deltaAccum=${deltaAccumulator.length} chars`);
+            recordReplacements('wire-sse', totalReplacements);
           }
           controller.close();
           _onStreamEnd(); // M-4
