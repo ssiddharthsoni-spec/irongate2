@@ -12,14 +12,27 @@
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "test:wire": "playwright test --config=playwright.wire.config.ts",
-    "test:selector-health": "playwright test tests/e2e/selector-health.spec.ts --headed"
+    "test:selector-health": "playwright test tests/e2e/selector-health.spec.ts --headed",
+    "test:comprehensive": "playwright test tests/e2e/comprehensive-detection.spec.ts --headed",
+    "test:canary": "playwright test tests/e2e/canary-chatgpt.spec.ts --headed",
+    "test:canary:report": "playwright test tests/e2e/canary-chatgpt.spec.ts --headed --reporter=html",
+    "mock-server": "node tests/mocked-platforms/server.mjs",
+    "dev:loop": "node scripts/dev-loop.mjs",
+    "dev:loop:test": "node scripts/dev-loop.mjs --test",
+    "pipeline": "node scripts/run-pipeline.mjs",
+    "pipeline:comprehensive": "node scripts/run-pipeline.mjs --spec comprehensive",
+    "pipeline:wire": "node scripts/run-pipeline.mjs --spec wire",
+    "test:report": "node scripts/test-report.mjs",
+    "drive": "node --import tsx tests/e2e/drive.ts",
+    "drive:full": "node --import tsx tests/e2e/drive.ts full"
   },
   "dependencies": {
     "@iron-gate/config": "workspace:*",
     "@iron-gate/crypto": "workspace:*",
     "@iron-gate/types": "workspace:*",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "zustand": "^5.0.11"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.0.0-beta.28",

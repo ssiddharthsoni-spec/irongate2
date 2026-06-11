@@ -21,6 +21,8 @@ import type { SiteAdapter } from './adapters';
 import { generateFake } from './main-world/fake-data';
 import { detectWithRegex } from '../detection/fallback-regex';
 import { scanForSecrets, isNaturalLanguage } from './main-world/entity-patterns';
+import { parseStructured } from '../detection/structural-parser';
+import { classifyKeyName, isObviousPlaceholder } from '../detection/key-name-sensitivity';
 import {
   jsonStringEscape,
   looksLikePersonName,
@@ -60,19 +62,12 @@ const _IG_GUARD_STATE = _IG_GUARD_ATTR
   : undefined;
 
 if (_IG_GUARD_STATE?.status === 'active') {
-  console.log('[Iron Gate MAIN] Already active — re-sending heartbeat for late content script');
-  // The nonce is NO LONGER stored on the guard (security fix: prevents page scripts
-  // from reading it via the guard). The first injection's nonce is already known to
-  // the content script, so a duplicate heartbeat without nonce is harmless — the
-  // content script will ignore it if it already has a valid session.
-  window.postMessage({
-    type: 'IRON_GATE_HEARTBEAT',
-    version: '0.2.7',
-    timestamp: Date.now(),
-    mode: (window as any).__IRON_GATE_MODE || 'proxy',
-    _duplicate: true,
-    _mid: crypto.randomUUID(),
-  }, window.location.origin);
+  // Instance A is already running and emitting periodic heartbeats with a
+  // valid _nonce (see periodic heartbeat block at script tail). A duplicate
+  // beat from instance B cannot carry the original nonce — the security
+  // model intentionally hides it from the guard. Sending one without nonce
+  // would be rejected by isValidMainWorldMessage and add noise. Skip.
+  console.log('[Iron Gate MAIN] Already active — instance A handles heartbeats');
 } else if (_IG_GUARD_STATE?.status === 'loading') {
   const elapsed = Date.now() - (_IG_GUARD_STATE.since || 0);
   if (elapsed < 5000) {
@@ -403,7 +398,23 @@ interface ServerProcessResult {
 // to pseudonymize. If Gemma says "research/fiction" → skip pseudonymization.
 // If Gemma says "work_sharing/high" → pseudonymize.
 // If no cached verdict (Gemma not ready) → fall back to regex-only scoring.
-let _gemmaVerdict: { intent: string; sensitivity: string; score: number; verdict: string; source: string; promptHash: string; timestamp: number } | null = null;
+// Gemma's contextually-judged entities. Each is a TYPE label + TEXT only
+// (the LLM doesn't return reliable spans). At submit time, the merge step
+// finds the text in the current prompt and computes spans against the
+// prompt being sent — this self-validates relevance to the current prompt
+// without requiring a hash match.
+interface GemmaEntity { type: string; text: string }
+
+let _gemmaVerdict: {
+  intent: string;
+  sensitivity: string;
+  score: number;
+  verdict: string;
+  source: string;
+  promptHash: string;
+  timestamp: number;
+  entities: GemmaEntity[];
+} | null = null;
 const GEMMA_VERDICT_TTL = 30_000; // 30s — covers typing → submit window
 
 function getCachedGemmaVerdict(): typeof _gemmaVerdict {
@@ -413,6 +424,174 @@ function getCachedGemmaVerdict(): typeof _gemmaVerdict {
     return null;
   }
   return _gemmaVerdict;
+}
+
+// ─── Submit-time entity assembly ──────────────────────────────────────────
+// Single source of truth for "what entities should be considered at submit
+// time". Combines:
+//   • regex hits (fast, deterministic value-format matching)
+//   • secret-scanner hits (high-precision known credential patterns)
+//   • Gemma's contextually-judged entities (text-only, span-computed here)
+//
+// Gemma's role: catch credentials/PII whose VALUE format isn't pattern-
+// matched by regex but whose CONTEXT (variable name, surrounding tokens,
+// document type) makes it sensitive — e.g. `AWS_SECRET_ACCESS_KEY=key-…`.
+//
+// Safety invariants:
+//   • Regex/secret hits are never displaced (they have authoritative spans).
+//   • Gemma entities only ADD spans, never remove or override existing ones.
+//   • A Gemma span overlapping any existing span is dropped (regex wins).
+//   • Gemma entities are validated by re-finding their text in the CURRENT
+//     prompt — if the text isn't present, the entity is irrelevant to this
+//     prompt and is silently dropped (self-validates against staleness).
+// Helper: shift an entity's start/end by `offset` (used when running detectors
+// on a record's bounded `value` substring — the spans need to be remapped to
+// the original prompt's coordinate space).
+function _shiftEntity(e: DetectedEntity, offset: number): DetectedEntity {
+  return { ...e, start: e.start + offset, end: e.end + offset };
+}
+
+function buildSubmitEntities(promptText: string): DetectedEntity[] {
+  const out: DetectedEntity[] = [];
+
+  // ── L1: structural parse ────────────────────────────────────────────────
+  // Yields typed records (env vars, etc.) plus the free-text gaps between
+  // them. Spans are pairwise non-overlapping by construction.
+  const parsed = parseStructured(promptText);
+
+  // ── L2 + L3: per-record detection ───────────────────────────────────────
+  // Inside each parsed record, both the variable NAME and the VALUE FORMAT
+  // are signals. They run on the bounded `valueSpan`, so:
+  //   • greedy regex can't escape into the next record (fixes run-on input)
+  //   • key-name detection catches credentials whose value-format isn't
+  //     pattern-matched (fixes AWS `key-…` test values)
+  for (const rec of parsed.records) {
+    const valueText = rec.value;
+    const baseOffset = rec.valueSpan[0];
+
+    // L2: key-name signal — emits a credential entity covering the whole
+    // value span when the variable name implies sensitivity.
+    const keyClass = classifyKeyName(rec.key);
+    if (keyClass.sensitive && !isObviousPlaceholder(valueText)) {
+      out.push({
+        type: keyClass.type,
+        text: valueText,
+        start: rec.valueSpan[0],
+        end: rec.valueSpan[1],
+        confidence: keyClass.confidence,
+        source: 'keyword',
+      });
+    }
+
+    // L3: value-format detectors — same regex pile we had before, but
+    // running on the bounded value substring. Spans are remapped to the
+    // original prompt's coordinate space.
+    if (valueText.length >= 2) {
+      for (const e of detectWithRegex(valueText)) out.push(_shiftEntity(e, baseOffset));
+      for (const e of scanForSecrets(valueText)) out.push(_shiftEntity(e, baseOffset));
+    }
+  }
+
+  // ── Free-text detection ─────────────────────────────────────────────────
+  // Anything not captured by a record is unstructured text — names in prose,
+  // a pasted SSN in conversation, etc. Detectors run as before.
+  for (const ft of parsed.freeText) {
+    if (ft.text.length < 2) continue;
+    const baseOffset = ft.span[0];
+    for (const e of detectWithRegex(ft.text)) out.push(_shiftEntity(e, baseOffset));
+    for (const e of scanForSecrets(ft.text)) out.push(_shiftEntity(e, baseOffset));
+  }
+
+  // ── L4: Gemma's contextual entities (text-only, span-located here) ──────
+  // Gemma's role unchanged: catches what neither structural nor value-format
+  // layers caught. Its entities go through the same final overlap-dedup.
+  const gemma = getCachedGemmaVerdict();
+  if (gemma && gemma.entities.length > 0) {
+    const MAX_OCCURRENCES_PER_ENTITY = 20;
+    for (const ge of gemma.entities) {
+      const text = ge.text;
+      if (!text || text.length < 2) continue;
+      let from = 0;
+      let occurrences = 0;
+      while (occurrences < MAX_OCCURRENCES_PER_ENTITY) {
+        const idx = promptText.indexOf(text, from);
+        if (idx === -1) break;
+        out.push({
+          type: ge.type || 'UNKNOWN',
+          text,
+          start: idx,
+          end: idx + text.length,
+          confidence: 0.85,
+          source: 'agent',
+        });
+        from = idx + text.length;
+        occurrences++;
+      }
+    }
+  }
+
+  // ── L5: overlap resolution ──────────────────────────────────────────────
+  // Final dedup. With L1's bounded records, cross-record overlaps are
+  // impossible; this is now mainly resolving sub-detections inside a single
+  // record (e.g. an EMAIL substring inside a DATABASE_URI value) and any
+  // Gemma entity that happens to overlap a record-bounded entity.
+  return dedupOverlappingSpans(out);
+}
+
+// Two spans [a,b) and [c,d) overlap iff !(b <= c || d <= a).
+function _spansOverlap(a: DetectedEntity, b: DetectedEntity): boolean {
+  return !(a.end <= b.start || b.end <= a.start);
+}
+
+// Source precedence — higher wins when two entities cover the same span.
+// Structural / specific detectors win over generic / inferred ones, because
+// they had access to MORE CONTEXT when they fired.
+//   keyword:   key-name detector (saw the variable name)        → strongest
+//   regex:     value-format detector (saw the bounded value)
+//   presidio:  Presidio NLP (where used)
+//   semantic:  ML semantic classifier
+//   metadata-classifier: classifier on metadata
+//   dictionary:dictionary lookup
+//   agent:     LLM (Gemma) — broad coverage, lowest precision   → weakest
+const _SOURCE_PRECEDENCE: Record<string, number> = {
+  keyword: 100,
+  regex: 80,
+  presidio: 70,
+  semantic: 60,
+  'metadata-classifier': 50,
+  dictionary: 40,
+  agent: 20,
+};
+
+function _sourcePriority(s: string | undefined): number {
+  return _SOURCE_PRECEDENCE[s || ''] ?? 10;
+}
+
+function dedupOverlappingSpans(entities: DetectedEntity[]): DetectedEntity[] {
+  if (entities.length <= 1) return entities;
+  // Resolution order: longest span first, then highest source priority,
+  // then highest confidence. The first to land claims its span; later
+  // entities that overlap an already-kept span are dropped.
+  //
+  // Why longest-first: a URL detector matching the full
+  // `postgres://…@db…/testdb` should beat an EMAIL substring detector
+  // matching `…@db…example.com` inside it — the URL is the more
+  // structurally-meaningful unit.
+  // Why source priority next: when spans are equal-length (e.g. a key-name
+  // entity and a value-format entity both cover the whole record value),
+  // prefer the more context-aware detector.
+  const sorted = [...entities].sort((a, b) => {
+    const lenDiff = (b.end - b.start) - (a.end - a.start);
+    if (lenDiff !== 0) return lenDiff;
+    const sourceDiff = _sourcePriority(b.source) - _sourcePriority(a.source);
+    if (sourceDiff !== 0) return sourceDiff;
+    return (b.confidence || 0) - (a.confidence || 0);
+  });
+  const kept: DetectedEntity[] = [];
+  for (const e of sorted) {
+    if (!kept.some(k => _spansOverlap(k, e))) kept.push(e);
+  }
+  return kept;
 }
 // Returns the classifier result or null on timeout/error.
 // The nonce is handled by igPostMessage (adds _nonce) and the content
@@ -682,6 +861,20 @@ window.addEventListener('message', (event) => {
   // A stale "allow" from a previous clean prompt must NOT suppress
   // detection on a new sensitive prompt.
   if (event.data?.type === 'IRON_GATE_GEMMA_VERDICT') {
+    // Defensively validate entities arriving from the relay. The page can't
+    // forge this message (handler ignores anything not from window.postMessage
+    // with our own origin) but the worker payload is constructed dynamically,
+    // so still bound array length and string lengths to keep memory safe.
+    const rawEntities = Array.isArray(event.data.entities) ? event.data.entities : [];
+    const sanitizedEntities: GemmaEntity[] = [];
+    for (const e of rawEntities) {
+      if (sanitizedEntities.length >= 50) break;
+      if (!e || typeof e.text !== 'string') continue;
+      const text = e.text.slice(0, 200);
+      if (text.length < 2) continue;
+      const type = (typeof e.type === 'string' ? e.type : 'UNKNOWN').slice(0, 64);
+      sanitizedEntities.push({ type, text });
+    }
     _gemmaVerdict = {
       intent: event.data.intent || 'ambiguous',
       sensitivity: event.data.sensitivity || 'medium',
@@ -690,9 +883,10 @@ window.addEventListener('message', (event) => {
       source: event.data.source || 'gemma',
       promptHash: event.data.promptHash || '',
       timestamp: Date.now(),
+      entities: sanitizedEntities,
     };
     console.log(
-      `%c[Iron Gate] Gemma verdict cached: ${_gemmaVerdict.verdict} (${_gemmaVerdict.intent}/${_gemmaVerdict.sensitivity})`,
+      `%c[Iron Gate] Gemma verdict cached: ${_gemmaVerdict.verdict} (${_gemmaVerdict.intent}/${_gemmaVerdict.sensitivity}) entities=${sanitizedEntities.length}`,
       'color: #a855f7; font-weight: bold',
     );
   }
@@ -863,6 +1057,85 @@ function sanitizeMappingsForTransit(mappings: PseudonymMapping[]): Array<{ pseud
 // Global forward map: original → fake (persists across messages in a conversation)
 let currentForwardMap: Record<string, string> = {};
 
+/**
+ * DEF-016 force-pseudonymization of prior-turn session entities.
+ *
+ * Iterates `currentForwardMap` (original → pseudonym entries from prior
+ * turns of this conversation) and applies any matches found in `text`,
+ * with the following filters to avoid false positives we've hit in
+ * production:
+ *
+ *   • Minimum original length 6 — prevents 3-5 char originals like
+ *     "URL", "key", "AWS", "id" from substring-matching technical text
+ *     (.env files, config dumps, code).
+ *   • Word-boundary check via `[a-zA-Z0-9_]` — treats digits and
+ *     underscore as word chars (matches JS `\w`), so `secret` doesn't
+ *     match inside `Stripe_SECRET=...` and `MyAccount` doesn't match
+ *     inside `MyAccount_test`.
+ *   • Prose-neighbor whitelist — only matches when immediate neighbors
+ *     are whitespace, comma, period, etc. ANY other non-word neighbor
+ *     (`=` `:` `/` `$` `{` `}` `<` `>` `(` `)` `[` `]`) signals a
+ *     structured context (URL, env var, template, JSON, code) where
+ *     matching a previous-turn original is almost certainly coincidence.
+ *
+ * Returns the (possibly modified) text and the mappings actually applied.
+ * Caller is responsible for `registerPseudonymization(sessionMappings)`
+ * to add them to the reverse map and for continuing to the regular
+ * pseudonymization path so NEWLY-detected entities also get pseudonymized.
+ *
+ * Replaces three near-duplicate inline implementations that lived in
+ * the fetch path, XHR path, and DOM-presubmit path — each with subtly
+ * different filters, the DOM-presubmit version with the OLD loose ones
+ * that caused false positives + a PII leak via early return.
+ */
+type SessionForcePseudoResult = {
+  pseudonymizedText: string;
+  sessionMappings: Array<{ original: string; pseudonym: string; type: string }>;
+};
+
+function applySessionEntityForcePseudo(text: string): SessionForcePseudoResult {
+  const sessionMappings: SessionForcePseudoResult['sessionMappings'] = [];
+  if (Object.keys(currentForwardMap).length === 0) {
+    return { pseudonymizedText: text, sessionMappings };
+  }
+  const PROSE_NEIGHBOR_RE = /^[\s,.!?;'"\-—–]$/;
+  const isProseNeighbor = (c: string): boolean =>
+    c === '' || PROSE_NEIGHBOR_RE.test(c);
+
+  let pseudonymizedText = text;
+  // Sort by length descending to prevent substring collisions
+  // (longer originals matched first, so "Acme Corp" wins over "Acme").
+  const fwdEntries = Object.entries(currentForwardMap)
+    .sort((a, b) => b[0].length - a[0].length);
+
+  for (const [original, pseudonym] of fwdEntries) {
+    if (original.length < 6) continue;
+    if (!pseudonymizedText.toLowerCase().includes(original.toLowerCase())) continue;
+    try {
+      const escaped = original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const prefix = /^[a-zA-Z0-9_]/.test(original) ? '(?<![a-zA-Z0-9_])' : '';
+      const suffix = /[a-zA-Z0-9_]$/.test(original) ? '(?![a-zA-Z0-9_])' : '';
+      const regex = new RegExp(prefix + escaped + suffix, 'gi');
+      const before = pseudonymizedText;
+      pseudonymizedText = pseudonymizedText.replace(
+        regex,
+        (match: string, offset: number, full: string): string => {
+          const charBefore = offset > 0 ? full[offset - 1] : '';
+          const charAfter = full[offset + match.length] || '';
+          if (!isProseNeighbor(charBefore) || !isProseNeighbor(charAfter)) {
+            return match;
+          }
+          return pseudonym;
+        },
+      );
+      if (pseudonymizedText !== before) {
+        sessionMappings.push({ original, pseudonym, type: 'SESSION_ENTITY' });
+      }
+    } catch { /* regex failed */ }
+  }
+  return { pseudonymizedText, sessionMappings };
+}
+
 // B2: Install the real firm pseudonym prefetch function now that currentForwardMap exists.
 // HKDF-SHA256: derive deterministic fakes per firm via the managed policy pseudonymKey.
 // Salt binds to entity type; info binds to firmId + original text.
@@ -968,6 +1241,19 @@ function pseudonymizeLocal(text: string, entities: DetectedEntity[]): PseudonymR
     if (VALUE_TYPES.has(entity.type)) {
       continue;
     }
+
+    // Lowercase-ORG safety guard. Real organization names are virtually
+    // always proper-cased ("Acme Corp", "Bloom Energy"). When an upstream
+    // classifier (Gemma, contextual analyzer, regex with /i flag) labels a
+    // fully-lowercase token as ORGANIZATION, it is almost always a
+    // misclassification of a person name, a misspelled query, or a common
+    // noun. Pseudonymizing it produces nonsense ("leopold achenberger" →
+    // "Northwind Technologies") that confuses both the user and the LLM.
+    // Threshold: at least one letter must be uppercase to permit ORG swap.
+    if (entity.type === 'ORGANIZATION' && /^[^A-Z]+$/.test(normalizedText) && /[a-z]/.test(normalizedText)) {
+      igLog(`Skipping ORGANIZATION pseudonymization — lowercase original: "${normalizedText.substring(0, 40)}"`);
+      continue;
+    }
     // Check local seen map first (within this call)
     let pseudonym = seen.get(normalizedText);
     if (!pseudonym) {
@@ -1023,18 +1309,39 @@ function pseudonymizeLocal(text: string, entities: DetectedEntity[]): PseudonymR
       }
       pseudonym = candidate;
       seen.set(normalizedText, pseudonym);
+      // Cache update is OK to do unconditionally — the forward map is just
+      // "what fake we'd assign IF this string is encountered"; if the splice
+      // ends up skipped this turn, a future turn will use the same fake.
       currentForwardMap[normalizedText] = pseudonym;
-      mappings.push({
-        original: normalizedText,
-        pseudonym,
-        type: entity.type,
-      });
-    } else if (!mappings.some(m => m.original === normalizedText)) {
-      // Already mapped — still record for this call's mappings
-      if (!seen.has(normalizedText)) seen.set(normalizedText, pseudonym);
-      mappings.push({ original: normalizedText, pseudonym, type: entity.type });
+    } else if (!seen.has(normalizedText)) {
+      seen.set(normalizedText, pseudonym);
+    }
+
+    // ── ATOMIC SPLICE + MAPPING ─────────────────────────────────────────
+    // The mapping is the sidepanel's source of truth for "what was
+    // pseudonymized on the wire". A mapping must NEVER be reported unless
+    // its splice actually landed in maskedText. So:
+    //   1. Verify the span still matches the entity's recorded text (guards
+    //      against upstream overlap corruption — should never fire after
+    //      dedupOverlappingSpans, but cheap safety).
+    //   2. If it matches: splice AND push the mapping together.
+    //   3. If it doesn't match: skip both. The panel won't ever claim a
+    //      swap that wasn't applied.
+    if (maskedText.substring(entity.start, entity.end) !== normalizedText) {
+      console.warn(
+        '[Iron Gate] pseudonymizeLocal: span/text mismatch at',
+        `[${entity.start},${entity.end})`,
+        'type=' + entity.type,
+        '— dropping both splice and mapping (panel integrity)',
+      );
+      continue;
     }
     maskedText = maskedText.substring(0, entity.start) + pseudonym + maskedText.substring(entity.end);
+    // Splice succeeded — NOW record the mapping. Atomic with the splice:
+    // if the user sees a row in the panel, that swap is in maskedText.
+    if (!mappings.some(m => m.original === normalizedText)) {
+      mappings.push({ original: normalizedText, pseudonym, type: entity.type });
+    }
   }
 
   mappings.reverse();
@@ -1615,6 +1922,23 @@ function _scheduleMapPersist(): void {
 }
 
 function addReverseMapping(map: Record<string, string>, pseudonym: string, original: string, entityType?: string): void {
+  // Runtime type guard. TypeScript signatures don't survive minification or
+  // cross-context message boundaries: a malformed entity (e.g. from a Gemini
+  // nested-JSON extraction that produced an object instead of a string) can
+  // arrive here with non-string pseudonym/original. Without this guard the
+  // first .match() call below (line ~150 deeper) throws
+  // "TypeError: b.match is not a function", aborting the mappings loop
+  // mid-iteration. Some entity types (those before the bad one) get added
+  // to the reverse map; others (after) do not — including SSN/account
+  // numbers in some prompts. Result: partial pseudonymization with PII
+  // leaking through silently. Skip and warn instead of crashing.
+  if (typeof pseudonym !== 'string' || typeof original !== 'string') {
+    console.warn(
+      '[Iron Gate] addReverseMapping skipped — non-string input',
+      'pseudonym:', typeof pseudonym, 'original:', typeof original, 'type:', entityType,
+    );
+    return;
+  }
   // BUG-14: Evict to half capacity using insertion order (true LRU).
   const keys = Object.keys(map);
   if (keys.length > MAX_MAP_SIZE) {
@@ -2312,40 +2636,107 @@ function startPersistentDomDepseudo(): void {
 
   igLog(`Starting persistent DOM de-pseudo observer (reverseMap: ${Object.keys(currentReverseMap).length} keys)`);
 
+  // Per-node debounce state for characterData mutations.
+  //
+  // Why: when ChatGPT (and other LLM platforms) stream responses, each
+  // appended token fires a characterData mutation on the same text node.
+  // The pre-debounce implementation ran the full `replacePseudonyms`
+  // engine on the GROWING full text on EVERY mutation. For a 5000-char
+  // response with 200 token appends, that's 200 calls × ~2500 chars avg
+  // × N pseudonyms = millions of char comparisons per response, all on
+  // the main thread, all during render. Visible lag.
+  //
+  // Strategy: trailing-edge debounce per node (120ms quiet window) with
+  // a hard 500ms max-wait so continuous streaming (no pause longer than
+  // 120ms) still gets de-pseudonymized regularly. Streaming naturally
+  // has micro-pauses every few tokens, so the trailing edge fires within
+  // a frame or two of the user being able to read each chunk.
+  //
+  // What this does NOT change:
+  //   • childList mutations (newly-added bubbles) — still scanned immediately
+  //   • Revert detection (React overwrites our replacement) — preserved in
+  //     the debounced callback, which reads textContent at fire time
+  //   • User-bubble scanWithSnapshot retries — independent code path
+  //   • Polling fallback — independent code path
+  const _charDataDebounceTimers = new WeakMap<Text, ReturnType<typeof setTimeout>>();
+  const _charDataDebounceStartTime = new WeakMap<Text, number>();
+  const CHAR_DATA_DEBOUNCE_MS = 120;
+  const CHAR_DATA_MAX_WAIT_MS = 500;
+
+  function _processCharacterDataNode(node: Text): void {
+    _charDataDebounceTimers.delete(node);
+    _charDataDebounceStartTime.delete(node);
+    if (Object.keys(currentReverseMap).length === 0) return;
+    if (!node.isConnected) return; // node detached from DOM during debounce window
+
+    // Skip mutations WE caused (one-shot: skip once then forget).
+    // BUT: if the new text contains a pseudonym, React reverted our
+    // replacement (e.g. a subsequent WS heartbeat / save triggered a
+    // re-render). In that case do NOT skip — fall through and replace.
+    if (_igOurMutations.has(node)) {
+      _igOurMutations.delete(node);
+      const revertedText = node.textContent || '';
+      const wouldReplace =
+        revertedText.length > 2 &&
+        replacePseudonyms(revertedText, currentReverseMap) !== revertedText;
+      if (!wouldReplace) return; // Truly our mutation — safe to skip
+      // Fall through: React reverted with a pseudonym — fix it again.
+    }
+
+    const text = node.textContent || '';
+    if (text.length > 2) {
+      const replaced = replacePseudonyms(text, currentReverseMap);
+      if (replaced !== text) {
+        _igOurMutations.add(node);
+        node.textContent = replaced;
+        _persistentReplacementCount++;
+        // React may immediately re-render — schedule a follow-up sweep
+        // (same trigger the pre-debounce code used).
+        scheduleRapidFollowUp();
+      }
+    }
+  }
+
+  function _scheduleCharacterDataScan(node: Text): void {
+    const now = Date.now();
+    const startTime = _charDataDebounceStartTime.get(node);
+    if (startTime === undefined) {
+      _charDataDebounceStartTime.set(node, now);
+    } else if (now - startTime >= CHAR_DATA_MAX_WAIT_MS) {
+      // Max-wait elapsed — flush now even if streaming hasn't paused.
+      const existing = _charDataDebounceTimers.get(node);
+      if (existing) clearTimeout(existing);
+      _processCharacterDataNode(node);
+      return;
+    }
+
+    // Trailing-edge debounce: each mutation resets the timer. The timer
+    // fires only after 120ms of quiet, coalescing rapid streaming bursts.
+    const existing = _charDataDebounceTimers.get(node);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      _processCharacterDataNode(node);
+    }, CHAR_DATA_DEBOUNCE_MS);
+    _charDataDebounceTimers.set(node, timer);
+  }
+
   _persistentObserver = new MutationObserver((mutations) => {
     if (Object.keys(currentReverseMap).length === 0) return;
 
     let didReplace = false;
     for (const mutation of mutations) {
       if (mutation.type === 'characterData') {
-        // Skip mutations WE caused (one-shot: skip once then forget).
-        // BUT: if the new text contains a pseudonym, React reverted our replacement
-        // (e.g., a subsequent WS heartbeat/save triggered a re-render). In that case
-        // do NOT skip — fall through and replace again.
-        if (_igOurMutations.has(mutation.target)) {
-          _igOurMutations.delete(mutation.target);
-          const revertedText = mutation.target.textContent || '';
-          // Check if React reverted our replacement by running the full engine.
-          // If replacePseudonyms would change the text, React overwrote us — re-fix it.
-          const wouldReplace = revertedText.length > 2 && replacePseudonyms(revertedText, currentReverseMap) !== revertedText;
-          if (!wouldReplace) continue; // Truly our mutation — safe to skip
-          // Fall through: React reverted our replacement with a pseudonym — fix it
-        }
-        // Framework changed this text node — run full replacement engine
-        const text = mutation.target.textContent || '';
-        if (text.length > 2) {
-          const replaced = replacePseudonyms(text, currentReverseMap);
-          if (replaced !== text) {
-            _igOurMutations.add(mutation.target);
-            mutation.target.textContent = replaced;
-            _persistentReplacementCount++;
-            didReplace = true;
-          }
-        }
+        // Hot path during streaming — debounce instead of processing
+        // synchronously. The debounced callback handles revert detection
+        // and replacement using identical logic.
+        _scheduleCharacterDataScan(mutation.target as Text);
         continue;
       }
 
       // childList: React replaced entire subtrees — scan new nodes
+      // immediately (childList mutations are far less frequent than
+      // characterData during streaming, and newly-added user bubbles
+      // need fast restoration).
       for (const node of mutation.addedNodes) {
         if (node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.TEXT_NODE) {
           const count = scanTextNodes(node);
@@ -2357,7 +2748,6 @@ function startPersistentDomDepseudo(): void {
       }
     }
 
-    // If we replaced anything, React may re-render again soon — schedule follow-up
     if (didReplace) {
       scheduleRapidFollowUp();
     }
@@ -2423,56 +2813,220 @@ function startPersistentDomDepseudo(): void {
  * Entry point — ensures the persistent observer is running and does an immediate scan.
  * Merges the request's reverse map into the global map.
  */
-function depseudonymizeUserBubble(reverseMap: Record<string, string>): void {
-  if (Object.keys(reverseMap).length === 0) return;
+// ── Principle: the user's bubble ALWAYS shows what the user typed ──────────
+//
+// Iron Gate's foundational promise is that pseudonymization is INVISIBLE to
+// the user. The wire payload contains pseudonyms (security); the rendered
+// user bubble must contain the user's original literal text (UX). Past
+// implementations relied on regex-replacing pseudonyms back to originals,
+// which had endless failure modes — fragmentation across text nodes, novel
+// pseudonym formats, missed re-renders, race conditions.
+//
+// This invariant approach takes the LITERAL text the user typed and writes
+// it directly into the rendered bubble. It then watches the bubble with a
+// dedicated MutationObserver — if React or any other code path mutates the
+// bubble's text to something else (e.g. a re-render that pulls from server
+// state which has the pseudonymized payload), it's restored to the original
+// immediately. No pattern matching, no guessing.
+//
+// Tradeoff: ChatGPT's own rich rendering of user-bubble content (links,
+// code formatting) is replaced with plain text. For prompts that ARE plain
+// text — the common case — this is invisible. For markdown/code-heavy
+// prompts, the rendered bubble loses some formatting but the text content
+// is the user's exact input. Given the alternative is showing pseudonyms,
+// plain-text exactness wins.
+const USER_BUBBLE_SELECTORS = [
+  '[data-message-author-role="user"]',
+  '.font-user-message',
+  'user-query',
+  '[data-testid*="user-message"]',
+];
+const _bubbleOriginalText = new WeakMap<Element, string>();
+interface BubbleObserverHandle {
+  observer: MutationObserver;
+  idleTimer: ReturnType<typeof setTimeout> | null;
+}
+const _bubbleObserverByElement = new WeakMap<Element, BubbleObserverHandle>();
+const _BUBBLE_OBSERVER_IDLE_MS = 5 * 60 * 1000;
 
-  // Use the SNAPSHOT for scanning — do NOT merge into currentReverseMap.
-  // Previously, merging the snapshot back into the global map caused stale
-  // entries to persist after clearReverseMapFully() — the merge re-populated
-  // the map, causing DOM polls and response wrapping with stale entries.
-  // Instead, scan directly with the snapshot's entries.
-  function scanWithSnapshot(root: Node): number {
-    let count = 0;
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    let node: Text | null;
-    while ((node = walker.nextNode() as Text | null)) {
-      if (!node.textContent || node.textContent.length <= 2) continue;
-      // Skip nodes we JUST modified (within this scan) to prevent loops.
-      // But DO NOT skip across scans — the platform may re-render the
-      // user bubble between retries, creating NEW text nodes with
-      // pseudonymized content that need replacement.
-      if (_igOurMutations.has(node)) continue;
-      const replaced = replacePseudonyms(node.textContent, reverseMap);
-      if (replaced !== node.textContent) {
-        _igOurMutations.add(node);
-        node.textContent = replaced;
-        count++;
+function _matchesAnyUserBubbleSelector(el: Element): boolean {
+  for (const sel of USER_BUBBLE_SELECTORS) {
+    try { if (el.matches(sel)) return true; } catch { /* invalid selector */ }
+  }
+  return false;
+}
+
+function _findLatestUserBubble(): HTMLElement | null {
+  for (const sel of USER_BUBBLE_SELECTORS) {
+    try {
+      const all = document.querySelectorAll(sel);
+      if (all.length > 0) return all[all.length - 1] as HTMLElement;
+    } catch { /* invalid selector */ }
+  }
+  return null;
+}
+
+/**
+ * UNIFIED bubble-restoration entry point. Replaces the previous
+ * `enforceUserBubbleInvariant(promptText)` + `depseudonymizeUserBubble(reverseMap)`
+ * pair, which were two parallel systems doing related work with separate
+ * retry tails and observer machinery.
+ *
+ * Two strategies, selected by inputs:
+ *
+ *   • **Wholesale enforcement** (when `promptText` is provided): write the
+ *     user's literal typed text into the LATEST user bubble's text nodes
+ *     while preserving styled wrapper structure, and install a per-bubble
+ *     MutationObserver that restores promptText on any future revert.
+ *     This is the bubble-shows-original-text invariant.
+ *
+ *   • **Reverse-map regex restore** (when `reverseMap` has entries): walk
+ *     ALL text nodes in document.body and run replacePseudonyms with the
+ *     map, swapping pseudonyms back to originals. Covers older bubbles in
+ *     scrollback (post-reload conversation hydration) where we don't have
+ *     the user's typed text anymore — only the pseudonym mappings.
+ *
+ * Both strategies run on a single shared retry tail (300–12000ms) so we
+ * don't have two sets of setTimeout calls competing.
+ *
+ * Call shapes:
+ *   restoreUserBubble({ promptText, reverseMap })  // fresh-submit path
+ *   restoreUserBubble({ reverseMap })              // DOM-presubmit replay /
+ *                                                  //   older-bubble restore
+ */
+interface BubbleRestoreOptions {
+  promptText?: string;
+  reverseMap: Record<string, string>;
+}
+
+function _writeBubbleTextPreservingStructure(el: HTMLElement, text: string): void {
+  // Walk to existing text nodes and update them in place. NEVER set
+  // el.textContent = text — that collapses all child elements into one
+  // text node, destroying the styled wrapper divs that give the bubble
+  // its visual appearance (background, padding, rounded corners). The
+  // bubble's text usually lives in a single deep text node anyway.
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  const textNodes: Text[] = [];
+  let n: Node | null;
+  while ((n = walker.nextNode())) textNodes.push(n as Text);
+  if (textNodes.length === 0) {
+    // Bubble exists but has no text nodes yet — fallback to textContent.
+    // A subsequent re-render will populate text nodes and our observer
+    // will route through the preserving path on the next mutation.
+    el.textContent = text;
+    return;
+  }
+  textNodes[0].textContent = text;
+  for (let i = 1; i < textNodes.length; i++) textNodes[i].textContent = '';
+}
+
+function _enforceBubbleInvariant(el: HTMLElement, promptText: string): void {
+  // Idempotent: no-op if already enforced with the same text.
+  if (_bubbleOriginalText.get(el) === promptText && (el.textContent || '') === promptText) {
+    return;
+  }
+  const prev = _bubbleObserverByElement.get(el);
+  if (prev) {
+    prev.observer.disconnect();
+    if (prev.idleTimer) clearTimeout(prev.idleTimer);
+  }
+
+  _writeBubbleTextPreservingStructure(el, promptText);
+  _bubbleOriginalText.set(el, promptText);
+
+  // Per-bubble observer with idle GC: re-enforces promptText if React or
+  // the platform mutates the bubble back to wire-payload (pseudonymized)
+  // text. Cheap: scoped to one element only, fast-rejects when textContent
+  // already equals promptText (no infinite loop). Disconnects after
+  // _BUBBLE_OBSERVER_IDLE_MS of mutation silence so long sessions don't
+  // accumulate one live observer per historical user bubble. A subsequent
+  // INTERCEPTED that lands on the same bubble re-attaches if needed.
+  const handle: BubbleObserverHandle = { observer: null!, idleTimer: null };
+  const scheduleIdleDisconnect = (): void => {
+    if (handle.idleTimer) clearTimeout(handle.idleTimer);
+    handle.idleTimer = setTimeout(() => {
+      handle.observer.disconnect();
+      handle.idleTimer = null;
+      // Only clear the WeakMap slot if we're still the registered handle
+      // (a re-enforce would have replaced us already).
+      if (_bubbleObserverByElement.get(el) === handle) {
+        _bubbleObserverByElement.delete(el);
       }
+    }, _BUBBLE_OBSERVER_IDLE_MS);
+  };
+  handle.observer = new MutationObserver(() => {
+    if ((el.textContent || '') !== promptText) {
+      _writeBubbleTextPreservingStructure(el, promptText);
     }
-    return count;
+    scheduleIdleDisconnect();
+  });
+  handle.observer.observe(el, { childList: true, subtree: true, characterData: true });
+  _bubbleObserverByElement.set(el, handle);
+  scheduleIdleDisconnect();
+}
+
+function _scanDocumentForReverseMap(reverseMap: Record<string, string>): number {
+  // Regex-replace pseudonyms → originals across all text nodes in the
+  // document. Uses _igOurMutations as a fast-skip for nodes we've
+  // already touched (prevents redundant scans across retries).
+  let count = 0;
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let node: Text | null;
+  while ((node = walker.nextNode() as Text | null)) {
+    if (!node.textContent || node.textContent.length <= 2) continue;
+    if (_igOurMutations.has(node)) continue;
+    const replaced = replacePseudonyms(node.textContent, reverseMap);
+    if (replaced !== node.textContent) {
+      _igOurMutations.add(node);
+      node.textContent = replaced;
+      count++;
+    }
+  }
+  return count;
+}
+
+function restoreUserBubble(options: BubbleRestoreOptions): void {
+  const { promptText, reverseMap } = options;
+  const hasPromptText = !!promptText && promptText.length >= 3;
+  const hasReverseMap = Object.keys(reverseMap).length > 0;
+  if (!hasPromptText && !hasReverseMap) return;
+
+  function runOnePass(): void {
+    if (hasPromptText) {
+      const bubble = _findLatestUserBubble();
+      if (bubble) _enforceBubbleInvariant(bubble, promptText!);
+    }
+    if (hasReverseMap) {
+      const n = _scanDocumentForReverseMap(reverseMap);
+      if (n > 0) igLog(`restoreUserBubble: ${n} reverse-map replacements`);
+    }
   }
 
-  igLog(`depseudonymizeUserBubble called: ${Object.keys(reverseMap).length} mappings`);
-  const count = scanWithSnapshot(document.body);
-  if (count > 0) {
-    igLog(`User bubble immediate scan: ${count} replacements`);
-  }
-
-  // Delayed scans to catch the user bubble after the platform renders it.
-  // Gemini renders the user bubble ~200-2000ms after the fetch completes.
-  // CRITICAL: clear the _igBubbleProcessed set before each retry so nodes
-  // that were scanned before the bubble rendered get re-scanned.
-  const delays = [300, 800, 1500, 3000, 5000];
+  // Immediate + shared retry tail. Single set of timers handles both
+  // strategies — half the setTimeout pressure of the old two-function
+  // design. Tail extends to 12s to cover ChatGPT's /-to-/c/<id> route
+  // navigation which can take 6–10s for the server-state-rendered
+  // bubble to appear.
+  runOnePass();
+  const delays = [300, 800, 1500, 3000, 5000, 8000, 12000];
   for (const delay of delays) {
-    setTimeout(() => {
-      // Clear processed set so re-rendered nodes are scanned again
-      // (WeakSet can't be cleared — use a new generation counter instead)
-      const retryCount = scanWithSnapshot(document.body);
-      if (retryCount > 0) {
-        igLog(`User bubble delayed scan (${delay}ms): ${retryCount} replacements`);
-      }
-    }, delay);
+    setTimeout(runOnePass, delay);
   }
+
+  // Removed (May 2026): a body-level MutationObserver that watched
+  // `document.body` subtree mutations for 20s to "catch" newly-inserted
+  // user bubbles. On ChatGPT it fired thousands of times per second
+  // during streaming + page hydration — directly causing Chrome's
+  // "Page Unresponsive" dialog. The persistent observer started by
+  // `startPersistentDomDepseudo()` already handles childList mutations
+  // on document.body for the entire conversation lifetime and uses the
+  // live `currentReverseMap` (materially identical to the snapshot we
+  // were using here, since the snapshot was taken moments before). No
+  // coverage loss; significant CPU savings.
+  //
+  // For the bubble-shows-original-text invariant we rely on the
+  // separate `enforceUserBubbleInvariant(promptText)` function with its
+  // narrow per-bubble observer.
 }
 
 /**
@@ -2482,29 +3036,42 @@ function depseudonymizeUserBubble(reverseMap: Record<string, string>): void {
  * these offsets become invalid and corrupt ChatGPT's rendering. Stripping them
  * is safe — they're cosmetic (citation hover) and the response still renders correctly.
  */
+// Fields we KEEP inside message.metadata. Anything else gets dropped.
+// This is an inverted whitelist: instead of chasing ChatGPT's evolving list
+// of offset-based citation/entity fields (displayedContentReferences,
+// cite_metadata, content_references, and whatever they add next), we drop
+// the entire metadata bag and only put back fields we know are needed for
+// basic rendering. New ChatGPT metadata fields can no longer break us by
+// leaving offset-shifted markers in the rendered output.
+const KEEP_METADATA_FIELDS = new Set<string>([
+  'message_type',
+  'model_slug',
+  'default_model_slug',
+  'parent_id',
+  'request_id',
+  'timestamp_',
+  'finish_details',
+  'status',
+  'is_complete',
+  'voice_mode_message',
+]);
+
 function stripOffsetAnnotations(text: string): string {
   // Only process SSE data lines that look like JSON.
   // IMPORTANT: Use [^\n]+ (not [\s\S]+) to avoid spanning multiple lines.
   return text.replace(/^(data: )(\{[^\n]+\})$/gm, (_match, prefix, json) => {
     try {
       const parsed = JSON.parse(json);
+      const meta = parsed?.message?.metadata;
+      if (!meta || typeof meta !== 'object') return _match;
+
       let changed = false;
-
-      // ChatGPT SSE: message.metadata.displayedContentReferences (citation offsets)
-      if (parsed?.message?.metadata?.displayedContentReferences) {
-        delete parsed.message.metadata.displayedContentReferences;
-        changed = true;
+      for (const key of Object.keys(meta)) {
+        if (!KEEP_METADATA_FIELDS.has(key)) {
+          delete meta[key];
+          changed = true;
+        }
       }
-      // Also strip cite_metadata and content_references (variant field names)
-      if (parsed?.message?.metadata?.cite_metadata) {
-        delete parsed.message.metadata.cite_metadata;
-        changed = true;
-      }
-      if (parsed?.message?.metadata?.content_references) {
-        delete parsed.message.metadata.content_references;
-        changed = true;
-      }
-
       return changed ? prefix + JSON.stringify(parsed) : _match;
     } catch {
       return _match; // Not valid JSON — leave as-is
@@ -2655,7 +3222,9 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
 
   // Check adapter strategy — dispatch to raw-chunk mode for platforms like Claude
   const strategy = activeAdapter?.responseStreamStrategy || 'sse-content';
-  console.log(`[Iron Gate DEPSEUDO] Strategy dispatch: adapter=${activeAdapter?.id || 'null'}, strategy=${strategy}, adapterProp=${activeAdapter?.responseStreamStrategy ?? 'MISSING'}`);
+  if (_IG_DEBUG) {
+    igLog(`depseudonymizeResponse strategy dispatch: adapter=${activeAdapter?.id || 'null'}, strategy=${strategy}, adapterProp=${activeAdapter?.responseStreamStrategy ?? 'MISSING'}`);
+  }
   if (strategy === 'raw-chunk') {
     return depseudonymizeResponseRaw(response, snapshotMap);
   }
@@ -2663,8 +3232,9 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
     return response;
   }
 
-  igLog(`depseudonymizeResponse: wrapping stream with ${mapKeys.length} mappings (sse-content mode)`);
-  console.log(`[Iron Gate DEPSEUDO] Wrapping response stream — ${mapKeys.length} mappings: ${mapKeys.join(', ')}`);
+  if (_IG_DEBUG) {
+    igLog(`depseudonymizeResponse wrapping stream — ${mapKeys.length} mappings (sse-content): ${mapKeys.join(', ')}`);
+  }
 
   let reader: ReadableStreamDefaultReader<Uint8Array>;
   try {
@@ -2784,12 +3354,15 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
   }
 
   // ── Strip offset annotations from parsed ChatGPT SSE ──
+  // Inverted whitelist (see KEEP_METADATA_FIELDS at top of file): drop
+  // everything in metadata except the small set we know is needed for
+  // basic rendering. This protects us from ChatGPT adding new offset-based
+  // metadata fields whose offsets are invalidated by pseudonym replacement.
   function stripAnnotations(parsed: any): void {
     const meta = parsed?.message?.metadata;
-    if (meta) {
-      delete meta.displayedContentReferences;
-      delete meta.cite_metadata;
-      delete meta.content_references;
+    if (!meta || typeof meta !== 'object') return;
+    for (const key of Object.keys(meta)) {
+      if (!KEEP_METADATA_FIELDS.has(key)) delete meta[key];
     }
   }
 
@@ -2821,9 +3394,14 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
               deltaAccumulator += content;
               const replaced = replacePseudonyms(deltaAccumulator, snapshotMap);
               if (replaced !== deltaAccumulator) totalReplacements++;
-              const unreplacedSafeLen = deltaAccumulator.length - maxPseudoLen;
-              const ratio = deltaAccumulator.length > 0 ? replaced.length / deltaAccumulator.length : 1;
-              const safeLen = Math.max(emittedDeltaLen, Math.floor(unreplacedSafeLen * ratio));
+              // Hold back the last maxPseudoLen chars of the REPLACED text.
+              // A pseudonym that's only partially in the accumulator (e.g.,
+              // "Robert Ch" — first 9 chars of "Robert Chen") wouldn't have
+              // matched yet, so it sits unchanged at the tail of `replaced`.
+              // Holding back maxPseudoLen there guarantees we never emit a
+              // partial pseudonym. This is exact in replaced-coords — no
+              // ratio approximation, no risk of advancing past a replacement.
+              const safeLen = Math.max(emittedDeltaLen, replaced.length - maxPseudoLen);
               const newDelta = replaced.substring(emittedDeltaLen, safeLen);
               emittedDeltaLen = safeLen;
               injectContent(parsed, mode, newDelta.length > 0 ? newDelta : '');
@@ -2871,8 +3449,8 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
     const extracted = extractContent(parsed);
     if (!extracted) {
       // Log first few non-content events to understand format
-      if (chunkCount <= 3) {
-        console.log(`[Iron Gate DEPSEUDO] No content extracted from SSE (chunk ${chunkCount}):`, JSON.stringify(parsed).substring(0, 200));
+      if (_IG_DEBUG && chunkCount <= 3) {
+        igLog(`DEPSEUDO no content extracted from SSE (chunk ${chunkCount}):`, JSON.stringify(parsed).substring(0, 200));
       }
       // No content field (metadata event, etc.) — pass through with raw replacement
       const reser = JSON.stringify(parsed);
@@ -2882,8 +3460,8 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
     }
 
     // Log first content extraction to verify format
-    if (chunkCount <= 2 && extracted) {
-      console.log(`[Iron Gate DEPSEUDO] Content extracted (${extracted.mode}): "${extracted.content.substring(0, 50)}"`);
+    if (_IG_DEBUG && chunkCount <= 2 && extracted) {
+      igLog(`DEPSEUDO content extracted (${extracted.mode}): "${extracted.content.substring(0, 50)}"`);
     }
 
     const { mode, content } = extracted;
@@ -2908,16 +3486,18 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
     const replaced = replacePseudonyms(deltaAccumulator, snapshotMap);
     if (replaced !== deltaAccumulator) totalReplacements++;
 
-    // Hold back the last maxPseudoLen chars — might be a partial pseudonym.
-    // Only emit what's safe (won't change when more content arrives).
-    // H-3 FIX: Use deltaAccumulator length (not replaced length) to compute safe boundary.
-    // When replacement shortens text ("Jonathan" → "John"), replaced.length < deltaAccumulator.length,
-    // and the old formula could advance safeLen beyond the actual safe boundary.
-    const unreplacedSafeLen = deltaAccumulator.length - maxPseudoLen;
-    // Map the unreplaced safe boundary to the replaced string's coordinate space.
-    // The ratio of replaced/unreplaced lengths gives the approximate mapping.
-    const ratio = deltaAccumulator.length > 0 ? replaced.length / deltaAccumulator.length : 1;
-    const safeLen = Math.max(emittedDeltaLen, Math.floor(unreplacedSafeLen * ratio));
+    // Hold back the last maxPseudoLen chars of the REPLACED text. A
+    // pseudonym only partially in the accumulator (e.g. "Robert Ch" out of
+    // "Robert Chen") didn't match yet, so it sits unchanged at the tail of
+    // `replaced`. Holding maxPseudoLen there guarantees we never emit a
+    // partial pseudonym.
+    //
+    // Earlier this was a ratio-based mapping from unreplaced→replaced coords,
+    // which produced fractional emit boundaries that landed inside or past
+    // a replacement region — the source of the "Pantoprazoledication" /
+    // "Patient Jane Millermary" corruption when chunks split across token
+    // boundaries near a pseudonym.
+    const safeLen = Math.max(emittedDeltaLen, replaced.length - maxPseudoLen);
     const newDelta = replaced.substring(emittedDeltaLen, safeLen);
     emittedDeltaLen = safeLen;
 
@@ -2964,8 +3544,9 @@ function depseudonymizeResponse(response: Response, reverseMap: Record<string, s
             }
           }
 
-          igLog(`depseudonymizeResponse: stream complete — ${chunkCount} chunks, ${totalReplacements} replacements`);
-          console.log(`[Iron Gate DEPSEUDO] Stream complete — ${chunkCount} chunks, ${totalReplacements} replacements, deltaAccum=${deltaAccumulator.length} chars`);
+          if (_IG_DEBUG) {
+            igLog(`depseudonymizeResponse stream complete — ${chunkCount} chunks, ${totalReplacements} replacements, deltaAccum=${deltaAccumulator.length} chars`);
+          }
           controller.close();
           _onStreamEnd(); // M-4
           return;
@@ -3232,6 +3813,7 @@ function registerPendingFileScan(fileName: string, fileKey: string): void {
   showScanIndicator(fileName);
 }
 
+
 // Listen for scan results relayed from content script
 window.addEventListener('message', (event) => {
   if (event.source !== window) return;
@@ -3334,6 +3916,9 @@ function _checkConversationBoundary(): void {
       currentForwardMap = {};
       _sessionEntities.clear();
       pendingFileScans.clear();
+      // Drop the file-detection dedup cache too — re-attaching the same file
+      // in a different conversation must re-scan, not silently skip.
+      _processedFileKeys.clear();
       dismissScanIndicator();
     } else {
       igLog(`URL changed: ${prevPath} → ${currentPath} — keeping pseudonym maps`);
@@ -3512,8 +4097,52 @@ function showDocumentBlockOverlay(options: {
     shadow.appendChild(overlay);
     document.body.appendChild(host);
 
+    // ── Event isolation ───────────────────────────────────────────────────
+    // Host pages (Claude.ai, ChatGPT, etc.) often bind document- or
+    // window-level keyboard listeners that route every keystroke into the
+    // chat editor regardless of focus. Without isolating, typing the
+    // override reason here ALSO types into the page's chat input.
+    //
+    // Two-layer block:
+    //  (1) host bubble-phase stopPropagation — events the textarea handled
+    //      natively never reach document-bubble listeners on the page.
+    //  (2) window capture-phase swallow-when-outside — events fired outside
+    //      the overlay are stopped before page capture-phase handlers run,
+    //      so a stray page handler can't re-route a keystroke into us.
+    const ISOLATED_EVENTS = [
+      'keydown', 'keyup', 'keypress',
+      'input', 'beforeinput',
+      'compositionstart', 'compositionupdate', 'compositionend',
+      'paste', 'cut', 'copy',
+    ] as const;
+    const stopAtHost = (e: Event) => e.stopPropagation();
+    for (const type of ISOLATED_EVENTS) {
+      host.addEventListener(type, stopAtHost, false);
+    }
+    const swallowOutside = (e: Event) => {
+      const path = (e as any).composedPath?.() as EventTarget[] | undefined;
+      if (!path || path.includes(host)) return;
+      e.stopImmediatePropagation();
+    };
+    for (const type of ISOLATED_EVENTS) {
+      window.addEventListener(type, swallowOutside, { capture: true });
+    }
+    // Defense-in-depth: if the page somehow steals focus, pull it back to
+    // the textarea so the user's keystrokes never land in the chat editor.
+    function trapFocus(e: FocusEvent) {
+      const path = (e as any).composedPath?.() as EventTarget[] | undefined;
+      if (path && path.includes(host)) return;
+      requestAnimationFrame(() => overrideInput.focus());
+    }
+    window.addEventListener('focusin', trapFocus, { capture: true });
+
     function cleanup() {
       document.removeEventListener('keydown', onEsc, { capture: true } as EventListenerOptions);
+      for (const type of ISOLATED_EVENTS) {
+        host.removeEventListener(type, stopAtHost, false);
+        window.removeEventListener(type, swallowOutside, { capture: true } as EventListenerOptions);
+      }
+      window.removeEventListener('focusin', trapFocus, { capture: true } as EventListenerOptions);
       host.remove();
     }
     function onEsc(e: KeyboardEvent) {
@@ -3622,7 +4251,9 @@ async function checkFileUploadGate(): Promise<'allow' | 'block'> {
       explanation: `Document scan failed — could not verify "${errorFileName}" is safe to share. Please check your Iron Gate API connection in the extension settings and try again.`,
     });
 
-    pendingFileScans.clear();
+    // On block (cancel/Esc/backdrop): keep entries so the next submit
+    // re-triggers the overlay. On allow (override): clear — user approved.
+    if (decision === 'allow') pendingFileScans.clear();
     return decision;
   }
 
@@ -3641,8 +4272,10 @@ async function checkFileUploadGate(): Promise<'allow' | 'block'> {
       explanation: highestScan.result.explanation || `This document contains sensitive information with a risk score of ${highestScore}.`,
     });
 
-    // Clear the scans after the decision so they don't re-trigger
-    pendingFileScans.clear();
+    // On block (cancel/Esc/backdrop): keep the entries so the next submit
+    // re-triggers the gate (file is still attached in the platform UI).
+    // On allow (override with reason): clear — the user has approved.
+    if (decision === 'allow') pendingFileScans.clear();
 
     return decision;
   }
@@ -3689,6 +4322,39 @@ const MAX_SCAN_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 // triggering our own patched version (avoids infinite recursion).
 const _pristineBlobArrayBuffer = Blob.prototype.arrayBuffer;
 
+// Serialize file processing so multiple concurrent uploads don't pile up
+// synchronous base64-encoding + postMessage work on the main thread. With
+// 4 simultaneous 2MB+ files we previously blocked the renderer for several
+// seconds, triggering "Page Unresponsive" / tab crash. Queue depth is the
+// natural backpressure: each file waits for the prior one to finish.
+let _scanQueueTail: Promise<void> = Promise.resolve();
+
+// Encode bytes → base64 in cooperative chunks. Yields to the event loop
+// between chunks so React frames / input handlers / Gemini's renderer can
+// run. Uses native Uint8Array.prototype.toBase64() if available (Chrome
+// 137+, much faster, no intermediate string), otherwise async-chunks.
+async function _bytesToBase64Async(bytes: Uint8Array): Promise<string> {
+  const proto = Uint8Array.prototype as unknown as { toBase64?: () => string };
+  if (typeof proto.toBase64 === 'function') {
+    return (bytes as unknown as { toBase64(): string }).toBase64();
+  }
+  // Async-chunked fallback. 8KB chunks balanced for memory vs yield frequency.
+  // After every 256 chunks (~2MB) we yield via setTimeout(0) so the main
+  // thread can handle paints and input. Per-iteration await on Promise.resolve()
+  // doesn't actually yield to the macrotask queue — setTimeout does.
+  const chunks: string[] = [];
+  const chunkSize = 8192;
+  let processed = 0;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    chunks.push(String.fromCharCode(...bytes.subarray(i, i + chunkSize)));
+    processed++;
+    if (processed % 256 === 0) {
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+  return btoa(chunks.join(''));
+}
+
 // Helper: read a File to base64 using the pristine (unpatched) Blob.arrayBuffer
 function _readFileToBase64AndPost(file: File, source: string): void {
   try {
@@ -3706,40 +4372,40 @@ function _readFileToBase64AndPost(file: File, source: string): void {
     // Register this file for the submit gate
     registerPendingFileScan(file.name, fileKey);
 
-    _pristineBlobArrayBuffer.call(file).then((buf: ArrayBuffer) => {
-      const bytes = new Uint8Array(buf);
-      let binary = '';
-      const chunkSize = 8192;
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    // Chain onto the queue tail so files process one at a time. Each entry
+    // catches its own errors so a failure on one file doesn't poison the
+    // queue for subsequent ones.
+    _scanQueueTail = _scanQueueTail.then(async () => {
+      try {
+        const buf: ArrayBuffer = await _pristineBlobArrayBuffer.call(file);
+        const bytes = new Uint8Array(buf);
+        const base64 = await _bytesToBase64Async(bytes);
+        // Send file content to content script for scanning.
+        // BroadcastChannel can silently drop large messages (>1MB varies by browser).
+        // Use igPostMessage for reliability — the file content is sent to
+        // Iron Gate's own worker, not to the AI tool.
+        igPostMessage({
+          type: 'IRON_GATE_FILE_UPLOAD',
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: ext,
+          fileBase64: base64,
+          url: window.location.href,
+          timestamp: Date.now(),
+        });
+      } catch (err) {
+        // BUG-03: Previously swallowed silently — if file read fails, the pendingFileScans
+        // entry stays in 'scanning' forever, permanently blocking the upload gate.
+        console.warn('[Iron Gate] File read failed:', file.name, err instanceof Error ? err.message : String(err));
+        // Mark scan as complete with 'allow' decision so the gate doesn't hang
+        const scanEntry = pendingFileScans.get(fileKey);
+        if (scanEntry && scanEntry.status === 'scanning') {
+          scanEntry.status = 'complete';
+          // H-9 FIX: Fail CLOSED — unreadable files (encrypted, corrupted) should block, not allow.
+          scanEntry.result = { score: 100, level: 'critical', entities: [], explanation: 'File read error — blocked (cannot verify safety)', entitiesFound: 0, decision: 'block', error: true };
+        }
       }
-      const base64 = btoa(binary);
-      // Send file content to content script for scanning.
-      // BroadcastChannel can silently drop large messages (>1MB varies by browser).
-      // File base64 can be 100KB+ which exceeds some limits.
-      // Use igPostMessage for reliability — the file content is already being
-      // sent to Iron Gate's own worker, not to the AI tool.
-      igPostMessage({
-        type: 'IRON_GATE_FILE_UPLOAD',
-        fileName: file.name,
-        fileSize: file.size,
-        fileType: ext,
-        fileBase64: base64,
-        url: window.location.href,
-        timestamp: Date.now(),
-      });
-    }).catch((err) => {
-      // BUG-03: Previously swallowed silently — if file read fails, the pendingFileScans
-      // entry stays in 'scanning' forever, permanently blocking the upload gate.
-      console.warn('[Iron Gate] File read failed:', file.name, err instanceof Error ? err.message : String(err));
-      // Mark scan as complete with 'allow' decision so the gate doesn't hang
-      const scanEntry = pendingFileScans.get(fileKey);
-      if (scanEntry && scanEntry.status === 'scanning') {
-        scanEntry.status = 'complete';
-        // H-9 FIX: Fail CLOSED — unreadable files (encrypted, corrupted) should block, not allow.
-        scanEntry.result = { score: 100, level: 'critical', entities: [], explanation: 'File read error — blocked (cannot verify safety)', entitiesFound: 0, decision: 'block', error: true };
-      }
-    });
+    }).catch(() => { /* never poison the queue tail */ });
   } catch (outerErr) {
     console.warn('[Iron Gate] File scan setup failed:', outerErr instanceof Error ? outerErr.message : String(outerErr));
   }
@@ -3883,43 +4549,12 @@ const patchedFetch = async function patchedFetch(
     igLog(`fetch #${_fetchCallCount}: ${method} ${url.substring(0, 100)}`);
   }
 
-  // ── GATE: Block file upload requests if scan found high-risk content ──
-  // Platforms upload file bytes BEFORE the conversation submit (separate
-  // HTTP request). If we only block the conversation submit, the file data
-  // is already on the server. Block the file upload request itself.
-  if (mode === 'proxy' && method === 'POST' && isFileUploadEndpoint(url)) {
-    // Check if any completed scan is high-risk
-    for (const [, scan] of pendingFileScans) {
-      if (scan.status === 'complete' && scan.result && scan.result.score >= 61) {
-        igLog(`BLOCKED file upload to ${url.substring(0, 60)} — scan score ${scan.result.score}`);
-        return new Response(JSON.stringify({
-          blocked: true,
-          reason: `Iron Gate blocked this file upload: "${scan.fileName}" scored ${scan.result.score} (${scan.result.level}).`,
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-      }
-    }
-    // If scan is still pending (scanning), hold the upload until scan completes
-    const pendingScans = Array.from(pendingFileScans.values()).filter(s => s.status === 'scanning');
-    if (pendingScans.length > 0) {
-      igLog(`Holding file upload — ${pendingScans.length} scan(s) pending`);
-      const waitStart = Date.now();
-      while (Date.now() - waitStart < 5000) {
-        await new Promise(r => setTimeout(r, 300));
-        const stillPending = Array.from(pendingFileScans.values()).some(s => s.status === 'scanning');
-        if (!stillPending) break;
-      }
-      // Re-check after waiting
-      for (const [, scan] of pendingFileScans) {
-        if (scan.status === 'complete' && scan.result && scan.result.score >= 61) {
-          igLog(`BLOCKED file upload after scan: "${scan.fileName}" score=${scan.result.score}`);
-          return new Response(JSON.stringify({
-            blocked: true,
-            reason: `Iron Gate blocked this file upload: "${scan.fileName}" scored ${scan.result.score} (${scan.result.level}).`,
-          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-        }
-      }
-    }
-  }
+  // ── (Removed) Upload-endpoint gate ────────────────────────────────────
+  // Previously we blocked the file-upload HTTP request itself when a scan
+  // came back high-risk. Per product UX: uploads should always succeed
+  // (the user just sees the scanning indicator). The single enforcement
+  // point is the conversation-submit overlay (`checkFileUploadGate`),
+  // which requires an override reason before the message can be sent.
 
   // ─── ENTERPRISE POLICY GATE (A4) ─────────────────────────────────────
   // Before any other logic, check the two managed-config gates:
@@ -4315,14 +4950,10 @@ const patchedFetch = async function patchedFetch(
 
               // Build modified request with pseudonymized body
               const newInit = { ...init, body: modifiedBody };
-              // De-pseudonymize the user's message bubble on every platform.
-              // Previously ChatGPT was skipped under the assumption that React
-              // state retains the original text — but synthetic input events
-              // (and some programmatic paste paths) can cause the pseudonym to
-              // end up in the bubble. The call is a safe no-op when the bubble
-              // already contains the original because the reverse map won't
-              // find anything to replace.
-              depseudonymizeUserBubble(requestReverseMap);
+              // Single unified call: enforce-invariant on latest bubble
+              // (promptText) + reverse-map regex restore for older bubbles
+              // (requestReverseMap). One retry tail, one observer system.
+              restoreUserBubble({ promptText, reverseMap: requestReverseMap });
               const response = await originalFetch.call(window, input, newInit);
               return depseudonymizeResponse(response, requestReverseMap);
             }
@@ -4332,10 +4963,10 @@ const patchedFetch = async function patchedFetch(
           }
         }
 
-        // Detect entities
-        const regexEntities = detectWithRegex(promptText);
-        const secrets = scanForSecrets(promptText);
-        const allEntities = [...regexEntities, ...secrets];
+        // Detect entities — regex + secret scanner + Gemma's contextually-
+        // judged spans (merged in buildSubmitEntities; see helper for safety
+        // invariants).
+        const allEntities = buildSubmitEntities(promptText);
         const _t1 = performance.now();
 
         igLog(`Detected ${allEntities.length} entities in prompt (${promptText.length} chars)`);
@@ -4390,81 +5021,22 @@ const patchedFetch = async function patchedFetch(
         let score = fullScore.score;
         let level = fullScore.level;
 
-        // DEF-016: When follow-up references entities from prior turns, force
-        // pseudonymization using the existing forward map. This prevents the
-        // #1 defect: names sent in plaintext in follow-up turns.
-        //
-        // Strategy: if the forward map contains entries that appear in the
-        // follow-up text, apply forward-map pseudonymization directly —
-        // bypassing the score gate entirely. This is safe because the forward
-        // map only contains entities WE previously pseudonymized.
+        // DEF-016: pre-register prior-turn pseudonyms referenced in this
+        // prompt + boost score to bypass GREEN passthrough.
+        // pseudonymizeLocal further below will reuse those pseudonyms via
+        // the forward map AND assign fresh ones to newly-detected entities,
+        // producing a single complete INTERCEPTED with all mappings.
         const sessionRefCount = _countSessionEntityReferences(promptText);
-        if (sessionRefCount > 0 && Object.keys(currentForwardMap).length > 0) {
-          // Apply forward-map replacement: find any known original entities in
-          // the prompt text and replace them with their established pseudonyms.
-          let pseudonymizedText = promptText;
-          const sessionMappings: PseudonymMapping[] = [];
-          // Sort by length descending to prevent substring collisions
-          const fwdEntries = Object.entries(currentForwardMap)
-            .sort((a, b) => b[0].length - a[0].length);
-          for (const [original, pseudonym] of fwdEntries) {
-            if (original.length < 3) continue;
-            if (!pseudonymizedText.toLowerCase().includes(original.toLowerCase())) continue;
-            // Boundary-aware replacement (case-insensitive)
-            try {
-              const escaped = original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-              const prefix = /^[a-zA-Z]/.test(original) ? '(?<![a-zA-Z])' : '';
-              const suffix = /[a-zA-Z]$/.test(original) ? '(?![a-zA-Z])' : '';
-              const regex = new RegExp(prefix + escaped + suffix, 'gi');
-              const before = pseudonymizedText;
-              pseudonymizedText = pseudonymizedText.replace(regex, () => pseudonym);
-              if (pseudonymizedText !== before) {
-                sessionMappings.push({ original, pseudonym, type: 'SESSION_ENTITY' });
-              }
-            } catch { /* regex failed */ }
-          }
-
-          if (sessionMappings.length > 0) {
-            console.log(
-              `%c[Iron Gate WIRE] DEF-016 FIX: Follow-up references ${sessionRefCount} session entities — force-pseudonymizing ${sessionMappings.length} entities from forward map`,
-              'color: #f97316; font-weight: bold; font-size: 13px',
-            );
-
-            registerPseudonymization(sessionMappings);
-            const requestReverseMap = { ...currentReverseMap };
-
-            // Replace prompt in body
-            const modifiedBody = activeAdapter?.replacePrompt(bodyString, promptText, pseudonymizedText)
-              ?? replacePrompt(bodyString, promptText, pseudonymizedText);
-
-            if (modifiedBody) {
-              // Report to sidepanel
-              turnCoordinator.submit({
-                type: 'IRON_GATE_INTERCEPTED', promptText, allEntities,
-                maskedText: pseudonymizedText,
-                mappings: sanitizeMappingsForTransit(sessionMappings),
-                level: 'high', score: Math.max(score, 50),
-              });
-
-              // Start DOM observer + rescans
-              startPersistentDomDepseudo();
-
-              const newInit = { ...init, body: modifiedBody };
-              // Always run user-bubble de-pseudo (no ChatGPT skip) — see the
-              // comment on the Sovereign-Mode branch above for the rationale.
-              depseudonymizeUserBubble(requestReverseMap);
-              const response = await originalFetch.call(window, input, newInit);
-              return depseudonymizeResponse(response, requestReverseMap);
-            }
-          }
+        const { sessionMappings: fetchSessionMappings } = applySessionEntityForcePseudo(promptText);
+        if (fetchSessionMappings.length > 0) {
+          igLog(`DEF-016 fetch: registering ${fetchSessionMappings.length} session pseudonyms (${sessionRefCount} refs)`);
+          registerPseudonymization(fetchSessionMappings);
         }
-        // Standard score boost as fallback (for cases where forward map replacement fails)
         if (sessionRefCount > 0 && score < 40) {
           const boost = Math.min(40, sessionRefCount * 15);
-          const boostedScore = Math.min(100, score + boost);
-          igLog(`DEF-016: Follow-up score boost ${score} → ${boostedScore}`);
-          score = boostedScore;
+          score = Math.min(100, score + boost);
           level = scoreToLevel(score);
+          igLog(`DEF-016 fetch: boosted score to ${score} (level=${level}) to force pseudonymization`);
         }
 
         igLog(`Full score: ${score} (${level}) — entities: ${allEntities.length}, breakdown: entity=${fullScore.breakdown.entityScore}, context=${fullScore.breakdown.contextScore}, docType=${fullScore.breakdown.documentTypeMultiplier}`);
@@ -4778,15 +5350,12 @@ const patchedFetch = async function patchedFetch(
               return _buildFailClosedResponse(url, `Tool rejected modified body (${modifiedResponse.status})`);
             }
 
-            // De-pseudonymize the user's own message bubble in the DOM.
-            // Runs on EVERY platform including ChatGPT. Historically we skipped
-            // ChatGPT because React state was assumed to hold the original
-            // text, but synthetic-input code paths can land the pseudonym in
-            // the rendered bubble. The call is a no-op on platforms where the
-            // bubble already shows the original (nothing to replace).
-            if (Object.keys(requestReverseMap).length > 0) {
-              depseudonymizeUserBubble(requestReverseMap);
-            }
+            // Single unified call: enforce-invariant on the latest user
+            // bubble (promptText → bubble shows what user typed) AND
+            // reverse-map regex restore across the document for older
+            // bubbles (scrollback hydrated after page reload, etc.).
+            // One retry tail covers both strategies — see restoreUserBubble.
+            restoreUserBubble({ promptText, reverseMap: requestReverseMap });
 
             // De-pseudonymize the response stream (use snapshot, not mutable global).
             // All platforms now use stream-level de-pseudo — offset annotations
@@ -4865,9 +5434,7 @@ const patchedFetch = async function patchedFetch(
       try {
         const promptText = activeAdapter?.extractPrompt(_auditBody) ?? extractPrompt(_auditBody);
         if (promptText && promptText.length >= 10) {
-          const regexEntities = detectWithRegex(promptText);
-          const secrets = scanForSecrets(promptText);
-          const allEntities = [...regexEntities, ...secrets];
+          const allEntities = buildSubmitEntities(promptText);
 
           if (allEntities.length > 0) {
             const { level, score } = quickScore(allEntities);
@@ -5156,15 +5723,9 @@ XMLHttpRequest.prototype.send = function(body?: any) {
 
 
 
-  // ── GATE: Block file upload XHR if scan found high-risk content ──
-  if (mode === 'proxy' && xhrMethod === 'POST' && isFileUploadEndpoint(url)) {
-    for (const [, scan] of pendingFileScans) {
-      if (scan.status === 'complete' && scan.result && scan.result.score >= 61) {
-        igLog(`BLOCKED XHR file upload to ${url.substring(0, 60)} — score ${scan.result.score}`);
-        return; // Don't send the XHR at all
-      }
-    }
-  }
+  // ── (Removed) XHR upload-endpoint gate ─────────────────────────────
+  // Same as the fetch upload gate above: per product UX, uploads always
+  // pass through. Enforcement is at the conversation-submit overlay only.
 
   // ─── File Upload Detection in XHR (deferred to avoid blocking) ─────────
   if (body instanceof FormData) {
@@ -5268,17 +5829,21 @@ XMLHttpRequest.prototype.send = function(body?: any) {
       try {
         const promptText = activeAdapter?.extractPrompt(bodyStr) ?? extractPrompt(bodyStr);
         if (promptText && promptText.length >= 10) {
-          const regexEntities = detectWithRegex(promptText);
-          const secrets = scanForSecrets(promptText);
-          const allEntities = [...regexEntities, ...secrets];
+          const allEntities = buildSubmitEntities(promptText);
 
           // Always run scoring (contextual keywords matter even with 0 entities)
           const fullScore = computeScore(promptText, allEntities as DetectedEntity[]);
           let score = fullScore.score;
           let level = fullScore.level;
 
-          // DEF-016: Session entity boost for XHR path (same as fetch proxy)
+          // DEF-016: pre-register prior-turn pseudonyms + boost score
+          // (same machinery as the fetch path — extracted helper).
           const xhrSessionRefCount = _countSessionEntityReferences(promptText);
+          const { sessionMappings: xhrSessionMappings } = applySessionEntityForcePseudo(promptText);
+          if (xhrSessionMappings.length > 0) {
+            igLog(`DEF-016 xhr: registering ${xhrSessionMappings.length} session pseudonyms (${xhrSessionRefCount} refs)`);
+            registerPseudonymization(xhrSessionMappings);
+          }
           if (xhrSessionRefCount > 0 && score < 40) {
             const boost = Math.min(40, xhrSessionRefCount * 15);
             score = Math.min(100, score + boost);
@@ -5381,9 +5946,7 @@ XMLHttpRequest.prototype.send = function(body?: any) {
       try {
         const promptText = activeAdapter?.extractPrompt(bodyStr) ?? extractPrompt(bodyStr);
         if (promptText && promptText.length >= 10) {
-          const regexEntities = detectWithRegex(promptText);
-          const secrets = scanForSecrets(promptText);
-          const allEntities = [...regexEntities, ...secrets];
+          const allEntities = buildSubmitEntities(promptText);
           if (allEntities.length > 0) {
             const { level, score } = quickScore(allEntities);
             const pseudoResult = pseudonymizeLocal(promptText, allEntities);
@@ -5752,9 +6315,7 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
 
           // Filter: must be real user content, not protocol frames or metadata
           if (promptText && promptText.length >= 20 && isNaturalLanguage(promptText)) {
-            const regexEntities = detectWithRegex(promptText);
-            const secrets = scanForSecrets(promptText);
-            const allEntities = [...regexEntities, ...secrets];
+            const allEntities = buildSubmitEntities(promptText);
             igLog(`WS PROXY: detected ${allEntities.length} entities in ${promptText.length}-char prompt`);
 
             if (allEntities.length > 0) {
@@ -5925,9 +6486,7 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
           }
           // Filter: must be real user content, not protocol frames or metadata
           if (promptText && promptText.length >= 20 && isNaturalLanguage(promptText)) {
-            const regexEntities = detectWithRegex(promptText);
-            const secrets = scanForSecrets(promptText);
-            const allEntities = [...regexEntities, ...secrets];
+            const allEntities = buildSubmitEntities(promptText);
             if (allEntities.length > 0) {
               const { level, score } = quickScore(allEntities);
               const pseudoResult = pseudonymizeLocal(promptText, allEntities);
@@ -5996,8 +6555,10 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
               const pseudoKeys = Object.keys(currentReverseMap);
               const hasPseudo = pseudoKeys.some(p => textData!.includes(p));
               if (hasPseudo) {
-                console.log(`%c[Iron Gate WS DIAG] Binary frame #${_wsRcvCount} contains pseudonyms! (${textData!.length} chars) — pseudos found: ${pseudoKeys.filter(p => textData!.includes(p)).join(', ')}`,
-                  'color: #ef4444; font-weight: bold; font-size: 13px');
+                if (_IG_DEBUG) {
+                  console.log(`%c[Iron Gate WS DIAG] Binary frame #${_wsRcvCount} contains pseudonyms! (${textData!.length} chars) — pseudos found: ${pseudoKeys.filter(p => textData!.includes(p)).join(', ')}`,
+                    'color: #ef4444; font-weight: bold; font-size: 13px');
+                }
                 // Schedule aggressive DOM scans to catch React's re-render from this frame.
                 // React will update the DOM with "James Mitchell" after this event is processed,
                 // so we schedule scans to run 0ms, 50ms, 150ms, and 400ms later.
@@ -6084,8 +6645,10 @@ const patchedWebSocket = function(this: WebSocket, url: string | URL, protocols?
                 const pKeys = Object.keys(currentReverseMap);
                 const hasP = pKeys.some(p => textData!.includes(p));
                 if (hasP) {
-                  console.log(`%c[Iron Gate WS DIAG onmsg] Binary frame contains pseudonyms! (${textData!.length} chars) — ${pKeys.filter(p => textData!.includes(p)).join(', ')}`,
-                    'color: #ef4444; font-weight: bold; font-size: 13px');
+                  if (_IG_DEBUG) {
+                    console.log(`%c[Iron Gate WS DIAG onmsg] Binary frame contains pseudonyms! (${textData!.length} chars) — ${pKeys.filter(p => textData!.includes(p)).join(', ')}`,
+                      'color: #ef4444; font-weight: bold; font-size: 13px');
+                  }
                   // Aggressive DOM scan cascade after React renders from this binary frame
                   [0, 50, 150, 400].forEach(delay => {
                     setTimeout(() => {
@@ -6187,54 +6750,36 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
       return null;
     }
 
-    const regexEntities = detectWithRegex(text);
-    const secrets = scanForSecrets(text);
-    const allEntities = [...regexEntities, ...secrets];
+    const allEntities = buildSubmitEntities(text);
 
     // Always run scoring — contextual keywords matter even with 0 entities
     const fullScore = computeScore(text, allEntities as DetectedEntity[]);
-    const score = fullScore.score;
-    const level = scoreToLevel(score);
+    let score = fullScore.score;
+    let level = scoreToLevel(score);
 
-    // DEF-016 ROOT CAUSE FIX (DOM path): Check session entity registry BEFORE
-    // the score gate. If the text references entities from prior turns, force-
-    // pseudonymize using the forward map — even if the current score is low.
+    // DEF-016: pre-register prior-turn session pseudonyms + boost score
+    // so the GREEN passthrough below doesn't drop a follow-up that
+    // references previously-pseudonymized PII. After this, fall through
+    // to the regular pseudonymization path so ALL detected entities
+    // (session + new) get pseudonymized together in pseudonymizeLocal,
+    // producing a single complete INTERCEPTED with all mappings.
+    //
+    // FIXED (May 2026): the prior implementation here used loose
+    // filters (min length 3, no prose guard) AND returned early with
+    // only the session mappings, leaving newly-detected entities in
+    // PLAINTEXT. Same PII leak we fixed in the fetch path. Now shares
+    // the strict `applySessionEntityForcePseudo` helper with fetch/XHR.
     const domSessionRefCount = _countSessionEntityReferences(text);
-    if (domSessionRefCount > 0 && Object.keys(currentForwardMap).length > 0) {
-      let pseudonymizedText = text;
-      const sessionMappings: PseudonymMapping[] = [];
-      const fwdEntries = Object.entries(currentForwardMap)
-        .sort((a, b) => b[0].length - a[0].length);
-      for (const [original, pseudonym] of fwdEntries) {
-        if (original.length < 3) continue;
-        if (!pseudonymizedText.toLowerCase().includes(original.toLowerCase())) continue;
-        try {
-          const escaped = original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const prefix = /^[a-zA-Z]/.test(original) ? '(?<![a-zA-Z])' : '';
-          const suffix = /[a-zA-Z]$/.test(original) ? '(?![a-zA-Z])' : '';
-          const regex = new RegExp(prefix + escaped + suffix, 'gi');
-          const before = pseudonymizedText;
-          pseudonymizedText = pseudonymizedText.replace(regex, () => pseudonym);
-          if (pseudonymizedText !== before) {
-            sessionMappings.push({ original, pseudonym, type: 'SESSION_ENTITY' });
-          }
-        } catch { /* regex failed */ }
-      }
-      if (sessionMappings.length > 0) {
-        igLog(`${source} DOM DEF-016: Force-pseudonymizing ${sessionMappings.length} session entities`);
-        registerPseudonymization(sessionMappings);
-        const suppressSessionNotif = activeAdapter?.id === 'gemini';
-        return {
-          maskedText: pseudonymizedText, mappings: sessionMappings,
-          _notificationData: suppressSessionNotif ? null : {
-            type: 'IRON_GATE_INTERCEPTED' as const,
-            promptText: text, allEntities,
-            maskedText: pseudonymizedText,
-            mappings: sanitizeMappingsForTransit(sessionMappings),
-            level: 'high', score: Math.max(score, 50),
-          },
-        };
-      }
+    const { sessionMappings: domSessionMappings } = applySessionEntityForcePseudo(text);
+    if (domSessionMappings.length > 0) {
+      igLog(`${source} DOM DEF-016: registering ${domSessionMappings.length} session pseudonyms (${domSessionRefCount} refs)`);
+      registerPseudonymization(domSessionMappings);
+    }
+    if (domSessionRefCount > 0 && score < 40) {
+      const boost = Math.min(40, domSessionRefCount * 15);
+      score = Math.min(100, score + boost);
+      level = scoreToLevel(score);
+      igLog(`${source} DOM DEF-016: boosted score to ${score} (level=${level}) to force pseudonymization`);
     }
 
     if (allEntities.length === 0) {
@@ -6411,7 +6956,7 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
       // De-pseudonymize user message bubble — dom-presubmit physically changed
       // the textarea, so the submitted text has pseudonyms visible in the UI.
       if (Object.keys(currentReverseMap).length > 0) {
-        depseudonymizeUserBubble({ ...currentReverseMap });
+        restoreUserBubble({ reverseMap: { ...currentReverseMap } });
       }
       setTimeout(() => { domInterceptBusy = false; _lastPseudoOutput = null; }, 300);
     }, 100);
@@ -6455,7 +7000,7 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
         }));
       }
       if (Object.keys(currentReverseMap).length > 0) {
-        depseudonymizeUserBubble({ ...currentReverseMap });
+        restoreUserBubble({ reverseMap: { ...currentReverseMap } });
       }
       setTimeout(() => { domInterceptBusy = false; }, 300);
     }, 100);
@@ -6469,21 +7014,54 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
     const btn = target.closest('button');
     if (!btn) return;
 
-    // Check if this looks like a send/submit button
-    const label = (btn.getAttribute('aria-label') || '').toLowerCase();
-    const testId = (btn.getAttribute('data-testid') || '').toLowerCase();
-    const textContent = (btn.textContent || '').toLowerCase();
-    const isSendButton = label.includes('send') || label.includes('submit') ||
-      testId.includes('send') || testId.includes('submit') ||
-      textContent.includes('send') || textContent.includes('submit') ||
-      btn.type === 'submit';
+    // Check if this looks like a send/submit button. We match in this order:
+    //   1. Adapter-specific submitSelectors (authoritative — platform-tuned)
+    //   2. Adapter.findSubmitButton() identity match (catches sibling-container buttons)
+    //   3. Generic aria/testid/text/type=submit heuristics
+    //   4. Fallback: button is near the input AND has an icon child (svg OR mat-icon)
+    //
+    // Why this matters: Gemini's send button uses Material-design icons
+    // (mat-icon, font-based) and lives outside the input's form/grandparent
+    // hierarchy. The old "svg-in-button + grandparent contains btn" fallback
+    // missed it entirely, so DOM-pre-submit never fired and PII flowed
+    // unpseudonymized.
+    let isSendButton = false;
 
+    // (1) Adapter submitSelectors
+    if (activeAdapter?.submitSelectors) {
+      for (const sel of activeAdapter.submitSelectors) {
+        try { if (btn.matches(sel)) { isSendButton = true; break; } } catch { /* invalid selector */ }
+      }
+    }
+
+    // (2) Same element as findSubmitButton()
+    if (!isSendButton) {
+      const adapterBtn = activeAdapter?.findSubmitButton();
+      if (adapterBtn === btn || adapterBtn?.contains(btn) || btn.contains(adapterBtn as Node)) {
+        isSendButton = true;
+      }
+    }
+
+    // (3) Generic heuristics
+    if (!isSendButton) {
+      const label = (btn.getAttribute('aria-label') || '').toLowerCase();
+      const testId = (btn.getAttribute('data-testid') || '').toLowerCase();
+      const textContent = (btn.textContent || '').toLowerCase();
+      if (label.includes('send') || label.includes('submit') ||
+          testId.includes('send') || testId.includes('submit') ||
+          textContent.includes('send') || textContent.includes('submit') ||
+          btn.type === 'submit') {
+        isSendButton = true;
+      }
+    }
+
+    // (4) Icon-child near input
     if (!isSendButton) {
       const inputEl = activeAdapter?.findInput();
       if (!inputEl) return;
       const parent = inputEl.closest('form') || inputEl.parentElement?.parentElement?.parentElement;
-      if (!parent || !parent.contains(btn)) return;
-      if (!btn.querySelector('svg')) return;
+      const hasIconChild = btn.querySelector('svg, mat-icon, [class*="icon"]');
+      if (!parent || !parent.contains(btn) || !hasIconChild) return;
     }
 
     const inputEl = activeAdapter?.findInput();
@@ -6527,7 +7105,7 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
           domInterceptBusy = true;
           btn.click();
           if (Object.keys(currentReverseMap).length > 0) {
-            depseudonymizeUserBubble({ ...currentReverseMap });
+            restoreUserBubble({ reverseMap: { ...currentReverseMap } });
           }
           setTimeout(() => { domInterceptBusy = false; }, 300);
         }, 100);
@@ -6578,7 +7156,7 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
       domInterceptBusy = true;
       btn.click();
       if (Object.keys(currentReverseMap).length > 0) {
-        depseudonymizeUserBubble({ ...currentReverseMap });
+        restoreUserBubble({ reverseMap: { ...currentReverseMap } });
       }
       setTimeout(() => { domInterceptBusy = false; }, 300);
     }, 100);
@@ -6610,6 +7188,26 @@ igPostMessage({
   timestamp: Date.now(),
   mode,
 });
+
+// Periodic heartbeat re-emission — covers the case where the content
+// script's message listener attached AFTER our first heartbeat fired,
+// or where init took longer than the content script's fallback timeout
+// so the content script believed main-world was dead. Each heartbeat
+// carries the same _nonce via igPostMessage so isValidMainWorldMessage
+// captures it on whichever beat the content script first observes.
+{
+  let _hbTicks = 0;
+  const _hbTimer = setInterval(() => {
+    _hbTicks++;
+    igPostMessage({
+      type: 'IRON_GATE_HEARTBEAT',
+      version: '0.2.7',
+      timestamp: Date.now(),
+      mode: (window as any).__IRON_GATE_MODE || mode,
+    });
+    if (_hbTicks >= 10) clearInterval(_hbTimer);
+  }, 1000);
+}
 
 // Health status message — content script relays this to service worker / sidepanel
 igPostMessage({

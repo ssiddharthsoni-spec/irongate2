@@ -58,6 +58,13 @@ function randBetween(min: number, max: number): number {
  * Format-preserving: the fake matches the structural pattern of the original.
  */
 export function generateFake(type: string, original: string): string {
+  // Type guard: protect against non-string entity text (Gemini nested JSON
+  // extraction can produce objects/numbers instead of strings).
+  if (typeof original !== 'string') {
+    const fallback = String(original ?? '');
+    if (fallback.length === 0) return '[REDACTED]';
+    original = fallback;
+  }
   switch (type) {
     case 'PERSON': {
       const pool = isFemaleFirst(original) ? FAKE_NAMES_F : FAKE_NAMES_M;

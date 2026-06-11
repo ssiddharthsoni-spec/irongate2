@@ -68,6 +68,53 @@
       "env": {
         "NODE_ENV": "test"
       }
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Iron Gate: Debug Comprehensive E2E",
+      "autoAttachChildProcesses": true,
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "program": "${workspaceRoot}/node_modules/@playwright/test/cli.js",
+      "args": [
+        "test",
+        "tests/e2e/comprehensive-detection.spec.ts",
+        "--headed",
+        "--reporter=list"
+      ],
+      "cwd": "${workspaceRoot}/apps/extension",
+      "smartStep": true,
+      "console": "integratedTerminal"
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Iron Gate: Debug Wire Verification E2E",
+      "autoAttachChildProcesses": true,
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "program": "${workspaceRoot}/node_modules/@playwright/test/cli.js",
+      "args": [
+        "test",
+        "tests/e2e/wire-verification.spec.ts",
+        "--headed",
+        "--reporter=list"
+      ],
+      "cwd": "${workspaceRoot}/apps/extension",
+      "smartStep": true,
+      "console": "integratedTerminal"
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Iron Gate: Debug Drive Loop",
+      "autoAttachChildProcesses": true,
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "runtimeArgs": ["--import", "tsx"],
+      "program": "${workspaceRoot}/apps/extension/tests/e2e/drive.ts",
+      "args": ["full"],
+      "cwd": "${workspaceRoot}/apps/extension",
+      "smartStep": true,
+      "console": "integratedTerminal"
     }
   ]
 }

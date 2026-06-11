@@ -388,6 +388,7 @@ function isValidMainWorldMessage(data: any): boolean {
 
 function handleHeartbeatMessages(event: MessageEvent) {
   if (event.source !== window) return;
+  if (event.data?._csNonce) return; // skip our own outbound messages
   if (event.data?.type === 'IRON_GATE_HEARTBEAT') {
     if (!isValidMainWorldMessage(event.data)) return;
     mainWorldAlive = true;
@@ -464,18 +465,34 @@ function tryScriptTagInjection(): void {
 // capture, and they fought over incoming messages. One would capture the
 // content script's nonce, the other would reject it.
 setTimeout(() => {
-  // Check the window property first — it's synchronous and reliable
-  const mainWorldProperty = (window as any).__IRON_GATE_MAIN_WORLD === 'active';
-  if (!mainWorldAlive && !mainWorldProperty) {
-    igLog('No heartbeat after 1500ms and no window property — trying <script> tag fallback...');
+  // Check ALL three presence signals before deciding main-world is dead:
+  //   1. mainWorldAlive — heartbeat captured (best evidence)
+  //   2. window property — synchronous flag set early during main-world init
+  //      (value is 'loading' before fetch is patched, 'active' after).
+  //      'loading' still means main-world IS running — slow init is not death.
+  //   3. data-ig-guard attribute — set on <html> at init start, removed by
+  //      main-world's catch handler if init crashes. Survives across the
+  //      'loading' → 'active' transition and is the most reliable presence
+  //      signal independent of timing.
+  // Firing the fallback while instance A is still loading creates two race
+  // conditions: (a) instance B sees guard='loading' and skips init, leaving
+  // no main-world alive; (b) instance B sees guard='active' and emits a
+  // no-nonce duplicate heartbeat that gets rejected as "invalid nonce".
+  // Both leak interception. Use guard attribute as the primary signal.
+  const mwProp = (window as any).__IRON_GATE_MAIN_WORLD;
+  const mainWorldProperty = mwProp === 'active' || mwProp === 'loading';
+  const guardAttr = document.documentElement.getAttribute('data-ig-guard');
+  const mainWorldPresent = mainWorldAlive || mainWorldProperty || !!guardAttr;
+  if (!mainWorldPresent) {
+    igLog('No heartbeat, no window property, no guard attribute after 1500ms — trying <script> tag fallback...');
     tryScriptTagInjection();
+  } else if (!mainWorldAlive) {
+    // Main-world is present but still initializing OR its first heartbeat
+    // was missed. Periodic heartbeats (every 1s for 10s, see main-world.ts
+    // heartbeat block) will deliver one shortly. No fallback needed.
+    igLog(`MAIN world detected via ${mwProp ? 'window property=' + mwProp : 'guard attribute'} (heartbeat pending)`);
   } else {
-    if (!mainWorldAlive && mainWorldProperty) {
-      mainWorldAlive = true;
-      igLog('MAIN world detected via window property (heartbeat was delayed)');
-    } else {
-      igLog('MAIN world alive via manifest injection — no fallback needed');
-    }
+    igLog('MAIN world alive via manifest injection — no fallback needed');
   }
 }, 1500); // Increased from 500ms to give manifest injection more time
 
@@ -553,8 +570,22 @@ function handleMainWorldMessages(event: MessageEvent) {
   if (event.source !== window) return;
   if (event.origin !== window.location.origin) return;
 
+  // window.postMessage dispatches to ALL listeners on `window` — including
+  // our own outbound csPostMessage() calls (SET_MODE etc.) and the heartbeats
+  // already consumed by handleHeartbeatMessages. Re-validating them here
+  // produces noisy "REJECTED message — invalid nonce" warnings (outbound
+  // messages have _csNonce not _nonce; heartbeats fail the duplicate _mid
+  // replay check because handleHeartbeatMessages consumed the _mid first).
+  // Skip both classes early so the inbound validation only runs against
+  // genuine main-world → content-script messages.
+  if (event.data?._csNonce) return; // our own outbound message
+  const inboundType = event.data?.type;
+  if (inboundType === 'IRON_GATE_HEARTBEAT' || inboundType === 'IRON_GATE_HEALTH') {
+    return; // already handled by handleHeartbeatMessages
+  }
+
   // LOUD logging for INTERCEPTED messages — this is where proxy data gets lost
-  if (event.data?.type === 'IRON_GATE_INTERCEPTED') {
+  if (inboundType === 'IRON_GATE_INTERCEPTED') {
     console.log('%c[Iron Gate CS] RECEIVED IRON_GATE_INTERCEPTED', 'color: #00ff00; font-weight: bold; font-size: 14px',
       'maskedPrompt:', event.data.maskedPrompt ? event.data.maskedPrompt.length + 'ch' : 'EMPTY',
       'mappings:', event.data.mappings?.length || 0,
@@ -562,8 +593,8 @@ function handleMainWorldMessages(event: MessageEvent) {
   }
 
   // Validate cryptographic nonce from MAIN world script
-  if (event.data?.type?.startsWith('IRON_GATE_') && !isValidMainWorldMessage(event.data)) {
-    console.warn('[Iron Gate CS] REJECTED message — invalid nonce:', event.data?.type);
+  if (inboundType?.startsWith('IRON_GATE_') && !isValidMainWorldMessage(event.data)) {
+    console.warn('[Iron Gate CS] REJECTED message — invalid nonce:', inboundType);
     return;
   }
 
@@ -797,7 +828,17 @@ function handleMainWorldMessages(event: MessageEvent) {
     return;
   }
 
-  // De-pseudonymization failure — show warning toast
+  // De-pseudonymization / fail-closed signal from main-world.
+  // Two responsibilities:
+  //   1. Show a warning toast on the page.
+  //   2. RETRACT any IRON_GATE_INTERCEPTED notification that was emitted for
+  //      this turn — main-world fires INTERCEPTED before the actual fetch
+  //      so the badge updates instantly, but if the fetch then fails or the
+  //      LLM rejects the modified body, the request is blocked. Without a
+  //      retraction, the sidepanel inspector would claim "N entities sent
+  //      to the LLM" when in fact nothing reached the LLM. The retraction
+  //      tells the worker → sidepanel to null lastScore (which cascades
+  //      through the inspector useEffect to clear the Changes panel).
   if (event.data?.type === 'IRON_GATE_DEPSEUDO_FAILURE') {
     if (toasts) {
       toasts.show({
@@ -806,6 +847,15 @@ function handleMainWorldMessages(event: MessageEvent) {
         type: 'warning',
       });
     }
+    try {
+      const rt = chrome.runtime;
+      if (rt?.id) {
+        rt.sendMessage({
+          type: 'PROMPT_TURN_INVALIDATED',
+          payload: { reason: event.data.detail || 'request blocked' },
+        }).catch(() => {});
+      }
+    } catch { /* extension context invalidated — toast still shown */ }
     return;
   }
 
@@ -849,6 +899,13 @@ function handleMainWorldMessages(event: MessageEvent) {
 
     igLog(`CS MAIN world ${isProxy ? 'INTERCEPTED' : 'AUDIT'} — ${entityCount} entities (${level}, score=${score}), entities array length: ${entities.length}, mappings: ${mappings.length}`);
 
+    // Lifecycle phase tag — see shared/iron-gate-messages.ts for the
+    // authoritative semantics. The wire interceptor's INTERCEPTED message
+    // is the definitive result for the turn (`authoritative`); AUDIT is a
+    // contextual signal that must never replace an authoritative result
+    // downstream (`audit`).
+    const phase: 'authoritative' | 'audit' = isProxy ? 'authoritative' : 'audit';
+
     const relayPayload = {
       score: score ?? (level === 'critical' ? 95 : level === 'high' ? 75 : level === 'medium' ? 45 : 15),
       level,
@@ -864,8 +921,9 @@ function handleMainWorldMessages(event: MessageEvent) {
       originalPrompt,
       maskedPrompt,
       pseudonymMappings: mappings,
-      isProxy, // true = pseudonymized (INTERCEPTED), false = audit only
-      wireIntercept: event.data.wireIntercept === true, // authoritative wire-level result — sidepanel must not suppress
+      isProxy, // legacy flag — true = pseudonymized (INTERCEPTED), false = audit only
+      wireIntercept: event.data.wireIntercept === true, // legacy flag
+      phase, // ← canonical lifecycle tag for downstream precedence rule
     };
 
     // M-9 fix: Atomic check-and-relay — capture runtime ref and send in the same
@@ -1008,9 +1066,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ ok: true });
         break;
       case 'IRON_GATE_GEMMA_VERDICT':
-        // Worker → content script → main-world: Gemma's context verdict.
-        // Main-world caches this so at submit time it can use the LLM's
-        // judgment (research/fiction/work_sharing) in the scoring decision.
+        // Worker → content script → main-world: Gemma's context verdict and
+        // any contextually-judged entities. Main-world caches the verdict for
+        // intent-context scoring AND merges the entity texts into the
+        // submit-time entity set so values regex missed (e.g., credentials
+        // whose format the regex doesn't match) still get pseudonymized.
         csPostMessage({
           type: 'IRON_GATE_GEMMA_VERDICT',
           intent: message.intent,
@@ -1018,8 +1078,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           score: message.score,
           verdict: message.verdict,
           source: message.source,
+          entities: Array.isArray(message.entities) ? message.entities.slice(0, 50) : [],
         });
-        igLog('Gemma verdict forwarded to main-world:', message.verdict, message.sensitivity);
+        igLog('Gemma verdict forwarded to main-world:', message.verdict, message.sensitivity, `entities=${Array.isArray(message.entities) ? message.entities.length : 0}`);
         break;
       case 'IRON_GATE_APPLY_POLICY_BUNDLE':
         // B3: Forward signed bundle rules from worker to main-world.

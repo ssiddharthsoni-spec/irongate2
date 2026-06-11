@@ -9,6 +9,7 @@ import { TrustPage } from './TrustPage';
 import { GhostDetection } from './GhostDetection';
 import { useDetectionStore, selectRecentActivity, hydrateStore } from './store';
 import type { ActivityItem as StoreActivityItem } from './store';
+import { inferPhase, phaseAllowsReplace } from '../shared/event-phase';
 
 // ── Pipeline Debug Log ────────────────────────────────────────────────────
 // Visible in the sidepanel UI. Every step of the pipeline logs here.
@@ -126,6 +127,17 @@ interface PromptInspectorData {
   isPassthrough?: boolean;
   /** Human-readable reason for passthrough (e.g., "Resume context — your data allowed through") */
   passthroughReason?: string;
+  /**
+   * Transport-blocked flag — pseudonymization DID happen on this turn (the
+   * mappings list is real), but the modified request was blocked before
+   * reaching the LLM (fetch error, LLM rejected modified body, body format
+   * unrecognized). The Inspector keeps the swap list visible AND shows a
+   * "request blocked, NOT sent to AI" banner so the panel never falsely
+   * implies data reached the model.
+   */
+  isBlocked?: boolean;
+  /** Human-readable reason for the transport block. */
+  blockedReason?: string;
 }
 
 // Timeout-wrapped chrome.storage.local.get to prevent infinite loading
@@ -267,17 +279,101 @@ export function App() {
 function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
   const [trustPageOpen, setTrustPageOpen] = useState(false);
   const [status, setStatus] = useState<'idle' | 'monitoring' | 'error'>('idle');
+  // API-key decryption failure surface. The api-key-store writes
+  // `ironGateApiKey_decrypt_error` whenever stored keys can't be unwrapped
+  // (corrupted ciphertext, key-derivation mismatch, etc.). Without surfacing
+  // this, the extension silently boots with no auth — Tier-3 classification
+  // is disabled and the user has no idea. We read at mount and subscribe to
+  // changes so the banner appears the moment the worker hits the failure.
+  const [apiKeyError, setApiKeyError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    chrome.storage.local.get('ironGateApiKey_decrypt_error').then((res) => {
+      if (cancelled) return;
+      const v = res.ironGateApiKey_decrypt_error;
+      setApiKeyError(typeof v === 'string' && v.length > 0 ? v : null);
+    }).catch(() => {});
+    const listener = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area !== 'local' || !changes.ironGateApiKey_decrypt_error) return;
+      const v = changes.ironGateApiKey_decrypt_error.newValue;
+      setApiKeyError(typeof v === 'string' && v.length > 0 ? v : null);
+    };
+    chrome.storage.onChanged.addListener(listener);
+    return () => { cancelled = true; chrome.storage.onChanged.removeListener(listener); };
+  }, []);
   const [currentTool, setCurrentTool] = useState<string | null>(null);
   const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([]);
   const [lastScore, setLastScoreRaw] = useState<SensitivityScore | null>(null);
   const lastScoreRef = useRef<any>(null);
+  // Timestamp of the last "significant" lastScore (proxy/wireIntercept with
+  // entities OR any score with entities). Read by the setLastScore wrapper
+  // below to enforce the "no 0-entity overwrite within protect window"
+  // invariant, AND mirrored from the useEffect's local _lastAcceptedScoreAt
+  // for back-compat with the existing PROMPT_CLEARED/CLEAN_SUBMIT guards.
+  const lastAcceptAtRef = useRef(0);
+  const PROXY_PROTECT_MS = 5_000;
 
-  // Wrapper: EVERY path that sets lastScore also logs to Recent Activity.
-  // This eliminates the class of bugs where some paths (GET_TAB_STATE,
-  // storage restore, runtime message) set the detection display but miss
-  // the activity log, causing "1 item found" + "No activity yet".
+  // Wrapper: EVERY path that sets lastScore goes through here.
+  //  • Single-source-of-truth for the "don't erase a confirmed protection
+  //    result with a 0-entity update inside the protect window" invariant.
+  //    PROMPT_CLEAN_SUBMIT, GET_TAB_STATE restore, processDetectionResult,
+  //    and any future caller all get the same protection.
+  //  • Every setter also logs to Recent Activity (eliminates the older
+  //    "1 item found" + "No activity yet" class of bugs).
   const setLastScore = useCallback((newScore: any) => {
+    // Single invariant, centralized in shared/event-phase.ts:
+    //   audit / enrichment can never replace authoritative.
+    //   preview can be replaced by anything that comes later.
+    //   authoritative replaces itself only with another authoritative
+    //     (refinement / re-broadcast) or `null` (turn-end reset).
+    //
+    // The reset paths (PROMPT_CLEARED debounced timer, conversation switch,
+    // tool change, tab change) all call setLastScore(null). null is always
+    // allowed through; the next turn starts from an empty current.
+    if (newScore) {
+      const incomingPhase = inferPhase(newScore);
+      const incomingHasEntities = (newScore.entities?.length ?? 0) > 0;
+      // Content-derived turn key: maskedPrompt is unique per turn (it's
+      // the literal text Iron Gate produced for THIS submit). Two events
+      // with different maskedPrompt values are different turns and the
+      // newer one is allowed to replace the older one.
+      const incomingTurnKey = (newScore as any).maskedPrompt
+        || (newScore as any).promptHash
+        || '';
+
+      const current = lastScoreRef.current as any;
+      const currentSnapshot = current
+        ? {
+            phase: inferPhase(current),
+            hasEntities: (current.entities?.length ?? 0) > 0,
+            turnKey: current.maskedPrompt || current.promptHash || '',
+          }
+        : null;
+
+      if (!phaseAllowsReplace(currentSnapshot, {
+        phase: incomingPhase,
+        hasEntities: incomingHasEntities,
+        turnKey: incomingTurnKey,
+      })) {
+        console.log(
+          '[Iron Gate ACTIVITY] setLastScore SUPPRESSED — incoming phase='
+            + incomingPhase + '(entities=' + (newScore.entities?.length ?? 0) + ')'
+            + ' would not replace current phase=' + (currentSnapshot?.phase ?? 'null')
+            + '(entities=' + (current?.entities?.length ?? 0) + ')',
+        );
+        return;
+      }
+    }
     setLastScoreRaw(newScore);
+    // Mirror into ref synchronously so a follow-up call in the same task
+    // sees the just-set value rather than waiting for the useEffect commit.
+    lastScoreRef.current = newScore;
+    // Update the protect-window timestamp when accepting a "significant"
+    // value (proxy/wireIntercept with entities, or any score with entities).
+    // Don't update on null or 0-entity sets — those don't deserve protection.
+    if (newScore && ((newScore.entities?.length ?? 0) > 0 || newScore.isProxy === true || newScore.wireIntercept === true)) {
+      lastAcceptAtRef.current = Date.now();
+    }
     console.log('[Iron Gate ACTIVITY] setLastScore called:', newScore?.score, 'entities:', newScore?.entities?.length, 'will add:', !!(newScore && (newScore.entities?.length > 0 || (newScore.score != null && newScore.score > 25))));
     if (newScore && (newScore.entities?.length > 0 || (newScore.score != null && newScore.score > 25))) {
       const entityCount = newScore.entities?.length || newScore.pseudonymMappings?.length || 0;
@@ -310,10 +406,74 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
   const [feedbackSent, setFeedbackSent] = useState<Set<number>>(new Set());
   const [promptFeedback, setPromptFeedback] = useState<'yes' | 'no' | 'not_sensitive' | null>(null);
 
-  // Prompt Inspector state
+  // Prompt Inspector state.
+  //
+  // ARCHITECTURE: inspectorData and inspectorOpen are DERIVED from lastScore
+  // via the useEffect below. They are never set imperatively from
+  // processDetectionResult, GET_TAB_STATE restore, or any other call site —
+  // the canonical state is always lastScore, and the inspector is just a
+  // view of it. This eliminates the "keep more mappings within 3s window"
+  // race condition that produced stale inspector content (4 swaps from a
+  // previous turn lingering after a new turn had landed with 1 swap).
   const [inspectorData, setInspectorData] = useState<PromptInspectorData | null>(null);
   const [inspectorView, setInspectorView] = useState<'diff' | 'original' | 'masked' | 'mappings'>('diff');
   const [inspectorOpen, setInspectorOpen] = useState(true);
+
+  useEffect(() => {
+    const score = lastScore as any;
+    if (!score) {
+      setInspectorData(null);
+      // Don't force-close; user-toggled state is preserved across null transitions.
+      return;
+    }
+    const isProxy = score.isProxy === true || score.wireIntercept === true;
+    const maskedPrompt: string = score.maskedPrompt || '';
+    const entities = Array.isArray(score.entities) ? score.entities : [];
+    // Transport-blocked turn — pseudonymization happened, but the modified
+    // request was blocked before reaching the LLM. We still want to show
+    // what was pseudonymized (the swap list is real), with a banner saying
+    // it didn't reach the AI.
+    const transportBlocked = score.transportStatus === 'blocked';
+    const blockedReason: string | undefined = score.transportReason || undefined;
+
+    if (isProxy && maskedPrompt) {
+      // Pseudonymized turn — populate inspector from THIS authoritative result.
+      setInspectorData({
+        originalPrompt: score.originalPrompt || '',
+        maskedPrompt,
+        pseudonymMappings: Array.isArray(score.pseudonymMappings) ? score.pseudonymMappings : [],
+        isBlocked: transportBlocked,
+        blockedReason,
+      });
+      setInspectorOpen(true);
+      return;
+    }
+
+    if (entities.length > 0 && score.realtime !== true) {
+      // Passthrough turn — entities detected but not pseudonymized.
+      const entityTypes = [...new Set(entities.map((e: any) => e.type as string))] as string[];
+      const isValueOnly = entityTypes.every((t) =>
+        ['MONETARY_AMOUNT', 'DATE', 'PERCENTAGE', 'QUANTITY'].includes(t),
+      );
+      const reason = isValueOnly
+        ? `${entities.length} value-type ${entities.length === 1 ? 'entity' : 'entities'} detected (${entityTypes.join(', ')}). Financial values are not pseudonymized — they're needed for accurate AI analysis.`
+        : score.isSelfReferential
+          ? `${entities.length} ${entities.length === 1 ? 'entity' : 'entities'} detected but allowed through — this appears to be your own data (resume, bio, or personal document).`
+          : `${entities.length} ${entities.length === 1 ? 'entity' : 'entities'} detected. Context analysis determined low risk — original text sent to AI.`;
+      setInspectorData({
+        originalPrompt: score.originalPrompt || '',
+        maskedPrompt: '',
+        pseudonymMappings: [],
+        isPassthrough: true,
+        passthroughReason: reason,
+      });
+      setInspectorOpen(true);
+      return;
+    }
+
+    // No pseudonymization, no passthrough entities — clear inspector.
+    setInspectorData(null);
+  }, [lastScore]);
 
   // Document Inspector state
   const [docScanData, setDocScanData] = useState<DocumentScanData | null>(null);
@@ -794,12 +954,12 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
                 previousToolId = urlTool;
               }
             } else {
-              // Not on an AI tool page — clear stale monitoring state
+              // Not on an AI tool page — clear stale monitoring state.
+              // setLastScore(null) cascades to inspectorData via the useEffect.
               setStatus('idle');
               setCurrentTool(null);
               if (previousToolId) {
                 setLastScore(null);
-                setInspectorData(null);
                 chrome.storage.local.remove(['lastScore', 'lastDetectionResult']);
                 previousToolId = null;
               }
@@ -811,12 +971,12 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
             setStatus('monitoring');
             setCurrentTool(response.aiToolName || response.aiTool || 'AI Tool');
 
-            // Clear stale detection data when switching to a different AI tool
+            // Clear stale detection data when switching to a different AI tool.
+            // setLastScore(null) cascades to inspectorData via the useEffect.
             const toolChanged = previousToolId && previousToolId !== toolId;
             if (toolChanged) {
               setLastScore(null);
               lastScoreRef.current = null;
-              setInspectorData(null);
               chrome.storage.local.remove(['lastScore', 'lastDetectionResult']);
             }
             previousToolId = toolId;
@@ -846,17 +1006,8 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
                         originalPrompt: s.lastOriginalPrompt || '',
                         pseudonymMappings: s.lastPseudonymMappings || [],
                       } as any;
+                      // setLastScore cascades to inspectorData via the useEffect.
                       setLastScore(restoredScore);
-
-                      // Set inspector data if pseudonymization happened
-                      if (s.lastMaskedPrompt) {
-                        setInspectorData({
-                          originalPrompt: s.lastOriginalPrompt || '',
-                          maskedPrompt: s.lastMaskedPrompt || '',
-                          pseudonymMappings: s.lastPseudonymMappings || [],
-                        });
-                        setInspectorOpen(true);
-                      }
                     }
                   }
                 }
@@ -865,11 +1016,11 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
           } else {
             setStatus('idle');
             setCurrentTool(null);
-            // Clear stale detection when navigating away from AI tools
+            // Clear stale detection when navigating away from AI tools.
+            // setLastScore(null) cascades to inspectorData via the useEffect.
             if (previousToolId) {
               setLastScore(null);
               lastScoreRef.current = null;
-              setInspectorData(null);
               chrome.storage.local.remove(['lastScore', 'lastDetectionResult']);
               previousToolId = null;
             }
@@ -970,10 +1121,41 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
         // This eliminates the entire class of "noise overwrites detection" bugs.
         // No buffer windows, no sequence numbers, no authority gates needed.
 
-        // CRITICAL: Don't let realtime results (from keystroke DOM observer)
-        // overwrite proxy results (from the wire interceptor with maskedPrompt).
-        const currentHasProxy = (lastScoreRef.current as any)?.isProxy === true;
+        // ── Authoritative-result protection ──────────────────────────────
+        // Stage-2 (Gemma) verdict and other late enrichments can broadcast a
+        // 0-entity SENSITIVITY_SCORE after the wire interceptor has already
+        // captured + pseudonymized the real prompt. Without this guard, the
+        // sidepanel flashes "All Clear" even though 8 entities were just
+        // protected on the wire.
+        //
+        // Two failure modes the original guard didn't cover:
+        //   (a) lastScoreRef.current lags behind setLastScore by one render
+        //       cycle (ref is synced via useEffect at L308). Two calls landing
+        //       in the same task both saw the pre-proxy state, so the realtime
+        //       Gemma broadcast slipped through.
+        //   (b) Predicate required isRealtime===true. Storage-onChanged paths
+        //       and any future enrichment that omits the flag bypassed it.
+        //
+        // Replace with a stronger invariant: for a short window after a
+        // proxy/wireIntercept-with-entities result is accepted, NO incoming
+        // non-proxy 0-entity result may overwrite it. The window covers the
+        // typical Stage-2 (Gemma) latency (~2-3s) plus a margin. After it
+        // elapses, normal updates resume so a fresh clean prompt can reset
+        // the panel.
+        const currentScore = lastScoreRef.current as any;
+        const currentHasProxy = currentScore?.isProxy === true || currentScore?.wireIntercept === true;
+        const currentEntityCount = currentScore?.entities?.length ?? 0;
+        const newEntityCount = newScore.entities?.length ?? 0;
         const newHasProxy = isProxy;
+        const withinProxyProtect = Date.now() - _lastAcceptedScoreAt < PROXY_SCORE_PROTECT_MS;
+
+        if (currentHasProxy && currentEntityCount > 0 && !newHasProxy && newEntityCount === 0 && withinProxyProtect) {
+          plog('SKIP', `0-entity ${isRealtime ? 'realtime' : 'enrichment'} would erase proxy result (current=${currentEntityCount}, age=${Date.now() - _lastAcceptedScoreAt}ms)`);
+          return;
+        }
+        // Original narrower guard kept for the realtime-with-entities case
+        // (e.g. a realtime Stage-1 broadcast that misclassifies should not
+        // outrank a proxy result, even if it has entities of its own).
         if (currentHasProxy && !newHasProxy && isRealtime) {
           plog('SKIP', `realtime would overwrite proxy data`);
           return;
@@ -981,6 +1163,10 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
         plog('ACCEPTED', `score=${newScore.score} isProxy=${isProxy} maskedPrompt=${newScore.maskedPrompt ? 'YES' : 'NO'} from=${source}`);
 
         setLastScore(newScore);
+        // Mirror into the ref synchronously so a follow-up call in the same
+        // task (Gemma broadcast vs storage.onChanged) sees the just-accepted
+        // value instead of waiting for the useEffect at L308 to commit.
+        lastScoreRef.current = newScore;
         setFeedbackSent(new Set());
         setFeedbackOpen(null);
         setPromptFeedback(null);
@@ -989,53 +1175,10 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
         chrome.storage.local.set({ lastScore: newScore });
         chrome.storage.local.remove('lastDetectionResult');
 
-        // Only clear inspector if the NEW result should replace it.
-        // Don't clear if we already have proxy data and the new result is realtime.
-        if (!isRealtime || !inspectorData) {
-          setInspectorData(null);
-          setInspectorOpen(false);
-        }
-
-        if (isProxy && newScore.maskedPrompt) {
-          // Pseudonymized — show full inspector with changes, safe version, mappings.
-          // Gemini/Claude send multiple fetch requests per submit (within 3s),
-          // each producing different mapping counts. Within that window, keep
-          // the result with the MOST mappings. After 3s, it's a new prompt —
-          // always show the new result regardless of mapping count.
-          const newMappingCount = newScore.pseudonymMappings?.length || 0;
-          const currentMappingCount = inspectorData?.pseudonymMappings?.length || 0;
-          const timeSinceLastAccept = Date.now() - _lastAcceptedScoreAt;
-          const isSamePromptWindow = timeSinceLastAccept < 3000;
-
-          if (!isSamePromptWindow || newMappingCount >= currentMappingCount) {
-            setInspectorData({
-              originalPrompt: newScore.originalPrompt || '',
-              maskedPrompt: newScore.maskedPrompt,
-              pseudonymMappings: newScore.pseudonymMappings || [],
-            });
-          }
-          setInspectorOpen(true);
-        } else if (newScore.entities && newScore.entities.length > 0 && !newScore.realtime) {
-          // Entities detected but NOT pseudonymized (passthrough) — show what was found and why
-          const entityCount = newScore.entities.length;
-          const entityTypes = [...new Set(newScore.entities.map((e: any) => e.type as string))] as string[];
-          const isValueOnly = entityTypes.every((t) =>
-            ['MONETARY_AMOUNT', 'DATE', 'PERCENTAGE', 'QUANTITY'].includes(t)
-          );
-          const reason = isValueOnly
-            ? `${entityCount} value-type ${entityCount === 1 ? 'entity' : 'entities'} detected (${entityTypes.join(', ')}). Financial values are not pseudonymized — they're needed for accurate AI analysis.`
-            : newScore.isSelfReferential
-            ? `${entityCount} ${entityCount === 1 ? 'entity' : 'entities'} detected but allowed through — this appears to be your own data (resume, bio, or personal document).`
-            : `${entityCount} ${entityCount === 1 ? 'entity' : 'entities'} detected. Context analysis determined low risk — original text sent to AI.`;
-          setInspectorData({
-            originalPrompt: newScore.originalPrompt || '',
-            maskedPrompt: '',
-            pseudonymMappings: [],
-            isPassthrough: true,
-            passthroughReason: reason,
-          });
-          setInspectorOpen(true);
-        }
+        // Inspector data is now derived from lastScore via a useEffect at
+        // component scope — see the inspectorData state declaration above.
+        // No imperative setInspectorData here; the effect handles every
+        // transition (pseudonymized → passthrough → cleared) consistently.
       }
     }
 
@@ -1125,6 +1268,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
         const cleanTabId = message.payload?.tabId;
         const currentActiveTab = activeTabIdRef.current;
         if (cleanTabId == null || currentActiveTab == null || cleanTabId === currentActiveTab) {
+          // setLastScore cascades to inspectorData via the useEffect.
           setLastScore({
             score: 0,
             level: 'low',
@@ -1133,8 +1277,6 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
             isProxy: false,
             allClear: true,
           } as any);
-          setInspectorData(null);
-          setInspectorOpen(false);
           chrome.storage.local.remove(['lastScore', 'lastDetectionResult']);
         }
         return;
@@ -1157,11 +1299,40 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
           if (_promptClearTimerRef.current) clearTimeout(_promptClearTimerRef.current);
           _promptClearTimerRef.current = setTimeout(() => {
             _promptClearTimerRef.current = null;
+            // setLastScore(null) cascades to inspectorData via the useEffect.
             setLastScore(null);
-            setInspectorData(null);
-            setInspectorOpen(false);
             chrome.storage.local.remove(['lastScore', 'lastDetectionResult']);
           }, 1500);
+        }
+      }
+
+      // ── PROMPT_TURN_INVALIDATED ────────────────────────────────────────
+      // Main-world fired IRON_GATE_INTERCEPTED before the actual fetch (so
+      // the badge updates instantly), but the fetch then failed or the LLM
+      // rejected the modified body. The pseudonymization DID happen — that
+      // information is real and worth showing — but the masked text never
+      // reached the LLM. Annotate the existing lastScore with
+      // `transportStatus: 'blocked'` so the inspector keeps the swap list
+      // visible AND surfaces a clear "request blocked, data NOT sent"
+      // banner. The integrity property is preserved: the panel never
+      // claims "sent to AI" for data that wasn't sent.
+      if (message.type === 'PROMPT_TURN_INVALIDATED') {
+        const invTabId = message.payload?.tabId;
+        const currentActiveTab = activeTabIdRef.current;
+        if (invTabId == null || currentActiveTab == null || invTabId === currentActiveTab) {
+          const reason: string = message.payload?.reason || 'request blocked';
+          console.log('[Iron Gate Sidepanel] Turn marked as transport-blocked:', reason);
+          const current = lastScoreRef.current as any;
+          if (current) {
+            const annotated = { ...current, transportStatus: 'blocked' as const, transportReason: reason };
+            // Direct ref write + raw setter — annotating is not a competing
+            // event subject to phase precedence; it's a status update on
+            // the existing turn.
+            lastScoreRef.current = annotated;
+            setLastScoreRaw(annotated);
+          }
+          // Don't touch storage / lastAcceptAtRef — those reflect the
+          // pseudonymization event which DID legitimately happen.
         }
       }
 
@@ -1742,6 +1913,37 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
         </div>
       )}
 
+      {/* API-key decryption failure banner — surfaces what the worker logs
+          to console (`API key decryption failed against all known schemes`)
+          so the user can actually see and act on it instead of running with
+          silently-disabled Tier-3 classification. */}
+      {apiKeyError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 shadow-sm">
+          <div className="flex items-start gap-2">
+            <div className="w-5 h-5 rounded-full bg-red-500 flex items-center justify-center flex-shrink-0 mt-0.5">
+              <span className="text-white text-xs font-bold">!</span>
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-red-900 mb-1">
+                Stored API key can't be read
+              </p>
+              <p className="text-xs text-red-700 mb-2">
+                Your saved API key failed to decrypt. Server-assisted classification (Tier 3) is currently disabled. Re-enter your key in Settings to restore it.
+              </p>
+              <button
+                onClick={async () => {
+                  try { await chrome.storage.local.remove('ironGateApiKey_decrypt_error'); } catch {}
+                  setApiKeyError(null);
+                }}
+                className="text-[11px] font-medium text-red-700 hover:text-red-900 underline"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Status */}
       <div className="bg-white rounded-lg p-3 mb-4 shadow-sm border">
         <div className="flex items-center gap-2">
@@ -1818,6 +2020,30 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
                 <div>
                   <p className="text-xs text-blue-800 font-medium">Context-Aware Pass-Through</p>
                   <p className="text-[10px] text-blue-600 mt-0.5">{inspectorData.passthroughReason}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Transport-blocked banner — pseudonymization succeeded but the
+              modified request didn't reach the AI. Iron Gate fail-closed:
+              user's data was protected (didn't go anywhere), but no
+              response was received. Banner makes sure the user understands
+              the swap list below was prepared but never actually sent. */}
+          {inspectorData?.isBlocked && (
+            <div className="px-3 py-2 border-t bg-amber-50 border-amber-200">
+              <div className="flex items-start gap-2 py-1">
+                <svg className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+                </svg>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-amber-900 font-semibold">Request blocked — data NOT sent to AI</p>
+                  <p className="text-[10px] text-amber-800 mt-0.5">
+                    Iron Gate pseudonymized {inspectorData.pseudonymMappings.length} {inspectorData.pseudonymMappings.length === 1 ? 'item' : 'items'} (shown below), but the request couldn't be delivered, so nothing reached the model.
+                  </p>
+                  {inspectorData.blockedReason && (
+                    <p className="text-[10px] text-amber-700 mt-1 font-mono break-words">{inspectorData.blockedReason}</p>
+                  )}
                 </div>
               </div>
             </div>

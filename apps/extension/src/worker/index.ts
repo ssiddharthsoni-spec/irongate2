@@ -18,6 +18,7 @@ import { recordAttestation, getAuditLog, clearAuditLog } from './audit-trail';
 import { initTrialAlarms, handleTrialAlarm } from './trial-notifications';
 import { classifyIfPro, classifyForGhost } from '../detection/ml-classifier';
 import { isPro } from '../shared/tier-gate';
+import { inferPhase, phaseAllowsReplace } from '../shared/event-phase';
 import { TOTAL_ENTITIES_DETECTED, WEEKLY_SCAN_COUNT } from '../shared/storage-keys';
 import { startKillSwitchPoller } from '../security/kill-switch-poller';
 import {
@@ -1824,7 +1825,8 @@ async function handleMessage(
               // may differ from the MAIN world's, and its async timing can cause it to
               // overwrite the correct authoritative data in the sidepanel.
               promptLength: text.length,
-              realtime: true, // Flag so UI can differentiate from submit
+              realtime: true, // Legacy flag — kept for back-compat
+              phase: 'preview' as const, // ← lifecycle tag: live-typing detection
               zone: routingDecision?.finalZone ?? scoreToZone(sensitivityResult.score),
               action: routedAction ?? (sensitivityResult.level === 'critical' ? 'block' : 'pass'),
               wasEscalated: routingDecision?.wasEscalated ?? false,
@@ -1943,7 +1945,8 @@ async function handleMessage(
                   })),
                   aiToolId: _stage2AiToolId,
                   tabId: _stage2TabId,
-                  realtime: true,
+                  realtime: true, // legacy flag
+                  phase: 'enrichment' as const, // ← async LLM verdict; never replaces authoritative
                   judgmentSource: judgment.source,
                   judgmentVerdict: judgment.verdict,
                   judgmentLatencyMs: judgment.latency.totalMs,
@@ -1977,6 +1980,18 @@ async function handleMessage(
               // The main-world caches this so at submit time it can check:
               // "is this research/fiction/code?" and skip pseudonymization.
               if (_stage2TabId) {
+                // Forward Gemma's contextually-judged entities so the
+                // submit-time pseudonymizer can mask values regex missed
+                // (e.g. credentials whose value-format isn't pattern-matched).
+                // Only sensitive entities with non-empty text are sent;
+                // bounded to 50 entries to keep the message small.
+                const gemmaEntities = (judgment.entities || [])
+                  .filter((e: any) => e && e.isSensitive && typeof e.text === 'string' && e.text.length > 0)
+                  .slice(0, 50)
+                  .map((e: any) => ({
+                    type: String(e.type || 'UNKNOWN').slice(0, 64),
+                    text: String(e.text).slice(0, 200),
+                  }));
                 chrome.tabs.sendMessage(_stage2TabId, {
                   type: 'IRON_GATE_GEMMA_VERDICT',
                   intent: judgment.verdict === 'allow' ? 'research' : 'work_sharing',
@@ -1984,6 +1999,7 @@ async function handleMessage(
                   score: judgment.score,
                   verdict: judgment.verdict,
                   source: judgment.source,
+                  entities: gemmaEntities,
                 }).catch(() => {});
               }
             }
@@ -2221,6 +2237,45 @@ async function handleMessage(
       return { received: true };
     }
 
+    // ── PROMPT_TURN_INVALIDATED ──────────────────────────────────────────
+    // Main-world fires IRON_GATE_INTERCEPTED notifications BEFORE the
+    // actual network fetch (so the badge updates instantly). If the fetch
+    // then fails / the LLM rejects the modified body / the body format
+    // wasn't recognized — the previously-reported "N entities pseudonymized
+    // and sent" is now untrue: nothing reached the LLM. This message
+    // retracts that report. Worker forgets its tab state; sidepanel nulls
+    // its lastScore (which cascades to clear the inspector via the
+    // useEffect). Net effect: panel only ever shows turns that actually
+    // reached the LLM.
+    case 'PROMPT_TURN_INVALIDATED': {
+      const invTabId = sender.tab?.id;
+      if (invTabId) {
+        igLog(`Turn invalidated for tab ${invTabId} — reason: ${message.payload?.reason || '(unspecified)'}`);
+        lastAuthoritativeByTab.delete(invTabId);
+        // Wipe the tab's stored state so a subsequent GET_TAB_STATE poll
+        // doesn't restore the now-retracted result.
+        getTabState(invTabId).then(s => {
+          if (s) {
+            updateTabState(invTabId, {
+              lastScore: null,
+              lastLevel: 'low',
+              lastExplanation: '',
+              lastEntities: [],
+              lastMaskedPrompt: '',
+              lastOriginalPrompt: '',
+              lastPseudonymMappings: [],
+            }).catch(() => {});
+          }
+        }).catch(() => {});
+      }
+      // Broadcast to sidepanel so it can null its lastScore.
+      chrome.runtime.sendMessage({
+        type: 'PROMPT_TURN_INVALIDATED',
+        payload: { tabId: invTabId, reason: message.payload?.reason || null },
+      }).catch(() => {});
+      return { received: true };
+    }
+
     // ── SENSITIVITY_SCORE from content script (relayed from MAIN world) ──
     // This is the PRIMARY event source — fired when MAIN world intercepts
     // a fetch to an LLM API and detects/pseudonymizes entities.
@@ -2435,9 +2490,51 @@ async function handleMessage(
         }
       }
 
-      // Store per-tab state (fire-and-forget)
+      // Store per-tab state (fire-and-forget).
+      //
+      // Phase-based precedence — same rule as the sidepanel display.
+      // shared/event-phase.ts owns the truth: audit/enrichment cannot
+      // displace authoritative; preview can be replaced by anything later;
+      // null is always replaceable.
+      //
+      // Without this, the trailing AUDIT events ChatGPT emits on secondary
+      // fetches clobber the authoritative proxy tab state with empty fields,
+      // and the sidepanel's GET_TAB_STATE polling fallback reads back the
+      // empty result — Recent Activity stays empty even though
+      // pseudonymization correctly fired on the real conversation submit.
       if (ssTabId && isFromContentScript) {
         getTabState(ssTabId).then(tabState => {
+          const incomingPhase = inferPhase(payload);
+          const incomingHasEntities = (entities?.length ?? 0) > 0;
+          // Content-derived turn identifier — see event-phase.ts for the
+          // architectural rationale. Different turns produce different
+          // masked prompts, so this is enough to distinguish "same-turn
+          // re-broadcast" from "new-turn arrival" without a turn-ID
+          // wiring layer.
+          const incomingTurnKey = (payload.maskedPrompt as string) || (payload.promptHash as string) || '';
+          const currentSnapshot = tabState
+            ? {
+                phase: inferPhase({
+                  // Reconstruct what the cached state's phase would have been.
+                  isProxy: !!tabState.lastMaskedPrompt,
+                  realtime: false,
+                }),
+                hasEntities: (tabState.lastEntities?.length ?? 0) > 0,
+                turnKey: tabState.lastMaskedPrompt || tabState.lastPromptHash || '',
+              }
+            : null;
+          if (!phaseAllowsReplace(currentSnapshot, {
+            phase: incomingPhase,
+            hasEntities: incomingHasEntities,
+            turnKey: incomingTurnKey,
+          })) {
+            igLog(
+              'Tab state: skipping write — incoming phase=' + incomingPhase
+                + ' would not replace current phase=' + (currentSnapshot?.phase ?? 'null'),
+              { currentEntities: tabState?.lastEntities?.length, incomingScore: score },
+            );
+            return;
+          }
           updateTabState(ssTabId, {
             aiToolId: aiToolId || 'unknown',
             lastScore: score,

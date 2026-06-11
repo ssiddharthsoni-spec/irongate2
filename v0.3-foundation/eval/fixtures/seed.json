@@ -1,0 +1,214 @@
+[
+  {
+    "id": "FP-001",
+    "prompt": "Compare Salesforce and HubSpot's enterprise CRM offerings. What are the key differences in pricing, features, and market positioning? Which one is better for a 500-person company?",
+    "expectedVerdict": "allow",
+    "expectedEntities": [
+      { "type": "ORGANIZATION", "text": "Salesforce", "isSensitive": false },
+      { "type": "ORGANIZATION", "text": "HubSpot", "isSensitive": false }
+    ],
+    "expectedScore": { "min": 0, "max": 25 },
+    "tags": ["false-positive", "research", "public-companies"],
+    "notes": "R-1 regression: single-word brands must be detected but scored low in research context"
+  },
+  {
+    "id": "FP-002",
+    "prompt": "Compare the business models of OpenAI, Google DeepMind, and Anthropic.",
+    "expectedVerdict": "allow",
+    "expectedEntities": [
+      { "type": "ORGANIZATION", "text": "Google", "isSensitive": false },
+      { "type": "ORGANIZATION", "text": "DeepMind", "isSensitive": false }
+    ],
+    "expectedScore": { "min": 0, "max": 15 },
+    "tags": ["false-positive", "research", "public-companies"]
+  },
+  {
+    "id": "FP-003",
+    "prompt": "Explain how photosynthesis works and what role chlorophyll plays in the light-dependent reactions.",
+    "expectedVerdict": "allow",
+    "expectedEntities": [],
+    "expectedScore": { "min": 0, "max": 5 },
+    "tags": ["false-positive", "science", "no-pii"]
+  },
+  {
+    "id": "TP-001",
+    "prompt": "Here's our detailed P&L and customer breakdown. Can you identify optimization opportunities?\n* Revenue: $12.3M\n  * Top customer (Fabrikam): $3.4M\n  * Next 4 customers: $4.8M combined\n* Payroll: $3.6M (engineering avg salary $178k, sales $132k)\n* Marketing: $2.8M (CAC rising from $9k to $12k)\n* Churn: 6.2% monthly\nHighly sensitive internal financial + customer concentration data.",
+    "expectedVerdict": "mask",
+    "expectedEntities": [
+      { "type": "ORGANIZATION", "text": "Fabrikam", "isSensitive": true },
+      { "type": "MONETARY_AMOUNT", "text": "$12.3M", "isSensitive": true },
+      { "type": "MONETARY_AMOUNT", "text": "$3.4M", "isSensitive": true }
+    ],
+    "expectedScore": { "min": 40, "max": 100 },
+    "tags": ["true-positive", "financial", "customer-data", "P&L"]
+  },
+  {
+    "id": "TP-002",
+    "prompt": "Help me draft a complaint letter. I'm John Anderson (SSN 234-56-7890), living at 456 Elm Drive, Boston, MA 02101. My account number is 9876543210 at Wells Fargo. I was charged $1,432.18 on my Visa 4532-1234-5678-9012. Contact me at john.anderson@email.com or (617) 555-0123.",
+    "expectedVerdict": "block",
+    "expectedEntities": [
+      { "type": "PERSON", "text": "John Anderson", "isSensitive": true },
+      { "type": "SSN", "text": "234-56-7890", "isSensitive": true },
+      { "type": "ADDRESS", "text": "456 Elm Drive, Boston, MA 02101", "isSensitive": true },
+      { "type": "CREDIT_CARD", "text": "4532-1234-5678-9012", "isSensitive": true },
+      { "type": "EMAIL", "text": "john.anderson@email.com", "isSensitive": true },
+      { "type": "PHONE_NUMBER", "text": "(617) 555-0123", "isSensitive": true }
+    ],
+    "expectedScore": { "min": 86, "max": 100 },
+    "tags": ["true-positive", "PII-dense", "SSN", "credit-card", "complaint-letter"]
+  },
+  {
+    "id": "TP-003",
+    "prompt": "Confidential — do not distribute. Acquiring Meridian Health for $2.8B. Due diligence in progress. CEO Sarah Chen to brief board Thursday. Deal codename: Project Atlas.",
+    "expectedVerdict": "block",
+    "expectedEntities": [
+      { "type": "ORGANIZATION", "text": "Meridian Health", "isSensitive": true },
+      { "type": "PERSON", "text": "Sarah Chen", "isSensitive": true },
+      { "type": "MONETARY_AMOUNT", "text": "$2.8B", "isSensitive": true },
+      { "type": "PROJECT_NAME", "text": "Project Atlas", "isSensitive": true }
+    ],
+    "expectedScore": { "min": 70, "max": 100 },
+    "tags": ["true-positive", "M&A", "MNPI", "deal-codename", "confidential"]
+  },
+  {
+    "id": "TP-004",
+    "prompt": "Patient: Maria Santos, DOB: 03/15/1990, MRN: 4521890. Diagnosis: Stage 2 breast cancer. Treatment plan: neoadjuvant chemotherapy followed by surgery. Referring physician: Dr. James Park.",
+    "expectedVerdict": "block",
+    "expectedEntities": [
+      { "type": "PERSON", "text": "Maria Santos", "isSensitive": true },
+      { "type": "DATE_OF_BIRTH", "text": "03/15/1990", "isSensitive": true },
+      { "type": "MEDICAL_RECORD", "text": "4521890", "isSensitive": true }
+    ],
+    "expectedScore": { "min": 86, "max": 100 },
+    "tags": ["true-positive", "HIPAA", "medical", "PHI"]
+  },
+  {
+    "id": "TP-005",
+    "prompt": "My API key is sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx234yz. Can you help me debug my OpenAI integration?",
+    "expectedVerdict": "block",
+    "expectedEntities": [
+      { "type": "API_KEY", "text": "sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx234yz", "isSensitive": true }
+    ],
+    "expectedScore": { "min": 86, "max": 100 },
+    "tags": ["true-positive", "credential", "API-key", "bright-line"]
+  },
+  {
+    "id": "CTX-001",
+    "prompt": "Help me improve my resume. I worked at Google from 2018-2022 as a Senior Engineer, then joined Stripe as a Staff Engineer. I managed a team of 12 and grew revenue by $4M.",
+    "expectedVerdict": "allow",
+    "expectedEntities": [
+      { "type": "ORGANIZATION", "text": "Google", "isSensitive": false },
+      { "type": "ORGANIZATION", "text": "Stripe", "isSensitive": false },
+      { "type": "MONETARY_AMOUNT", "text": "$4M", "isSensitive": false }
+    ],
+    "expectedScore": { "min": 0, "max": 25 },
+    "tags": ["context-dependent", "resume", "self-referential"],
+    "notes": "Self-referential task: user IS the data subject. Orgs are past employers, not confidential."
+  },
+  {
+    "id": "CTX-002",
+    "prompt": "Write a fictional story about a character named James Wilson who works at a bank and discovers fraud. Include realistic details.",
+    "expectedVerdict": "allow",
+    "expectedEntities": [
+      { "type": "PERSON", "text": "James Wilson", "isSensitive": false }
+    ],
+    "expectedScore": { "min": 0, "max": 25 },
+    "tags": ["context-dependent", "creative-writing", "fiction"]
+  },
+  {
+    "id": "CTX-003",
+    "prompt": "Our top 3 accounts by revenue:\n1. Acme Corp — $2.1M (renewal Feb)\n2. Globex Industries — $1.8M (at-risk)\n3. Initech Solutions — $1.4M (expanding)\nCan you analyze churn risk factors?",
+    "expectedVerdict": "mask",
+    "expectedEntities": [
+      { "type": "ORGANIZATION", "text": "Acme Corp", "isSensitive": true },
+      { "type": "ORGANIZATION", "text": "Globex Industries", "isSensitive": true },
+      { "type": "ORGANIZATION", "text": "Initech Solutions", "isSensitive": true },
+      { "type": "MONETARY_AMOUNT", "text": "$2.1M", "isSensitive": true }
+    ],
+    "expectedScore": { "min": 50, "max": 100 },
+    "tags": ["context-dependent", "customer-data", "revenue", "churn"],
+    "notes": "Confidential customer revenue data — must mask org names"
+  },
+  {
+    "id": "COMP-001",
+    "prompt": "Student ID: S2024-78901. Transcript for Emily Rodriguez, enrolled in Computer Science BS. GPA: 3.82. Dean's List Fall 2023. Academic probation cleared Spring 2022.",
+    "expectedVerdict": "block",
+    "expectedEntities": [
+      { "type": "PERSON", "text": "Emily Rodriguez", "isSensitive": true },
+      { "type": "STUDENT_ID", "text": "S2024-78901", "isSensitive": true }
+    ],
+    "expectedScore": { "min": 61, "max": 100 },
+    "tags": ["compliance", "FERPA", "education-record"]
+  },
+  {
+    "id": "COMP-002",
+    "prompt": "TOP SECRET//SCI//NOFORN\nBriefing on satellite imagery analysis of the Xinjiang facility. Coordinates: 43.7°N, 87.6°E.",
+    "expectedVerdict": "block",
+    "expectedEntities": [
+      { "type": "CLASSIFICATION_MARKING", "text": "TOP SECRET//SCI//NOFORN", "isSensitive": true }
+    ],
+    "expectedScore": { "min": 86, "max": 100 },
+    "tags": ["compliance", "classified", "government", "bright-line"]
+  },
+  {
+    "id": "EDGE-001",
+    "prompt": "What is the weather in New York today?",
+    "expectedVerdict": "allow",
+    "expectedEntities": [],
+    "expectedScore": { "min": 0, "max": 10 },
+    "tags": ["edge-case", "trivial", "no-pii"]
+  },
+  {
+    "id": "EDGE-002",
+    "prompt": "My horoscope says I, born on March 15, 1990, will have good luck today. My name is Sarah and I live in Boston.",
+    "expectedVerdict": "allow",
+    "expectedEntities": [
+      { "type": "DATE", "text": "March 15, 1990", "isSensitive": false }
+    ],
+    "expectedScore": { "min": 0, "max": 25 },
+    "tags": ["edge-case", "horoscope", "intent-suppression"],
+    "notes": "Self-referential benign context. Date is the user's own DOB used for horoscope."
+  },
+  {
+    "id": "EDGE-003",
+    "prompt": "The routing number for Chase bank is 021000021. Is this correct?",
+    "expectedVerdict": "nudge",
+    "expectedEntities": [
+      { "type": "ROUTING_NUMBER", "text": "021000021", "isSensitive": false }
+    ],
+    "expectedScore": { "min": 10, "max": 40 },
+    "tags": ["edge-case", "public-info", "routing-number"],
+    "notes": "Public routing number for a major bank. Not PII but worth a nudge."
+  },
+  {
+    "id": "LEGAL-001",
+    "prompt": "PRIVILEGED AND CONFIDENTIAL — ATTORNEY WORK PRODUCT\nRe: Smith v. Meridian Corp (Case No. 2024-CV-1234)\nSettlement authority: $4.5M. Do not disclose to opposing counsel (Baker & McKenzie).",
+    "expectedVerdict": "block",
+    "expectedEntities": [
+      { "type": "ORGANIZATION", "text": "Meridian Corp", "isSensitive": true },
+      { "type": "ORGANIZATION", "text": "Baker & McKenzie", "isSensitive": true },
+      { "type": "MONETARY_AMOUNT", "text": "$4.5M", "isSensitive": true }
+    ],
+    "expectedScore": { "min": 75, "max": 100 },
+    "tags": ["true-positive", "legal", "attorney-client-privilege", "settlement"]
+  },
+  {
+    "id": "LEGAL-002",
+    "prompt": "Draft a generic NDA template for a software company. Include standard confidentiality clauses and a 2-year term.",
+    "expectedVerdict": "allow",
+    "expectedEntities": [],
+    "expectedScore": { "min": 0, "max": 20 },
+    "tags": ["false-positive", "legal", "template-request"]
+  },
+  {
+    "id": "FIN-001",
+    "prompt": "Q3 earnings preview — NOT FOR DISTRIBUTION\nRevenue: $847M (+12% YoY)\nEBITDA: $213M (margin 25.1%)\nGuidance raised to $3.4B full-year\nAnnouncement date: October 28 before market open",
+    "expectedVerdict": "block",
+    "expectedEntities": [
+      { "type": "MONETARY_AMOUNT", "text": "$847M", "isSensitive": true },
+      { "type": "MONETARY_AMOUNT", "text": "$213M", "isSensitive": true }
+    ],
+    "expectedScore": { "min": 70, "max": 100 },
+    "tags": ["true-positive", "financial", "MNPI", "earnings", "insider-trading-risk"]
+  }
+]

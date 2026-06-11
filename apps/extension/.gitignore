@@ -1,1 +1,4 @@
-.drive-profile/
+.drive-*/
+test-results/
+test-results-*.json
+tests/e2e/screenshots/

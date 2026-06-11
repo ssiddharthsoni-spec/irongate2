@@ -1,0 +1,171 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Iron Gate: Full Pipeline (Build + Test + Report)",
+      "type": "shell",
+      "command": "pnpm --filter @iron-gate/extension pipeline",
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Iron Gate: Comprehensive Detection Tests",
+      "type": "shell",
+      "command": "pnpm --filter @iron-gate/extension pipeline:comprehensive",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Iron Gate: Wire Verification Tests",
+      "type": "shell",
+      "command": "pnpm --filter @iron-gate/extension pipeline:wire",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Iron Gate: Dev Loop (Watch + Build + Reload)",
+      "type": "shell",
+      "command": "pnpm --filter @iron-gate/extension dev:loop",
+      "isBackground": true,
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^\\[ERROR\\]\\s+(.*)$",
+          "message": 1
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^.*Building extension",
+          "endsPattern": "^.*Build completed|^.*Build failed"
+        }
+      }
+    },
+    {
+      "label": "Iron Gate: Dev Loop + Auto Test",
+      "type": "shell",
+      "command": "pnpm --filter @iron-gate/extension dev:loop:test",
+      "isBackground": true,
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^\\[ERROR\\]\\s+(.*)$",
+          "message": 1
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^.*Building extension",
+          "endsPattern": "^.*Tests passed|^.*Tests failed"
+        }
+      }
+    },
+    {
+      "label": "Iron Gate: Start Mock Server",
+      "type": "shell",
+      "command": "pnpm --filter @iron-gate/extension mock-server",
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Iron Gate: Build Extension",
+      "type": "shell",
+      "command": "pnpm --filter @iron-gate/extension build",
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "Iron Gate: Unit Tests",
+      "type": "shell",
+      "command": "pnpm --filter @iron-gate/extension test",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Iron Gate: Unit Tests (Watch)",
+      "type": "shell",
+      "command": "pnpm --filter @iron-gate/extension test:watch",
+      "isBackground": true,
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Iron Gate: Drive (Stage 1 — Boot + Sidepanel)",
+      "type": "shell",
+      "command": "pnpm --filter @iron-gate/extension drive stage1",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Iron Gate: Drive (Full E2E — All Scenarios)",
+      "type": "shell",
+      "command": "pnpm --filter @iron-gate/extension drive:full",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Iron Gate: Launch Chrome for Testing",
+      "type": "shell",
+      "command": "google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/irongate-test-profile --disable-extensions-except=${workspaceFolder}/apps/extension/dist --load-extension=${workspaceFolder}/apps/extension/dist --no-first-run",
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "problemMatcher": [],
+      "detail": "Launches Chrome with the extension loaded and CDP enabled on port 9222"
+    }
+  ]
+}

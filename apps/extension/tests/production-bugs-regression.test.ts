@@ -761,3 +761,74 @@ describe('P0-7: Cross-Platform De-pseudonymization', () => {
     expect(result).not.toContain('BENTWORTH');
   });
 });
+
+// ─── P&L Financial Data + Parenthetical Org Detection (April 2026) ──────────
+// Bug: "Top customer (Fabrikam): $3.4M" — Fabrikam goes undetected because the
+// contextual extraction regex fails on trailing ')'. All financial data passes
+// through unmodified to ChatGPT. Reported via screenshot April 15 2026.
+
+import { detectWithRegex } from '../src/detection/fallback-regex';
+import { computeScore } from '../src/detection/scorer';
+
+describe('P&L financial data regression (April 2026)', () => {
+  const P_AND_L_INPUT = `Here's our detailed P&L and customer breakdown. Can you identify optimization opportunities?
+* Revenue: $12.3M
+  * Top customer (Fabrikam): $3.4M
+  * Next 4 customers: $4.8M combined
+* Payroll: $3.6M (engineering avg salary $178k, sales $132k)
+* Marketing: $2.8M (CAC rising from $9k to $12k)
+* Churn: 6.2% monthly (enterprise segment driving most losses)
+Highly sensitive internal financial + customer concentration data.`;
+
+  it('should detect Fabrikam as ORGANIZATION from parenthetical pattern', () => {
+    const entities = detectWithRegex(P_AND_L_INPUT);
+    const orgEntities = entities.filter(e => e.type === 'ORGANIZATION');
+    const fabrikam = orgEntities.find(e => e.text === 'Fabrikam');
+    expect(fabrikam).toBeDefined();
+    expect(fabrikam!.type).toBe('ORGANIZATION');
+  });
+
+  it('should detect monetary amounts in P&L', () => {
+    const entities = detectWithRegex(P_AND_L_INPUT);
+    const monetary = entities.filter(e => e.type === 'MONETARY_AMOUNT');
+    expect(monetary.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('should score P&L data above medium (>25)', () => {
+    const entities = detectWithRegex(P_AND_L_INPUT);
+    const result = computeScore(P_AND_L_INPUT, entities);
+    expect(result.score).toBeGreaterThan(25);
+  });
+
+  const COMPLAINT_LETTER = `Help me draft a complaint letter. I'm John Anderson
+(SSN 234-56-7890), living at 456 Elm Drive, Boston, MA 02101.
+My account number is 1876543210 at Wells Fargo. I was charged
+$1,432.18 on my Visa 4532-1234-5678-9012. Contact me at
+john.anderson@email.com or (617) 555-0123.`;
+
+  it('should detect SSN in complaint letter', () => {
+    const entities = detectWithRegex(COMPLAINT_LETTER);
+    const ssn = entities.find(e => e.type === 'SSN');
+    expect(ssn).toBeDefined();
+    expect(ssn!.text).toBe('234-56-7890');
+  });
+
+  it('should detect credit card in complaint letter', () => {
+    const entities = detectWithRegex(COMPLAINT_LETTER);
+    const cc = entities.find(e => e.type === 'CREDIT_CARD');
+    expect(cc).toBeDefined();
+  });
+
+  it('should detect person name in complaint letter', () => {
+    const entities = detectWithRegex(COMPLAINT_LETTER);
+    const person = entities.find(e => e.type === 'PERSON');
+    expect(person).toBeDefined();
+  });
+
+  it('should score complaint letter as critical (SSN + CC present)', () => {
+    const entities = detectWithRegex(COMPLAINT_LETTER);
+    const result = computeScore(COMPLAINT_LETTER, entities);
+    expect(result.score).toBeGreaterThanOrEqual(86);
+    expect(result.level).toBe('critical');
+  });
+});

@@ -135,17 +135,106 @@ export function buildRegexCache(reverseMap: Record<string, string>): CachedPseud
     });
 }
 
+// ─── Inline citation-marker stripper ────────────────────────────────────────
+//
+// ChatGPT's response content embeds inline citation markers (the visible
+// `["]<box-char>` tail observed in corrupted output). They use Private Use
+// Area (PUA) Unicode codepoints (U+E000–U+F8FF) — characters that should
+// never appear in normal text — plus zero-width joiner / non-joiner pairs.
+//
+// We strip them BEFORE pseudonym replacement so the per-entry regexes
+// don't have to navigate around them, and so the rendered output is clean.
+//
+// Patterns stripped:
+//   • PUA codepoints                    (U+E000–U+F8FF)
+//   • Zero-width chars                  (U+200B–U+200F, U+FEFF)
+//   • The full inline-cite pattern      (`["]` followed by a PUA char)
+//   • `cite_turn0...` style placeholders (rare, but seen in some payloads)
+//
+// All of these are content-neutral — they exist only to drive ChatGPT's
+// front-end citation rendering, and the front-end gracefully handles their
+// absence (text just renders without the citation hover).
+const INLINE_MARKER_PATTERNS: RegExp[] = [
+  // ChatGPT inline citation: closing-bracket + PUA character (the literal
+  // `"]≡` pattern observed). The leading character is sometimes a typographic
+  // quote, sometimes a regular bracket — strip the bracket+PUA pair regardless.
+  /[\]\)][-]+/g,
+  // Bare PUA characters wherever they appear
+  /[-]+/g,
+  // Zero-width chars + BOM
+  /[​-‏﻿]+/g,
+  // ChatGPT inline entity references that leak into rendered text when the
+  // pseudonym-replacement byte-length change throws off the renderer's
+  // offset table. Observed corruption: `entity["company","Apple Inc."]`
+  // and `entity["person","Leopold Aschenbrenner"]` appearing verbatim.
+  // Strip the entire wrapper — the display name is already in surrounding
+  // text most of the time and this is metadata, not content.
+  /entity\["[^"\]]*"(?:,"[^"\]]*")*\]/g,
+  // Bare-fragment leftover when the closing `"]` was already consumed.
+  /entity\["[a-z_]+","/g,
+  // ChatGPT search-citation tokens: `turn0search3`, `cite_turn0search3`,
+  // `mainstrecite…turn0search…`. Placeholder markers their front-end
+  // converts to chips; when offsets break, the raw token leaks to the user.
+  // Match anywhere (not just on word boundary) because corrupted output
+  // shows these glued to surrounding content: `Digitalsearch1turn0search0`.
+  /(?:mainstre)?cite[_a-z]*turn\d+search\d+/gi,
+  /turn\d+search\d+/gi,
+  // Bare `search<digit>` placeholder (the head of a chained citation run
+  // that lost its leading `turn0`). Conservative: only strip when followed
+  // by another `turn<digit>` token to avoid clobbering English text.
+  /search\d+(?=turn\d+|search\d+)/gi,
+];
+
+export function stripInlineMarkers(content: string): string {
+  if (!content) return content;
+  let out = content;
+  for (const re of INLINE_MARKER_PATTERNS) {
+    out = out.replace(re, '');
+  }
+  return out;
+}
+
 // ─── Core Replacement Engine ────────────────────────────────────────────────
 
 /**
  * Stateless core of replacePseudonyms. Takes a pre-built regex cache
  * and performs 3-strategy replacement + leak scanner with:
+ *   - Inline citation marker strip (cleans up `"]≡` style markers)
+ *   - Fast-reject for chunks with no candidate substring (perf)
  *   - Replaced-region tracking (prevents overlap corruption)
  *   - Word-boundary checks (prevents false positives in longer words)
  *   - Fragment exclusion (prevents email corruption)
  */
 export function replacePseudonymsCore(text: string, cache: CachedPseudoEntry[]): string {
-  let result = text;
+  if (cache.length === 0) return text;
+
+  // Strip inline citation markers FIRST. These are PUA / zero-width chars
+  // ChatGPT injects between text fragments to drive citation rendering on
+  // its front-end. They corrupted past de-pseudonymization runs because
+  // the markers landed inside or adjacent to a pseudonym, splitting the
+  // word at the wrong place after replacement.
+  let result = stripInlineMarkers(text);
+
+  // ── FAST-REJECT (perf) ────────────────────────────────────────────────
+  // SSE streams contain hundreds of small chunks; most are punctuation,
+  // whitespace, or filler tokens with no pseudonym to replace. Running 22+
+  // regex passes plus the leak scanner on each was the visible UI lag.
+  // Test ONCE per chunk: if no pseudonym (or its JSON-escaped form)
+  // appears, skip the whole replacement loop.
+  const resultLowerForReject = result.toLowerCase();
+  let anyCandidate = false;
+  for (const entry of cache) {
+    const pl = entry.pseudonym.toLowerCase();
+    if (pl.length >= 2 && resultLowerForReject.includes(pl)) {
+      anyCandidate = true;
+      break;
+    }
+    if (entry.jsonPseudo !== entry.pseudonym && result.includes(entry.jsonPseudo)) {
+      anyCandidate = true;
+      break;
+    }
+  }
+  if (!anyCandidate) return result;
 
   for (const entry of cache) {
     const { pseudonym, original, regexCS, regexCI, jsonPseudo, jsonOrig, json2Pseudo, json2Orig } = entry;

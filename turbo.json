@@ -16,6 +16,15 @@
     "test:e2e": {
       "dependsOn": ["build"]
     },
+    "pipeline": {
+      "dependsOn": []
+    },
+    "pipeline:comprehensive": {
+      "dependsOn": []
+    },
+    "pipeline:wire": {
+      "dependsOn": []
+    },
     "test:detection": {},
     "lint": {},
     "db:migrate": {

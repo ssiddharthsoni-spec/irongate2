@@ -363,6 +363,16 @@ function _isFemaleFirst(name: string): boolean {
 // ── Main Generation Function ────────────────────────────────────────────
 
 export function generateFake(type: string, original: string): string {
+  // Type guard: entity.text can be non-string if detection produced a
+  // malformed entity (e.g., Gemini's nested JSON extraction returning an
+  // object instead of a string). Without this guard, calling .match() or
+  // .replace() on a non-string crashes with "TypeError: b.match is not a
+  // function" in the minified bundle (reported on Gemini April 2026).
+  if (typeof original !== 'string') {
+    const fallback = String(original ?? '');
+    if (fallback.length === 0) return '[REDACTED]';
+    original = fallback;
+  }
   switch (type) {
     case 'PERSON': {
       const female = _isFemaleFirst(original);

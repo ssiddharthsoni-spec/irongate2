@@ -43,8 +43,49 @@ export const ChatGPTAdapter: SiteAdapter = {
 
   fileUploadPatterns: [/\/backend-api\/files/, /files\.oaiusercontent\.com/],
 
-  // ChatGPT uses accumulated SSE format (message.content.parts[0]) — SSE content parsing works best
-  responseStreamStrategy: 'sse-content',
+  // ── Response-stream strategy: 'none' (DOM-level de-pseudo only) ────────
+  //
+  // ChatGPT's SSE content embeds *inline entity markers* of the form
+  // `entity["category","name"]` next to the visible text. Their front-end
+  // renderer uses byte offsets stored in `message.metadata.*` (citations,
+  // entity references, etc.) to convert these markers into hover-cards and
+  // clean them from the final DOM.
+  //
+  // When Iron Gate's wire-level de-pseudonymizer substitutes a pseudonym
+  // for its original in the streaming SSE, the byte length of the text
+  // changes (e.g. 24-char pseudonym → 16-char original = -8 bytes). Every
+  // offset further down the response is now wrong. ChatGPT's renderer
+  // either (a) eats the wrong characters around the marker, producing
+  // strings like `Pancreatitischarge summary` (lost "dis"), or (b) gives
+  // up and leaves the raw marker as visible text, producing
+  // `entity["people",Dr. Richard Lee]` in the response.
+  //
+  // We tried two fixes in earlier sessions:
+  //   1. `stripOffsetAnnotations` — inverted whitelist on
+  //      `message.metadata.*` so new offset-based fields can't break us
+  //   2. `stripInlineMarkers` — regex strippers for the visible markers
+  // Both were brittle: ChatGPT keeps introducing new marker variants
+  // (quoted, unquoted, mixed-quoting, missing closing brackets) and
+  // the byte-offset problem is structural — the renderer offsets are
+  // computed against the bytes ChatGPT emitted, not what we delivered.
+  //
+  // The architectural fix: **let ChatGPT render the response with its
+  // pseudonyms intact**, so its renderer sees correct byte offsets and
+  // cleans markers properly. Then the persistent DOM observer (started
+  // by `startPersistentDomDepseudo()` in main-world.ts) walks text
+  // nodes in the rendered DOM and swaps pseudonyms → originals using
+  // boundary-aware matching. The user sees originals; ChatGPT's
+  // renderer is undisturbed.
+  //
+  // Tradeoff: every characterData mutation during streaming fires the
+  // observer, which calls `replacePseudonyms` on the changed text node.
+  // For long responses this is more CPU work than the wire-level path,
+  // but the fast-reject inside `replacePseudonymsCore` short-circuits
+  // tokens that don't contain a pseudonym.
+  //
+  // Outbound (request → ChatGPT) pseudonymization is UNCHANGED — that's
+  // the security-critical path and stays at wire-level.
+  responseStreamStrategy: 'none',
 
   extractResponseContent(parsed: any) {
     // ChatGPT accumulated: message.content.parts[0] has full text so far
