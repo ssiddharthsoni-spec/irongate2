@@ -1,0 +1,23 @@
+# Gitleaks configuration — Iron Gate
+#
+# Iron Gate is a PII/secret-detection product: its test suites NECESSARILY
+# contain realistic-looking synthetic credentials (fake Stripe/AWS/GCP keys,
+# SSNs, etc.) as detection fixtures and e2e canaries. Those are allowlisted
+# by PATH below — narrowly, test directories only. Real secrets must never
+# live in test files either; the allowlist trades that residual risk for a
+# scanner that stays meaningful on product code.
+#
+# Everything outside these paths is scanned with the default rules.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Synthetic detection fixtures and e2e canary prompts"
+paths = [
+  '''apps/extension/tests/.*''',
+  '''apps/api/src/.*\.test\.ts''',
+  '''apps/api/tests/.*''',
+  '''v0\.3-foundation/eval/fixtures/.*''',
+  '''v0\.3-foundation/tests/.*''',
+]
