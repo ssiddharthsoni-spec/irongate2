@@ -6902,13 +6902,50 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
     };
   }
 
+  // ── Selector-death fail-closed guard ──────────────────────────────────────
+  // June 2026 audit: when findInput() returned null (platform UI redesign),
+  // the handlers silently returned and the NATIVE submit proceeded. For
+  // dom-presubmit platforms (Gemini) the wire f.req splice only covers
+  // entities from PRIOR turns — first-turn PII went out raw, with zero
+  // telemetry. A selector regression must surface as a blocked send the
+  // user can see, not as a silent PII leak.
+  function _isEditableTarget(t: EventTarget | null): boolean {
+    const el = t as HTMLElement | null;
+    if (!el) return false;
+    if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) return true;
+    return el.isContentEditable === true;
+  }
+
+  let _lastSelectorFailureLog = 0;
+  /** Returns true if the event was blocked (dom-presubmit platform only). */
+  function _failClosedOnSelectorDeath(e: Event, phase: string): boolean {
+    if (activeAdapter?.interception !== 'dom-presubmit') return false;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const now = Date.now();
+    if (now - _lastSelectorFailureLog > 5000) {
+      _lastSelectorFailureLog = now;
+      console.error(
+        `[Iron Gate] PROTECTION DEGRADED — ${activeAdapter.id} input selector failed (${phase}). ` +
+        'Send blocked (fail-closed): the platform UI may have changed. Update Iron Gate or contact support.',
+      );
+      igPostMessage({ type: 'IRON_GATE_SELECTOR_FAILURE', adapterId: activeAdapter.id, phase, ts: now });
+    }
+    return true;
+  }
+
   // ── Enter key interception (capture phase — runs before platform handlers) ──
   document.addEventListener('keydown', async function (e: KeyboardEvent) {
     if (domInterceptBusy) return;
     if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
 
     const inputEl = activeAdapter?.findInput();
-    if (!inputEl) return;
+    if (!inputEl) {
+      // Only fail closed when the user is actually submitting from an
+      // editable element — Enter elsewhere on the page is none of our business.
+      if (_isEditableTarget(e.target)) _failClosedOnSelectorDeath(e, 'enter');
+      return;
+    }
     if (!inputEl.contains(e.target as Node) && e.target !== inputEl) return;
 
     const text = activeAdapter?.readInput(inputEl);
@@ -7100,7 +7137,12 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
     }
 
     const inputEl = activeAdapter?.findInput();
-    if (!inputEl) return;
+    if (!inputEl) {
+      // The button was CONFIRMED as a send button by heuristics (1)-(3) but
+      // the input selector is dead — fail closed on dom-presubmit platforms.
+      _failClosedOnSelectorDeath(e, 'click');
+      return;
+    }
 
     const text = activeAdapter?.readInput(inputEl);
 

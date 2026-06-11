@@ -736,3 +736,15 @@ describe('Architecture Invariants — Kill switch survives MV3 worker restarts',
     expect(src).toMatch(/alarm\.name === KILL_SWITCH_ALARM/);
   });
 });
+
+describe('Architecture Invariants — Selector death fails closed on dom-presubmit', () => {
+  // June 2026 audit: a Gemini UI redesign that broke findInput() let the
+  // native submit proceed with raw first-turn PII and zero telemetry.
+  it('main-world has the fail-closed guard and both confirmed paths use it', () => {
+    const src = readMainWorld();
+    expect(src).toMatch(/function _failClosedOnSelectorDeath/);
+    expect(src).toMatch(/_failClosedOnSelectorDeath\(e, 'enter'\)/);
+    expect(src).toMatch(/_failClosedOnSelectorDeath\(e, 'click'\)/);
+    expect(src).toMatch(/IRON_GATE_SELECTOR_FAILURE/);
+  });
+});
