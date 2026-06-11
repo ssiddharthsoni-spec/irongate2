@@ -1055,6 +1055,10 @@ interface TabState {
   // request never reached the LLM. Cleared by the next accepted result.
   transportStatus?: 'blocked' | null;
   transportReason?: string | null;
+  // WP2: selector death on a dom-presubmit platform — protection degraded.
+  // Set by SELECTOR_FAILURE, cleared by the next accepted authoritative
+  // result (evidence the interception pipeline works again).
+  selectorFailure?: { adapterId: string; phase: string; at: number } | null;
 }
 
 const TAB_STATE_KEY = 'iron_gate_tab_states';
@@ -1225,6 +1229,7 @@ const CONTENT_SCRIPT_ONLY: ReadonlySet<string> = new Set([
   'CLASSIFY_INTENT_CONTEXT',
   'PERSIST_REVERSE_MAP',
   'REQUEST_REVERSE_MAP',
+  'SELECTOR_FAILURE',
 ]);
 
 async function handleMessage(
@@ -1328,6 +1333,24 @@ async function handleMessage(
       } catch (e) {
         return { ok: false, error: e instanceof Error ? e.message : String(e) };
       }
+    }
+
+    // WP2: dom-presubmit selector death — main-world blocked the send
+    // fail-closed; record it so the sidepanel shows "protection degraded"
+    // instead of the user discovering it as a silently missing result.
+    case 'SELECTOR_FAILURE': {
+      const sfTabId = sender.tab?.id;
+      if (sfTabId) {
+        igLog(`SELECTOR FAILURE on tab ${sfTabId}: ${message.payload?.adapterId}/${message.payload?.phase}`);
+        updateTabState(sfTabId, {
+          selectorFailure: {
+            adapterId: String(message.payload?.adapterId || 'unknown').slice(0, 32),
+            phase: String(message.payload?.phase || 'unknown').slice(0, 16),
+            at: Date.now(),
+          },
+        }).catch(() => {});
+      }
+      return { ok: true };
     }
 
     case 'REQUEST_REVERSE_MAP': {
@@ -2412,11 +2435,13 @@ async function handleMessage(
             lastDetectionTime: Date.now(),
             lastTurn: incomingTurn,
             lastPhase: incomingPhase,
-            // An accepted result ends the composing state and clears any
-            // transport-blocked annotation from the previous turn.
+            // An accepted result ends the composing state and clears the
+            // previous turn's transport-blocked / selector-failure flags
+            // (a result arriving is evidence the pipeline works).
             preview: null,
             transportStatus: null,
             transportReason: null,
+            selectorFailure: null,
           }).catch(() => {});
         }).catch(() => {});
       }

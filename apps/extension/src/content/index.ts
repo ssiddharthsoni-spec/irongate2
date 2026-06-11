@@ -661,6 +661,19 @@ function handleMainWorldMessages(event: MessageEvent) {
     return;
   }
 
+  // Selector death on a dom-presubmit platform — main-world blocked the send
+  // fail-closed; surface "protection degraded" through the worker tab state.
+  if (event.data?.type === 'IRON_GATE_SELECTOR_FAILURE') {
+    chrome.runtime.sendMessage({
+      type: 'SELECTOR_FAILURE',
+      payload: {
+        adapterId: sanitizeString(event.data.adapterId, 32),
+        phase: sanitizeString(event.data.phase, 16),
+      },
+    }).catch(() => {});
+    return;
+  }
+
   // IRON_GATE_CLEAN_SUBMIT relay REMOVED (WP1): the main-world producer was
   // deleted long ago, so this block was unreachable. Clean user submits now
   // mint a TurnId in the coordinator and arrive as ordinary turn-stamped

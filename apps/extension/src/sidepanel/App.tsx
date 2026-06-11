@@ -353,12 +353,24 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
   // re-application (mount hydrate, tab checks, and onChanged can all deliver
   // the same state; identical turn/phase/time must not re-render).
   const lastAppliedTabStateRef = useRef<string>('');
+  const selectorDegradedRef = useRef(false);
   const applyTabState = useCallback((s: any | null) => {
     const fp = s
-      ? `${s.lastTurn?.epoch ?? 0}/${s.lastTurn?.seq ?? 0}:${s.lastPhase ?? ''}:${s.lastDetectionTime ?? 0}:${s.preview?.at ?? 0}:${s.transportStatus ?? ''}`
+      ? `${s.lastTurn?.epoch ?? 0}/${s.lastTurn?.seq ?? 0}:${s.lastPhase ?? ''}:${s.lastDetectionTime ?? 0}:${s.preview?.at ?? 0}:${s.transportStatus ?? ''}:${s.selectorFailure?.at ?? 0}`
       : 'null';
     if (fp === lastAppliedTabStateRef.current) return;
     lastAppliedTabStateRef.current = fp;
+
+    // WP2: selector death on this tab — drive the existing "protection
+    // degraded" banner. Only manage transitions WE caused: kill-switch and
+    // PROTECTION_STATUS also write protectionHealthy and must not be stomped.
+    if (s?.selectorFailure) {
+      selectorDegradedRef.current = true;
+      setProtectionHealthy(false);
+    } else if (selectorDegradedRef.current) {
+      selectorDegradedRef.current = false;
+      setProtectionHealthy(null);
+    }
 
     if (!s) { setLastScore(null); return; }
 
