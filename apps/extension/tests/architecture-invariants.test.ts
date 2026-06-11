@@ -708,3 +708,31 @@ describe('Architecture Invariants — Reverse-map persistence lives in the worke
     expect(sendSites).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe('Architecture Invariants — Kill switch survives MV3 worker restarts', () => {
+  // June 2026 audit: killSwitchActive was in-memory only (fail-open on every
+  // worker restart until the 60s poller's first check) and enforcement could
+  // be skipped entirely because resolveConfig() raced the deployment-mode lock.
+  const WORKER_INDEX = join(REPO_ROOT, 'apps/extension/src/worker/index.ts');
+
+  it('kill-switch state is persisted on change and restored at worker start', () => {
+    const src = readFileSync(WORKER_INDEX, 'utf8');
+    expect(src).toMatch(/function setKillSwitchActive/);
+    // The setter persists; the poller callback must use the setter, not raw assignment.
+    expect(src).not.toMatch(/killSwitchActive = shouldDisable/);
+    expect(src).toMatch(/chrome\.storage\.session\.get\(KILL_SWITCH_STATE_KEY\)/);
+  });
+
+  it('config resolution is chained after the deployment-mode lock', () => {
+    const src = readFileSync(WORKER_INDEX, 'utf8');
+    expect(src).toMatch(/_deploymentReady\.then\(\(\) => resolveConfig\(\)\)/);
+    // No bare unchained resolveConfig().then( anywhere.
+    expect(src).not.toMatch(/^resolveConfig\(\)\.then\(/m);
+  });
+
+  it('kill-switch polling is alarm-backed (setInterval dies with the worker)', () => {
+    const src = readFileSync(WORKER_INDEX, 'utf8');
+    expect(src).toMatch(/chrome\.alarms\.create\(KILL_SWITCH_ALARM/);
+    expect(src).toMatch(/alarm\.name === KILL_SWITCH_ALARM/);
+  });
+});

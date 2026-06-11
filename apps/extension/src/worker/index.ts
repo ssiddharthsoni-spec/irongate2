@@ -317,7 +317,10 @@ function getDeviceHash(): string {
   } catch { /* non-fatal */ }
 })();
 
-initLocalLlmDeployment().then(async (cfg) => {
+// Captured as a promise so startup blocks that branch on _deploymentMode can
+// chain after the lock instead of racing it (audit: hybrid/server deployments
+// could read the initial 'local-only' and skip kill-switch enforcement).
+const _deploymentReady = initLocalLlmDeployment().then(async (cfg) => {
   _deploymentMode = cfg.deploymentMode;
   igLog(`Deployment mode locked: ${cfg.deploymentMode}`);
 
@@ -849,12 +852,37 @@ async function refreshComplianceProfile(): Promise<void> {
 // activates to prevent unmonitored operation.
 let killSwitchActive = false;
 let _killSwitchStopFn: (() => void) | null = null;
+let _killSwitchEnforcementUrl: string | null = null;
+const KILL_SWITCH_STATE_KEY = 'ig_kill_switch_active';
+const KILL_SWITCH_ALARM = 'iron-gate-kill-switch-poll';
+
+// Restore persisted state IMMEDIATELY at worker start. MV3 workers restart
+// constantly; in-memory `false` until the poller's first check completed was
+// a fail-open gap of up to 60s on every wake (audit finding). storage.session
+// survives worker restarts and clears on browser restart, where the first
+// poll re-establishes truth.
+chrome.storage.session.get(KILL_SWITCH_STATE_KEY).then((res) => {
+  if (res[KILL_SWITCH_STATE_KEY] === true) {
+    killSwitchActive = true;
+    igLog('KILL SWITCH restored as ACTIVE from session state (worker restart)');
+  }
+}).catch(() => {});
+
+function setKillSwitchActive(active: boolean): void {
+  killSwitchActive = active;
+  chrome.storage.session.set({ [KILL_SWITCH_STATE_KEY]: active }).catch(() => {});
+}
 
 function startKillSwitchEnforcement(apiBaseUrl: string): void {
   if (_killSwitchStopFn) _killSwitchStopFn(); // Stop any existing poller
+  _killSwitchEnforcementUrl = apiBaseUrl;
+  // setInterval dies silently when the worker is suspended; the alarm wakes
+  // the worker every minute and re-runs enforcement (immediate poll) so a
+  // server-side kill-switch flip takes effect even while the worker sleeps.
+  chrome.alarms.create(KILL_SWITCH_ALARM, { periodInMinutes: 1 });
 
   _killSwitchStopFn = startKillSwitchPoller(apiBaseUrl, (shouldDisable) => {
-    killSwitchActive = shouldDisable;
+    setKillSwitchActive(shouldDisable);
     if (shouldDisable) {
       igLog('KILL SWITCH ACTIVE — all AI tool access blocked');
     } else {
@@ -890,8 +918,12 @@ function startKillSwitchEnforcement(apiBaseUrl: string): void {
 // Start kill switch poller once config is resolved (needs API URL)
 const KILL_SWITCH_API_URL = 'https://irongate-api.onrender.com/v1';
 
-// Load config with managed-first priority
-resolveConfig().then((config) => {
+// Load config with managed-first priority.
+// ORDERING: chained after the deployment-mode lock — this block branches on
+// _deploymentMode (kill-switch enforcement, suppression/compliance refresh);
+// as an independent promise it raced initLocalLlmDeployment() and could read
+// the initial 'local-only', permanently skipping enforcement.
+_deploymentReady.then(() => resolveConfig()).then((config) => {
   firmMode = config.firmMode;
   isManaged = config.isManaged;
   if (config.isManaged) {
@@ -3318,6 +3350,11 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   // Health check — replaces setInterval in health-monitor.ts
   if (alarm.name === 'iron-gate-health-check') {
     runHealthCheck().catch(() => {});
+  }
+  // Kill-switch poll on worker wake — restarting enforcement runs an
+  // immediate poll; the in-life setInterval poller is replaced each time.
+  if (alarm.name === KILL_SWITCH_ALARM && _killSwitchEnforcementUrl) {
+    startKillSwitchEnforcement(_killSwitchEnforcementUrl);
   }
 
   // Nonce cleanup — replaces setInterval which dies on SW suspension
