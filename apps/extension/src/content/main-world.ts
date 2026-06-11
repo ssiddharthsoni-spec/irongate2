@@ -2460,6 +2460,9 @@ const turnCoordinator = (() => {
     level: string;
     score: number;
     extra?: Record<string, unknown>;
+    /** WP2: URL matched adapter.primaryEndpointPatterns — a real user
+     *  submit even without a recorded gesture (voice, paste-send). */
+    isPrimaryEndpoint?: boolean;
   };
 
   function _emit(r: QueuedResult, turn: { epoch: number; seq: number }): void {
@@ -2597,11 +2600,11 @@ const turnCoordinator = (() => {
       if (r.promptText && r.promptText.length > 20) {
         const now = Date.now();
         const userActed = now - _lastUserActionAt < USER_ACTION_WINDOW_MS;
-        if (userActed || _turnSeq === 0) {
+        if (userActed || _turnSeq === 0 || r.isPrimaryEndpoint === true) {
           _lastEmitHash = _promptHash(r.promptText);
           _lastEmitAt = now;
           _emit(r, _mintTurn());
-          igLog(`Turn coordinator: EMIT clean prompt (${r.promptText.length}ch, score=${r.score}, userActed=${userActed})`);
+          igLog(`Turn coordinator: EMIT clean prompt (${r.promptText.length}ch, score=${r.score}, userActed=${userActed}, primary=${r.isPrimaryEndpoint === true})`);
           return;
         }
         igLog('Turn coordinator: DROP 0-entity AUDIT (no user gesture — secondary platform fetch)');
@@ -5552,6 +5555,10 @@ const patchedFetch = async function patchedFetch(
           turnCoordinator.submit({
             type: 'IRON_GATE_AUDIT', promptText, allEntities: [],
             maskedText: '', mappings: [], level, score,
+            // WP2: exact clean-submit discrimination — the adapter knows
+            // which URL is the real chat send vs a secondary fetch.
+            isPrimaryEndpoint: (activeAdapter?.primaryEndpointPatterns ?? [])
+              .some((re) => re.test(url)),
           });
 
           // REMOVED: IRON_GATE_CLEAN_SUBMIT was causing real detections to be

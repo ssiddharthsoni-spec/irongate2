@@ -47,6 +47,18 @@ export interface SiteAdapter {
   apiPatterns: RegExp[];
 
   /**
+   * WP2: URL patterns identifying the PRIMARY chat-completion request — the
+   * one a user submit produces — as opposed to the secondary fetches
+   * (title generation, metadata, autosave) that also match apiPatterns.
+   * Used by the turn coordinator to mint a turn for clean (0-entity)
+   * submits even without a recorded user gesture (voice input, paste-send).
+   * MUST be precise: matching a secondary fetch here recreates the
+   * false-All-Clear bug class. Omit when unsure — gesture correlation
+   * still covers keyboard/click submits.
+   */
+  primaryEndpointPatterns?: RegExp[];
+
+  /**
    * Should the fetch proxy skip this site?
    * True for platforms where DOM pre-submit handles everything (Gemini)
    * or where fetch isn't the primary transport (Copilot).

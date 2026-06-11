@@ -88,6 +88,12 @@ export const GeminiAdapter: SiteAdapter = {
     /generativelanguage\.googleapis\.com/,
   ],
 
+  // StreamGenerate is the chat send; batchexecute is the multiplexed RPC
+  // channel (mixed traffic) and must not match.
+  primaryEndpointPatterns: [
+    /gemini\.google\.com.*\/StreamGenerate/,
+  ],
+
   fileUploadPatterns: [/content-push\.googleapis\.com\/upload/],
 
   responseStreamStrategy: 'none',

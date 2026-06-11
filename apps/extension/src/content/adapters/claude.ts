@@ -32,6 +32,13 @@ export const ClaudeAdapter: SiteAdapter = {
     /claude\.ai\/api\/organizations\/[^/]+\/chat_conversations\/[^/]+\/title/,
   ],
 
+  // The user submit is …/chat_conversations/<id>/completion; the /title
+  // endpoint (listed in apiPatterns) is secondary and must not match.
+  primaryEndpointPatterns: [
+    /\/chat_conversations\/[^/]+\/completion(?:\?|$)/,
+    /api\.anthropic\.com\/v1\/messages(?:\?|$)/,
+  ],
+
   fileUploadPatterns: [/claude\.ai\/api\/convert_document/],
 
   // Claude.ai uses a non-standard SSE format (completion field, not delta.text).

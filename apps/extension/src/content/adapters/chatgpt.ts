@@ -41,6 +41,13 @@ export const ChatGPTAdapter: SiteAdapter = {
     /api\.openai\.com\/v1\/chat\/completions/,
   ],
 
+  // The user submit POSTs to …/conversation EXACTLY; secondary calls add
+  // path segments (/gen_title/<id>, /textdocs, …) and must not match.
+  primaryEndpointPatterns: [
+    /\/backend-(?:api|anon)\/(?:f\/)?conversation(?:\?|$)/,
+    /api\.openai\.com\/v1\/chat\/completions(?:\?|$)/,
+  ],
+
   fileUploadPatterns: [/\/backend-api\/files/, /files\.oaiusercontent\.com/],
 
   // ── Response-stream strategy: 'none' (DOM-level de-pseudo only) ────────
