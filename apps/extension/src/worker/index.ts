@@ -1174,6 +1174,8 @@ const NONCE_REQUIRED: ReadonlySet<string> = new Set([
 // from sidepanel/external origins closes the spoofing vector.
 const CONTENT_SCRIPT_ONLY: ReadonlySet<string> = new Set([
   'CLASSIFY_INTENT_CONTEXT',
+  'PERSIST_REVERSE_MAP',
+  'REQUEST_REVERSE_MAP',
 ]);
 
 async function handleMessage(
@@ -1242,6 +1244,54 @@ async function handleMessage(
     // Content script asks for its tab ID (used for per-tab reverse map keying)
     case 'IRON_GATE_GET_TAB_ID': {
       return { tabId: sender.tab?.id ?? null };
+    }
+
+    // ── Reverse-map session persistence ──────────────────────────────────
+    // Lives in the WORKER because content scripts cannot access
+    // chrome.storage.session by default (TRUSTED_CONTEXTS only) — the
+    // previous content-script implementation silently failed on every
+    // persist AND restore. Widening the access level instead would expose
+    // every session key (incl. enforcement state) to all content-script
+    // contexts. storage.session is memory-only and trusted-context-only;
+    // that IS the at-rest protection — the old content-script AES layer
+    // stored its key in the same storage area and added none.
+    case 'PERSIST_REVERSE_MAP': {
+      const tabId = sender.tab?.id;
+      if (!tabId) return { ok: false, error: 'no tab' };
+      const rawMap = message.payload?.map;
+      const seq = typeof message.payload?.seq === 'number' ? message.payload.seq : 0;
+      if (!rawMap || typeof rawMap !== 'object' || Array.isArray(rawMap)) {
+        return { ok: false, error: 'invalid map' };
+      }
+      // Bound entries and string lengths — mirrors main-world's 500-entry cap.
+      const bounded: Record<string, string> = {};
+      let entryCount = 0;
+      for (const [k, v] of Object.entries(rawMap)) {
+        if (entryCount >= 500) break;
+        if (typeof k !== 'string' || typeof v !== 'string') continue;
+        if (k.length === 0 || k.length > 500 || v.length > 500) continue;
+        bounded[k] = v;
+        entryCount++;
+      }
+      try {
+        await chrome.storage.session.set({ [`ig_revmap_${tabId}`]: { map: bounded, seq } });
+        return { ok: true, entries: entryCount };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    }
+
+    case 'REQUEST_REVERSE_MAP': {
+      const tabId = sender.tab?.id;
+      if (!tabId) return { map: null, seq: -1 };
+      try {
+        const res = await chrome.storage.session.get(`ig_revmap_${tabId}`);
+        const stored = res[`ig_revmap_${tabId}`];
+        if (stored && typeof stored === 'object' && stored.map && typeof stored.map === 'object') {
+          return { map: stored.map, seq: typeof stored.seq === 'number' ? stored.seq : -1 };
+        }
+      } catch { /* fall through to empty */ }
+      return { map: null, seq: -1 };
     }
 
     case 'IRON_GATE_RECORD_AUDIT': {
@@ -4178,6 +4228,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   lastAuthoritativeByTab.delete(tabId);
   _conversationTrackers.delete(tabId);
   removeTabState(tabId);
+  // Reverse-map persistence is keyed per tab — drop it with the tab.
+  chrome.storage.session.remove(`ig_revmap_${tabId}`).catch(() => {});
 });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

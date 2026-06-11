@@ -664,3 +664,47 @@ describe('Architecture Invariants — Gemma verdicts stay off window.postMessage
     expect(src).toMatch(/_handleGemmaVerdictPayload/);
   });
 });
+
+describe('Architecture Invariants — Reverse-map persistence lives in the worker', () => {
+  // June 2026 audit: the content script persisted the reverse map to
+  // chrome.storage.session, which content scripts cannot access by default
+  // (TRUSTED_CONTEXTS) — every persist/restore silently failed. The map's
+  // restore payload (full fake→real PII map) also traveled on
+  // window.postMessage, observable AND poisonable by page scripts.
+  const CONTENT_INDEX = join(REPO_ROOT, 'apps/extension/src/content/index.ts');
+  const WORKER_INDEX = join(REPO_ROOT, 'apps/extension/src/worker/index.ts');
+
+  it('content script never touches chrome.storage.session for the reverse map', () => {
+    const src = readFileSync(CONTENT_INDEX, 'utf8');
+    // welcomeShown (non-PII UX flag) is the single tolerated legacy use.
+    const uses = (src.match(/chrome\.storage\.session\.(get|set|remove)\(/g) ?? []).length;
+    const welcomeUses = (src.match(/chrome\.storage\.session\.(get|set)\(\s*\{?\s*'?welcomeShown/g) ?? []).length;
+    expect(uses - welcomeUses, 'reverse-map persistence must go through the worker').toBeLessThanOrEqual(2);
+    expect(src).not.toMatch(/encryptAndStore|loadAndDecrypt|getSessionKey/);
+  });
+
+  it('worker owns PERSIST/REQUEST_REVERSE_MAP and restricts them to content scripts', () => {
+    const src = readFileSync(WORKER_INDEX, 'utf8');
+    expect(src).toMatch(/case 'PERSIST_REVERSE_MAP'/);
+    expect(src).toMatch(/case 'REQUEST_REVERSE_MAP'/);
+    const csOnly = src.split('CONTENT_SCRIPT_ONLY')[1]?.split(']')[0] ?? '';
+    expect(csOnly).toContain('PERSIST_REVERSE_MAP');
+    expect(csOnly).toContain('REQUEST_REVERSE_MAP');
+  });
+
+  it('main-world has no window-path RESTORE handler (map poisoning)', () => {
+    const src = readMainWorld();
+    expect(src).not.toMatch(/event\.data\?\.type === 'IRON_GATE_RESTORE_REVERSE_MAP'/);
+    expect(src).toMatch(/_handleRestoreReverseMap/);
+  });
+
+  it('restore map is sent to main-world only on the secure channel', () => {
+    const src = readFileSync(CONTENT_INDEX, 'utf8');
+    const sendSites = src.split('IRON_GATE_RESTORE_REVERSE_MAP').length - 1;
+    const secureSends = (src.match(/_igSecureChannel\.postMessage\(\{\s*\n?\s*type: 'IRON_GATE_RESTORE_REVERSE_MAP'/g) ?? []).length;
+    expect(secureSends).toBeGreaterThanOrEqual(1);
+    // No csPostMessage send of the restore payload anywhere.
+    expect(src).not.toMatch(/csPostMessage\(\{\s*\n?\s*type: 'IRON_GATE_RESTORE_REVERSE_MAP'/);
+    expect(sendSites).toBeGreaterThanOrEqual(1);
+  });
+});

@@ -30,86 +30,10 @@ function igLog(...args: any[]) { if (_IG_DEBUG) console.log('[Iron Gate CS]', ..
  * Detects the active AI tool and starts capturing prompts.
  */
 
-// ── Encrypted Map Persistence Helpers ────────────────────────────────────────
-// Uses a session-scoped AES-GCM key (generated once per browser session) to
-// encrypt the reverse pseudonym map before storing in chrome.storage.session.
-// This ensures PII in the map is encrypted at rest.
-
-const SESSION_KEY_NAME = '__ig_session_key';
-let _sessionKey: CryptoKey | null = null;
-
-async function getSessionKey(): Promise<CryptoKey> {
-  if (_sessionKey) return _sessionKey;
-  // Try to import a previously exported key from session storage
-  try {
-    const result = await chrome.storage.session.get(SESSION_KEY_NAME);
-    if (result[SESSION_KEY_NAME] && typeof result[SESSION_KEY_NAME] === 'string') {
-      const raw = Uint8Array.from(atob(result[SESSION_KEY_NAME]), c => c.charCodeAt(0));
-      if (raw.length === 0) throw new Error('Empty session key');
-      _sessionKey = await crypto.subtle.importKey(
-        'raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt'],
-      );
-      return _sessionKey;
-    }
-  } catch {}
-  // Generate a new key for this browser session
-  _sessionKey = await crypto.subtle.generateKey(
-    { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt'],
-  );
-  // Export and store so other tabs in this session can use the same key
-  try {
-    const exported = await crypto.subtle.exportKey('raw', _sessionKey);
-    const b64 = btoa(String.fromCharCode(...new Uint8Array(exported)));
-    await chrome.storage.session.set({ [SESSION_KEY_NAME]: b64 });
-  } catch {}
-  return _sessionKey;
-}
-
-async function encryptAndStore(key: string, map: Record<string, string> | null | undefined): Promise<number> {
-  if (!map) return 0;
-  const entries = Object.keys(map).length;
-  if (entries === 0) {
-    await chrome.storage.session.set({ [key]: null });
-    return 0;
-  }
-  const aesKey = await getSessionKey();
-  const plaintext = JSON.stringify(map);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encrypted = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv, tagLength: 128 }, aesKey,
-    new TextEncoder().encode(plaintext),
-  );
-  const combined = new Uint8Array(12 + encrypted.byteLength);
-  combined.set(iv, 0);
-  combined.set(new Uint8Array(encrypted), 12);
-  let binary = '';
-  const chunkSize = 8192;
-  for (let i = 0; i < combined.length; i += chunkSize) {
-    binary += String.fromCharCode(...combined.subarray(i, i + chunkSize));
-  }
-  const b64 = btoa(binary);
-  await chrome.storage.session.set({ [key]: b64 });
-  return entries;
-}
-
-async function loadAndDecrypt(key: string): Promise<Record<string, string> | null> {
-  try {
-    const result = await chrome.storage.session.get(key);
-    const stored = result[key];
-    if (!stored || typeof stored !== 'string') return null;
-    const aesKey = await getSessionKey();
-    const combined = Uint8Array.from(atob(stored), c => c.charCodeAt(0));
-    if (combined.length < 13) return null;
-    const iv = combined.slice(0, 12);
-    const ciphertext = combined.slice(12);
-    const decrypted = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv, tagLength: 128 }, aesKey, ciphertext,
-    );
-    return JSON.parse(new TextDecoder().decode(decrypted));
-  } catch {
-    return null;
-  }
-}
+// Reverse-map persistence moved to the WORKER (June 2026): content scripts
+// cannot access chrome.storage.session (TRUSTED_CONTEXTS only) — the old
+// in-place AES helpers here silently failed on every persist and restore.
+// See worker/index.ts PERSIST_REVERSE_MAP / REQUEST_REVERSE_MAP.
 
 let detector: ReturnType<typeof detectAITool> = null;
 let engine: ReturnType<typeof createCaptureEngine> | null = null;
@@ -117,26 +41,6 @@ let badge: ReturnType<typeof createSensitivityBadge> | null = null;
 let tooltips: EntityTooltipHandle | null = null;
 let toasts: CoachingToastHandle | null = null;
 
-// ── Per-Tab Reverse Map Keying ──────────────────────────────────────────────
-// Use tab-specific keys for reverse map storage to prevent cross-tab
-// contamination when the same hostname is open in multiple tabs.
-let _tabMapKey: string | null = null;
-
-async function getTabMapKey(): Promise<string> {
-  if (_tabMapKey) return _tabMapKey;
-  try {
-    const response = await chrome.runtime.sendMessage({ type: 'IRON_GATE_GET_TAB_ID' });
-    if (response?.tabId) {
-      _tabMapKey = `reverse_map_tab_${response.tabId}`;
-      return _tabMapKey;
-    }
-  } catch { /* context invalidated */ }
-  // Fallback: use hostname + random session ID to prevent cross-tab contamination.
-  // Each content script instance gets its own unique key even on the same hostname.
-  const sessionId = Math.random().toString(36).substring(2, 10);
-  _tabMapKey = `reverse_map_${window.location.hostname}_${sessionId}`;
-  return _tabMapKey;
-}
 let contextAlive = true;
 
 // Coaching state — throttle toasts to avoid spam
@@ -552,13 +456,16 @@ function handleSecureChannelMessage(data: any) {
   }
 
   if (data.type === 'IRON_GATE_PERSIST_REVERSE_MAP') {
+    // Relay to the worker — content scripts cannot access
+    // chrome.storage.session (TRUSTED_CONTEXTS only); the old in-place
+    // implementation silently failed on every persist. The worker keys
+    // the map by sender.tab.id and bounds its size.
     const map = data.map;
     const seq = typeof data._seq === 'number' ? data._seq : 0;
     if (map && typeof map === 'object') {
-      getTabMapKey().then((tabKey) => {
-        return encryptAndStore(tabKey, map).then(() => {
-          chrome.storage.session.set({ [`${tabKey}_seq`]: seq }).catch(() => {});
-        });
+      chrome.runtime.sendMessage({
+        type: 'PERSIST_REVERSE_MAP',
+        payload: { map, seq },
       }).catch(() => {});
     }
     return;
@@ -716,44 +623,27 @@ function handleMainWorldMessages(event: MessageEvent) {
     return;
   }
 
-  // ── Reverse Pseudonym Map Persistence (Encrypted) ────────────────────────
-  // MAIN world sends updated reverse map for persistence in chrome.storage.session.
-  // Map is encrypted at rest using a session-scoped AES-GCM key to protect PII
-  // even if chrome.storage.session is somehow compromised.
-  if (event.data?.type === 'IRON_GATE_PERSIST_REVERSE_MAP') {
-    const map = event.data.map;
-    const seq = typeof event.data._seq === 'number' ? event.data._seq : 0;
-    if (map && typeof map === 'object') {
-      getTabMapKey().then((tabKey) => {
-        // Store _seq alongside the map so we can send it back on restore
-        return encryptAndStore(tabKey, map).then((entryCount) => {
-          // Persist _seq in a separate unencrypted key (it's just a counter, not PII)
-          chrome.storage.session.set({ [`${tabKey}_seq`]: seq }).catch(() => {});
-          igLog(`Persisted reverse map (${entryCount} entries, seq=${seq}) to key ${tabKey}`);
-        });
-      }).catch(() => {});
-    }
-    return;
-  }
+  // ── Reverse Pseudonym Map Persistence ────────────────────────────────────
+  // PERSIST arrives ONLY via the secure BroadcastChannel (see
+  // handleSecureChannelMessage) — the previous duplicate window-path handler
+  // here is removed: one channel, one handler.
 
-  // MAIN world requests persisted reverse map (after page refresh)
+  // MAIN world requests persisted reverse map (after page refresh). The
+  // request carries nothing sensitive so it may arrive on the window channel,
+  // but the RESPONSE is the full fake→real map (raw PII values) and goes
+  // back ONLY over the nonce-named secure channel — never window.postMessage,
+  // where any page script could observe it.
   if (event.data?.type === 'IRON_GATE_REQUEST_REVERSE_MAP') {
-    getTabMapKey().then(async (tabKey) => {
-      const map = await loadAndDecrypt(tabKey);
-      if (map && Object.keys(map).length > 0) {
-        // Retrieve the stored _seq so main world can validate staleness
-        let seq = -1;
-        try {
-          const seqResult = await chrome.storage.session.get(`${tabKey}_seq`);
-          const stored = seqResult[`${tabKey}_seq`];
-          if (typeof stored === 'number') seq = stored;
-        } catch { /* ignore */ }
-        csPostMessage({
+    chrome.runtime.sendMessage({ type: 'REQUEST_REVERSE_MAP' }).then((response) => {
+      if (!chrome.runtime?.id) return;
+      const map = response?.map;
+      if (map && typeof map === 'object' && Object.keys(map).length > 0 && _igSecureChannel) {
+        _igSecureChannel.postMessage({
           type: 'IRON_GATE_RESTORE_REVERSE_MAP',
           map,
-          _seq: seq,
+          _seq: typeof response.seq === 'number' ? response.seq : -1,
         });
-        igLog(`Restored reverse map (${Object.keys(map).length} entries, seq=${seq}) from key ${tabKey}`);
+        igLog(`Restored reverse map (${Object.keys(map).length} entries, seq=${response.seq}) via secure channel`);
       }
     }).catch(() => {});
     return;

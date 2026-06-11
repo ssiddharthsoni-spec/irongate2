@@ -206,6 +206,9 @@ _igSecureChannel.onmessage = (evt) => {
   if (data?.type === 'IRON_GATE_GEMMA_VERDICT') {
     _handleGemmaVerdictPayload(data);
   }
+  // IRON_GATE_RESTORE_REVERSE_MAP is handled by a second listener
+  // (addEventListener) registered inside the implementation scope where the
+  // live map state (_clearSequence, currentReverseMap) is visible.
 };
 
 /**
@@ -922,50 +925,11 @@ window.addEventListener('message', (event) => {
       igLog('Private LLM configured:', _privateLlmEndpoint, _privateLlmModel);
     }
   }
-  // Receive persisted reverse map from content script (after page refresh)
-  if (event.data?.type === 'IRON_GATE_RESTORE_REVERSE_MAP') {
-    const restored = event.data.map;
-    // Validate: must be a plain object with string→string entries, bounded size
-    if (restored && typeof restored === 'object' && !Array.isArray(restored)) {
-      const entries = Object.entries(restored);
-      const count = entries.length;
-      if (count > 0 && count <= 5000 && entries.every(([k, v]) => typeof k === 'string' && typeof v === 'string')) {
-        // BUG-21: Use session sequence number instead of time-based window.
-        // The old 5s window caused a race: a second prompt within 5s had its
-        // restore silently dropped. The restore message includes the sequence
-        // at the time it was persisted — if it's stale (from before a clear),
-        // we reject it. If no sequence is present (legacy), fall back to time check.
-        const restoreSeq = typeof event.data._seq === 'number' ? event.data._seq : -1;
-        if (restoreSeq >= 0 && restoreSeq < _clearSequence) {
-          igLog(`RESTORE_REVERSE_MAP ignored — stale sequence ${restoreSeq} < current ${_clearSequence}`);
-        } else if (restoreSeq < 0 && _lastClearTime > 0 && Date.now() - _lastClearTime < 5000) {
-          igLog(`RESTORE_REVERSE_MAP ignored (legacy) — clearReverseMapFully() ran ${Date.now() - _lastClearTime}ms ago`);
-        } else {
-          // M-1 FIX: MERGE restored entries, but only add keys that don't
-          // already exist in the current map. This prevents the restore from
-          // overwriting entries added by a pseudonymization that raced ahead
-          // of the restore completing.
-          for (const [k, v] of entries) {
-            if (!(k in currentReverseMap)) {
-              currentReverseMap[k] = v as string;
-            }
-          }
-          _reverseMapRestored = true;
-          _regexCacheVersion++;
-          console.log(
-            `%c[Iron Gate MAIN] Restored ${count} reverse pseudonym mappings from session`,
-            'color: #22c55e; font-weight: bold',
-          );
-          // Start de-pseudo observer immediately so previous session's user bubbles
-          // get their original text restored (don't wait for a new pseudonymization event)
-          startPersistentDomDepseudo();
-          // Delay initial scan to let Claude finish rendering conversation history
-          setTimeout(() => scanTextNodes(document.body), 1500);
-          setTimeout(() => scanTextNodes(document.body), 3000);
-        }
-      }
-    }
-  }
+  // Reverse-map RESTORE: SECURITY — the restore payload is the full
+  // fake→real map. It arrives ONLY via the nonce-named _igSecureChannel
+  // (handler near the channel declaration). A window-path handler here
+  // would let any page script inject a poisoned map and make Iron Gate
+  // rewrite AI responses with attacker-chosen text. Do not re-add one.
 });
 
 // Request mode sync and persisted reverse map from content script
@@ -2375,6 +2339,63 @@ let _rapidScanPending = false;
 let _clearSequence = 0;
 let _lastClearTime = 0;
 
+// ── Reverse-map RESTORE (secure channel) ────────────────────────────────────
+// SECURITY: the restore payload is the full fake→real map. It arrives ONLY
+// via the nonce-named _igSecureChannel — a window-path handler would let any
+// page script observe it AND inject a poisoned map, making Iron Gate rewrite
+// AI responses with attacker-chosen text. Registered here (not at the channel
+// declaration) because the live map state below is scoped to this block.
+_igSecureChannel.addEventListener('message', (evt: MessageEvent) => {
+  if (evt?.data?.type === 'IRON_GATE_RESTORE_REVERSE_MAP') {
+    _handleRestoreReverseMap(evt.data);
+  }
+});
+
+function _handleRestoreReverseMap(data: any): void {
+  const restored = data.map;
+  // Validate: must be a plain object with string→string entries, bounded size
+  if (!restored || typeof restored !== 'object' || Array.isArray(restored)) return;
+  const entries = Object.entries(restored);
+  const count = entries.length;
+  if (count === 0 || count > 5000 || !entries.every(([k, v]) => typeof k === 'string' && typeof v === 'string')) {
+    return;
+  }
+  // BUG-21: Use session sequence number instead of time-based window.
+  // The old 5s window caused a race: a second prompt within 5s had its
+  // restore silently dropped. The restore message includes the sequence
+  // at the time it was persisted — if it's stale (from before a clear),
+  // we reject it. If no sequence is present (legacy), fall back to time check.
+  const restoreSeq = typeof data._seq === 'number' ? data._seq : -1;
+  if (restoreSeq >= 0 && restoreSeq < _clearSequence) {
+    igLog(`RESTORE_REVERSE_MAP ignored — stale sequence ${restoreSeq} < current ${_clearSequence}`);
+    return;
+  }
+  if (restoreSeq < 0 && _lastClearTime > 0 && Date.now() - _lastClearTime < 5000) {
+    igLog(`RESTORE_REVERSE_MAP ignored (legacy) — clearReverseMapFully() ran ${Date.now() - _lastClearTime}ms ago`);
+    return;
+  }
+  // M-1 FIX: MERGE restored entries, but only add keys that don't already
+  // exist in the current map. This prevents the restore from overwriting
+  // entries added by a pseudonymization that raced ahead of the restore.
+  for (const [k, v] of entries) {
+    if (!(k in currentReverseMap)) {
+      currentReverseMap[k] = v as string;
+    }
+  }
+  _reverseMapRestored = true;
+  _regexCacheVersion++;
+  console.log(
+    `%c[Iron Gate MAIN] Restored ${count} reverse pseudonym mappings from session`,
+    'color: #22c55e; font-weight: bold',
+  );
+  // Start de-pseudo observer immediately so previous session's user bubbles
+  // get their original text restored (don't wait for a new pseudonymization event)
+  startPersistentDomDepseudo();
+  // Delay initial scan to let Claude finish rendering conversation history
+  setTimeout(() => scanTextNodes(document.body), 1500);
+  setTimeout(() => scanTextNodes(document.body), 3000);
+}
+
 // ── Conversation boundary timeout ──────────────────────────────────────────
 // Fallback: if URL-based conversation detection fails (platform changed their
 // URL structure), clear the map after 30 minutes of no pseudonymization activity.
@@ -2588,10 +2609,11 @@ function clearReverseMapFully(): void {
   }
   _persistentReplacementCount = 0;
 
-  // Persist the EMPTY map to encrypted storage so stale keys
-  // don't resurrect on page refresh
+  // Persist the EMPTY map so stale keys don't resurrect on page refresh.
+  // Same channel as every other persist — the secure BroadcastChannel
+  // (one channel, one handler; the old igPostMessage duplicate is gone).
   if (hadEntries) {
-    igPostMessage({
+    _igSecureChannel.postMessage({
       type: 'IRON_GATE_PERSIST_REVERSE_MAP',
       map: {},
       _seq: _clearSequence,
