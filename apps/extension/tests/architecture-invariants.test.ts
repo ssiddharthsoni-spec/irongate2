@@ -782,9 +782,15 @@ describe('Architecture Invariants — WP1 turn identity & single delivery', () =
 
   it('the main-world coordinator mints turn ids and the 10s window is gone', () => {
     const src = readMainWorld();
-    expect(src).toMatch(/_mintTurn\(\)/);
+    // Minting moved (pure relocation) into the extracted turn-coordinator
+    // module — assert it there; main-world must still wire the coordinator in.
+    const coordinatorSrc = readFileSync(
+      join(REPO_ROOT, 'apps/extension/src/content/main-world/turn-coordinator.ts'), 'utf8',
+    );
+    expect(coordinatorSrc).toMatch(/_mintTurn\(\)/);
     expect(src).toMatch(/noteUserAction/);
     expect(src).not.toMatch(/now - _lastEmitAt < 10_000/);
+    expect(coordinatorSrc).not.toMatch(/now - _lastEmitAt < 10_000/);
   });
 
   it('the dead CLEAN_SUBMIT chain stays dead', () => {

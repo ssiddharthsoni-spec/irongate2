@@ -28,10 +28,11 @@ import {
   looksLikePersonName,
   buildRegexCache,
   replacePseudonymsCore,
-  HoldbackReplacer,
   type CachedPseudoEntry,
 } from './main-world/depseudo-engine';
 import { createSessionEntityTracker } from './main-world/session-entities';
+import { createStreamDepseudo, KEEP_METADATA_FIELDS } from './main-world/stream-depseudo';
+import { createTurnCoordinator, type QueuedResult } from './main-world/turn-coordinator';
 
 // ─── Full Scoring Pipeline ──────────────────────────────────────────────────
 // Import the REAL scoring pipeline — intent suppression, context analysis,
@@ -2429,191 +2430,54 @@ function _resetMapActivityTimer(): void {
 /**
  * Turn Coordinator — Gate that controls what reaches the sidepanel.
  *
- * ARCHITECTURE (production-grade, replaces buffer/window/sequence approach):
- *
- *   The sidepanel shows the LAST SIGNIFICANT SCAN result. Non-significant
- *   results (0-entity, low-score AUDITs from metadata/preflight/polling
- *   fetches) are DROPPED HERE and never reach the sidepanel at all.
- *
- *   "All Clear" is handled by PROMPT_CLEARED (fires when user's input field
- *   is cleared after submission, already debounced) and tab navigation.
- *
- *   This eliminates the entire class of "0-entity overwrites real detection"
- *   bugs because the noise never enters the pipeline. No buffer windows,
- *   no sequence numbers, no suppression rules in the sidepanel.
- *
- * What passes through:
- *   - INTERCEPTED (any score) — pseudonymized prompt, always significant
- *   - AUDIT with entities > 0 — found something, always significant
- *   - AUDIT with score > 25 — contextual/semantic detection, no entities but meaningful
- *
- * What gets dropped:
- *   - 0-entity AUDIT with score ≤ 25 — metadata fetch, preflight, polling noise
+ * The minting/dedup logic (QueuedResult gating, _mintTurn() turn identity,
+ * noteUserAction gesture correlation, prompt-hash dedup) lives in
+ * ./main-world/turn-coordinator.ts so unit tests exercise the SHIPPED code.
+ * The _emit body stays here because it calls notifyContentScript +
+ * igPostMessage (main-world module state) — it's injected into the factory.
  */
-const turnCoordinator = (() => {
-  type QueuedResult = {
-    type: 'IRON_GATE_INTERCEPTED' | 'IRON_GATE_AUDIT';
-    promptText: string;
-    allEntities: Array<{ type: string; text: string; start: number; end: number; confidence: number; source: string }>;
-    maskedText: string;
-    mappings: Array<{ pseudonym: string; type: string; length: number }>;
-    level: string;
-    score: number;
-    extra?: Record<string, unknown>;
-    /** WP2: URL matched adapter.primaryEndpointPatterns — a real user
-     *  submit even without a recorded gesture (voice, paste-send). */
-    isPrimaryEndpoint?: boolean;
-  };
+function _emit(r: QueuedResult, turn: { epoch: number; seq: number }): void {
+  igLog(`Turn coordinator: EMIT ${r.type} score=${r.score} entities=${r.allEntities.length} turn=${turn.epoch}/${turn.seq}`);
+  notifyContentScript(r.type, r.promptText, r.allEntities, r.maskedText, r.mappings, r.level, r.score, { ...r.extra, turn });
 
-  function _emit(r: QueuedResult, turn: { epoch: number; seq: number }): void {
-    igLog(`Turn coordinator: EMIT ${r.type} score=${r.score} entities=${r.allEntities.length} turn=${turn.epoch}/${turn.seq}`);
-    notifyContentScript(r.type, r.promptText, r.allEntities, r.maskedText, r.mappings, r.level, r.score, { ...r.extra, turn });
-
-    // B1: Record an audit entry for the configured sink. The audit entry
-    // contains ONLY counts and types — never the original prompt text or
-    // entity values. The audit buffer in the worker batches and delivers.
-    //
-    // The shape is enforced by the AuditEntry interface on the worker side;
-    // any field added here that could contain raw PII text would fail the
-    // architecture invariant test for PII-in-audit.
-    const entityTypes = Array.from(new Set(r.allEntities.map(e => e.type)));
-    const action: 'allowed' | 'pseudonymized' | 'blocked' | 'low-risk-passthrough' =
-      r.type === 'IRON_GATE_INTERCEPTED'
-        ? 'pseudonymized'
-        : r.score > 25
-          ? 'allowed'
-          : 'low-risk-passthrough';
-    const zone: 'green' | 'amber' | 'red' =
-      r.score > 60 ? 'red' : r.score > 25 ? 'amber' : 'green';
-
-    igPostMessage({
-      type: 'IRON_GATE_RECORD_AUDIT',
-      payload: {
-        aiTool: activeAdapter?.id || 'unknown',
-        zone,
-        score: r.score,
-        entityCount: r.allEntities.length,
-        entityTypes, // type strings only, NO values
-        action,
-        tier: 1, // updated to 2 in pipeline if Tier 2 was consulted
-        pseudonymsApplied: r.mappings?.length ?? 0,
-        modelUsed: (r.extra?.modelUsed as string) || undefined,
-        latencyMs: (r.extra?.latencyMs as number) || undefined,
-      },
-    });
-  }
-
-  // ── Turn identity (WP1) ───────────────────────────────────────────────────
-  // The coordinator is the ONE place that knows a user turn began, so it
-  // mints TurnId here and stamps every emission. Downstream (worker
-  // updateTabState via shouldReplaceDisplay) arbitrates display purely on
-  // (turn, phase) — the old 10s suppression window is gone.
+  // B1: Record an audit entry for the configured sink. The audit entry
+  // contains ONLY counts and types — never the original prompt text or
+  // entity values. The audit buffer in the worker batches and delivers.
   //
-  //   epoch  per-pageload (Date.now at init) — reload beats everything older
-  //   seq    monotonic per pageload; mint = seq++ on a genuine user turn
-  //
-  // Minting rules:
-  //   INTERCEPTED                 → always a turn (pseudonymization happened)
-  //   0-entity low-score AUDIT    → a turn ONLY when correlated with a real
-  //     user action (Enter/click within USER_ACTION_WINDOW_MS — recorded by
-  //     the DOM handlers) or when it's the first prompt of the pageload.
-  //     Otherwise it's a secondary platform fetch (title generation,
-  //     metadata) and is dropped: the wire alone cannot distinguish the two,
-  //     which is exactly why the old emission-history window misfired —
-  //     a clean prompt within 10s of a previous turn was swallowed and the
-  //     panel went stale. Keyboard/click submits (the overwhelming case)
-  //     are now exact; WP2's adapter URL classification closes the rest.
-  //   AUDIT with entities/score   → stamped with the CURRENT turn (echo of it)
-  const _TURN_EPOCH = Date.now();
-  let _turnSeq = 0;
-  let _lastUserActionAt = 0;
-  const USER_ACTION_WINDOW_MS = 3000;
+  // The shape is enforced by the AuditEntry interface on the worker side;
+  // any field added here that could contain raw PII text would fail the
+  // architecture invariant test for PII-in-audit.
+  const entityTypes = Array.from(new Set(r.allEntities.map(e => e.type)));
+  const action: 'allowed' | 'pseudonymized' | 'blocked' | 'low-risk-passthrough' =
+    r.type === 'IRON_GATE_INTERCEPTED'
+      ? 'pseudonymized'
+      : r.score > 25
+        ? 'allowed'
+        : 'low-risk-passthrough';
+  const zone: 'green' | 'amber' | 'red' =
+    r.score > 60 ? 'red' : r.score > 25 ? 'amber' : 'green';
 
-  function _currentTurn(): { epoch: number; seq: number } {
-    return { epoch: _TURN_EPOCH, seq: _turnSeq };
-  }
-  function _mintTurn(): { epoch: number; seq: number } {
-    _turnSeq++;
-    return _currentTurn();
-  }
-
-  // Dedup: prevent the same prompt from emitting twice within a short window.
-  // ChatGPT (and some adapters) can trigger two fetch interceptions for one
-  // user submit, producing near-identical results (e.g., 373ch vs 372ch).
-  // This is PRODUCER noise control (one user action → two wire calls must
-  // not mint two turns); display arbitration no longer depends on it.
-  let _lastEmitHash = '';
-  let _lastEmitAt = 0;
-  const DEDUP_WINDOW_MS = 3000;
-
-  function _promptHash(text: string): string {
-    // Fast 53-bit hash of the first 300 chars — enough to identify the same prompt
-    let h = 0;
-    const s = text.substring(0, 300);
-    for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
-    return String(h);
-  }
-
-  return {
-    /** DOM Enter/click handlers call this on every user submit gesture. */
-    noteUserAction(): void {
-      _lastUserActionAt = Date.now();
+  igPostMessage({
+    type: 'IRON_GATE_RECORD_AUDIT',
+    payload: {
+      aiTool: activeAdapter?.id || 'unknown',
+      zone,
+      score: r.score,
+      entityCount: r.allEntities.length,
+      entityTypes, // type strings only, NO values
+      action,
+      tier: 1, // updated to 2 in pipeline if Tier 2 was consulted
+      pseudonymsApplied: r.mappings?.length ?? 0,
+      modelUsed: (r.extra?.modelUsed as string) || undefined,
+      latencyMs: (r.extra?.latencyMs as number) || undefined,
     },
+  });
+}
 
-    submit(r: QueuedResult): void {
-      // INTERCEPTED: always significant — pseudonymization occurred.
-      // The hash dedup keeps one user action that triggers two near-identical
-      // wire calls from minting two turns.
-      if (r.type === 'IRON_GATE_INTERCEPTED') {
-        const hash = _promptHash(r.promptText);
-        const now = Date.now();
-        if (hash === _lastEmitHash && now - _lastEmitAt < DEDUP_WINDOW_MS) {
-          igLog(`Turn coordinator: DEDUP skip (same prompt within ${DEDUP_WINDOW_MS}ms)`);
-          return;
-        }
-        _lastEmitHash = hash;
-        _lastEmitAt = now;
-        _emit(r, _mintTurn());
-        return;
-      }
-
-      // AUDIT with entities: found something — significant echo of the
-      // current turn (it must never displace the turn's INTERCEPTED, which
-      // shouldReplaceDisplay guarantees via phase rank).
-      if (r.allEntities.length > 0) {
-        _emit(r, _currentTurn());
-        return;
-      }
-
-      // AUDIT with meaningful score (contextual/semantic detection)
-      if (r.score > 25) {
-        _emit(r, _currentTurn());
-        return;
-      }
-
-      // ── 0-entity, low-score AUDIT: clean user prompt OR platform noise ──
-      // The wire alone cannot tell a clean user submit from a secondary
-      // platform fetch (title generation, metadata) — both arrive here.
-      // Discriminator: a real submit is correlated with a user gesture the
-      // DOM handlers just recorded. First prompt of the pageload also mints
-      // (covers entry paths with no keystroke, e.g. voice on a fresh page).
-      if (r.promptText && r.promptText.length > 20) {
-        const now = Date.now();
-        const userActed = now - _lastUserActionAt < USER_ACTION_WINDOW_MS;
-        if (userActed || _turnSeq === 0 || r.isPrimaryEndpoint === true) {
-          _lastEmitHash = _promptHash(r.promptText);
-          _lastEmitAt = now;
-          _emit(r, _mintTurn());
-          igLog(`Turn coordinator: EMIT clean prompt (${r.promptText.length}ch, score=${r.score}, userActed=${userActed}, primary=${r.isPrimaryEndpoint === true})`);
-          return;
-        }
-        igLog('Turn coordinator: DROP 0-entity AUDIT (no user gesture — secondary platform fetch)');
-        return;
-      }
-      igLog(`Turn coordinator: DROP 0-entity AUDIT (short/empty, score=${r.score})`);
-    },
-  };
-})();
+// Epoch is minted (Date.now) inside the factory at creation time — same
+// semantics as the old module-init IIFE. noteUserAction()/submit() call
+// sites below are unchanged.
+const turnCoordinator = createTurnCoordinator({ emit: _emit, log: igLog });
 
 /**
  * Clears the reverse pseudonym map completely — map, regex cache, DOM observer,
@@ -3203,25 +3067,8 @@ function restoreUserBubble(options: BubbleRestoreOptions): void {
  * these offsets become invalid and corrupt ChatGPT's rendering. Stripping them
  * is safe — they're cosmetic (citation hover) and the response still renders correctly.
  */
-// Fields we KEEP inside message.metadata. Anything else gets dropped.
-// This is an inverted whitelist: instead of chasing ChatGPT's evolving list
-// of offset-based citation/entity fields (displayedContentReferences,
-// cite_metadata, content_references, and whatever they add next), we drop
-// the entire metadata bag and only put back fields we know are needed for
-// basic rendering. New ChatGPT metadata fields can no longer break us by
-// leaving offset-shifted markers in the rendered output.
-const KEEP_METADATA_FIELDS = new Set<string>([
-  'message_type',
-  'model_slug',
-  'default_model_slug',
-  'parent_id',
-  'request_id',
-  'timestamp_',
-  'finish_details',
-  'status',
-  'is_complete',
-  'voice_mode_message',
-]);
+// KEEP_METADATA_FIELDS (the inverted metadata whitelist) moved to
+// ./main-world/stream-depseudo.ts with the stream cores — imported at top.
 
 function stripOffsetAnnotations(text: string): string {
   // Only process SSE data lines that look like JSON.
@@ -3246,530 +3093,30 @@ function stripOffsetAnnotations(text: string): string {
   });
 }
 
-/**
- * Content-level SSE de-pseudonymization.
- *
- * Architecture: instead of replacing pseudonyms in raw SSE transport text
- * (where "James Park" is split across two JSON objects and never contiguous),
- * we operate at the CONTENT level:
- *
- *   SSE bytes → line splitter → JSON parser → content extractor
- *     → content accumulator → pseudonym replacer → SSE rebuilder → output
- *
- * Two SSE content formats are supported:
- *   1. Accumulated (ChatGPT): each event has full text so far in parts[0]
- *   2. Delta (OpenAI API / Claude): each event has only the new token
- *
- * For accumulated format: replace in the full content; the frontend naturally
- * shows the latest version (corrections appear seamlessly).
- *
- * For delta format: accumulate deltas into a running buffer, replace in the
- * full buffer, diff against previously emitted content to compute the
- * corrected delta.
- *
- * Fallback: non-JSON or unrecognized SSE lines get raw text replacement.
- */
-/**
- * Raw-chunk response de-pseudonymization.
- * Decodes each chunk, runs replacePseudonyms on the full decoded text,
- * re-encodes and passes through. No SSE parsing — works with any format.
- * Best for platforms with non-standard SSE (Claude.ai).
- */
+// ─── Stream De-pseudonymization Cores ────────────────────────────────────────
+// The raw-chunk (HoldbackReplacer) and SSE/delta stream-wrapping bodies moved
+// to ./main-world/stream-depseudo.ts (pure relocation) so unit tests exercise
+// the SHIPPED code. Main-world state is injected once here; the two functions
+// below delegate under the original names so all call sites stay untouched.
+const _streamDepseudo = createStreamDepseudo({
+  replacePseudonyms: (text, map) => replacePseudonyms(text, map),
+  log: igLog,
+  isDebug: () => _IG_DEBUG,
+  onStreamStart: () => { _activeStreamCount++; }, // M-4: track active stream for deferred clear
+  onStreamEnd: () => _onStreamEnd(),              // M-4
+  recordReplacements: (mechanism, count) => recordReplacements(mechanism, count),
+  getAdapterId: () => activeAdapter?.id,
+  getResponseStreamStrategy: () => activeAdapter?.responseStreamStrategy,
+  extractResponseContent: activeAdapter?.extractResponseContent?.bind(activeAdapter),
+  injectResponseContent: activeAdapter?.injectResponseContent?.bind(activeAdapter),
+});
+
 function depseudonymizeResponseRaw(response: Response, reverseMap: Record<string, string>): Response {
-  if (!response.body || response.bodyUsed) return response;
-
-  // M-6 fix: Snapshot the reverse map at stream-creation time so that
-  // concurrent pseudonymization from another prompt cannot pollute this stream.
-  const snapshotMap = { ...reverseMap };
-  const mapKeys = Object.keys(snapshotMap);
-  if (mapKeys.length === 0) return response;
-
-  // BUG-35: Use igLog only (rate-limited) — console.log here caused spam with 100+ entity convos
-  igLog(`depseudonymizeResponseRaw: wrapping stream with ${mapKeys.length} mappings (raw-chunk mode)`);
-
-  let reader: ReadableStreamDefaultReader<Uint8Array>;
-  try {
-    reader = response.body.getReader();
-  } catch (readerErr) {
-    console.warn('[Iron Gate MAIN] depseudonymizeResponseRaw: getReader() failed —', readerErr instanceof Error ? readerErr.message : String(readerErr));
-    return response;
-  }
-
-  // M-4: Track active stream for deferred clear
-  _activeStreamCount++;
-
-  const decoder = new TextDecoder();
-  const encoder = new TextEncoder();
-  let chunkCount = 0;
-
-  // DEF-031: prefix-aware holdback (extracted to depseudo-engine.ts so the
-  // chunk-boundary logic is unit-tested against the SHIPPED code). The
-  // previous inline version split before replacing, leaking pseudonyms that
-  // straddled the cut, and flushed the holdback unreplaced on error.
-  // Candidate tokens come from the real regex cache so fragment entries
-  // (first names of multi-word fakes) are held back too.
-  const hb = new HoldbackReplacer(
-    (text) => replacePseudonyms(text, snapshotMap),
-    buildRegexCache(snapshotMap).map((e) => e.pseudonym),
-  );
-
-  const stream = new ReadableStream({
-    async pull(controller) {
-      try {
-        const { done, value } = await reader.read();
-
-        if (done) {
-          const remainder = hb.flush();
-          if (remainder.length > 0) controller.enqueue(encoder.encode(remainder));
-          igLog(`depseudonymizeResponseRaw: stream complete — ${chunkCount} chunks, ${hb.replacedCount} replacements`);
-          recordReplacements('wire-raw', hb.replacedCount);
-          controller.close();
-          _onStreamEnd(); // M-4
-          return;
-        }
-
-        chunkCount++;
-        const safeText = hb.push(decoder.decode(value, { stream: true }));
-        if (safeText.length > 0) {
-          controller.enqueue(encoder.encode(safeText));
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const isAbort = msg.includes('aborted') || msg.includes('abort') || msg.includes('cancel');
-        if (!isAbort) {
-          console.warn('[Iron Gate MAIN] depseudonymizeResponseRaw: stream error', msg);
-        }
-        try {
-          const remainder = hb.flush();
-          if (remainder.length > 0) controller.enqueue(encoder.encode(remainder));
-          controller.close();
-        } catch {
-          try { controller.error(err); } catch { /* already closed */ }
-        }
-        _onStreamEnd(); // M-4
-      }
-    },
-  });
-
-  const wrappedHeaders = new Headers(response.headers);
-  wrappedHeaders.delete('Content-Encoding');
-  wrappedHeaders.delete('Content-Length');
-
-  return new Response(stream, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: wrappedHeaders,
-  });
+  return _streamDepseudo.depseudonymizeResponseRaw(response, reverseMap);
 }
 
 function depseudonymizeResponse(response: Response, reverseMap: Record<string, string>): Response {
-  if (!response.body) {
-    igLog('depseudonymizeResponse: no response body — skipping');
-    return response;
-  }
-  // Guard: if body is already locked/consumed, we can't wrap it
-  if (response.bodyUsed) {
-    igLog('depseudonymizeResponse: body already used — skipping');
-    return response;
-  }
-
-  // M-6 fix: Snapshot the reverse map at stream-creation time so that
-  // concurrent pseudonymization from another prompt cannot pollute this stream.
-  const snapshotMap = { ...reverseMap };
-  const mapKeys = Object.keys(snapshotMap);
-  if (mapKeys.length === 0) {
-    igLog('depseudonymizeResponse: no mappings — returning response as-is');
-    return response;
-  }
-
-  // Check adapter strategy — dispatch to raw-chunk mode for platforms like Claude
-  const strategy = activeAdapter?.responseStreamStrategy || 'sse-content';
-  if (_IG_DEBUG) {
-    igLog(`depseudonymizeResponse strategy dispatch: adapter=${activeAdapter?.id || 'null'}, strategy=${strategy}, adapterProp=${activeAdapter?.responseStreamStrategy ?? 'MISSING'}`);
-  }
-  if (strategy === 'raw-chunk') {
-    return depseudonymizeResponseRaw(response, snapshotMap);
-  }
-  if (strategy === 'none') {
-    return response;
-  }
-
-  if (_IG_DEBUG) {
-    igLog(`depseudonymizeResponse wrapping stream — ${mapKeys.length} mappings (sse-content): ${mapKeys.join(', ')}`);
-  }
-
-  let reader: ReadableStreamDefaultReader<Uint8Array>;
-  try {
-    reader = response.body.getReader();
-  } catch (readerErr) {
-    console.warn('[Iron Gate MAIN] depseudonymizeResponse: getReader() failed —', readerErr instanceof Error ? readerErr.message : String(readerErr));
-    return response;
-  }
-
-  // M-4: Track active stream for deferred clear
-  _activeStreamCount++;
-
-  const decoder = new TextDecoder();
-  const encoder = new TextEncoder();
-
-  // Longest pseudonym — used as holdback margin for partial matches at content tail
-  const maxPseudoLen = Math.min(Math.max(...mapKeys.map(k => k.length), 0), 200);
-
-  // ── State ──
-  let lineBuffer = '';           // Raw bytes → complete lines
-  let deltaAccumulator = '';     // Running content for delta-style SSE
-  let emittedDeltaLen = 0;       // How much of replaced delta content we've emitted
-  let chunkCount = 0;
-  let totalReplacements = 0;
-
-  // ── Content extraction: find the text content in an SSE JSON object ──
-  // Returns { mode, content } or null if no content found.
-  // Uses adapter-specific extractor when available, falls back to generic patterns.
-  function extractContent(parsed: any): { mode: 'accumulated' | 'delta'; content: string } | null {
-    // Try adapter-specific extraction first
-    if (activeAdapter?.extractResponseContent) {
-      const result = activeAdapter.extractResponseContent(parsed);
-      if (result) return result;
-    }
-
-    // Generic fallbacks — covers ChatGPT, OpenAI API, Anthropic API, Claude.ai
-    // ChatGPT accumulated: message.content.parts[0] has full text so far
-    const parts = parsed?.message?.content?.parts;
-    if (Array.isArray(parts) && typeof parts[0] === 'string') {
-      return { mode: 'accumulated', content: parts[0] };
-    }
-    // OpenAI API delta: choices[0].delta.content
-    const delta = parsed?.choices?.[0]?.delta?.content;
-    if (typeof delta === 'string') {
-      return { mode: 'delta', content: delta };
-    }
-    // Anthropic Messages API stream: delta.text (content_block_delta events)
-    const anthropicDelta = parsed?.delta?.text;
-    if (typeof anthropicDelta === 'string') {
-      return { mode: 'delta', content: anthropicDelta };
-    }
-    // Claude.ai web: { completion: "accumulated text so far" }
-    const completion = parsed?.completion;
-    if (typeof completion === 'string') {
-      return { mode: 'accumulated', content: completion };
-    }
-    // ChatGPT 2025+ JSON patch: {"o":"append/add/patch","v":"text or [ops]"}
-    // Match on operation type broadly — path format varies across versions
-    if (parsed?.o === 'append' && typeof parsed?.v === 'string' && parsed.v.length > 0) {
-      return { mode: 'delta', content: parsed.v };
-    }
-    if (parsed?.o === 'add' && typeof parsed?.v === 'string' && parsed.v.length > 0 && parsed?.p?.includes('content')) {
-      return { mode: 'accumulated', content: parsed.v };
-    }
-    if (parsed?.o === 'patch' && Array.isArray(parsed?.v)) {
-      for (const op of parsed.v) {
-        if (op?.o === 'append' && typeof op?.v === 'string' && op.v.length > 0) {
-          return { mode: 'delta', content: op.v };
-        }
-      }
-    }
-    if (parsed?.v?.message?.content?.parts) {
-      const vParts = parsed.v.message.content.parts;
-      if (Array.isArray(vParts) && typeof vParts[0] === 'string') {
-        return { mode: 'accumulated', content: vParts[0] };
-      }
-    }
-    return null;
-  }
-
-  // ── Content injection: put modified content back into SSE JSON ──
-  // Uses adapter-specific injector when available, falls back to generic patterns.
-  function injectContent(parsed: any, mode: 'accumulated' | 'delta', content: string): void {
-    // Try adapter-specific injection first
-    if (activeAdapter?.injectResponseContent) {
-      activeAdapter.injectResponseContent(parsed, mode, content);
-      return;
-    }
-
-    // Generic fallbacks
-    if (mode === 'accumulated') {
-      if (parsed?.message?.content?.parts) {
-        parsed.message.content.parts[0] = content;
-      } else if (parsed?.v?.message?.content?.parts) {
-        parsed.v.message.content.parts[0] = content;
-      } else if (parsed?.completion !== undefined) {
-        parsed.completion = content;
-      } else if (parsed?.o === 'add' && typeof parsed?.v === 'string') {
-        parsed.v = content;
-      }
-    } else {
-      if (parsed?.choices?.[0]?.delta?.content !== undefined) {
-        parsed.choices[0].delta.content = content;
-      } else if (parsed?.delta?.text !== undefined) {
-        parsed.delta.text = content;
-      } else if (parsed?.o === 'append' && typeof parsed?.v === 'string') {
-        parsed.v = content;
-      } else if (parsed?.o === 'patch' && Array.isArray(parsed?.v)) {
-        for (const op of parsed.v) {
-          if ((op?.o === 'append' || op?.o === 'add') && typeof op?.v === 'string') {
-            op.v = content;
-            break;
-          }
-        }
-      }
-    }
-  }
-
-  // ── Strip offset annotations from parsed ChatGPT SSE ──
-  // Inverted whitelist (see KEEP_METADATA_FIELDS at top of file): drop
-  // everything in metadata except the small set we know is needed for
-  // basic rendering. This protects us from ChatGPT adding new offset-based
-  // metadata fields whose offsets are invalidated by pseudonym replacement.
-  function stripAnnotations(parsed: any): void {
-    const meta = parsed?.message?.metadata;
-    if (!meta || typeof meta !== 'object') return;
-    for (const key of Object.keys(meta)) {
-      if (!KEEP_METADATA_FIELDS.has(key)) delete meta[key];
-    }
-  }
-
-  // ── Process one complete SSE line ──
-  // Returns the modified line string, or null to suppress (holdback for delta mode).
-  function processSSELine(line: string): string | null {
-    // Pass through empty lines (SSE event separators)
-    if (line === '') return '';
-    // Non-data lines: could be event types, comments, or raw JSON lines.
-    // ChatGPT 2025+ sends raw JSON patch lines without "data: " prefix:
-    //   {"o":"patch","v":[{"p":"/message/content/parts/0","o":"append","v":"text"}]}
-    // These MUST be parsed and content-extracted, not just raw-replaced.
-    if (!line.startsWith('data: ')) {
-      // Try JSON parsing for raw JSON lines (ChatGPT 2025+ patch format)
-      if (line.startsWith('{') && line.length > 10) {
-        try {
-          const parsed = JSON.parse(line);
-          const extracted = extractContent(parsed);
-          if (extracted) {
-            chunkCount++;
-            const { mode, content } = extracted;
-            if (mode === 'accumulated') {
-              const replaced = replacePseudonyms(content, snapshotMap);
-              if (replaced !== content) totalReplacements++;
-              stripAnnotations(parsed);
-              injectContent(parsed, mode, replaced);
-              return JSON.stringify(parsed);
-            } else {
-              deltaAccumulator += content;
-              const replaced = replacePseudonyms(deltaAccumulator, snapshotMap);
-              if (replaced !== deltaAccumulator) totalReplacements++;
-              // Hold back the last maxPseudoLen chars of the REPLACED text.
-              // A pseudonym that's only partially in the accumulator (e.g.,
-              // "Robert Ch" — first 9 chars of "Robert Chen") wouldn't have
-              // matched yet, so it sits unchanged at the tail of `replaced`.
-              // Holding back maxPseudoLen there guarantees we never emit a
-              // partial pseudonym. This is exact in replaced-coords — no
-              // ratio approximation, no risk of advancing past a replacement.
-              const safeLen = Math.max(emittedDeltaLen, replaced.length - maxPseudoLen);
-              const newDelta = replaced.substring(emittedDeltaLen, safeLen);
-              emittedDeltaLen = safeLen;
-              injectContent(parsed, mode, newDelta.length > 0 ? newDelta : '');
-              return JSON.stringify(parsed);
-            }
-          }
-          // Parsed but no content — raw replacement on serialized JSON
-          const reser = JSON.stringify(parsed);
-          const replaced = replacePseudonyms(reser, snapshotMap);
-          if (replaced !== reser) totalReplacements++;
-          return replaced;
-        } catch {
-          // Not valid JSON — fall through to raw replacement
-        }
-      }
-      if (line.length > 10) {
-        const replaced = replacePseudonyms(line, snapshotMap);
-        if (replaced !== line) totalReplacements++;
-        return replaced;
-      }
-      return line;
-    }
-    // Pass through stream terminator
-    const payload = line.substring(6);
-    if (payload === '[DONE]' || payload.trim() === '[DONE]') return line;
-    // Pass through non-JSON payloads
-    if (!payload.startsWith('{') && !payload.startsWith('[')) {
-      // Raw text replacement fallback
-      const replaced = replacePseudonyms(payload, snapshotMap);
-      if (replaced !== payload) totalReplacements++;
-      return 'data: ' + replaced;
-    }
-
-    // ── JSON SSE line: parse, extract content, replace, rebuild ──
-    let parsed: any;
-    try {
-      parsed = JSON.parse(payload);
-    } catch {
-      // Invalid JSON — raw text replacement fallback
-      const replaced = replacePseudonyms(payload, snapshotMap);
-      if (replaced !== payload) totalReplacements++;
-      return 'data: ' + replaced;
-    }
-
-    const extracted = extractContent(parsed);
-    if (!extracted) {
-      // Log first few non-content events to understand format
-      if (_IG_DEBUG && chunkCount <= 3) {
-        igLog(`DEPSEUDO no content extracted from SSE (chunk ${chunkCount}):`, JSON.stringify(parsed).substring(0, 200));
-      }
-      // No content field (metadata event, etc.) — pass through with raw replacement
-      const reser = JSON.stringify(parsed);
-      const replaced = replacePseudonyms(reser, snapshotMap);
-      if (replaced !== reser) totalReplacements++;
-      return 'data: ' + replaced;
-    }
-
-    // Log first content extraction to verify format
-    if (_IG_DEBUG && chunkCount <= 2 && extracted) {
-      igLog(`DEPSEUDO content extracted (${extracted.mode}): "${extracted.content.substring(0, 50)}"`);
-    }
-
-    const { mode, content } = extracted;
-
-    if (mode === 'accumulated') {
-      // ── Accumulated format (ChatGPT) ──
-      // Each event has the FULL text so far. Once both "James" and " Park"
-      // are in the accumulated text, "James Park" appears contiguously.
-      // Replace in the full content — the frontend always shows the latest
-      // version, so corrections appear seamlessly with no flicker.
-      const replaced = replacePseudonyms(content, snapshotMap);
-      if (replaced !== content) totalReplacements++;
-      stripAnnotations(parsed);
-      injectContent(parsed, mode, replaced);
-      return 'data: ' + JSON.stringify(parsed);
-    }
-
-    // ── Delta format (OpenAI API / Claude / others) ──
-    // Each event has only the new token. Accumulate into a running buffer,
-    // replace in the full buffer, diff to compute the corrected delta.
-    deltaAccumulator += content;
-    const replaced = replacePseudonyms(deltaAccumulator, snapshotMap);
-    if (replaced !== deltaAccumulator) totalReplacements++;
-
-    // Hold back the last maxPseudoLen chars of the REPLACED text. A
-    // pseudonym only partially in the accumulator (e.g. "Robert Ch" out of
-    // "Robert Chen") didn't match yet, so it sits unchanged at the tail of
-    // `replaced`. Holding maxPseudoLen there guarantees we never emit a
-    // partial pseudonym.
-    //
-    // Earlier this was a ratio-based mapping from unreplaced→replaced coords,
-    // which produced fractional emit boundaries that landed inside or past
-    // a replacement region — the source of the "Pantoprazoledication" /
-    // "Patient Jane Millermary" corruption when chunks split across token
-    // boundaries near a pseudonym.
-    const safeLen = Math.max(emittedDeltaLen, replaced.length - maxPseudoLen);
-    const newDelta = replaced.substring(emittedDeltaLen, safeLen);
-    emittedDeltaLen = safeLen;
-
-    if (newDelta.length === 0) {
-      // Held back — but we MUST still emit the event to preserve SSE structure.
-      // Claude/Anthropic SSE parsers expect a data line for every event: line.
-      // Suppressing the data line breaks their JSON parser.
-      // Emit with empty content — the frontend handles empty deltas gracefully.
-      injectContent(parsed, mode, '');
-      return 'data: ' + JSON.stringify(parsed);
-    }
-
-    injectContent(parsed, mode, newDelta);
-    return 'data: ' + JSON.stringify(parsed);
-  }
-
-  const stream = new ReadableStream({
-    async pull(controller) {
-      try {
-        const { done, value } = await reader.read();
-
-        if (done) {
-          // ── Flush remaining data ──
-          // Process any remaining complete lines in lineBuffer
-          if (lineBuffer.length > 0) {
-            const remaining = lineBuffer;
-            lineBuffer = '';
-            const lines = remaining.split('\n');
-            for (const line of lines) {
-              const result = processSSELine(line);
-              if (result !== null) {
-                controller.enqueue(encoder.encode(result + '\n'));
-              }
-            }
-          }
-
-          // Flush held-back delta content
-          if (emittedDeltaLen < deltaAccumulator.length) {
-            const replaced = replacePseudonyms(deltaAccumulator, snapshotMap);
-            const finalDelta = replaced.substring(emittedDeltaLen);
-            if (finalDelta.length > 0) {
-              // Emit as a raw data line (the stream is ending, format doesn't matter)
-              controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":' + JSON.stringify(finalDelta) + '}}]}\n'));
-            }
-          }
-
-          if (_IG_DEBUG) {
-            igLog(`depseudonymizeResponse stream complete — ${chunkCount} chunks, ${totalReplacements} replacements, deltaAccum=${deltaAccumulator.length} chars`);
-            recordReplacements('wire-sse', totalReplacements);
-          }
-          controller.close();
-          _onStreamEnd(); // M-4
-          return;
-        }
-
-        chunkCount++;
-        lineBuffer += decoder.decode(value, { stream: true });
-
-        // Split into complete lines. SSE events are delimited by \n.
-        // Keep the last segment (might be incomplete) in lineBuffer.
-        const lines = lineBuffer.split('\n');
-        lineBuffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const result = processSSELine(line);
-          if (result !== null) {
-            controller.enqueue(encoder.encode(result + '\n'));
-          }
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const isAbort = msg.includes('aborted') || msg.includes('abort') || msg.includes('cancel');
-        if (!isAbort) {
-          console.warn('[Iron Gate MAIN] depseudonymizeResponse: stream error', msg);
-          try {
-            window.postMessage({
-              type: 'IRON_GATE_DEPSEUDO_FAILURE',
-              detail: 'De-pseudonymization stream error — some fake names may appear in the AI response.',
-            }, window.location.origin);
-          } catch { /* ignore */ }
-        }
-        // Fail gracefully: flush whatever we have and close.
-        try {
-          if (lineBuffer.length > 0) {
-            controller.enqueue(encoder.encode(lineBuffer));
-            lineBuffer = '';
-          }
-          controller.close();
-        } catch {
-          try { controller.error(err); } catch { /* already closed */ }
-        }
-        _onStreamEnd(); // M-4
-      }
-    },
-  });
-
-  // Strip Content-Encoding and Content-Length from the wrapped response.
-  // The original response body is already decompressed by the browser;
-  // copying these headers to our wrapped Response could cause issues
-  // (e.g., frontend expecting compressed data but getting plaintext,
-  // or Content-Length mismatch after replacement changes text length).
-  const wrappedHeaders = new Headers(response.headers);
-  wrappedHeaders.delete('Content-Encoding');
-  wrappedHeaders.delete('Content-Length');
-
-  return new Response(stream, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: wrappedHeaders,
-  });
+  return _streamDepseudo.depseudonymizeResponse(response, reverseMap);
 }
 
 // ─── DOM De-pseudonymization — REMOVED ──────────────────────────────────────
