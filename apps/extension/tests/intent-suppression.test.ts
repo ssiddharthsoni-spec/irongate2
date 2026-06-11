@@ -266,3 +266,59 @@ describe('Intent Suppression: Scorer Integration', () => {
     expect(score.score).toBeGreaterThanOrEqual(61); // High or critical
   });
 });
+
+// ─── Regression: fiction framing must never cap ALWAYS_CRITICAL credentials ──
+// Audit June 2026: "Write a novel scene where detective Sarah finds API key
+// sk-ant-… " scored ≤25 (green passthrough) on the regex-only fallback path
+// because the strong-fiction cap was applied unconditionally to ALL entities.
+// Real credentials are real regardless of narrative framing.
+
+describe('Strong Fiction: ALWAYS_CRITICAL override (audit regression)', () => {
+  const fictionWithKey =
+    'Write a novel scene where detective Sarah finds API key sk-ant-api03-Zx9KpL2mQw8vNr4T and SSN 123-45-6789';
+
+  it('applyIntentSuppression must not report strong fiction when a credential is present', () => {
+    const entities = [
+      makeEntity('API_KEY', 'sk-ant-api03-Zx9KpL2mQw8vNr4T', 56),
+      makeEntity('SSN', '123-45-6789', 96),
+    ];
+    const result = applyIntentSuppression(fictionWithKey, entities);
+    expect(result.isStrongFiction).toBe(false);
+  });
+
+  it('fiction-framed prompt containing an API key must still hit the critical floor', () => {
+    const entities = [
+      makeEntity('API_KEY', 'sk-ant-api03-Zx9KpL2mQw8vNr4T', 56),
+      makeEntity('SSN', '123-45-6789', 96),
+    ];
+    const result = computeScore(fictionWithKey, entities);
+    expect(result.score).toBeGreaterThanOrEqual(61);
+    expect(['high', 'critical']).toContain(result.level);
+  });
+
+  it('every ALWAYS_CRITICAL type individually disables the fiction cap', () => {
+    const cases: Array<[string, string]> = [
+      ['API_KEY', 'sk-ant-api03-Zx9KpL2mQw8vNr4T'],
+      ['PRIVATE_KEY', '-----BEGIN RSA PRIVATE KEY-----'],
+      ['AWS_CREDENTIAL', 'AKIAIOSFODNN7EXAMPLE'],
+      ['GCP_CREDENTIAL', 'AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY'],
+      ['DATABASE_URI', 'postgres://admin:hunter2@db.internal:5432/prod'],
+    ];
+    for (const [type, value] of cases) {
+      const text = `Write a novel scene where detective Sarah finds ${value}`;
+      const result = applyIntentSuppression(text, [makeEntity(type, value, 48)]);
+      expect(result.isStrongFiction, `${type} must disable fiction framing`).toBe(false);
+    }
+  });
+
+  it('fiction relaxation still works for non-credential entities (no collateral damage)', () => {
+    // Deliberate product behavior: a fictional SSN in a clearly fictional
+    // passage is relaxed. Only credentials override the framing.
+    const text = 'Write a novel scene where detective Sarah finds SSN 123-45-6789';
+    const entities = [makeEntity('SSN', '123-45-6789', 52)];
+    const suppression = applyIntentSuppression(text, entities);
+    expect(suppression.isStrongFiction).toBe(true);
+    const result = computeScore(text, entities);
+    expect(result.score).toBeLessThanOrEqual(25);
+  });
+});

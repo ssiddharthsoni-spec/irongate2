@@ -332,7 +332,13 @@ export function applyIntentSuppression(
   // score reduction regardless of NEVER_SUPPRESS_TYPES. Individual entities
   // are still logged (we don't drop their confidence) so the user sees
   // what IronGate detected, but the prompt won't be red-flagged.
-  const strongFictionActive = text.length <= 500 && STRONG_FICTION_OPENING.test(text);
+  //
+  // HARD EXCEPTION: ALWAYS_CRITICAL_TYPES (real credentials — API keys,
+  // private keys, cloud creds, DB URIs) disable fiction framing entirely.
+  // A working secret pasted into a "novel scene" is still a working secret;
+  // the critical floor must hold no matter how the prompt is framed.
+  const strongFictionActive = text.length <= 500 && STRONG_FICTION_OPENING.test(text) &&
+    !entities.some(e => ALWAYS_CRITICAL_TYPES.has(e.type));
 
   const suppressions: IntentSuppression[] = [];
   const matchedPatterns: BenignIntentPattern[] = [];
