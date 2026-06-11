@@ -834,3 +834,23 @@ describe('Architecture Invariants — WP2 platform decisions live in adapters', 
     expect(src).not.toMatch(/adapter\.id\s*===\s*'(?:gemini|copilot|chatgpt|claude)'/);
   });
 });
+
+describe('Architecture Invariants — WP3 single sources', () => {
+  it('exactly one scoreToLevel definition (detection/types.ts)', async () => {
+    const files = await glob('apps/extension/src/**/*.{ts,tsx}', { cwd: REPO_ROOT, absolute: true });
+    const defs: string[] = [];
+    for (const f of files) {
+      if (/function scoreToLevel|const scoreToLevel\s*=/.test(readFileSync(f, 'utf8'))) defs.push(f);
+    }
+    expect(defs.map(f => f.split('/src/')[1])).toEqual(['detection/types.ts']);
+  });
+
+  it('exactly one ALWAYS_CRITICAL_TYPES definition (detection/types.ts)', async () => {
+    const files = await glob('apps/extension/src/**/*.{ts,tsx}', { cwd: REPO_ROOT, absolute: true });
+    const defs: string[] = [];
+    for (const f of files) {
+      if (/ALWAYS_CRITICAL_TYPES\s*[:=]\s*(?:ReadonlySet<string>\s*=\s*)?new Set/.test(readFileSync(f, 'utf8'))) defs.push(f);
+    }
+    expect(defs.map(f => f.split('/src/')[1])).toEqual(['detection/types.ts']);
+  });
+});

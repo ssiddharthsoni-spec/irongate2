@@ -395,12 +395,7 @@ function validateVerdict(v: string): JudgmentVerdict {
   return 'nudge'; // Conservative default
 }
 
-function scoreToLevel(score: number): SensitivityLevel {
-  if (score <= 25) return 'low';
-  if (score <= 60) return 'medium';
-  if (score <= 85) return 'high';
-  return 'critical';
-}
+// scoreToLevel — imported from ./types (WP3 single source).
 
 /**
  * Merge LLM sensitivity assessments with regex-detected spans.
@@ -491,7 +486,7 @@ interface LLMJudgmentArgs {
 // Converts the existing detection pipeline output into Evidence.
 
 import type { DetectedEntity as LocalDetectedEntity } from './types';
-import { HIGH_PII_TYPES } from './types';
+import { HIGH_PII_TYPES, scoreToLevel } from './types';
 
 /**
  * Build Evidence from existing detection pipeline output.

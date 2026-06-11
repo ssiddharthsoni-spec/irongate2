@@ -44,6 +44,24 @@ export const HIGH_PII_TYPES: ReadonlySet<string> = new Set([
  * Entity types that should NEVER have their confidence reduced.
  * Subset of HIGH_PII_TYPES — secrets and credentials.
  */
+// ── Score bands — THE single source (WP3) ───────────────────────────────────
+// low 0-25 · medium 26-60 · high 61-85 · critical 86-100. Every consumer
+// imports scoreToLevel from here; private copies are banned by an
+// architecture invariant (three identical copies existed and only luck
+// kept them from diverging).
+export const SCORE_BANDS = {
+  lowMax: 25,
+  mediumMax: 60,
+  highMax: 85,
+} as const;
+
+export function scoreToLevel(score: number): 'low' | 'medium' | 'high' | 'critical' {
+  if (score <= SCORE_BANDS.lowMax) return 'low';
+  if (score <= SCORE_BANDS.mediumMax) return 'medium';
+  if (score <= SCORE_BANDS.highMax) return 'high';
+  return 'critical';
+}
+
 export const ALWAYS_CRITICAL_TYPES: ReadonlySet<string> = new Set([
   'API_KEY', 'PRIVATE_KEY', 'AWS_CREDENTIAL', 'GCP_CREDENTIAL', 'DATABASE_URI',
 ]);

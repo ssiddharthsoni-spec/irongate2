@@ -1,3 +1,5 @@
+import { scoreToLevel } from '../../detection/types';
+
 /**
  * Sensitivity Badge — Phase 2
  *
@@ -71,12 +73,7 @@ const LEVEL_STYLES: Record<string, LevelStyle> = {
   },
 };
 
-function scoreToLevel(score: number): string {
-  if (score <= 25) return 'low';
-  if (score <= 60) return 'medium';
-  if (score <= 85) return 'high';
-  return 'critical';
-}
+// scoreToLevel — imported from detection/types (WP3 single source).
 
 function getLevelLabel(level: string): string {
   const labels: Record<string, string> = {

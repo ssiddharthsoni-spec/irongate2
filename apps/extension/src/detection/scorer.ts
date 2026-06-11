@@ -874,12 +874,10 @@ function computeLegalBoost(text: string): number {
   return Math.min(LEGAL_BOOST_CAP, boost);
 }
 
-export function scoreToLevel(score: number): SensitivityLevel {
-  if (score <= 25) return 'low';
-  if (score <= 60) return 'medium';
-  if (score <= 85) return 'high';
-  return 'critical';
-}
+// Canonical implementation lives in types.ts (WP3) — imported for internal
+// use and re-exported for existing importers.
+import { scoreToLevel } from './types';
+export { scoreToLevel };
 
 // ── Human-readable explanation templates ────────────────────────────────────
 // Map entity types to plain English descriptions users can understand.
