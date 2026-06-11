@@ -196,6 +196,18 @@ const _IG_MSG_NONCE = crypto.getRandomValues(new Uint8Array(16))
 // channel name. Used for: reverse map, file uploads, server process requests.
 const _igSecureChannel = new BroadcastChannel(`ig_${_IG_MSG_NONCE}`);
 
+// Inbound secure channel: the content script relays worker-origin payloads
+// that carry sensitive values (Gemma-judged entity texts) over this channel
+// instead of window.postMessage, so page scripts can never observe them.
+// BroadcastChannel does not echo to the posting context, so our own
+// outbound posts above never re-enter here.
+_igSecureChannel.onmessage = (evt) => {
+  const data = evt?.data;
+  if (data?.type === 'IRON_GATE_GEMMA_VERDICT') {
+    _handleGemmaVerdictPayload(data);
+  }
+};
+
 /**
  * Secure postMessage wrapper that auto-includes the session nonce AND a
  * unique per-message ID. The content script validates the session nonce
@@ -417,6 +429,43 @@ let _gemmaVerdict: {
   entities: GemmaEntity[];
 } | null = null;
 const GEMMA_VERDICT_TTL = 30_000; // 30s — covers typing → submit window
+
+/**
+ * Cache a Gemma verdict relayed from the worker. Called ONLY from the
+ * _igSecureChannel onmessage handler — verdicts carry raw sensitive entity
+ * texts and must never travel via window.postMessage.
+ * CRITICAL: a stale "allow" from a previous clean prompt must NOT suppress
+ * detection on a new sensitive prompt — the TTL + promptHash guard that.
+ */
+function _handleGemmaVerdictPayload(data: any): void {
+  // Defensively validate entities arriving from the relay: the worker
+  // payload is constructed dynamically, so bound array length and string
+  // lengths to keep memory safe.
+  const rawEntities = Array.isArray(data.entities) ? data.entities : [];
+  const sanitizedEntities: GemmaEntity[] = [];
+  for (const e of rawEntities) {
+    if (sanitizedEntities.length >= 50) break;
+    if (!e || typeof e.text !== 'string') continue;
+    const text = e.text.slice(0, 200);
+    if (text.length < 2) continue;
+    const type = (typeof e.type === 'string' ? e.type : 'UNKNOWN').slice(0, 64);
+    sanitizedEntities.push({ type, text });
+  }
+  _gemmaVerdict = {
+    intent: data.intent || 'ambiguous',
+    sensitivity: data.sensitivity || 'medium',
+    score: data.score || 50,
+    verdict: data.verdict || 'mask',
+    source: data.source || 'gemma',
+    promptHash: data.promptHash || '',
+    timestamp: Date.now(),
+    entities: sanitizedEntities,
+  };
+  console.log(
+    `%c[Iron Gate] Gemma verdict cached: ${_gemmaVerdict.verdict} (${_gemmaVerdict.intent}/${_gemmaVerdict.sensitivity}) entities=${sanitizedEntities.length}`,
+    'color: #a855f7; font-weight: bold',
+  );
+}
 
 function getCachedGemmaVerdict(): typeof _gemmaVerdict {
   if (!_gemmaVerdict) return null;
@@ -856,41 +905,10 @@ window.addEventListener('message', (event) => {
   }
   // Receive private LLM config from content script
   // Receive Gemma 4 classification response from content script
-  // Receive Gemma verdict from worker (via content script relay).
-  // Caches the LLM's context judgment for use at submit time.
-  // CRITICAL: only use this verdict if it matches the CURRENT prompt.
-  // A stale "allow" from a previous clean prompt must NOT suppress
-  // detection on a new sensitive prompt.
-  if (event.data?.type === 'IRON_GATE_GEMMA_VERDICT') {
-    // Defensively validate entities arriving from the relay. The page can't
-    // forge this message (handler ignores anything not from window.postMessage
-    // with our own origin) but the worker payload is constructed dynamically,
-    // so still bound array length and string lengths to keep memory safe.
-    const rawEntities = Array.isArray(event.data.entities) ? event.data.entities : [];
-    const sanitizedEntities: GemmaEntity[] = [];
-    for (const e of rawEntities) {
-      if (sanitizedEntities.length >= 50) break;
-      if (!e || typeof e.text !== 'string') continue;
-      const text = e.text.slice(0, 200);
-      if (text.length < 2) continue;
-      const type = (typeof e.type === 'string' ? e.type : 'UNKNOWN').slice(0, 64);
-      sanitizedEntities.push({ type, text });
-    }
-    _gemmaVerdict = {
-      intent: event.data.intent || 'ambiguous',
-      sensitivity: event.data.sensitivity || 'medium',
-      score: event.data.score || 50,
-      verdict: event.data.verdict || 'mask',
-      source: event.data.source || 'gemma',
-      promptHash: event.data.promptHash || '',
-      timestamp: Date.now(),
-      entities: sanitizedEntities,
-    };
-    console.log(
-      `%c[Iron Gate] Gemma verdict cached: ${_gemmaVerdict.verdict} (${_gemmaVerdict.intent}/${_gemmaVerdict.sensitivity}) entities=${sanitizedEntities.length}`,
-      'color: #a855f7; font-weight: bold',
-    );
-  }
+  // Gemma verdicts: SECURITY — these carry raw sensitive entity texts, so
+  // they arrive ONLY via the nonce-named _igSecureChannel (handler near the
+  // channel declaration), never via window.postMessage where page scripts
+  // can listen. Do not re-add a window-path handler for them.
   if (event.data?.type === 'IRON_GATE_SET_PRIVATE_LLM') {
     const candidate = event.data.endpoint || null;
     if (candidate && !_isAllowedLlmEndpoint(candidate)) {

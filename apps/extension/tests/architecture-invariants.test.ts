@@ -642,3 +642,25 @@ describe('Architecture Invariants — No raw prompt text in console logs', () =>
     expect(offenders, `Console content-slice logging found in: ${offenders.join(', ')}`).toEqual([]);
   });
 });
+
+describe('Architecture Invariants — Gemma verdicts stay off window.postMessage', () => {
+  // June 2026 audit: Gemma-judged entity values (raw sensitive text) were
+  // relayed to the MAIN world via window.postMessage — readable by any page
+  // script. They must travel only on the nonce-named BroadcastChannel.
+  const CONTENT_INDEX = join(REPO_ROOT, 'apps/extension/src/content/index.ts');
+
+  it('content script forwards GEMMA_VERDICT via _igSecureChannel, never csPostMessage', () => {
+    const src = readFileSync(CONTENT_INDEX, 'utf8');
+    const caseBlock = src.split("case 'IRON_GATE_GEMMA_VERDICT'")[1]?.split('break;')[0] ?? '';
+    expect(caseBlock).toContain('_igSecureChannel.postMessage');
+    expect(caseBlock, 'GEMMA_VERDICT must not be sent via csPostMessage/window.postMessage').not.toContain('csPostMessage');
+  });
+
+  it('main-world has no window-path handler for GEMMA_VERDICT (forgeable + observable)', () => {
+    const src = readMainWorld();
+    expect(src).not.toMatch(/event\.data\?\.type === 'IRON_GATE_GEMMA_VERDICT'/);
+    // The secure-channel handler must exist instead.
+    expect(src).toMatch(/_igSecureChannel\.onmessage/);
+    expect(src).toMatch(/_handleGemmaVerdictPayload/);
+  });
+});

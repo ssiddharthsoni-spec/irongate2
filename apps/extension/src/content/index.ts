@@ -1071,16 +1071,29 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         // intent-context scoring AND merges the entity texts into the
         // submit-time entity set so values regex missed (e.g., credentials
         // whose format the regex doesn't match) still get pseudonymized.
-        csPostMessage({
-          type: 'IRON_GATE_GEMMA_VERDICT',
-          intent: message.intent,
-          sensitivity: message.sensitivity,
-          score: message.score,
-          verdict: message.verdict,
-          source: message.source,
-          entities: Array.isArray(message.entities) ? message.entities.slice(0, 50) : [],
-        });
-        igLog('Gemma verdict forwarded to main-world:', message.verdict, message.sensitivity, `entities=${Array.isArray(message.entities) ? message.entities.length : 0}`);
+        //
+        // SECURITY: entity texts are raw sensitive values. They travel ONLY
+        // on the nonce-named BroadcastChannel — window.postMessage is
+        // observable by any page script, and a window-path handler would
+        // also let page scripts forge "allow" verdicts. No fallback: a
+        // verdict always responds to a prompt main-world itself intercepted,
+        // so the handshake (and therefore the channel) already exists; if it
+        // somehow doesn't, dropping an enrichment verdict is fail-safe
+        // (detection stays at the regex score — never weaker).
+        if (_igSecureChannel) {
+          _igSecureChannel.postMessage({
+            type: 'IRON_GATE_GEMMA_VERDICT',
+            intent: message.intent,
+            sensitivity: message.sensitivity,
+            score: message.score,
+            verdict: message.verdict,
+            source: message.source,
+            entities: Array.isArray(message.entities) ? message.entities.slice(0, 50) : [],
+          });
+          igLog('Gemma verdict forwarded to main-world (secure channel):', message.verdict, message.sensitivity, `entities=${Array.isArray(message.entities) ? message.entities.length : 0}`);
+        } else {
+          igLog('Gemma verdict DROPPED — secure channel not established (fail-safe: regex score stands)');
+        }
         break;
       case 'IRON_GATE_APPLY_POLICY_BUNDLE':
         // B3: Forward signed bundle rules from worker to main-world.
