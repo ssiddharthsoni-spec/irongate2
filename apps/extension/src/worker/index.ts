@@ -1023,100 +1023,17 @@ onManagedConfigChanged((config) => {
 // Track detection data per tab so the side panel can display tab-specific info.
 // Uses chrome.storage.session (survives service worker idle, clears on browser close).
 
-interface TabState {
-  tabId: number;
-  aiToolId: string;
-  aiToolName: string;
-  lastScore: number | null;
-  lastLevel: string | null;
-  lastExplanation: string | null;
-  lastEntities: any[];
-  lastPromptHash?: string;
-  lastPromptLength?: number;
-  lastOriginalPrompt?: string;
-  lastMaskedPrompt?: string;
-  lastPseudonymMappings?: any[];
-  detectionCount: number;
-  lastDetectionTime: number;
-  // ── WP1 turn identity ──
-  // Real turn id + phase of the displayed result. updateTabState gates
-  // every display write through shouldReplaceDisplay(lastTurn/lastPhase),
-  // so this stored state is ALWAYS the best-known truth for the tab and
-  // the sidepanel renders it verbatim with zero arbitration of its own.
-  lastTurn?: { epoch: number; seq: number } | null;
-  lastPhase?: 'preview' | 'authoritative' | 'enrichment' | 'audit';
-  // Live-typing feedback — a SEPARATE slot from the turn outcome. Written
-  // freely while the user composes, cleared by each authoritative result
-  // or PROMPT_CLEARED. Keeping it apart from the display fields is what
-  // lets PROMPT_CLEARED work without a suppression window: clearing the
-  // composing banner can never wipe the inspector again.
-  preview?: { score: number; level: string; entityCount: number; at: number } | null;
-  // PROMPT_TURN_INVALIDATED annotation: pseudonymization happened but the
-  // request never reached the LLM. Cleared by the next accepted result.
-  transportStatus?: 'blocked' | null;
-  transportReason?: string | null;
-  // WP2: selector death on a dom-presubmit platform — protection degraded.
-  // Set by SELECTOR_FAILURE, cleared by the next accepted authoritative
-  // result (evidence the interception pipeline works again).
-  selectorFailure?: { adapterId: string; phase: string; at: number } | null;
-}
-
-const TAB_STATE_KEY = 'iron_gate_tab_states';
-const MAX_PROMPT_STORAGE = 2000; // Truncate prompts to avoid quota issues
-
-async function loadTabStates(): Promise<Record<number, TabState>> {
-  try {
-    const result = await chrome.storage.session.get(TAB_STATE_KEY);
-    return result[TAB_STATE_KEY] || {};
-  } catch (err) {
-    console.warn('[Iron Gate] loadTabStates storage read failed:', err instanceof Error ? err.message : String(err));
-    return {};
-  }
-}
-
-async function saveTabStates(states: Record<number, TabState>): Promise<void> {
-  try {
-    await chrome.storage.session.set({ [TAB_STATE_KEY]: states });
-  } catch (err) {
-    igLog('Failed to save tab states:', err);
-  }
-}
-
-async function getTabState(tabId: number): Promise<TabState | null> {
-  const states = await loadTabStates();
-  return states[tabId] || null;
-}
-
-async function updateTabState(tabId: number, update: Partial<TabState>): Promise<TabState> {
-  const states = await loadTabStates();
-  const existing = states[tabId] || {
-    tabId,
-    aiToolId: '',
-    aiToolName: '',
-    lastScore: null,
-    lastLevel: null,
-    lastExplanation: null,
-    lastEntities: [],
-    detectionCount: 0,
-    lastDetectionTime: 0,
-  };
-  // Truncate prompts to stay within storage quota (lastPromptHash is always 64 chars, no truncation needed)
-  if (update.lastOriginalPrompt && update.lastOriginalPrompt.length > MAX_PROMPT_STORAGE) {
-    update.lastOriginalPrompt = update.lastOriginalPrompt.substring(0, MAX_PROMPT_STORAGE);
-  }
-  if (update.lastMaskedPrompt && update.lastMaskedPrompt.length > MAX_PROMPT_STORAGE) {
-    update.lastMaskedPrompt = update.lastMaskedPrompt.substring(0, MAX_PROMPT_STORAGE);
-  }
-  states[tabId] = { ...existing, ...update };
-  await saveTabStates(states);
-  return states[tabId];
-}
-
-async function removeTabState(tabId: number): Promise<void> {
-  const states = await loadTabStates();
-  delete states[tabId];
-  await saveTabStates(states);
-}
+// Tab-state management — extracted to ./tab-state (WP4) for real-import
+// testability of the restart-rehydration path. Storage area injected here.
+import {
+  type TabState,
+  initTabStateStorage,
+  loadTabStates,
+  getTabState,
+  updateTabState,
+  removeTabState,
+} from './tab-state';
+initTabStateStorage(chrome.storage.session);
 
 // ── M-8 fix: Sequential processing queue for PROMPT_DETECTED per tab ────────
 // Multiple tabs can send PROMPT_DETECTED simultaneously, causing race conditions

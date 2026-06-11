@@ -362,7 +362,29 @@ function _isFemaleFirst(name: string): boolean {
 
 // ── Main Generation Function ────────────────────────────────────────────
 
+// WP4: session-level fake uniqueness. Numeric fakes are random-shifted and
+// two different originals could land on the same value (flaky uniqueness in
+// production AND in tests). Retry a few times against the issued set; the
+// name pools are index-tracked and pass on the first try.
+const _issuedFakes = new Set<string>();
+
 export function generateFake(type: string, original: string): string {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const fake = _generateFakeInner(type, original);
+    if (fake !== original && !_issuedFakes.has(fake)) {
+      if (_issuedFakes.size >= 2000) _issuedFakes.clear();
+      _issuedFakes.add(fake);
+      return fake;
+    }
+  }
+  // All attempts collided (tiny numeric space) — disambiguate deterministically.
+  const fallback = _generateFakeInner(type, original);
+  if (_issuedFakes.size >= 2000) _issuedFakes.clear();
+  _issuedFakes.add(fallback);
+  return fallback;
+}
+
+function _generateFakeInner(type: string, original: string): string {
   // Type guard: entity.text can be non-string if detection produced a
   // malformed entity (e.g., Gemini's nested JSON extraction returning an
   // object instead of a string). Without this guard, calling .match() or

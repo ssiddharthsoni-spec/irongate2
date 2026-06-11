@@ -30,9 +30,11 @@ jobs:
         working-directory: apps/extension
 
       - name: Run selector health probe
-        run: npx playwright test tests/e2e/selector-health.spec.ts --reporter=list 2>&1 || true
+        # WP4: no longer muted with '|| true' — a dead selector is a
+        # production protection gap and must turn this workflow RED so it
+        # notifies. The report still uploads via the always() step below.
+        run: npx playwright test tests/e2e/selector-health.spec.ts --reporter=list
         working-directory: apps/extension
-        # Don't fail the whole workflow — we want the report even on partial failures
 
       - name: Upload results
         if: always()
