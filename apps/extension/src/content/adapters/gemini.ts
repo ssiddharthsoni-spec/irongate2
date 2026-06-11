@@ -1,4 +1,6 @@
 import type { SiteAdapter } from './base';
+import { findDeepestString } from './base';
+import { jsonStringEscape } from '../main-world/depseudo-engine';
 // Wire parser available but not active — DOM pre-submit is the current strategy.
 // import { extractPromptFromBatchexecute, replacePromptInBatchexecute } from '../main-world/gemini-wire';
 
@@ -132,12 +134,71 @@ export const GeminiAdapter: SiteAdapter = {
 
   usesShadowDom: true,
 
-  extractPrompt(_body: string): string | null {
-    return null; // DOM pre-submit handles extraction
+  // WP3: Gemini's f.req wire parsing lives HERE now (it used to hide in
+  // main-world's "generic" fallbacks while this adapter claimed DOM-only —
+  // the architectural lie behind the May revert ping-pong). DOM pre-submit
+  // remains the primary path; these handle the XHR/fetch wire echoes.
+  extractPrompt(body: string): string | null {
+    // URL-encoded form body with f.req= containing nested JSON:
+    // f.req=[[["MfsCee","[\"prompt text\",...]",null,"generic"]]]&at=...
+    if (typeof body !== 'string' || !(body.includes('f.req=') || body.includes('f.req%3D'))) {
+      return null;
+    }
+    try {
+      const params = new URLSearchParams(body);
+      const fReq = params.get('f.req');
+      if (fReq) {
+        const outer = JSON.parse(fReq);
+        // Walk the nested arrays to find the deepest string
+        const deep = findDeepestString(Array.isArray(outer) ? outer : [outer]);
+        if (deep) {
+          // Gemini nests JSON-in-JSON: the string might itself be a JSON array
+          try {
+            const inner = JSON.parse(deep);
+            const innerDeep = findDeepestString(Array.isArray(inner) ? inner : [inner]);
+            if (innerDeep && innerDeep.length > 10) {
+              return innerDeep;
+            }
+          } catch { /* not JSON-in-JSON, use the string directly */ }
+          if (deep.length > 10) {
+            return deep;
+          }
+        }
+      }
+    } catch { /* parse failed — not extractable */ }
+    return null;
   },
 
-  replacePrompt(_body: string, _original: string, _replacement: string): string | null {
-    return null; // DOM pre-submit handles replacement
+  replacePrompt(body: string, originalPrompt: string, replacement: string): string | null {
+    // The prompt appears JSON-escaped (possibly double-escaped) inside f.req.
+    // Parse, replace with matching escaping, re-encode.
+    if (!(body.includes('f.req=') || body.includes('f.req%3D'))) return null;
+    try {
+      const params = new URLSearchParams(body);
+      const fReq = params.get('f.req');
+      if (fReq && originalPrompt.length >= 10) {
+        // Try single JSON-escaped match (prompt inside a JSON string)
+        const escapedOrig = jsonStringEscape(originalPrompt);
+        const escapedRepl = jsonStringEscape(replacement);
+        if (fReq.includes(escapedOrig)) {
+          params.set('f.req', fReq.split(escapedOrig).join(escapedRepl));
+          return params.toString();
+        }
+        // Try double-escaped match (JSON-in-JSON: prompt is escaped twice)
+        const doubleEscapedOrig = jsonStringEscape(escapedOrig);
+        const doubleEscapedRepl = jsonStringEscape(escapedRepl);
+        if (fReq.includes(doubleEscapedOrig)) {
+          params.set('f.req', fReq.split(doubleEscapedOrig).join(doubleEscapedRepl));
+          return params.toString();
+        }
+        // Try raw text match (prompt appears unescaped)
+        if (fReq.includes(originalPrompt)) {
+          params.set('f.req', fReq.split(originalPrompt).join(replacement));
+          return params.toString();
+        }
+      }
+    } catch { /* parse failed */ }
+    return null;
   },
 
   readInput(el: HTMLElement): string {

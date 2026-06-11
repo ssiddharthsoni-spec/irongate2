@@ -18,6 +18,7 @@
 // The registry auto-selects the active adapter based on the current hostname.
 import { getAdapter, isLLMEndpoint as adapterIsLLMEndpoint, shouldSkipFetchProxy, shouldSkipXhrProxy, getAllAdapters } from './adapters';
 import type { SiteAdapter } from './adapters';
+import { findDeepestString } from './adapters/base';
 import { generateFake } from './main-world/fake-data';
 import { detectWithRegex } from '../detection/fallback-regex';
 import { scanForSecrets, isNaturalLanguage } from './main-world/entity-patterns';
@@ -1382,37 +1383,9 @@ function filterEntitiesForPseudonymization(
 // Falls back to generic deep-search for unknown formats.
 
 function extractPrompt(body: any): string | null {
-  // ── Google Gemini: URL-encoded form body with f.req= containing nested JSON ──
-  // Must be checked BEFORE JSON.parse since URL-encoded strings aren't valid JSON.
-  // Gemini sends: f.req=[[[\"MfsCee\",\"[\\\"prompt text\\\",...]\",null,\"generic\"]]]&at=...
-  if (typeof body === 'string' && (body.includes('f.req=') || body.includes('f.req%3D'))) {
-    try {
-      const params = new URLSearchParams(body);
-      const fReq = params.get('f.req');
-      if (fReq) {
-        const outer = JSON.parse(fReq);
-        // Walk the nested arrays to find the deepest string
-        const deep = findDeepestString(Array.isArray(outer) ? outer : [outer]);
-        if (deep) {
-          // Gemini nests JSON-in-JSON: the string might itself be a JSON array
-          try {
-            const inner = JSON.parse(deep);
-            const innerDeep = findDeepestString(Array.isArray(inner) ? inner : [inner]);
-            if (innerDeep && innerDeep.length > 10) {
-              igLog(`Gemini prompt extracted from f.req (${innerDeep.length} chars)`);
-              return innerDeep;
-            }
-          } catch { /* not JSON-in-JSON, use the string directly */ }
-          if (deep.length > 10) {
-            igLog(`Gemini prompt extracted from f.req outer (${deep.length} chars)`);
-            return deep;
-          }
-        }
-      }
-    } catch (e) {
-      igLog('Gemini f.req parse failed:', e);
-    }
-  }
+  // Gemini f.req parsing moved to the Gemini adapter (WP3) — the engine's
+  // generic path must contain no platform formats. Call order at every wire
+  // site is activeAdapter?.extractPrompt(body) ?? extractPrompt(body).
 
   try {
     const parsed = typeof body === 'string' ? JSON.parse(body) : body;
@@ -1532,59 +1505,10 @@ function findLongestStringValue(obj: any, maxDepth = 5): string | null {
 }
 
 /** Find longest string in deeply nested arrays (Gemini format) */
-function findDeepestString(arr: any[]): string | null {
-  let best: string | null = null;
-  for (const item of arr) {
-    if (typeof item === 'string' && (!best || item.length > best.length)) {
-      best = item;
-    } else if (Array.isArray(item)) {
-      const found = findDeepestString(item);
-      if (found && (!best || found.length > best.length)) best = found;
-    }
-  }
-  return best;
-}
+// findDeepestString — imported from ./adapters/base (WP3 shared copy).
 
 function replacePrompt(body: string, originalPrompt: string, replacement: string): string | null {
-  // ── Google Gemini: URL-encoded form body with f.req= ──
-  // The prompt appears JSON-escaped (possibly double-escaped) inside the f.req value.
-  // We parse f.req, find the prompt text with appropriate escaping, replace it, and re-encode.
-  if (body.includes('f.req=') || body.includes('f.req%3D')) {
-    try {
-      const params = new URLSearchParams(body);
-      const fReq = params.get('f.req');
-      if (fReq && originalPrompt.length >= 10) {
-        // Try single JSON-escaped match (prompt inside a JSON string)
-        const escapedOrig = jsonStringEscape(originalPrompt);
-        const escapedRepl = jsonStringEscape(replacement);
-        if (fReq.includes(escapedOrig)) {
-          const modifiedFReq = fReq.split(escapedOrig).join(escapedRepl);
-          params.set('f.req', modifiedFReq);
-          igLog(`Gemini replacePrompt: single-escaped match`);
-          return params.toString();
-        }
-        // Try double-escaped match (JSON-in-JSON: prompt is escaped twice)
-        const doubleEscapedOrig = jsonStringEscape(escapedOrig);
-        const doubleEscapedRepl = jsonStringEscape(escapedRepl);
-        if (fReq.includes(doubleEscapedOrig)) {
-          const modifiedFReq = fReq.split(doubleEscapedOrig).join(doubleEscapedRepl);
-          params.set('f.req', modifiedFReq);
-          igLog(`Gemini replacePrompt: double-escaped match`);
-          return params.toString();
-        }
-        // Try raw text match (prompt appears unescaped)
-        if (fReq.includes(originalPrompt)) {
-          const modifiedFReq = fReq.split(originalPrompt).join(replacement);
-          params.set('f.req', modifiedFReq);
-          igLog(`Gemini replacePrompt: raw text match`);
-          return params.toString();
-        }
-        igLog(`Gemini replacePrompt: no match found in f.req (${fReq.length} chars)`);
-      }
-    } catch (e) {
-      igLog('Gemini replacePrompt error:', e);
-    }
-  }
+  // Gemini f.req replacement moved to the Gemini adapter (WP3).
 
   try {
     const parsed = JSON.parse(body);
@@ -5490,24 +5414,6 @@ igLog('XHR interceptor installed');
 
 const OriginalWebSocket = window.WebSocket;
 
-/**
- * Check if a SignalR frame is a chat invocation (type 1) with extractable prompt text.
- * Returns the prompt text if found, null otherwise.
- */
-function isSignalRChatFrame(frame: string): boolean {
-  try {
-    const parsed = JSON.parse(frame);
-    // SignalR invocation frames have type: 1
-    if (parsed?.type !== 1) return false;
-    // Must have a target method (e.g., "chat", "Chat", "send")
-    if (!parsed?.target) return false;
-    // Must have arguments
-    if (!Array.isArray(parsed?.arguments) || parsed.arguments.length === 0) return false;
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 // Re-encode string back to binary format if it was originally binary
 function _reEncodeBinary(text: string, wasBinary: boolean, format: 'arraybuffer' | 'view' | null): string | ArrayBuffer | Uint8Array {
@@ -5517,136 +5423,16 @@ function _reEncodeBinary(text: string, wasBinary: boolean, format: 'arraybuffer'
   return encoded;
 }
 
-// ── Copilot SignalR WebSocket.send interception layer ──────────────────────
-// DOM text replacement doesn't work for Copilot because React's internal state
-// overwrites DOM changes. Instead, we let Copilot submit normally and intercept
-// the outgoing SignalR WebSocket frame to pseudonymize the text at wire level.
-// We patch WebSocket.prototype.send (not individual instances) because modifying
-// instance properties (send, addEventListener, onmessage) breaks SignalR.
+// ── Copilot outgoing WS pseudonymization: REMOVED (WP3, June 2026) ──────────
+// The machinery that lived here (pendingCopilotPseudo slot,
+// applyCopilotSignalRPseudo, frame deep-walk) was DEAD CODE: the
+// WS.prototype.send patch below has always bypassed fragile transports
+// (wsTransportFragile — patching anything hangs SignalR), so the queued
+// pseudonym was never applied and dom-capture-wire submits leaked RAW text.
+// Until a SignalR-safe wire strategy exists, sensitive dom-capture-wire
+// submits are BLOCKED fail-closed at the submit handlers instead.
 
-let pendingCopilotPseudo: { original: string; maskedText: string } | null = null;
-let pendingCopilotTimer: ReturnType<typeof setTimeout> | null = null;
-// H-14: Track whether a pending pseudo expired — if WS frame arrives after expiry,
-// we must block it rather than sending raw PII
-let _copilotPseudoExpired = false;
-
-function setPendingCopilotPseudo(pseudo: { original: string; maskedText: string }) {
-  pendingCopilotPseudo = pseudo;
-  _copilotPseudoExpired = false; // Clear expired flag on new pseudo
-  if (pendingCopilotTimer) clearTimeout(pendingCopilotTimer);
-  // 30s TTL — Copilot's SignalR can be slow (reconnects, Azure edge latency).
-  // 10s was too short and caused pseudonymization to silently fail on slow connections.
-  const _pendingSetAt = Date.now();
-  pendingCopilotTimer = setTimeout(() => {
-    if (pendingCopilotPseudo === pseudo) {
-      // BUG-29: Log expiration with details so silent failures are diagnosable
-      console.warn(`[Iron Gate] Copilot WS: Pending pseudo EXPIRED after 30s (original=${pseudo.original.length}c, elapsed=${Date.now() - _pendingSetAt}ms). Next WS frame will be BLOCKED.`);
-      pendingCopilotPseudo = null;
-      _copilotPseudoExpired = true; // H-14: Flag so WS handler blocks the next frame
-    }
-    pendingCopilotTimer = null;
-  }, 30000);
-}
-
-function applyCopilotSignalRPseudo(data: string): string {
-  // H-14: If a pending pseudo expired, block the frame (don't send raw PII)
-  if (!pendingCopilotPseudo && _copilotPseudoExpired) {
-    console.warn('%c[Iron Gate SECURITY] Copilot WS: BLOCKED — pending pseudo expired, frame arrived too late', 'color: #ef4444; font-weight: bold');
-    _copilotPseudoExpired = false;
-    return '';
-  }
-  if (!pendingCopilotPseudo) return data;
-  const { original, maskedText } = pendingCopilotPseudo;
-
-  // JSON-escape the text (strip wrapping quotes from JSON.stringify)
-  const escapedOriginal = JSON.stringify(original).slice(1, -1);
-  const escapedMasked = JSON.stringify(maskedText).slice(1, -1);
-
-  // Try exact match first
-  if (data.includes(escapedOriginal)) {
-    igLog(`Copilot WS: Pseudonymized SignalR frame (exact match, ${original.length} chars)`);
-    return data.split(escapedOriginal).join(escapedMasked);
-  }
-
-  // Fallback: normalized line breaks
-  const normOriginal = original.replace(/\r\n/g, '\n').trim();
-  const escapedNorm = JSON.stringify(normOriginal).slice(1, -1);
-  if (escapedNorm !== escapedOriginal && data.includes(escapedNorm)) {
-    const normMasked = maskedText.replace(/\r\n/g, '\n').trim();
-    const escapedNormMasked = JSON.stringify(normMasked).slice(1, -1);
-    igLog(`Copilot WS: Pseudonymized SignalR frame (normalized match)`);
-    return data.split(escapedNorm).join(escapedNormMasked);
-  }
-
-  // Fallback 2: parse SignalR frames and walk arguments for entity-level detection
-  const RS = '\x1e';
-  const frames = data.split(RS);
-  let modified = false;
-  for (let i = 0; i < frames.length; i++) {
-    const frame = frames[i].trim();
-    if (!frame) continue;
-    try {
-      const parsed = JSON.parse(frame);
-      if (parsed?.type !== 1 || !Array.isArray(parsed?.arguments)) continue;
-      const walked = _walkPseudoSignalR(parsed.arguments);
-      if (walked.changed) {
-        parsed.arguments = walked.value;
-        frames[i] = JSON.stringify(parsed);
-        modified = true;
-      }
-    } catch (parseErr) {
-      // BUG-22: Previously silently continued, passing malformed frames unmodified.
-      // Log so failures are diagnosable. The frame still passes through (can't
-      // pseudonymize what we can't parse), but at least we know it happened.
-      igLog(`Copilot WS: Malformed SignalR frame skipped (${frame.length}c):`, parseErr instanceof Error ? parseErr.message : String(parseErr));
-      continue;
-    }
-  }
-  if (modified) {
-    igLog(`Copilot WS: Pseudonymized SignalR frame (deep walk fallback)`);
-    return frames.join(RS);
-  }
-
-  // C-4 FIX: Fail CLOSED — if we can't pseudonymize, block the frame.
-  // Returning unmodified data would silently leak raw PII to Copilot.
-  console.warn(
-    '%c[Iron Gate SECURITY] Copilot WS: BLOCKED — could not pseudonymize SignalR frame',
-    'color: #ef4444; font-weight: bold',
-    `(frame=${data.length}c, orig=${original.length}c)`,
-  );
-  pendingCopilotPseudo = null; // Clear so user can retry
-  return ''; // Empty string blocks the frame — Copilot will show an error or retry
-}
-
-function _walkPseudoSignalR(obj: any): { value: any; changed: boolean } {
-  if (typeof obj === 'string' && obj.length > 50) {
-    const entities = detectWithRegex(obj);
-    const secrets = scanForSecrets(obj);
-    const all = [...entities, ...secrets];
-    if (all.length > 0) {
-      const result = pseudonymizeLocal(obj, all);
-      if (result.maskedText !== obj) {
-        registerPseudonymization(result.mappings, { skipDomRescan: true });
-        return { value: result.maskedText, changed: true };
-      }
-    }
-    return { value: obj, changed: false };
-  }
-  if (Array.isArray(obj)) {
-    let changed = false;
-    const arr = obj.map(item => { const r = _walkPseudoSignalR(item); if (r.changed) changed = true; return r.value; });
-    return { value: arr, changed };
-  }
-  if (obj && typeof obj === 'object') {
-    let changed = false;
-    const out: any = {};
-    for (const [k, v] of Object.entries(obj)) { const r = _walkPseudoSignalR(v); if (r.changed) changed = true; out[k] = r.value; }
-    return { value: out, changed };
-  }
-  return { value: obj, changed: false };
-}
-
-// Patch WebSocket.prototype.send for Copilot SignalR pseudonymization.
+// Patch WebSocket.prototype.send (generic platforms; fragile transports bypass).
 const _origWsSend = OriginalWebSocket.prototype.send;
 OriginalWebSocket.prototype.send = function(this: WebSocket, data: string | ArrayBufferLike | Blob | ArrayBufferView) {
   // Fragile WS transports (Copilot SignalR): completely bypass the
@@ -5661,17 +5447,6 @@ OriginalWebSocket.prototype.send = function(this: WebSocket, data: string | Arra
   if (hasHighRiskFileScanSync() && activeAdapter?.isWsEndpoint?.(this.url)) {
     igLog('WS.prototype.send BLOCKED — high-risk document detected');
     return;
-  }
-  if (mode === 'proxy' && pendingCopilotPseudo &&
-      activeAdapter?.isWsEndpoint?.(this.url)) {
-    if (typeof data === 'string') {
-      const modified = applyCopilotSignalRPseudo(data);
-      if (modified !== data) {
-        pendingCopilotPseudo = null;
-        if (pendingCopilotTimer) { clearTimeout(pendingCopilotTimer); pendingCopilotTimer = null; }
-        return _origWsSend.call(this, modified);
-      }
-    }
   }
   return _origWsSend.call(this, data);
 };
@@ -6239,6 +6014,22 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
   const isDomPresubmit = activeAdapter.interception === 'dom-presubmit';
   const isDomCaptureWire = activeAdapter.interception === 'dom-capture-wire';
 
+  // WP3: dom-capture-wire platforms (Copilot) have NO outgoing wire
+  // pseudonymization (SignalR cannot be patched safely), so a sensitive
+  // submit cannot be protected — block it rather than leak raw text.
+  function _blockDomCaptureWireSubmit(reason: string): void {
+    console.error(
+      `%c[Iron Gate] BLOCKED: ${reason}`,
+      'color: #ef4444; font-weight: bold; font-size: 14px',
+    );
+    igPostMessage({
+      type: 'IRON_GATE_SUBMIT_BLOCKED',
+      reason,
+      adapter: adapterName,
+    });
+  }
+
+
   igLog(`${adapterName} DOM ${isDomPresubmit ? 'pre-submit' : 'capture-wire'} interceptor initializing`);
 
   let domInterceptBusy = false;
@@ -6458,8 +6249,14 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
     if (!result) return;
 
     if (isDomCaptureWire) {
-      setPendingCopilotPseudo({ original: text, maskedText: result.maskedText });
-      igLog(`${adapterName}: Queued pseudo for WS interception`);
+      if (result.mappings && result.mappings.length > 0) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        _blockDomCaptureWireSubmit(
+          `${adapterName} cannot pseudonymize on the wire — submit with ${result.mappings.length} sensitive entities blocked to protect your data. Remove the sensitive values and retry.`,
+        );
+      }
+      // Clean prompt: let the native submit proceed untouched.
       return;
     }
 
@@ -6523,8 +6320,13 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
       const result = await adapterDomPseudonymize(text, 'Enter');
       if (result) {
         if (isDomCaptureWire) {
-          setPendingCopilotPseudo({ original: text, maskedText: result.maskedText });
-          // Simulate Enter to let the platform submit
+          if (result.mappings && result.mappings.length > 0) {
+            _blockDomCaptureWireSubmit(
+              `${adapterName} cannot pseudonymize on the wire — submit blocked to protect your data.`,
+            );
+            return;
+          }
+          // Clean prompt: simulate Enter to let the platform submit
           inputEl.dispatchEvent(new KeyboardEvent('keydown', {
             key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
             bubbles: true, cancelable: true,
@@ -6649,7 +6451,13 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
           const result = await adapterDomPseudonymize(text, 'SendBtn');
           if (result) {
             if (isDomCaptureWire) {
-              setPendingCopilotPseudo({ original: text, maskedText: result.maskedText });
+              if (result.mappings && result.mappings.length > 0) {
+                _blockDomCaptureWireSubmit(
+                  `${adapterName} cannot pseudonymize on the wire — submit blocked to protect your data.`,
+                );
+                return;
+              }
+              // Clean prompt: re-click to let the platform submit
               setTimeout(() => { domInterceptBusy = true; btn.click(); setTimeout(() => { domInterceptBusy = false; }, 300); }, 100);
               return;
             }
@@ -6685,8 +6493,14 @@ if (activeAdapter && (activeAdapter.interception === 'dom-presubmit' || activeAd
     if (!result) return;
 
     if (isDomCaptureWire) {
-      setPendingCopilotPseudo({ original: text, maskedText: result.maskedText });
-      igLog(`${adapterName}: Queued pseudo for WS interception`);
+      if (result.mappings && result.mappings.length > 0) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        _blockDomCaptureWireSubmit(
+          `${adapterName} cannot pseudonymize on the wire — submit with ${result.mappings.length} sensitive entities blocked to protect your data. Remove the sensitive values and retry.`,
+        );
+      }
+      // Clean prompt: let the native submit proceed untouched.
       return;
     }
 

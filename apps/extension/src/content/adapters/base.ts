@@ -241,3 +241,21 @@ export function defaultIsValidPromptInput(el: Element | null): boolean {
 
   return true;
 }
+
+/**
+ * WP3: find the deepest/longest string inside nested arrays — used by wire
+ * body parsers (Gemini f.req nested JSON, generic deep-JSON fallback).
+ * Moved from main-world.ts so adapters and the engine share one copy.
+ */
+export function findDeepestString(arr: any[]): string | null {
+  let best: string | null = null;
+  for (const item of arr) {
+    if (typeof item === 'string') {
+      if (!best || item.length > best.length) best = item;
+    } else if (Array.isArray(item)) {
+      const found = findDeepestString(item);
+      if (found && (!best || found.length > best.length)) best = found;
+    }
+  }
+  return best;
+}
