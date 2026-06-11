@@ -98,6 +98,72 @@ export interface PhaseSnapshot {
   turnKey?: string;
 }
 
+// ─── Turn Identity (WP1, June 2026) ─────────────────────────────────────────
+//
+// The recurring stale-sidepanel class (commits c3c119a, c02ebbe, e254c68,
+// 8b9696f and ~10 user reports) had one root cause: no detection event
+// carried a real turn identifier, so every consumer reconstructed "same turn
+// or new turn?" from timestamps and content — and each guess got its own
+// patch window (3s/10s producer dedup, 2s fingerprint, 5s protect window,
+// 8s re-restore). TurnId replaces all of them.
+//
+//   epoch  Minted once per main-world page load (Date.now() at init).
+//          Makes seq comparable across page reloads: a reload resets seq
+//          to 0 but gets a strictly larger epoch.
+//   seq    Per-tab monotonic counter, incremented by main-world at the
+//          moment a user submit is intercepted — the ONE place that knows
+//          a turn began. INTERCEPTED and CLEAN_SUBMIT mint; AUDIT and
+//          enrichment events are stamped with the current value.
+//
+// Events without a turn (worker typing previews, legacy payloads) compare
+// as EQUAL to anything — they fall through to phase-rank rules, so a
+// turnless preview can never displace an authoritative result.
+
+export interface TurnId {
+  epoch: number;
+  seq: number;
+}
+
+/** -1: a older than b · 0: same turn / not comparable · 1: a newer than b */
+export function compareTurn(
+  a: TurnId | null | undefined,
+  b: TurnId | null | undefined,
+): number {
+  if (!a || !b) return 0;
+  if (typeof a.epoch !== 'number' || typeof b.epoch !== 'number'
+   || typeof a.seq !== 'number' || typeof b.seq !== 'number') return 0;
+  if (a.epoch !== b.epoch) return a.epoch < b.epoch ? -1 : 1;
+  if (a.seq !== b.seq) return a.seq < b.seq ? -1 : 1;
+  return 0;
+}
+
+export interface DisplaySnapshot extends PhaseSnapshot {
+  turn?: TurnId | null;
+}
+
+/**
+ * THE single acceptance rule for displayable detection state, applied by
+ * the worker before every per-tab state write (and therefore implicitly by
+ * the sidepanel, which renders that state verbatim):
+ *
+ *   1. A newer turn always wins — the user's new submit replaces the
+ *      previous turn's display, including "All Clear" after a protected
+ *      turn (the c3c119a bug class: the old phase gate refused this).
+ *   2. A stale turn never wins — a delayed broadcast, poll echo, or
+ *      GET_TAB_STATE restore from an earlier turn cannot resurrect.
+ *   3. Same turn (or turnless): existing phase precedence applies.
+ */
+export function shouldReplaceDisplay(
+  current: DisplaySnapshot | null,
+  incoming: DisplaySnapshot,
+): boolean {
+  if (!current) return true;
+  const cmp = compareTurn(incoming.turn, current.turn);
+  if (cmp > 0) return true;
+  if (cmp < 0) return false;
+  return phaseAllowsReplace(current, incoming);
+}
+
 export function phaseAllowsReplace(
   current: PhaseSnapshot | null,
   incoming: PhaseSnapshot,
