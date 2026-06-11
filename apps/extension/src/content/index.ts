@@ -69,6 +69,21 @@ function syncModeToMainWorld(newMode: 'audit' | 'proxy') {
   csPostMessage({ type: 'IRON_GATE_SET_MODE', mode: newMode });
 }
 
+// WP5 Option C flag sync — storage.local 'lengthPreservingEnabled' (cutover-gated)
+function syncLengthPreservingToMainWorld() {
+  try {
+    chrome.storage.local.get('lengthPreservingEnabled', (r) => {
+      if (!chrome.runtime?.id) return;
+      csPostMessage({ type: 'IRON_GATE_SET_LENGTH_PRESERVING', enabled: r?.lengthPreservingEnabled === true });
+    });
+  } catch { /* non-fatal — flag stays off */ }
+}
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.lengthPreservingEnabled) {
+    csPostMessage({ type: 'IRON_GATE_SET_LENGTH_PRESERVING', enabled: changes.lengthPreservingEnabled.newValue === true });
+  }
+});
+
 function syncProcessingModeToMainWorld(processingMode: 'local' | 'server' | 'shadow') {
   csPostMessage({ type: 'IRON_GATE_SET_PROCESSING_MODE', processingMode });
 }
@@ -170,6 +185,7 @@ resolveMode().then((savedMode) => {
   if (!contextAlive) return;
   syncModeToMainWorld(savedMode);
   syncPrivateLlmToMainWorld();
+  syncLengthPreservingToMainWorld();
   igLog('Initial mode from storage:', savedMode);
 }).catch((err) => {
   igLog('Failed to resolve initial mode:', err);

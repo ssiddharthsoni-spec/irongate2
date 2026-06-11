@@ -368,7 +368,28 @@ function _isFemaleFirst(name: string): boolean {
 // name pools are index-tracked and pass on the first try.
 const _issuedFakes = new Set<string>();
 
+// ── WP5 Option C flag ────────────────────────────────────────────────────────
+// When enabled, fakes are BYTE-LENGTH-PRESERVING (detection/length-preserving)
+// so wire replacement cannot corrupt offset-annotated platforms. Off by
+// default; flipped per the cutover gates (offset spike + telemetry soak).
+// LP output is session-deterministic with its own collision avoidance, so it
+// bypasses the legacy uniqueness wrapper below.
+import { lengthPreservingFake } from '../../detection/length-preserving';
+
+let _lengthPreservingEnabled = false;
+export function setLengthPreserving(enabled: boolean): void {
+  _lengthPreservingEnabled = enabled;
+}
+
 export function generateFake(type: string, original: string): string {
+  if (_lengthPreservingEnabled) {
+    const lp = lengthPreservingFake(type, original);
+    if (lp !== null) return lp; // null = non-ASCII original → legacy fallback
+  }
+  return _generateFakeLegacy(type, original);
+}
+
+function _generateFakeLegacy(type: string, original: string): string {
   for (let attempt = 0; attempt < 5; attempt++) {
     const fake = _generateFakeInner(type, original);
     if (fake !== original && !_issuedFakes.has(fake)) {

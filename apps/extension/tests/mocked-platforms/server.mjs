@@ -34,7 +34,18 @@ function logIntercepted(platform, payload) {
 
 // ── SSE helper ────────────────────────────────────────────────────────────────
 function sendSSE(res, data) {
-  res.write(`data: ${JSON.stringify(data)}\n\n`);
+  const frame = `data: ${JSON.stringify(data)}\n\n`;
+  // WP4: split every frame across two network writes at an awkward byte
+  // position — real platforms chunk arbitrarily, and pseudonyms straddling
+  // the cut were the recurring leak class (DEF-031). Emitting whole frames
+  // meant the e2e suite could never catch chunk-boundary regressions.
+  if (frame.length > 12) {
+    const cut = Math.floor(frame.length / 2) + 3;
+    res.write(frame.slice(0, cut));
+    res.write(frame.slice(cut));
+  } else {
+    res.write(frame);
+  }
 }
 
 // ── HTTP Server ───────────────────────────────────────────────────────────────

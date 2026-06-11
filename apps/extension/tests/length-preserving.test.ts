@@ -98,3 +98,23 @@ describe('length-preserving tokenization (Option C core)', () => {
     }
   });
 });
+
+describe('Option C flag integration (shipped generateFake dispatch)', () => {
+  it('flag ON: generateFake returns byte-length-preserving fakes; OFF: legacy', async () => {
+    const { generateFake, setLengthPreserving } = await import('../src/content/main-world/fake-data');
+    const byteLength = (s: string) => new TextEncoder().encode(s).length;
+    try {
+      setLengthPreserving(true);
+      const on = generateFake('PERSON', 'Robert Chen');
+      expect(byteLength(on)).toBe(byteLength('Robert Chen'));
+      // Non-ASCII falls back to legacy (no length guarantee, but never throws)
+      const fallback = generateFake('PERSON', 'José García');
+      expect(typeof fallback).toBe('string');
+      expect(fallback.length).toBeGreaterThan(0);
+    } finally {
+      setLengthPreserving(false);
+    }
+    const off = generateFake('SSN', '123-45-6789');
+    expect(typeof off).toBe('string');
+  });
+});

@@ -19,7 +19,7 @@
 import { getAdapter, isLLMEndpoint as adapterIsLLMEndpoint, shouldSkipFetchProxy, shouldSkipXhrProxy, getAllAdapters } from './adapters';
 import type { SiteAdapter } from './adapters';
 import { findDeepestString } from './adapters/base';
-import { generateFake } from './main-world/fake-data';
+import { generateFake, setLengthPreserving } from './main-world/fake-data';
 import { detectWithRegex } from '../detection/fallback-regex';
 import { scanForSecrets, isNaturalLanguage } from './main-world/entity-patterns';
 import { parseStructured } from '../detection/structural-parser';
@@ -808,6 +808,11 @@ window.addEventListener('message', (event) => {
   // Ignore any attempt to set it to 'server' — cloud API is disabled.
   if (event.data?.type === 'IRON_GATE_SET_PROCESSING_MODE') {
     // No-op. processingMode stays 'local'.
+  }
+  // WP5 Option C: length-preserving tokenization flag (cutover-gated).
+  if (event.data?.type === 'IRON_GATE_SET_LENGTH_PRESERVING') {
+    setLengthPreserving(event.data.enabled === true);
+    igLog('Length-preserving tokenization:', event.data.enabled === true ? 'ON' : 'OFF');
   }
   // Enterprise managed policy state (killSwitch, allowedAITools, firm info).
   // Validated by the content-script nonce check above.
