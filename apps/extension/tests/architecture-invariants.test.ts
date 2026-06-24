@@ -889,33 +889,43 @@ describe('Architecture Invariants — inline fallback stays in sync', () => {
   });
 });
 
-describe('Architecture Invariants — Iron Gate never modifies user input', () => {
-  // June 2026 (user-reported, twice): the user's own message bubble was
-  // corrupted — "Lisa Park" → "Maria Park" during streaming (fragment
-  // collision) and "prompt 1" → "prompt 2" across turns (restoreUserBubble
-  // retry timers mis-targeting the latest bubble). PRINCIPLE: Iron Gate
-  // never writes to the composer or a user message bubble; de-pseudo is
-  // the AI response only. Opt-in per adapter via userBubbleNeedsRestore.
-  it('restoreUserBubble is gated off unless the adapter opts in', () => {
+describe('Architecture Invariants — user bubble restored with whole-value swaps only', () => {
+  // June 2026 (user-reported, repeatedly): the user's own message bubble was
+  // corrupted — "Lisa Park" → "Maria Park" (fragment collision) and
+  // "prompt 1" → "prompt 2" (cross-turn promptText mis-targeting). On ChatGPT
+  // the bubble renders the wire payload (pseudonyms), so it MUST be restored —
+  // but ONLY with exact whole-pseudonym swaps (replacePseudonymsFullOnly),
+  // never first-name fragments (which rewrite real names) and never by writing
+  // promptText into a "latest bubble" (which mis-targets across turns).
+  it('both de-pseudo scan paths route user-bubble nodes through full-only replacement', () => {
     const src = readMainWorld();
-    const body = src.split('function restoreUserBubble(')[1]?.split('\nfunction ')[0] ?? '';
-    expect(body).toMatch(/if \(!activeAdapter\?\.userBubbleNeedsRestore\) return;/);
+    // scanTextNodes + the characterData path each pick the replacer by location.
+    const fullOnlyUses = (src.match(/replacePseudonymsFullOnly\(/g) ?? []).length;
+    expect(fullOnlyUses).toBeGreaterThanOrEqual(2);
+    expect(src).toMatch(/function replacePseudonymsFullOnly/);
+    expect(src).toMatch(/_isInsideUserBubble\(/);
   });
 
-  it('no adapter currently opts into user-bubble restore (input is untouchable)', async () => {
-    const files = await glob('apps/extension/src/content/adapters/*.ts', { cwd: REPO_ROOT, absolute: true });
-    const optedIn: string[] = [];
-    for (const f of files) {
-      if (/userBubbleNeedsRestore\s*:\s*true/.test(readFileSync(f, 'utf8'))) optedIn.push(f);
-    }
-    expect(optedIn).toEqual([]);
+  it('full-only replacement builds its cache WITHOUT fragment expansion', () => {
+    const src = readMainWorld();
+    // replacePseudonymsFullOnly must call buildRegexCache(..., false).
+    expect(src).toMatch(/buildRegexCache\(reverseMap,\s*false\)/);
   });
 
-  it('both de-pseudo scan paths skip user-message subtrees', () => {
+  it('the cross-turn corruption machinery is deleted', () => {
     const src = readMainWorld();
-    // scanTextNodes acceptNode + the characterData path both consult _isInsideUserBubble
-    const guards = (src.match(/_isInsideUserBubble\(/g) ?? []).length;
-    expect(guards).toBeGreaterThanOrEqual(2);
-    expect(src).toMatch(/function _isInsideUserBubble/);
+    // These functions wrote promptText into "the latest bubble" / applied
+    // whole-document fragment scans — both corrupted the user bubble.
+    expect(src).not.toMatch(/function _enforceBubbleInvariant/);
+    expect(src).not.toMatch(/function _scanDocumentForReverseMap/);
+    expect(src).not.toMatch(/function _findLatestUserBubble/);
+  });
+
+  it('the composer (contentEditable) is never touched by de-pseudo', () => {
+    const src = readMainWorld();
+    // scanTextNodes rejects contentEditable in its acceptNode (ternary form),
+    // and the characterData path early-returns on it.
+    expect(src).toMatch(/isContentEditable[\s\S]{0,40}FILTER_REJECT/);
+    expect(src).toMatch(/isContentEditable\)\s*return;/);
   });
 });

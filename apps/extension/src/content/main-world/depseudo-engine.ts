@@ -71,7 +71,19 @@ export function looksLikePersonName(s: string): boolean {
 
 // ─── Regex Cache Builder ────────────────────────────────────────────────────
 
-export function buildRegexCache(reverseMap: Record<string, string>): CachedPseudoEntry[] {
+/**
+ * @param expandFragments when true (default), person-name entries also get a
+ *   first-name-only variant ("James" → "John") so the AI's RESPONSE, which
+ *   often uses just the first name, is de-pseudonymized. Pass FALSE for the
+ *   user's own message bubble: there we restore only EXACT whole pseudonyms,
+ *   because fragment rules can rewrite a real name the user typed (the
+ *   "Lisa Park" → "Maria Park" corruption class). Whole-value swaps + the
+ *   collision-free generator make user-bubble restoration exact and safe.
+ */
+export function buildRegexCache(
+  reverseMap: Record<string, string>,
+  expandFragments = true,
+): CachedPseudoEntry[] {
   const entries = Object.entries(reverseMap)
     .filter(([k]) => k && k.length >= 2);
 
@@ -84,7 +96,7 @@ export function buildRegexCache(reverseMap: Record<string, string>): CachedPseud
   const expanded: Array<[string, string]> = [];
   for (const [pseudonym, original] of entries) {
     expanded.push([pseudonym, original]);
-    if (looksLikePersonName(pseudonym) && looksLikePersonName(original)) {
+    if (expandFragments && looksLikePersonName(pseudonym) && looksLikePersonName(original)) {
       const pseudoFirst = pseudonym.split(/\s+/)[0];
       const origFirst = original.split(/\s+/)[0];
       // Only add first-name mapping if it's not already in the map

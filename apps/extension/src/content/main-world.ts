@@ -2235,6 +2235,27 @@ function replacePseudonyms(text: string, reverseMap: Record<string, string>): st
   return replacePseudonymsCore(text, _regexCache);
 }
 
+// ── Full-value-only replacement for the USER's own message bubble ────────────
+// On platforms that render the wire payload in the user bubble (ChatGPT), the
+// bubble shows pseudonyms and Iron Gate must restore the user's ORIGINAL text.
+// But the user bubble must be restored with EXACT whole-pseudonym swaps only —
+// NEVER first-name fragments — because a fragment rule can rewrite a real name
+// the user typed (the "Lisa Park" → "Maria Park" corruption). Combined with the
+// collision-free fake generator, whole-value restoration is exact and safe.
+// Separate cache (expandFragments=false) so it can't pick up fragment entries.
+let _fullOnlyCacheVersion = -1;
+let _fullOnlyCacheMap: Record<string, string> | null = null;
+let _fullOnlyCache: CachedPseudoEntry[] = [];
+
+function replacePseudonymsFullOnly(text: string, reverseMap: Record<string, string>): string {
+  if (_fullOnlyCacheVersion !== _regexCacheVersion || _fullOnlyCacheMap !== reverseMap) {
+    _fullOnlyCacheVersion = _regexCacheVersion;
+    _fullOnlyCacheMap = reverseMap;
+    _fullOnlyCache = buildRegexCache(reverseMap, false); // no fragment expansion
+  }
+  return replacePseudonymsCore(text, _fullOnlyCache);
+}
+
 /**
  * Persistent DOM de-pseudonymization observer.
  *
@@ -2527,29 +2548,28 @@ function scanTextNodes(root: Node): number {
   if (Object.keys(currentReverseMap).length === 0) return 0;
 
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    // Never rewrite the user's input: the composer (contentEditable) AND the
-    // user's sent message bubbles are user-owned. De-pseudo is for the AI's
-    // response only — touching user text only corrupts it (see the INVARIANT
-    // in restoreUserBubble). Unless the platform renders pseudonyms in the
-    // user bubble (userBubbleNeedsRestore), user-message subtrees are skipped.
-    acceptNode: (n) => {
-      const pe = n.parentElement;
-      if (pe && pe.isContentEditable) return NodeFilter.FILTER_REJECT;
-      if (!activeAdapter?.userBubbleNeedsRestore && pe && _isInsideUserBubble(pe)) {
-        return NodeFilter.FILTER_REJECT;
-      }
-      return NodeFilter.FILTER_ACCEPT;
-    },
+    // NEVER touch the composer (contentEditable) — the user is actively
+    // typing there. The user's SENT bubble IS restored, but with whole-value
+    // swaps only (see below), so the displayed bubble shows the user's
+    // original text without the fragment corruption that plagued it.
+    acceptNode: (n) =>
+      n.parentElement && n.parentElement.isContentEditable
+        ? NodeFilter.FILTER_REJECT
+        : NodeFilter.FILTER_ACCEPT,
   });
   let replacements = 0;
   let textNode: Node | null = walker.nextNode();
   while (textNode) {
     const text = textNode.textContent || '';
     if (text.length > 2) {
-      // Use the SAME replacePseudonyms engine as stream de-pseudo.
-      // This ensures name fragments, case-insensitive matching, and all
-      // 5 strategies work identically in both the stream and DOM paths.
-      const replaced = replacePseudonyms(text, currentReverseMap);
+      // User's own bubble → EXACT whole-pseudonym swaps only (no fragments,
+      // which would rewrite real names the user typed). AI response → full
+      // engine incl. first-name fragments (the AI uses "James" for
+      // "James Mitchell"). This split is the fix for user-input corruption.
+      const inUserBubble = !!(textNode.parentElement && _isInsideUserBubble(textNode.parentElement));
+      const replaced = inUserBubble
+        ? replacePseudonymsFullOnly(text, currentReverseMap)
+        : replacePseudonyms(text, currentReverseMap);
       if (replaced !== text) {
         _igOurMutations.add(textNode);
         textNode.textContent = replaced;
@@ -2617,27 +2637,27 @@ function startPersistentDomDepseudo(): void {
     // BUT: if the new text contains a pseudonym, React reverted our
     // replacement (e.g. a subsequent WS heartbeat / save triggered a
     // re-render). In that case do NOT skip — fall through and replace.
-    // Never rewrite the user's input — composer OR sent bubble (mirrors the
-    // scanTextNodes filter; the user's words are never modified by Iron Gate).
+    // Never touch the composer (user is typing). The sent bubble IS restored
+    // but with whole-value swaps only — chosen below.
     if (node.parentElement?.isContentEditable) return;
-    if (!activeAdapter?.userBubbleNeedsRestore
-        && node.parentElement && _isInsideUserBubble(node.parentElement)) {
-      return;
-    }
+    const inUserBubble = !!(node.parentElement && _isInsideUserBubble(node.parentElement));
+
+    // User bubble → whole-value swaps only; AI response → full+fragment.
+    const replaceFn = inUserBubble ? replacePseudonymsFullOnly : replacePseudonyms;
 
     if (_igOurMutations.has(node)) {
       _igOurMutations.delete(node);
       const revertedText = node.textContent || '';
       const wouldReplace =
         revertedText.length > 2 &&
-        replacePseudonyms(revertedText, currentReverseMap) !== revertedText;
+        replaceFn(revertedText, currentReverseMap) !== revertedText;
       if (!wouldReplace) return; // Truly our mutation — safe to skip
       // Fall through: React reverted with a pseudonym — fix it again.
     }
 
     const text = node.textContent || '';
     if (text.length > 2) {
-      const replaced = replacePseudonyms(text, currentReverseMap);
+      const replaced = replaceFn(text, currentReverseMap);
       if (replaced !== text) {
         _igOurMutations.add(node);
         node.textContent = replaced;
@@ -2812,13 +2832,6 @@ const USER_BUBBLE_SELECTORS = [
   'user-query',
   '[data-testid*="user-message"]',
 ];
-const _bubbleOriginalText = new WeakMap<Element, string>();
-interface BubbleObserverHandle {
-  observer: MutationObserver;
-  idleTimer: ReturnType<typeof setTimeout> | null;
-}
-const _bubbleObserverByElement = new WeakMap<Element, BubbleObserverHandle>();
-const _BUBBLE_OBSERVER_IDLE_MS = 5 * 60 * 1000;
 
 // True if `el` is inside (or is) a user-message bubble — used by the de-pseudo
 // scan paths to NEVER touch the user's own words. Walks ancestors via closest()
@@ -2830,178 +2843,36 @@ function _isInsideUserBubble(el: Element): boolean {
   return false;
 }
 
-function _matchesAnyUserBubbleSelector(el: Element): boolean {
-  for (const sel of USER_BUBBLE_SELECTORS) {
-    try { if (el.matches(sel)) return true; } catch { /* invalid selector */ }
-  }
-  return false;
-}
-
-function _findLatestUserBubble(): HTMLElement | null {
-  for (const sel of USER_BUBBLE_SELECTORS) {
-    try {
-      const all = document.querySelectorAll(sel);
-      if (all.length > 0) return all[all.length - 1] as HTMLElement;
-    } catch { /* invalid selector */ }
-  }
-  return null;
-}
-
-/**
- * UNIFIED bubble-restoration entry point. Replaces the previous
- * `enforceUserBubbleInvariant(promptText)` + `depseudonymizeUserBubble(reverseMap)`
- * pair, which were two parallel systems doing related work with separate
- * retry tails and observer machinery.
- *
- * Two strategies, selected by inputs:
- *
- *   • **Wholesale enforcement** (when `promptText` is provided): write the
- *     user's literal typed text into the LATEST user bubble's text nodes
- *     while preserving styled wrapper structure, and install a per-bubble
- *     MutationObserver that restores promptText on any future revert.
- *     This is the bubble-shows-original-text invariant.
- *
- *   • **Reverse-map regex restore** (when `reverseMap` has entries): walk
- *     ALL text nodes in document.body and run replacePseudonyms with the
- *     map, swapping pseudonyms back to originals. Covers older bubbles in
- *     scrollback (post-reload conversation hydration) where we don't have
- *     the user's typed text anymore — only the pseudonym mappings.
- *
- * Both strategies run on a single shared retry tail (300–12000ms) so we
- * don't have two sets of setTimeout calls competing.
- *
- * Call shapes:
- *   restoreUserBubble({ promptText, reverseMap })  // fresh-submit path
- *   restoreUserBubble({ reverseMap })              // DOM-presubmit replay /
- *                                                  //   older-bubble restore
- */
 interface BubbleRestoreOptions {
+  /** Optional original prompt text (legacy callers still pass it; restoration
+   *  now works purely from reverseMap whole-value swaps, so it's unused). */
   promptText?: string;
+  /** fake → original entries for this turn (merged into currentReverseMap). */
   reverseMap: Record<string, string>;
 }
 
-function _writeBubbleTextPreservingStructure(el: HTMLElement, text: string): void {
-  // Walk to existing text nodes and update them in place. NEVER set
-  // el.textContent = text — that collapses all child elements into one
-  // text node, destroying the styled wrapper divs that give the bubble
-  // its visual appearance (background, padding, rounded corners). The
-  // bubble's text usually lives in a single deep text node anyway.
-  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-  const textNodes: Text[] = [];
-  let n: Node | null;
-  while ((n = walker.nextNode())) textNodes.push(n as Text);
-  if (textNodes.length === 0) {
-    // Bubble exists but has no text nodes yet — fallback to textContent.
-    // A subsequent re-render will populate text nodes and our observer
-    // will route through the preserving path on the next mutation.
-    el.textContent = text;
-    return;
-  }
-  textNodes[0].textContent = text;
-  for (let i = 1; i < textNodes.length; i++) textNodes[i].textContent = '';
-}
-
-function _enforceBubbleInvariant(el: HTMLElement, promptText: string): void {
-  // Idempotent: no-op if already enforced with the same text.
-  if (_bubbleOriginalText.get(el) === promptText && (el.textContent || '') === promptText) {
-    return;
-  }
-  const prev = _bubbleObserverByElement.get(el);
-  if (prev) {
-    prev.observer.disconnect();
-    if (prev.idleTimer) clearTimeout(prev.idleTimer);
-  }
-
-  _writeBubbleTextPreservingStructure(el, promptText);
-  _bubbleOriginalText.set(el, promptText);
-
-  // Per-bubble observer with idle GC: re-enforces promptText if React or
-  // the platform mutates the bubble back to wire-payload (pseudonymized)
-  // text. Cheap: scoped to one element only, fast-rejects when textContent
-  // already equals promptText (no infinite loop). Disconnects after
-  // _BUBBLE_OBSERVER_IDLE_MS of mutation silence so long sessions don't
-  // accumulate one live observer per historical user bubble. A subsequent
-  // INTERCEPTED that lands on the same bubble re-attaches if needed.
-  const handle: BubbleObserverHandle = { observer: null!, idleTimer: null };
-  const scheduleIdleDisconnect = (): void => {
-    if (handle.idleTimer) clearTimeout(handle.idleTimer);
-    handle.idleTimer = setTimeout(() => {
-      handle.observer.disconnect();
-      handle.idleTimer = null;
-      // Only clear the WeakMap slot if we're still the registered handle
-      // (a re-enforce would have replaced us already).
-      if (_bubbleObserverByElement.get(el) === handle) {
-        _bubbleObserverByElement.delete(el);
-      }
-    }, _BUBBLE_OBSERVER_IDLE_MS);
-  };
-  handle.observer = new MutationObserver(() => {
-    if ((el.textContent || '') !== promptText) {
-      _writeBubbleTextPreservingStructure(el, promptText);
-    }
-    scheduleIdleDisconnect();
-  });
-  handle.observer.observe(el, { childList: true, subtree: true, characterData: true });
-  _bubbleObserverByElement.set(el, handle);
-  scheduleIdleDisconnect();
-}
-
-function _scanDocumentForReverseMap(reverseMap: Record<string, string>): number {
-  // Regex-replace pseudonyms → originals across all text nodes in the
-  // document. Uses _igOurMutations as a fast-skip for nodes we've
-  // already touched (prevents redundant scans across retries).
-  let count = 0;
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-  let node: Text | null;
-  while ((node = walker.nextNode() as Text | null)) {
-    if (!node.textContent || node.textContent.length <= 2) continue;
-    if (_igOurMutations.has(node)) continue;
-    const replaced = replacePseudonyms(node.textContent, reverseMap);
-    if (replaced !== node.textContent) {
-      _igOurMutations.add(node);
-      node.textContent = replaced;
-      count++;
-    }
-  }
-  return count;
-}
-
 function restoreUserBubble(options: BubbleRestoreOptions): void {
-  // ── INVARIANT: Iron Gate never modifies the user's input ──────────────────
-  // On wire-interception platforms (ChatGPT, Claude) the user's message bubble
-  // already shows their ORIGINAL typed text from the platform's own state.
-  // Writing to it can ONLY corrupt — the two failure modes that shipped:
-  //   1. cross-turn mis-targeting: retry timers (up to 12s) resolve "latest
-  //      user bubble" at fire time, so a stale turn-1 timer stamps turn-1 text
-  //      onto turn-2's bubble (or vice versa) → "prompt 1 became prompt 2"
-  //   2. fragment collision: _scanDocumentForReverseMap applies first-name
-  //      fragments, so a fake first name ("Lisa" for Maria Mendez) rewrites a
-  //      REAL name the user typed ("Lisa Park" → "Maria Park")
-  // De-pseudonymization is for the AI's RESPONSE, never the user's own words.
-  // Only platforms that render the pseudonym in the user bubble opt in.
-  if (!activeAdapter?.userBubbleNeedsRestore) return;
+  // ── How the user's bubble is restored (rewritten June 2026) ───────────────
+  // On platforms that render the wire payload in the user bubble (ChatGPT),
+  // the bubble shows pseudonyms and must be restored to the user's ORIGINAL.
+  // The restoration is EXACT whole-pseudonym swaps via scanTextNodes (which
+  // routes user-bubble nodes through replacePseudonymsFullOnly). This replaced
+  // two corruption sources that shipped:
+  //   1. cross-turn mis-targeting — the old code wrote promptText into "the
+  //      latest user bubble" resolved AT TIMER FIRE TIME (up to 12s later),
+  //      so a stale turn-1 timer stamped text onto turn-2's bubble
+  //      ("prompt 1 became prompt 2"). GONE: no promptText-write, no
+  //      _findLatestUserBubble. Each bubble's own pseudonyms map to their own
+  //      originals — idempotent and turn-agnostic.
+  //   2. fragment collision — the old whole-document scan applied first-name
+  //      fragments to the user bubble ("Lisa Park" → "Maria Park"). GONE:
+  //      user-bubble nodes use whole-value swaps only.
+  const { reverseMap } = options;
+  if (Object.keys(reverseMap).length === 0 && Object.keys(currentReverseMap).length === 0) return;
 
-  const { promptText, reverseMap } = options;
-  const hasPromptText = !!promptText && promptText.length >= 3;
-  const hasReverseMap = Object.keys(reverseMap).length > 0;
-  if (!hasPromptText && !hasReverseMap) return;
-
-  function runOnePass(): void {
-    if (hasPromptText) {
-      const bubble = _findLatestUserBubble();
-      if (bubble) _enforceBubbleInvariant(bubble, promptText!);
-    }
-    if (hasReverseMap) {
-      const n = _scanDocumentForReverseMap(reverseMap);
-      if (n > 0) igLog(`restoreUserBubble: ${n} reverse-map replacements`);
-    }
-  }
-
-  // Immediate + shared retry tail. Single set of timers handles both
-  // strategies — half the setTimeout pressure of the old two-function
-  // design. Tail extends to 12s to cover ChatGPT's /-to-/c/<id> route
-  // navigation which can take 6–10s for the server-state-rendered
-  // bubble to appear.
+  // Retry tail: ChatGPT's /-to-/c/<id> route navigation can take 6–10s to
+  // render the server-state bubble; rescan so a late re-render is restored.
+  const runOnePass = (): void => { scanTextNodes(_depseudoScanRoot()); };
   runOnePass();
   const delays = [300, 800, 1500, 3000, 5000, 8000, 12000];
   for (const delay of delays) {
