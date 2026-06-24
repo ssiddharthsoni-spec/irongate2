@@ -707,6 +707,16 @@ function handleMainWorldMessages(event: MessageEvent) {
     return;
   }
 
+  // DIAGNOSTIC (v0.2.11): relay the bubble-restoration trace to the sidepanel
+  // Pipeline Log so the user can see it without opening a console.
+  if (event.data?.type === 'IRON_GATE_BUBBLE_DIAG') {
+    chrome.runtime.sendMessage({
+      type: 'BUBBLE_DIAG',
+      detail: sanitizeString(event.data.detail, 300),
+    }).catch(() => {});
+    return;
+  }
+
   // IRON_GATE_CLEAN_SUBMIT relay REMOVED (WP1): the main-world producer was
   // deleted long ago, so this block was unreachable. Clean user submits now
   // mint a TurnId in the coordinator and arrive as ordinary turn-stamped

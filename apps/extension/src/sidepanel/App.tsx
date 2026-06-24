@@ -1077,6 +1077,11 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
       // exclusively through worker-owned tab state (see tabStateListener).
       // Clears land as preview-slot updates; transport blocks land as
       // tab-state annotations. Only non-detection messages remain below.
+      if (message.type === 'BUBBLE_DIAG') {
+        plog('BUBBLE', String(message.detail || ''));
+        return;
+      }
+
       if (message.type === 'GHOST_DETECTION') {
         const { label, confidence } = message.payload;
         setRecentActivity((prev) => {

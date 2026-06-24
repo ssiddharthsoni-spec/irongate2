@@ -2877,7 +2877,32 @@ function restoreUserBubble(options: BubbleRestoreOptions): void {
 
   // Retry tail: ChatGPT's /-to-/c/<id> route navigation can take 6–10s to
   // render the server-state bubble; rescan so a late re-render is restored.
-  const runOnePass = (): void => { scanTextNodes(_depseudoScanRoot()); };
+  // DIAGNOSTIC (v0.2.11): each pass reports, to the sidepanel Pipeline Log,
+  // exactly what it sees — so we can tell apart "bubble not found",
+  // "bubble outside scan root", "map empty", and "text didn't match".
+  let _passNum = 0;
+  const runOnePass = (): void => {
+    _passNum++;
+    const root = _depseudoScanRoot();
+    let bubblesInDoc = 0;
+    let bubblesInRoot = 0;
+    let sample = '';
+    try {
+      const sel = USER_BUBBLE_SELECTORS.join(',');
+      const docBubbles = document.querySelectorAll(sel);
+      bubblesInDoc = docBubbles.length;
+      bubblesInRoot = (root instanceof Element ? root.querySelectorAll(sel).length
+        : document.querySelectorAll(sel).length);
+      const last = docBubbles[docBubbles.length - 1];
+      if (last) sample = (last.textContent || '').trim().slice(0, 50);
+    } catch { /* selector issue — report zeros */ }
+    const mapSize = Object.keys(currentReverseMap).length;
+    const replaced = scanTextNodes(root);
+    igPostMessage({
+      type: 'IRON_GATE_BUBBLE_DIAG',
+      detail: `pass${_passNum} bubblesDoc=${bubblesInDoc} inRoot=${bubblesInRoot} map=${mapSize} replaced=${replaced} rootTag=${root instanceof Element ? root.tagName : 'doc'} sample="${sample}"`,
+    });
+  };
   runOnePass();
   const delays = [300, 800, 1500, 3000, 5000, 8000, 12000];
   for (const delay of delays) {
