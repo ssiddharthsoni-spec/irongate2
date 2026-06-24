@@ -96,8 +96,12 @@
     textarea.value = '';
     textarea.style.height = 'auto';
 
-    // Add user message bubble
-    addMessage('user', text);
+    // FIDELITY: do NOT render the user bubble from the typed original. Real
+    // ChatGPT renders it from server state (the wire payload = pseudonyms).
+    // Create an empty user bubble now; fill it from the server's user_echo
+    // event below (which carries what the server actually received). Iron Gate
+    // must then restore the original into it.
+    const userBubble = addMessage('user', '');
     statusBar.textContent = 'Scanning for sensitive data...';
     sendBtn.disabled = true;
 
@@ -137,6 +141,13 @@
           if (data === '[DONE]') break;
           try {
             const parsed = JSON.parse(data);
+            // Server echo of the received user message (the pseudonyms) →
+            // render the user bubble from it, like real ChatGPT renders from
+            // server state. Iron Gate's DOM de-pseudo must restore the original.
+            if (parsed?.user_echo !== undefined) {
+              userBubble.textContent = parsed.user_echo;
+              continue;
+            }
             const parts = parsed?.message?.content?.parts;
             if (parts?.[0]) {
               assistantText = parts[0];
@@ -176,7 +187,7 @@
     div.className = `message ${role}`;
     div.innerHTML = `
       ${role === 'assistant' ? '<div class="assistant-label">ChatGPT</div>' : ''}
-      <div class="bubble" ${role === 'assistant' ? 'data-message-author-role="assistant"' : ''}>${text}</div>
+      <div class="bubble" data-message-author-role="${role}">${text}</div>
     `;
     messages.appendChild(div);
     messages.scrollTop = messages.scrollHeight;

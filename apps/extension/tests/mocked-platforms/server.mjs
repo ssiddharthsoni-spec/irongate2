@@ -107,8 +107,15 @@ const server = http.createServer((req, res) => {
         'Connection': 'keep-alive',
       });
 
-      // Return a response that echoes back what we received (contains pseudonym)
+      // FIDELITY (June 2026): real ChatGPT renders the user bubble from
+      // SERVER STATE — i.e. the payload it received, which (after Iron Gate's
+      // wire interception) contains the PSEUDONYMS. Echo the received user
+      // message first so the mock page can render the user bubble from it,
+      // exactly like the real site. This is the behavior the old mock failed
+      // to replicate (it rendered the bubble from the typed original), which
+      // is why green tests missed the user-bubble corruption.
       const chunks = [
+        { user_echo: userMsg },
         { message: { id: 'msg1', author: { role: 'assistant' }, content: { parts: [`I received your message about `] } } },
         { message: { id: 'msg1', author: { role: 'assistant' }, content: { parts: [`I received your message about ${userMsg} and can help.`] } } },
         '[DONE]',
