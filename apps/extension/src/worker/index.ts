@@ -2346,6 +2346,16 @@ async function handleMessage(
                 turnKey: tabState.lastMaskedPrompt || tabState.lastPromptHash || '',
               }
             : null;
+          // DIAGNOSTIC (v0.2.12): report what the worker received + whether it
+          // writes or skips, to the sidepanel Pipeline Log (BUBBLE_DIAG path).
+          const _diag = (verb: string) => {
+            try {
+              chrome.runtime.sendMessage({
+                type: 'BUBBLE_DIAG',
+                detail: `WORKER ${verb} turn=${incomingTurn ? `${incomingTurn.epoch}/${incomingTurn.seq}` : 'none'} phase=${incomingPhase} ent=${entities?.length ?? 0} map=${pseudonymMappings?.length ?? 0} masked=${(maskedPrompt || '').length} curEnt=${currentSnapshot?.hasEntities ? 'y' : 'n'}`,
+              }).catch(() => {});
+            } catch { /* no-op */ }
+          };
           if (!shouldReplaceDisplay(currentSnapshot, {
             phase: incomingPhase,
             hasEntities: incomingHasEntities,
@@ -2357,8 +2367,10 @@ async function handleMessage(
                 + ' turn=' + (incomingTurn ? `${incomingTurn.epoch}/${incomingTurn.seq}` : 'none')
                 + ' would not replace current phase=' + (currentSnapshot?.phase ?? 'null'),
             );
+            _diag('SKIP');
             return;
           }
+          _diag('WRITE');
           updateTabState(ssTabId, {
             aiToolId: aiToolId || 'unknown',
             lastScore: score,

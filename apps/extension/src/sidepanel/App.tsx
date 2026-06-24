@@ -995,7 +995,7 @@ function AppMain({ onSignOut }: { onSignOut: () => Promise<void> }) {
                     // Only restore tab state if it's from the same AI tool — prevents
                     // stale ChatGPT results showing when navigating to Claude in same tab
                     if (s.aiToolId && s.aiToolId !== toolId) return;
-                    plog('GET_TAB_STATE', `score=${s.lastScore} turn=${s.lastTurn ? `${s.lastTurn.epoch}/${s.lastTurn.seq}` : 'none'} phase=${s.lastPhase || '-'}`);
+                    plog('GET_TAB_STATE', `score=${s.lastScore} turn=${s.lastTurn ? `${s.lastTurn.epoch}/${s.lastTurn.seq}` : 'none'} phase=${s.lastPhase || '-'} storedMap=${s.lastPseudonymMappings?.length ?? 0} storedEnt=${s.lastEntities?.length ?? 0} storedMasked=${s.lastMaskedPrompt?.length ?? 0}`);
                     // WP1: same single render mapping as the live listener —
                     // idempotent, so periodic re-checks can't resurrect or
                     // flicker anything.

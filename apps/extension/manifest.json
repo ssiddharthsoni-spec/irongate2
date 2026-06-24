@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Iron Gate — AI Data Governance",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "description": "Protect sensitive data in AI prompts. Real-time PII scanning and compliance for ChatGPT, Claude, Gemini, and more.",
   "homepage_url": "https://irongate-dashboard.vercel.app",
   "permissions": [
