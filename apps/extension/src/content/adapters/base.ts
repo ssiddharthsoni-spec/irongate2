@@ -59,6 +59,17 @@ export interface SiteAdapter {
   primaryEndpointPatterns?: RegExp[];
 
   /**
+   * WP-FIX (June 2026): does this platform's user-message bubble render the
+   * PSEUDONYM (so Iron Gate must restore the original into it)? FALSE for
+   * wire-interception platforms (ChatGPT, Claude) where the bubble already
+   * shows the user's original text from the platform's own React state —
+   * there, Iron Gate must NEVER touch the user bubble (writing to it only
+   * corrupts: cross-turn mis-targeting + fragment collisions). DEFAULT off.
+   * INVARIANT: the user's input text is never modified by Iron Gate.
+   */
+  userBubbleNeedsRestore?: boolean;
+
+  /**
    * WP2: the platform's WebSocket transport is timing-sensitive — the
    * engine must not patch ws.send or touch the instance at all (Copilot
    * SignalR hangs on ANY interference). Detection happens via

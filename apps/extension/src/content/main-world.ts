@@ -2527,13 +2527,19 @@ function scanTextNodes(root: Node): number {
   if (Object.keys(currentReverseMap).length === 0) return 0;
 
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    // Never rewrite the user's composer: displayed content must show real
-    // names, but editable text is user-owned (and skipping it removes the
-    // hottest typing-time code path from every scan).
-    acceptNode: (n) =>
-      n.parentElement && n.parentElement.isContentEditable
-        ? NodeFilter.FILTER_REJECT
-        : NodeFilter.FILTER_ACCEPT,
+    // Never rewrite the user's input: the composer (contentEditable) AND the
+    // user's sent message bubbles are user-owned. De-pseudo is for the AI's
+    // response only — touching user text only corrupts it (see the INVARIANT
+    // in restoreUserBubble). Unless the platform renders pseudonyms in the
+    // user bubble (userBubbleNeedsRestore), user-message subtrees are skipped.
+    acceptNode: (n) => {
+      const pe = n.parentElement;
+      if (pe && pe.isContentEditable) return NodeFilter.FILTER_REJECT;
+      if (!activeAdapter?.userBubbleNeedsRestore && pe && _isInsideUserBubble(pe)) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
   });
   let replacements = 0;
   let textNode: Node | null = walker.nextNode();
@@ -2611,8 +2617,13 @@ function startPersistentDomDepseudo(): void {
     // BUT: if the new text contains a pseudonym, React reverted our
     // replacement (e.g. a subsequent WS heartbeat / save triggered a
     // re-render). In that case do NOT skip — fall through and replace.
-    // Never rewrite the user's composer (mirrors the scanTextNodes filter).
+    // Never rewrite the user's input — composer OR sent bubble (mirrors the
+    // scanTextNodes filter; the user's words are never modified by Iron Gate).
     if (node.parentElement?.isContentEditable) return;
+    if (!activeAdapter?.userBubbleNeedsRestore
+        && node.parentElement && _isInsideUserBubble(node.parentElement)) {
+      return;
+    }
 
     if (_igOurMutations.has(node)) {
       _igOurMutations.delete(node);
@@ -2809,6 +2820,16 @@ interface BubbleObserverHandle {
 const _bubbleObserverByElement = new WeakMap<Element, BubbleObserverHandle>();
 const _BUBBLE_OBSERVER_IDLE_MS = 5 * 60 * 1000;
 
+// True if `el` is inside (or is) a user-message bubble — used by the de-pseudo
+// scan paths to NEVER touch the user's own words. Walks ancestors via closest()
+// for each known user-bubble selector.
+function _isInsideUserBubble(el: Element): boolean {
+  for (const sel of USER_BUBBLE_SELECTORS) {
+    try { if (el.closest(sel)) return true; } catch { /* invalid selector */ }
+  }
+  return false;
+}
+
 function _matchesAnyUserBubbleSelector(el: Element): boolean {
   for (const sel of USER_BUBBLE_SELECTORS) {
     try { if (el.matches(sel)) return true; } catch { /* invalid selector */ }
@@ -2946,6 +2967,20 @@ function _scanDocumentForReverseMap(reverseMap: Record<string, string>): number 
 }
 
 function restoreUserBubble(options: BubbleRestoreOptions): void {
+  // ── INVARIANT: Iron Gate never modifies the user's input ──────────────────
+  // On wire-interception platforms (ChatGPT, Claude) the user's message bubble
+  // already shows their ORIGINAL typed text from the platform's own state.
+  // Writing to it can ONLY corrupt — the two failure modes that shipped:
+  //   1. cross-turn mis-targeting: retry timers (up to 12s) resolve "latest
+  //      user bubble" at fire time, so a stale turn-1 timer stamps turn-1 text
+  //      onto turn-2's bubble (or vice versa) → "prompt 1 became prompt 2"
+  //   2. fragment collision: _scanDocumentForReverseMap applies first-name
+  //      fragments, so a fake first name ("Lisa" for Maria Mendez) rewrites a
+  //      REAL name the user typed ("Lisa Park" → "Maria Park")
+  // De-pseudonymization is for the AI's RESPONSE, never the user's own words.
+  // Only platforms that render the pseudonym in the user bubble opt in.
+  if (!activeAdapter?.userBubbleNeedsRestore) return;
+
   const { promptText, reverseMap } = options;
   const hasPromptText = !!promptText && promptText.length >= 3;
   const hasReverseMap = Object.keys(reverseMap).length > 0;

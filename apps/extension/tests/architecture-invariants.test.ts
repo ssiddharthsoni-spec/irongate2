@@ -888,3 +888,34 @@ describe('Architecture Invariants — inline fallback stays in sync', () => {
     expect(src).toMatch(/capped >= 86 \? 'critical' : capped >= 61 \? 'high' : capped >= 26 \? 'medium' : 'low'/);
   });
 });
+
+describe('Architecture Invariants — Iron Gate never modifies user input', () => {
+  // June 2026 (user-reported, twice): the user's own message bubble was
+  // corrupted — "Lisa Park" → "Maria Park" during streaming (fragment
+  // collision) and "prompt 1" → "prompt 2" across turns (restoreUserBubble
+  // retry timers mis-targeting the latest bubble). PRINCIPLE: Iron Gate
+  // never writes to the composer or a user message bubble; de-pseudo is
+  // the AI response only. Opt-in per adapter via userBubbleNeedsRestore.
+  it('restoreUserBubble is gated off unless the adapter opts in', () => {
+    const src = readMainWorld();
+    const body = src.split('function restoreUserBubble(')[1]?.split('\nfunction ')[0] ?? '';
+    expect(body).toMatch(/if \(!activeAdapter\?\.userBubbleNeedsRestore\) return;/);
+  });
+
+  it('no adapter currently opts into user-bubble restore (input is untouchable)', async () => {
+    const files = await glob('apps/extension/src/content/adapters/*.ts', { cwd: REPO_ROOT, absolute: true });
+    const optedIn: string[] = [];
+    for (const f of files) {
+      if (/userBubbleNeedsRestore\s*:\s*true/.test(readFileSync(f, 'utf8'))) optedIn.push(f);
+    }
+    expect(optedIn).toEqual([]);
+  });
+
+  it('both de-pseudo scan paths skip user-message subtrees', () => {
+    const src = readMainWorld();
+    // scanTextNodes acceptNode + the characterData path both consult _isInsideUserBubble
+    const guards = (src.match(/_isInsideUserBubble\(/g) ?? []).length;
+    expect(guards).toBeGreaterThanOrEqual(2);
+    expect(src).toMatch(/function _isInsideUserBubble/);
+  });
+});
