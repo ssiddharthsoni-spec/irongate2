@@ -24,7 +24,7 @@ import { generateFake, setLengthPreserving } from './main-world/fake-data';
 import { detectWithRegex } from '../detection/fallback-regex';
 import { scanForSecrets, isNaturalLanguage } from './main-world/entity-patterns';
 import { parseStructured } from '../detection/structural-parser';
-import { classifyKeyName, isObviousPlaceholder } from '../detection/key-name-sensitivity';
+import { classifyKeyName, isObviousPlaceholder, looksLikeIdentifierValue } from '../detection/key-name-sensitivity';
 import {
   jsonStringEscape,
   looksLikePersonName,
@@ -528,7 +528,12 @@ function buildSubmitEntities(promptText: string): DetectedEntity[] {
     // L2: key-name signal — emits a credential entity covering the whole
     // value span when the variable name implies sensitivity.
     const keyClass = classifyKeyName(rec.key);
-    if (keyClass.sensitive && !isObviousPlaceholder(valueText)) {
+    // Prose labels ("Member: Lisa Park") only protect IDENTIFIER-shaped values;
+    // name/prose values fall through to PERSON/ORG detection so they don't get
+    // a numeric fake or mangle a benign sentence. Env-var records keep their
+    // original behavior (any non-placeholder value is a credential).
+    const proseValueOk = rec.kind !== 'prose_kv' || looksLikeIdentifierValue(valueText);
+    if (keyClass.sensitive && !isObviousPlaceholder(valueText) && proseValueOk) {
       out.push({
         type: keyClass.type,
         text: valueText,

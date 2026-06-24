@@ -28,7 +28,13 @@ export type SensitiveKeyType =
   | 'API_KEY'
   | 'AUTH_TOKEN'
   | 'DATABASE_URI'
-  | 'PASSWORD';
+  | 'PASSWORD'
+  // Labeled identifiers in prose (healthcare / insurance / finance / identity).
+  // All map to existing HIGH_PII entity types so they pseudonymize AND hit the
+  // always-critical floor. The LABEL is the signal; value format is irrelevant.
+  | 'MEDICAL_RECORD'
+  | 'ACCOUNT_NUMBER'
+  | 'SSN';
 
 interface KeyClassifier {
   // Tested case-insensitively against the key name.
@@ -89,6 +95,23 @@ const CLASSIFIERS: KeyClassifier[] = [
   { pattern: /(?:^|_)TOKEN(?:$|_)/i, type: 'AUTH_TOKEN', confidence: 0.8 },
   // Bare KEY — only if specifically *_KEY (avoids matching things like KEYBOARD)
   { pattern: /(?:^|_)KEY$/i, type: 'API_KEY', confidence: 0.7 },
+
+  // ── Labeled identifiers in prose (the label IS the signal) ──────────────
+  // These catch values that have NO distinctive format (MRN "MED-789012",
+  // Insurance ID "BCBS-2024-456789", "Account: 483726159") which value-format
+  // regex can never reliably match. Matched against the prose label after
+  // normalizing spaces to underscores (see classifyKeyName), so "Insurance
+  // ID" tests as "INSURANCE_ID", "Medical Record Number" as
+  // "MEDICAL_RECORD_NUMBER", etc.
+  //
+  // Healthcare:
+  { pattern: /(?:^|_)(?:MRN|MEDICAL[_-]?RECORD(?:[_-]?(?:NO|NUMBER|ID))?|PATIENT[_-]?(?:ID|NO|NUMBER)|CHART[_-]?(?:NO|NUMBER)|NPI)(?:$|_)/i, type: 'MEDICAL_RECORD', confidence: 0.9 },
+  // Health insurance identifiers:
+  { pattern: /(?:^|_)(?:INSURANCE(?:[_-]?ID)?|MEMBER(?:[_-]?ID)?|POLICY(?:[_-]?(?:NO|NUMBER))?|GROUP(?:[_-]?(?:NO|NUMBER))?|PLAN[_-]?ID|CLAIM(?:[_-]?(?:NO|NUMBER))?|SUBSCRIBER[_-]?ID)(?:$|_)/i, type: 'ACCOUNT_NUMBER', confidence: 0.85 },
+  // Financial / banking identifiers:
+  { pattern: /(?:^|_)(?:ACCOUNT(?:[_-]?(?:NO|NUMBER))?|ACCT|ROUTING(?:[_-]?(?:NO|NUMBER))?|ABA|IBAN|SWIFT(?:[_-]?(?:CODE|BIC))?|BANK[_-]?ACCOUNT|BENEFICIARY[_-]?ACCOUNT|SORT[_-]?CODE)(?:$|_)/i, type: 'ACCOUNT_NUMBER', confidence: 0.85 },
+  // Government / identity numbers:
+  { pattern: /(?:^|_)(?:SSN|SOCIAL[_-]?SECURITY(?:[_-]?(?:NO|NUMBER))?|TAX[_-]?ID|TIN|EIN|PASSPORT(?:[_-]?(?:NO|NUMBER))?|DRIVERS?[_-]?LICEN[CS]E)(?:$|_)/i, type: 'SSN', confidence: 0.9 },
 ];
 
 export interface KeyNameClassification {
@@ -110,12 +133,40 @@ export function classifyKeyName(key: string | null | undefined): KeyNameClassifi
   const trimmed = key.trim();
   if (trimmed.length < 3 || trimmed.length > 128) return NEGATIVE;
 
+  // Normalize prose labels to the underscore form the patterns expect:
+  // "Insurance ID" → "INSURANCE_ID", "Medical Record Number" →
+  // "MEDICAL_RECORD_NUMBER", "Group #" → "GROUP". Trailing punctuation
+  // (the "#" from "Group #", stray ".") is stripped. Both the raw and the
+  // normalized form are tested so env-var keys (already underscored) and
+  // prose labels both match.
+  const normalized = trimmed
+    .replace(/[#:.]+$/g, '')
+    .trim()
+    .replace(/[\s-]+/g, '_');
+
   for (const c of CLASSIFIERS) {
-    if (c.pattern.test(trimmed)) {
+    if (c.pattern.test(trimmed) || c.pattern.test(normalized)) {
       return { sensitive: true, type: c.type, confidence: c.confidence };
     }
   }
   return NEGATIVE;
+}
+
+/**
+ * True iff `v` is shaped like an identifier/secret rather than prose.
+ * Used to gate PROSE-label protection: "Account: 483726159" and
+ * "Insurance ID: BCBS-2024-456789" are identifiers (have digits); "Member:
+ * Lisa Park" and "Member: John is on the team" are prose (no digit, has
+ * spaces) and must fall through to the normal PERSON/ORG detectors instead
+ * of being masked as a numeric account. Identifier = contains a digit, OR is
+ * a single compact token (no internal whitespace) of length ≥ 5.
+ */
+export function looksLikeIdentifierValue(v: string): boolean {
+  const t = (v || '').trim();
+  if (t.length === 0) return false;
+  if (/\d/.test(t)) return true;            // any digit → identifier-ish
+  if (!/\s/.test(t) && t.length >= 5) return true; // compact single token (codes, keys)
+  return false;
 }
 
 /**

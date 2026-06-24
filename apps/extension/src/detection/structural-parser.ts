@@ -113,6 +113,121 @@ function parseEnvVars(text: string): ParsedRecord[] {
   return records;
 }
 
+// ─── Prose key:value parser ──────────────────────────────────────────────────
+// Recognizes inline labeled fields in natural-language prose, e.g.
+//   "Patient Jane Miller, MRN: MED-789012, DOB: 08/14/1965. Insurance ID:
+//    BCBS-2024-456789. Member: Lisa Park, Group #GRP-9012. Account: 483726159"
+// This is the architectural fix for labeled identifiers leaking: the LABEL
+// (MRN, Insurance ID, Account, …) is the sensitivity signal, so the value is
+// protected REGARDLESS of its format — no per-format regex whack-a-mole.
+//
+// Design: generic SEGMENTATION here (any "Label: value" / "Label #value"),
+// SENSITIVITY decided downstream by key-name-sensitivity.classifyKeyName().
+// A mis-segmented non-sensitive label is harmless — its value just gets the
+// same format-regex scan it would have gotten as free text; protection only
+// happens for vocabulary labels.
+
+const CLAUSE_BOUNDARY = /[,.;\n]/;
+// Scheme-like words that precede ':' but are NOT field labels (URLs, times).
+const NON_LABEL = new Set(['http', 'https', 'ftp', 'ftps', 'ssh', 'ws', 'wss', 'mailto', 'tel', 'file', 'data']);
+
+interface SepMarker { sepIdx: number; labelStart: number; labelEnd: number; key: string; valueStart: number; }
+
+// Words that, when they are the word right before the separator, indicate a
+// MULTI-word label (the preceding word is part of the label, not the previous
+// value): "Insurance ID", "Account Number", "Sort Code", "Medical Record".
+const LABEL_CONTINUATION = new Set(['id', 'ids', 'no', 'num', 'number', 'code', 'record', 'name', 'type', 'key']);
+
+// One pure-letter word ending at `end` (exclusive). Returns null if the char
+// before `end` (after skipping spaces) isn't a letter.
+function letterWordBefore(text: string, end: number): { word: string; start: number } | null {
+  let we = end;
+  while (we > 0 && text[we - 1] === ' ') we--;
+  let ws = we;
+  while (ws > 0 && /[A-Za-z]/.test(text[ws - 1])) ws--;
+  if (ws === we) return null;
+  return { word: text.substring(ws, we), start: ws };
+}
+
+// Extract the field label immediately before a separator. Default: the single
+// word before the sep. Extended to a second (and third) word ONLY when the
+// trailing word is a continuation word (ID/Number/Code/…). This correctly
+// keeps "Insurance ID" whole while yielding just "Bank" from
+// "...Global Trading LLC Bank:" — the disambiguation needed for delimiter-less
+// prose like wire instructions.
+function extractLabel(text: string, sepIdx: number): { key: string; start: number; end: number } | null {
+  let end = sepIdx;
+  while (end > 0 && /\s/.test(text[end - 1])) end--;
+  const labelEnd = end;
+
+  const w1 = letterWordBefore(text, labelEnd);
+  if (!w1) return null;
+  let start = w1.start;
+
+  // Extend left while the CURRENT leftmost word is a continuation word and the
+  // preceding char is a single space (i.e. another label word, not a boundary).
+  let leftmost = w1.word.toLowerCase();
+  let guard = 0;
+  while (guard++ < 2 && LABEL_CONTINUATION.has(leftmost) && start > 0 && text[start - 1] === ' ') {
+    const prev = letterWordBefore(text, start);
+    if (!prev) break;
+    start = prev.start;
+    leftmost = prev.word.toLowerCase();
+  }
+
+  const key = text.substring(start, labelEnd).trim();
+  if (key.length < 2 || key.length > 40) return null;
+  if (NON_LABEL.has(key.toLowerCase())) return null;
+  return { key, start, end: labelEnd };
+}
+
+function findProseMarkers(text: string): SepMarker[] {
+  const markers: SepMarker[] = [];
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c !== ':' && c !== '#') continue;
+    if (c === ':' && text.substr(i + 1, 2) === '//') continue; // URL scheme
+    const label = extractLabel(text, i);
+    if (!label) continue;
+    let vs = i + 1;
+    while (vs < text.length && /\s/.test(text[vs])) vs++;
+    markers.push({ sepIdx: i, labelStart: label.start, labelEnd: label.end, key: label.key, valueStart: vs });
+  }
+  return markers;
+}
+
+function parseProseKv(text: string): ParsedRecord[] {
+  const markers = findProseMarkers(text);
+  if (markers.length === 0) return [];
+  const records: ParsedRecord[] = [];
+  for (let i = 0; i < markers.length; i++) {
+    const cur = markers[i];
+    const next = markers[i + 1];
+    // Value ends at the first clause boundary at/after valueStart, OR at the
+    // start of the next field's label (so "Routing: 021000021 Account: ..."
+    // splits even without a comma), whichever comes first.
+    let valueEnd = text.length;
+    for (let j = cur.valueStart; j < text.length; j++) {
+      if (CLAUSE_BOUNDARY.test(text[j])) { valueEnd = j; break; }
+    }
+    if (next && next.labelStart < valueEnd && next.labelStart > cur.valueStart) {
+      valueEnd = next.labelStart;
+    }
+    const trimmedEnd = trimTrailingWs(text, valueEnd, cur.valueStart);
+    if (trimmedEnd <= cur.valueStart) continue; // empty value
+    const value = text.substring(cur.valueStart, trimmedEnd);
+    if (value.trim().length < 2) continue; // degenerate value
+    records.push({
+      kind: 'prose_kv',
+      key: cur.key,
+      value,
+      keySpan: [cur.labelStart, cur.labelEnd],
+      valueSpan: [cur.valueStart, trimmedEnd],
+    });
+  }
+  return records;
+}
+
 // ─── Public entry point ─────────────────────────────────────────────────────
 
 /**
@@ -126,13 +241,20 @@ export function parseStructured(text: string): ParsedPrompt {
     return { records: [], freeText: [] };
   }
 
-  // Phase 1: env-var records. Other parsers (JSON, headers, query strings)
-  // can be added here as siblings — each yields ParsedRecord[] over disjoint
-  // spans, and the merge step ensures none of them claim the same character.
-  const records = parseEnvVars(text);
+  // Phase 1: env-var records (KEY=VALUE). Highest precedence.
+  const envRecords = parseEnvVars(text);
 
-  // Sort records by keySpan start (defensive — ENV_KEY_RE already iterates
-  // left-to-right, but other parsers might not).
+  // Phase 2: prose key:value records ("MRN: MED-789012"). Drop any that
+  // overlap an env-var record so all spans stay pairwise non-overlapping.
+  const envCovers = (s: number, e: number): boolean =>
+    envRecords.some((r) => s < r.valueSpan[1] && e > r.keySpan[0]);
+  const proseRecords = parseProseKv(text).filter(
+    (r) => !envCovers(r.keySpan[0], r.valueSpan[1]),
+  );
+
+  const records = [...envRecords, ...proseRecords];
+
+  // Sort records by keySpan start so free-text gap computation is correct.
   records.sort((a, b) => a.keySpan[0] - b.keySpan[0]);
 
   // Compute free-text gaps between record spans.
