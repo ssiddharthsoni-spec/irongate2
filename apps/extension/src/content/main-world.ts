@@ -19,6 +19,7 @@
 import { getAdapter, isLLMEndpoint as adapterIsLLMEndpoint, shouldSkipFetchProxy, shouldSkipXhrProxy, getAllAdapters } from './adapters';
 import type { SiteAdapter } from './adapters';
 import { findDeepestString } from './adapters/base';
+import { buildReservedParts, fakeCollides } from '../detection/fake-collision';
 import { generateFake, setLengthPreserving } from './main-world/fake-data';
 import { detectWithRegex } from '../detection/fallback-regex';
 import { scanForSecrets, isNaturalLanguage } from './main-world/entity-patterns';
@@ -1219,6 +1220,13 @@ function pseudonymizeLocal(text: string, entities: DetectedEntity[]): PseudonymR
   const mappings: PseudonymMapping[] = [];
   const seen = new Map<string, string>();
 
+  // Collision-free mapping (June 2026): a fake — or any of its name-parts —
+  // must never reuse a real value/part the user typed ANYWHERE in this prompt.
+  // Built once from ALL entities so processing order can't let a collision
+  // slip through. This is the root-cause fix for "real name rewritten to a
+  // different real name" (e.g. "Lisa Park" → "Maria Park").
+  const reservedParts = buildReservedParts(entities.map((e) => e.text));
+
   const sorted = [...entities].sort((a, b) => b.start - a.start);
   let maskedText = text;
 
@@ -1276,24 +1284,16 @@ function pseudonymizeLocal(text: string, entities: DetectedEntity[]): PseudonymR
       const usedOriginals = new Set(Object.keys(currentForwardMap));
       // Also include originals from this call's seen map (not yet in currentForwardMap)
       for (const [orig] of seen) usedOriginals.add(orig);
-      // Check if candidate collides with any existing mapping (exact or substring)
-      function hasCollision(c: string): boolean {
-        if (usedFakes.has(c) || usedOriginals.has(c) || c === normalizedText) return true;
-        // For short tokens (< 8 chars), check substring collisions:
-        // a fake "$4M" would match inside another fake "$4.2B" during de-pseudo
-        if (c.length < 8) {
-          for (const f of usedFakes) {
-            if (f.includes(c) || c.includes(f)) return true;
-          }
-          for (const o of usedOriginals) {
-            if (o.includes(c) || c.includes(o)) return true;
-          }
-        }
-        return false;
-      }
+      // Collision check extracted to detection/fake-collision.ts (tested
+      // directly). Reuses currentForwardMap fakes/originals + this prompt's
+      // reservedParts so a fake can never coincide with any real name.
+      const collisionCtx = { usedFakes, usedOriginals, reservedParts, self: normalizedText };
       let candidate = generateFake(entity.type, normalizedText);
       let attempts = 0;
-      while (attempts < 10 && hasCollision(candidate)) {
+      // Higher attempt budget than before (10): the reservedParts constraint is
+      // stricter, and the fake pools/synthesis are large, so a clean fake is
+      // found quickly — but never leave a colliding fake in place.
+      while (attempts < 30 && fakeCollides(candidate, collisionCtx)) {
         candidate = generateFake(entity.type, normalizedText);
         attempts++;
       }
