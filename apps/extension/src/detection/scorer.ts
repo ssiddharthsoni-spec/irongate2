@@ -176,12 +176,6 @@ const VOLUME_THRESHOLDS = {
   VERY_LONG: 5000,
 };
 
-const VOLUME_SCORES = {
-  SHORT: 0,
-  MEDIUM: 5,
-  LONG: 10,
-  VERY_LONG: 20,
-};
 
 // ── Named scoring constants ─────────────────────────────────────────────────
 // Thresholds and caps referenced in the scoring pipeline.
@@ -203,12 +197,6 @@ const CONTEXTUAL_KEYWORD_HIGH_FLOOR_THRESHOLD = 35;
 const CONTEXTUAL_KEYWORD_HIGH_FLOOR = 50;
 /** Maximum self-referential score ceiling (resume/bio with all entities suppressed) */
 const SELF_REFERENTIAL_CEILING = 20;
-/** Entity score cap — prevents single-layer dominance */
-const ENTITY_SCORE_CAP = 70;
-/** Context score cap */
-const CONTEXT_SCORE_CAP = 25;
-/** Legal boost cap */
-const LEGAL_BOOST_CAP = 25;
 /** Co-occurrence boost cap */
 const CO_OCCURRENCE_BOOST_CAP = 30;
 /** NaN fail-safe score when critical floor is 0 */
@@ -223,16 +211,6 @@ const DOC_TYPE_CONFIDENCE_THRESHOLD = 0.25;
 const CRITICAL_MARKER_CONFIDENCE = 0.88;
 /** Entity proximity distance for co-occurrence boost (chars) */
 const CO_OCCURRENCE_PROXIMITY = 100;
-/** Type combination bonus multiplier for 3+ unique types */
-const TYPE_COMBO_BONUS_3PLUS = 1.3;
-/** Type combination bonus multiplier for 2 unique types */
-const TYPE_COMBO_BONUS_2 = 1.15;
-/** Count bonus multiplier for 10+ entities */
-const COUNT_BONUS_10PLUS = 1.4;
-/** Count bonus multiplier for 5+ entities */
-const COUNT_BONUS_5PLUS = 1.2;
-/** Context window around each entity for keyword proximity check (chars) */
-const ENTITY_CONTEXT_WINDOW = 200;
 
 /**
  * Compute the sensitivity score for a given text and detected entities.
