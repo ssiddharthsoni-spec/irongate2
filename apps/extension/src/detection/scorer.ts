@@ -27,6 +27,15 @@
 
 import type { DetectedEntity } from './types';
 import { HIGH_PII_TYPES } from './types';
+// Shared sensitivity-scoring core (verified byte-identical to the API's
+// copy; parameterized by this app's weights + keyword lists). esbuild
+// inlines these into the MAIN-world IIFE — confirmed self-contained at build.
+import {
+  computeEntityScore,
+  computeVolumeScore,
+  computeContextScore,
+  computeLegalBoost,
+} from '@iron-gate/types';
 import { classifyDocument, DOCUMENT_TYPE_MULTIPLIERS } from './document-classifier';
 import { analyzeRelationships, computeRelationshipBoost } from './relationship-analyzer';
 import { applyContextAwareDetection } from '../shared/context-analyzer';
@@ -344,12 +353,13 @@ export function computeScore(
 
   // 2. Volume score: longer text = higher risk (likely pasted document)
   const volumeScore = computeVolumeScore(text);
+  // (context/legal pass this app's keyword lists — see shared core)
 
   // 3. Context score: legal keywords near entities
-  const contextScore = computeContextScore(text, contextualEntities);
+  const contextScore = computeContextScore(text, contextualEntities, LEGAL_KEYWORDS);
 
   // 4. Legal boost: privilege markers
-  const legalBoost = computeLegalBoost(text);
+  const legalBoost = computeLegalBoost(text, PRIVILEGE_MARKERS);
 
   // 5. Contextual keyword score: business-sensitive patterns (deal codenames, MNPI,
   //    litigation strategy, layoff plans, etc.) detected WITHOUT PII entities
@@ -783,96 +793,11 @@ function composeFromClassifier(
   return Object.freeze(result);
 }
 
-function computeEntityScore(
-  entities: DetectedEntity[],
-  weights: Record<string, number>
-): number {
-  if (entities.length === 0) return 0;
-
-  let score = 0;
-
-  for (const entity of entities) {
-    const weight = weights[entity.type] || 5;
-    // Scale by confidence (guard against NaN/undefined confidence)
-    const confidence = Number.isFinite(entity.confidence) ? entity.confidence : 0.5;
-    score += weight * confidence;
-  }
-
-  // Entity combination bonus: multiple different entity types = more risky
-  const uniqueTypes = new Set(entities.map((e) => e.type));
-  if (uniqueTypes.size >= 3) {
-    score *= TYPE_COMBO_BONUS_3PLUS;
-  } else if (uniqueTypes.size >= 2) {
-    score *= TYPE_COMBO_BONUS_2;
-  }
-
-  // Count bonus: many entities = document was likely pasted
-  if (entities.length >= 10) {
-    score *= COUNT_BONUS_10PLUS;
-  } else if (entities.length >= 5) {
-    score *= COUNT_BONUS_5PLUS;
-  }
-
-  return Math.min(ENTITY_SCORE_CAP, score);
-}
-
-function computeVolumeScore(text: string): number {
-  const len = text.length;
-
-  if (len >= VOLUME_THRESHOLDS.VERY_LONG) return VOLUME_SCORES.VERY_LONG;
-  if (len >= VOLUME_THRESHOLDS.LONG) return VOLUME_SCORES.LONG;
-  if (len >= VOLUME_THRESHOLDS.MEDIUM) return VOLUME_SCORES.MEDIUM;
-  return VOLUME_SCORES.SHORT;
-}
-
-function computeContextScore(text: string, entities: DetectedEntity[]): number {
-  if (entities.length === 0) return 0;
-
-  const lowerText = text.toLowerCase();
-  let score = 0;
-
-  // Check for legal keywords near entities
-  for (const entity of entities) {
-    const surroundingStart = Math.max(0, entity.start - ENTITY_CONTEXT_WINDOW);
-    const surroundingEnd = Math.min(text.length, entity.end + ENTITY_CONTEXT_WINDOW);
-    const surrounding = lowerText.substring(surroundingStart, surroundingEnd);
-
-    for (const keyword of LEGAL_KEYWORDS) {
-      if (surrounding.includes(keyword)) {
-        score += 5;
-        break; // Only count once per entity
-      }
-    }
-  }
-
-  return Math.min(CONTEXT_SCORE_CAP, score);
-}
-
-function computeLegalBoost(text: string): number {
-  const lowerText = text.toLowerCase();
-  let boost = 0;
-
-  for (const marker of PRIVILEGE_MARKERS) {
-    if (lowerText.includes(marker)) {
-      boost += 15;
-    }
-  }
-
-  // Check for case citation patterns (e.g., "Smith v. Jones")
-  const caseCitationPattern = /\b[A-Z][a-z]+\s+v\.?\s+[A-Z][a-z]+\b/g;
-  const citations = text.match(caseCitationPattern);
-  if (citations) {
-    boost += citations.length * 5;
-  }
-
-  // Check for matter/case number patterns
-  const matterPattern = /\b(?:matter|case|docket)\s*(?:#|no\.?|number)?\s*\d/gi;
-  if (matterPattern.test(text)) {
-    boost += 10;
-  }
-
-  return Math.min(LEGAL_BOOST_CAP, boost);
-}
+// computeEntityScore / computeVolumeScore / computeContextScore /
+// computeLegalBoost moved to the shared core (@iron-gate/types →
+// packages/types/src/scoring.ts) and imported at the top. This app
+// still owns ENTITY_WEIGHTS, LEGAL_KEYWORDS, PRIVILEGE_MARKERS and
+// passes them in, so behavior is unchanged.
 
 // Canonical implementation lives in types.ts (WP3) — imported for internal
 // use and re-exported for existing importers.
