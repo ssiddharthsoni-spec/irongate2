@@ -9,13 +9,20 @@
  *  86-100: Critical — Highly sensitive content (financial, legal, medical)
  */
 
-import type { DetectedEntity } from '@iron-gate/types';
+import type { DetectedEntity, SensitivityLevel } from '@iron-gate/types';
+import {
+  scoreToLevel,
+  computeEntityScore,
+  computeVolumeScore,
+  computeContextScore,
+  computeLegalBoost,
+} from '@iron-gate/types';
 import { getBoostMultiplier } from '../services/sensitivity-graph';
 import { db } from '../db/client';
 import { weightOverrides } from '../db/schema';
 import { eq } from 'drizzle-orm';
 
-export type SensitivityLevel = 'low' | 'medium' | 'high' | 'critical';
+export type { SensitivityLevel };
 
 export interface ScoreResult {
   score: number;
@@ -99,8 +106,8 @@ const WEIGHT_CACHE_TTL = 5 * 60_000; // 5 minutes
 export function score(text: string, entities: DetectedEntity[]): ScoreResult {
   const entityScore = computeEntityScore(entities, ENTITY_WEIGHTS);
   const volumeScore = computeVolumeScore(text);
-  const contextScore = computeContextScore(text, entities);
-  const legalBoost = computeLegalBoost(text);
+  const contextScore = computeContextScore(text, entities, LEGAL_KEYWORDS);
+  const legalBoost = computeLegalBoost(text, PRIVILEGE_MARKERS);
 
   let rawScore = entityScore + volumeScore + contextScore + legalBoost;
   // NaN fail-safe: if any component produced NaN, default to HIGH (fail-closed, never passthrough)
@@ -143,8 +150,8 @@ export async function scoreFirmAware(
   // 2. Compute base scores with firm-adjusted weights
   const entityScore = computeEntityScore(entities, effectiveWeights);
   const volumeScore = computeVolumeScore(text);
-  const contextScore = computeContextScore(text, entities);
-  const legalBoost = computeLegalBoost(text);
+  const contextScore = computeContextScore(text, entities, LEGAL_KEYWORDS);
+  const legalBoost = computeLegalBoost(text, PRIVILEGE_MARKERS);
 
   // 3. Sensitivity graph boost (MOAT feature)
   const graphBoost = boostResult.boost;
@@ -189,84 +196,12 @@ export async function scoreFirmAware(
   };
 }
 
-function computeEntityScore(entities: DetectedEntity[], weights: Record<string, number>): number {
-  if (entities.length === 0) return 0;
-
-  let s = 0;
-  for (const entity of entities) {
-    const weight = weights[entity.type] || 5;
-    const confidence = Number.isFinite(entity.confidence) ? entity.confidence : 0.5;
-    s += weight * confidence;
-  }
-
-  // Combination bonus
-  const uniqueTypes = new Set(entities.map((e) => e.type));
-  if (uniqueTypes.size >= 3) s *= 1.3;
-  else if (uniqueTypes.size >= 2) s *= 1.15;
-
-  // Count bonus
-  if (entities.length >= 10) s *= 1.4;
-  else if (entities.length >= 5) s *= 1.2;
-
-  return Math.min(70, s);
-}
-
-function computeVolumeScore(text: string): number {
-  const len = text.length;
-  if (len >= 5000) return 20;
-  if (len >= 2000) return 10;
-  if (len >= 500) return 5;
-  return 0;
-}
-
-function computeContextScore(text: string, entities: DetectedEntity[]): number {
-  if (entities.length === 0) return 0;
-
-  const lowerText = text.toLowerCase();
-  let s = 0;
-
-  for (const entity of entities) {
-    const start = Math.max(0, entity.start - 200);
-    const end = Math.min(text.length, entity.end + 200);
-    const surrounding = lowerText.substring(start, end);
-
-    for (const keyword of LEGAL_KEYWORDS) {
-      if (surrounding.includes(keyword)) {
-        s += 5;
-        break;
-      }
-    }
-  }
-
-  return Math.min(25, s);
-}
-
-function computeLegalBoost(text: string): number {
-  const lowerText = text.toLowerCase();
-  let boost = 0;
-
-  for (const marker of PRIVILEGE_MARKERS) {
-    if (lowerText.includes(marker)) boost += 15;
-  }
-
-  // Case citations (e.g., "Smith v. Jones")
-  const citations = text.match(/\b[A-Z][a-z]+\s+v\.?\s+[A-Z][a-z]+\b/g);
-  if (citations) boost += citations.length * 5;
-
-  // Matter/case number patterns
-  if (/\b(?:matter|case|docket)\s*(?:#|no\.?|number)?\s*\d/gi.test(text)) {
-    boost += 10;
-  }
-
-  return Math.min(25, boost);
-}
-
-function scoreToLevel(s: number): SensitivityLevel {
-  if (s <= 25) return 'low';
-  if (s <= 60) return 'medium';
-  if (s <= 85) return 'high';
-  return 'critical';
-}
+// computeEntityScore, computeVolumeScore, computeContextScore,
+// computeLegalBoost, scoreToLevel — moved to the shared core
+// (@iron-gate/types → packages/types/src/scoring.ts) and imported above.
+// The values that differ between apps (ENTITY_WEIGHTS, LEGAL_KEYWORDS,
+// PRIVILEGE_MARKERS) are still owned here and passed in as arguments, so
+// behavior is unchanged.
 
 function generateExplanation(
   _score: number,

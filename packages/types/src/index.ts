@@ -9,6 +9,19 @@ export * from './detection-api';
 // --- Phase 1 Contracts (Two-Stage Pipeline) ---
 export * from './judgment';
 
+// --- Shared sensitivity-scoring core (used by api + extension scorers) ---
+// Explicit re-export (not `export *`) so SensitivityLevel, which this barrel
+// already defines below, is not double-exported.
+export {
+  scoreToLevel,
+  computeEntityScore,
+  computeVolumeScore,
+  computeContextScore,
+  computeLegalBoost,
+  SCORE_BANDS,
+} from './scoring';
+export type { ScorableEntity } from './scoring';
+
 // --- AI Tool Detection ---
 
 export type AIToolId =
